@@ -40,15 +40,17 @@ npm test
 
 ## 使用方式
 
-在 Claude Desktop Code 中：
+最短用法是在 Claude Desktop Code 中发布方案：
 
-> 使用 council，把当前架构方案发布到 Council。
+> 使用 council，把当前架构方案发布到 Council，并告诉我 topic ID。
 
-在 Codex App 中：
+再到 Codex App 中审查：
 
-> 使用 $council，读取最近的议题，审查方案并回复。
+> 使用 `$council` 读取 topic `<topic-id>`，检查项目代码，审查方案并把 critique 发布回去。
 
 自动调用后台 Claude 前，需要先完成 Claude Code CLI 登录。手动双桌面接力不依赖 CLI 登录。
+
+完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 
 ## 后续演进
 
