@@ -1,4 +1,4 @@
-# architecture-council - 多 Agent 本地架构讨论工程
+# council - 多 Agent 本地架构讨论工程
 
 > ⚠️ 一旦本文件夹有所变化，请更新本文件
 
@@ -9,4 +9,3 @@
 | `.gitignore` | 配置 | 排除依赖、构建产物、本地配置和运行数据 |
 | `packages/` | 运行时 | 保存可独立构建和测试的服务包 |
 | `skills/` | Agent 层 | 保存供多个 Agent 客户端发现的 Skill |
-

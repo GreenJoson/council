@@ -1,9 +1,9 @@
 ---
-name: architecture-council
-description: Coordinate architecture discussions between Claude and Codex through the shared local Architecture Council MCP. Use when the user asks Claude and Codex to debate, cross-review, challenge, continue, publish, or record an architecture/design/implementation decision; when a proposal from one desktop app must be made available to the other without copy-paste; or when Codex should ask a background Claude Code consultant for an independent proposal or rebuttal.
+name: council
+description: Coordinate architecture discussions between Claude and Codex through the shared local Council MCP. Use when the user asks Claude and Codex to debate, cross-review, challenge, continue, publish, or record an architecture/design/implementation decision; when a proposal from one desktop app must be made available to the other without copy-paste; or when Codex should ask a background Claude Code consultant for an independent proposal or rebuttal.
 ---
 
-# Architecture Council
+# Council
 
 Use the `council_*` MCP tools as the only shared discussion store. Keep each model's private session separate; share only user-visible proposals, evidence, critiques, rebuttals, and decisions.
 

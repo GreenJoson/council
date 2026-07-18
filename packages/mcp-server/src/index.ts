@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @input  依赖：COUNCIL_* 环境变量和 stdio MCP 客户端
- * @output 导出：运行中的 architecture-council MCP 服务
+ * @output 导出：运行中的 council MCP 服务
  * @pos    Codex App 与 Claude Desktop 共用的本地进程入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -31,10 +31,10 @@ async function main(): Promise<void> {
   });
 
   await bundle.server.connect(transport);
-  logger.info("server", "Architecture Council MCP 已通过 stdio 启动。 ");
+  logger.info("server", "Council MCP 已通过 stdio 启动。 ");
 }
 
 main().catch((error: unknown) => {
-  logger.error("server", "Architecture Council MCP 启动失败", error);
+  logger.error("server", "Council MCP 启动失败", error);
   process.exit(1);
 });

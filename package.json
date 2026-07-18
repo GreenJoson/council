@@ -1,5 +1,5 @@
 {
-  "name": "architecture-council",
+  "name": "council",
   "version": "0.1.0",
   "private": true,
   "description": "Local multi-agent architecture discussion workspace",
@@ -10,4 +10,3 @@
     "test": "npm test --prefix packages/mcp-server"
   }
 }
-

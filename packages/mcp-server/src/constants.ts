@@ -6,7 +6,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export const SERVER_NAME = "architecture-council-mcp-server";
+export const SERVER_NAME = "council-mcp-server";
 export const SERVER_VERSION = "0.1.0";
 
 export const TOPIC_STATUSES = ["open", "decided", "closed"] as const;

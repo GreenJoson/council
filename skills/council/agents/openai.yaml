@@ -1,0 +1,4 @@
+interface:
+  display_name: "Council"
+  short_description: "让 Claude 与 Codex 共享并交叉审查架构方案"
+  default_prompt: "使用 $council 让 Claude 与 Codex 交叉审查当前架构方案并记录决策。"

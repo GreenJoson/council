@@ -1,4 +1,4 @@
-# architecture-council - Claude 与 Codex 的本地共享架构讨论 Skill
+# council - Claude 与 Codex 的本地共享架构讨论 Skill
 
 > ⚠️ 一旦本文件夹有所变化，请更新本文件
 
