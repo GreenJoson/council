@@ -1,0 +1,13 @@
+{
+  "name": "architecture-council",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local multi-agent architecture discussion workspace",
+  "scripts": {
+    "install:mcp": "npm install --prefix packages/mcp-server",
+    "build": "npm run build --prefix packages/mcp-server",
+    "check": "npm run check --prefix packages/mcp-server",
+    "test": "npm test --prefix packages/mcp-server"
+  }
+}
+
