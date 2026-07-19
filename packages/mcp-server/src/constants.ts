@@ -27,6 +27,7 @@ export const DECISION_STATUSES = [
 ] as const;
 
 export const MAX_TITLE_CHARS = 200;
+export const MAX_ID_CHARS = 250;
 export const MAX_QUESTION_CHARS = 12_000;
 export const MAX_MESSAGE_CHARS = 30_000;
 export const MAX_INSTRUCTION_CHARS = 8_000;
@@ -34,4 +35,6 @@ export const MAX_CONSTRAINT_COUNT = 50;
 export const MAX_CONSTRAINT_CHARS = 1_000;
 export const MAX_ALTERNATIVE_COUNT = 30;
 export const MAX_LIST_LIMIT = 100;
+export const MAX_ORCHESTRATION_PLAN_ROUNDS = 50;
+export const MAX_ORCHESTRATION_STARTUP_SCAN = 10_000;
 export const MAX_PATH_CHARS = 4_096;

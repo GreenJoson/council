@@ -281,6 +281,16 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+button.sync-state {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+button.sync-offline:hover {
+  color: var(--color-danger);
+}
+
 .sync-connected svg {
   color: var(--color-positive);
 }
@@ -522,6 +532,54 @@ textarea:focus-visible {
 .full-state p {
   margin: 0 0 22px;
   color: var(--color-text-secondary);
+}
+
+.empty-workspace-grid {
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+
+.empty-workspace {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-width: 0;
+  padding: 32px;
+  text-align: center;
+}
+
+.empty-workspace h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.empty-workspace p {
+  max-width: 520px;
+  margin: 0 0 22px;
+  color: var(--color-text-secondary);
+}
+
+.error-banner {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  left: 22px;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 760px;
+  margin-inline: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-small);
+  background: var(--color-danger-soft);
+  box-shadow: var(--shadow-large);
+  color: var(--color-text);
+}
+
+.error-banner > span {
+  flex: 1;
+  min-width: 0;
 }
 
 .spinner {

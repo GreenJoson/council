@@ -1,13 +1,14 @@
 /**
- * @input  依赖：SQLite 数据文件、议题/消息/决策领域类型
- * @output 导出：CouncilDatabase 持久化服务
- * @pos    双桌面客户端共享状态的唯一数据访问层
+ * @input  依赖：SQLite 数据文件、领域类型与安全错误语义
+ * @output 导出：CouncilDatabase 持久化与单调 revision 服务
+ * @pos    双桌面客户端共享状态和变更检测的唯一数据访问层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import { CouncilConflictError, CouncilNotFoundError } from "./errors.js";
 import type {
   Author,
   CouncilMessage,
@@ -61,6 +62,17 @@ interface CountRow {
 
 interface SessionRow {
   session_id: string;
+}
+
+interface RevisionRow {
+  key: string;
+  value: number;
+}
+
+export interface CouncilRevisions {
+  total: number;
+  content: number;
+  orchestration: number;
 }
 
 function parseStringArray(value: string): string[] {
@@ -123,15 +135,22 @@ export class CouncilDatabase {
       throw new Error("SQLite busy timeout 必须是正整数。");
     }
     this.#database = new DatabaseSync(databasePath);
-    this.#database.exec("PRAGMA foreign_keys = ON;");
-    this.#database.exec("PRAGMA journal_mode = WAL;");
-    this.#database.exec("PRAGMA synchronous = NORMAL;");
-    this.#database.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
-    this.#migrate();
+    try {
+      this.#database.exec("PRAGMA foreign_keys = ON;");
+      this.#database.exec("PRAGMA journal_mode = WAL;");
+      this.#database.exec("PRAGMA synchronous = NORMAL;");
+      this.#database.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
+      this.#migrate();
+    } catch (error) {
+      this.#database.close();
+      throw error;
+    }
   }
 
   #migrate(): void {
-    this.#database.exec(`
+    this.#database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.#database.exec(`
       CREATE TABLE IF NOT EXISTS topics (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -175,13 +194,87 @@ export class CouncilDatabase {
         PRIMARY KEY (topic_id, agent)
       );
 
+      CREATE TABLE IF NOT EXISTS council_meta (
+        key TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+      );
+
+      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('revision', 0);
+      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('content_revision', 0);
+      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('orchestration_revision', 0);
+
+      DROP TRIGGER IF EXISTS trg_topics_revision_insert;
+      DROP TRIGGER IF EXISTS trg_topics_revision_update;
+      DROP TRIGGER IF EXISTS trg_topics_revision_delete;
+      DROP TRIGGER IF EXISTS trg_messages_revision_insert;
+      DROP TRIGGER IF EXISTS trg_messages_revision_update;
+      DROP TRIGGER IF EXISTS trg_messages_revision_delete;
+      DROP TRIGGER IF EXISTS trg_decisions_revision_insert;
+      DROP TRIGGER IF EXISTS trg_decisions_revision_update;
+      DROP TRIGGER IF EXISTS trg_decisions_revision_delete;
+
+      CREATE TRIGGER trg_topics_revision_insert
+        AFTER INSERT ON topics BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_topics_revision_update
+        AFTER UPDATE ON topics BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_topics_revision_delete
+        AFTER DELETE ON topics BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_messages_revision_insert
+        AFTER INSERT ON messages BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_messages_revision_update
+        AFTER UPDATE ON messages BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_messages_revision_delete
+        AFTER DELETE ON messages BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_decisions_revision_insert
+        AFTER INSERT ON decisions BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_decisions_revision_update
+        AFTER UPDATE ON decisions BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+      CREATE TRIGGER trg_decisions_revision_delete
+        AFTER DELETE ON decisions BEGIN
+          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+        END;
+
       CREATE INDEX IF NOT EXISTS idx_topics_project_updated
         ON topics(project_path, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_topic_created
         ON messages(topic_id, created_at ASC);
       CREATE INDEX IF NOT EXISTS idx_decisions_topic_created
         ON decisions(topic_id, created_at ASC);
-    `);
+      `);
+      this.#database.exec("COMMIT;");
+    } catch (error) {
+      try {
+        this.#database.exec("ROLLBACK;");
+      } catch {
+        // 原始迁移错误优先；构造器会关闭连接。
+      }
+      throw error;
+    }
   }
 
   #transaction<T>(operation: () => T): T {
@@ -230,7 +323,9 @@ export class CouncilDatabase {
       .prepare("SELECT * FROM topics WHERE id = ?")
       .get(topicId) as unknown as TopicRow | undefined;
     if (!row) {
-      throw new Error(`议题 ${topicId} 不存在。请先调用 council_list_topics 或创建新议题。`);
+      throw new CouncilNotFoundError(
+        `议题 ${topicId} 不存在。请先调用 council_list_topics 或创建新议题。`,
+      );
     }
     return topicFromRow(row);
   }
@@ -314,6 +409,17 @@ export class CouncilDatabase {
     const id = `message_${randomUUID()}`;
     const now = new Date().toISOString();
     return this.#transaction(() => {
+      if (input.parentMessageId) {
+        const parent = this.#database
+          .prepare("SELECT topic_id FROM messages WHERE id = ?")
+          .get(input.parentMessageId) as unknown as Pick<MessageRow, "topic_id"> | undefined;
+        if (!parent) {
+          throw new CouncilNotFoundError("父消息不存在，无法建立回复关系。");
+        }
+        if (parent.topic_id !== input.topicId) {
+          throw new CouncilConflictError("父消息不属于当前议题，无法建立回复关系。");
+        }
+      }
       this.#database
         .prepare(`
           INSERT INTO messages (
@@ -347,6 +453,9 @@ export class CouncilDatabase {
     createdBy: Author;
   }): Decision {
     this.getTopic(input.topicId);
+    if (input.status === "accepted" && input.createdBy !== "human") {
+      throw new CouncilConflictError("Accepted 决策必须由用户确认。");
+    }
     const id = `decision_${randomUUID()}`;
     const now = new Date().toISOString();
     return this.#transaction(() => {
@@ -419,6 +528,38 @@ export class CouncilDatabase {
       topics: count("topics"),
       messages: count("messages"),
       decisions: count("decisions"),
+    };
+  }
+
+  getRevision(): number {
+    return this.getRevisions().total;
+  }
+
+  getRevisions(): CouncilRevisions {
+    const rows = this.#database
+      .prepare(`
+        SELECT key, value FROM council_meta
+        WHERE key IN ('revision', 'content_revision', 'orchestration_revision')
+      `)
+      .all() as unknown as RevisionRow[];
+    const values = new Map(rows.map((row) => [row.key, row.value]));
+    const total = values.get("revision");
+    const content = values.get("content_revision");
+    const orchestration = values.get("orchestration_revision");
+    if (
+      !Number.isSafeInteger(total) ||
+      !Number.isSafeInteger(content) ||
+      !Number.isSafeInteger(orchestration) ||
+      (total ?? -1) < 0 ||
+      (content ?? -1) < 0 ||
+      (orchestration ?? -1) < 0
+    ) {
+      throw new Error("Council revision 状态无效。");
+    }
+    return {
+      total: total as number,
+      content: content as number,
+      orchestration: orchestration as number,
     };
   }
 

@@ -24,13 +24,43 @@ export interface CouncilConfig {
   claudeCommand: string;
   claudeArgs: string[];
   claudeModel?: string;
-  claudePermissionMode: string;
+  claudePermissionMode: "plan";
   claudeTimeoutMs: number;
+  claudeKillGraceMs: number;
   claudeMaxTurns: number;
   sqliteBusyTimeoutMs: number;
   maxContextChars: number;
   maxOutputChars: number;
   defaultMessageLimit: number;
+}
+
+export interface CouncilHttpConfig {
+  databasePath: string;
+  sqliteBusyTimeoutMs: number;
+  defaultMessageLimit: number;
+  host: string;
+  port: number;
+  allowedOrigins: string[];
+  corsMaxAgeSeconds: number;
+  rateLimitWindowMs: number;
+  rateLimitMax: number;
+  bodyLimitBytes: number;
+  eventPollMs: number;
+  eventRetryMs: number;
+  eventHeartbeatMs: number;
+  shutdownTimeoutMs: number;
+  orchestrationLeaseTtlMs: number;
+  orchestrationLeaseRenewMs: number;
+  orchestrationSweepIntervalMs: number;
+  orchestrationDefaultMaxRounds: number;
+  orchestrationDefaultMaxAttempts: number;
+  orchestrationDefaultMaxRecoveries: number;
+  orchestrationDefaultAgentTimeoutMs: number;
+  orchestrationAgentCleanupTimeoutMs: number;
+  orchestrationConfirmCompletion: boolean;
+  orchestrationRunPageLimit: number;
+  orchestrationStartupScanLimit: number;
+  orchestrationShutdownTimeoutMs: number;
 }
 
 export interface Topic {

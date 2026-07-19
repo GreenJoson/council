@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前议题、参与者、发布状态与消息回调
+ * @input  依赖：当前议题、参与者、同步/发布状态与消息回调
  * @output 导出：DiscussionPanel 中央讨论工作区
  * @pos    Operator Console 的主要阅读和回复区域
  *
@@ -7,7 +7,7 @@
  */
 
 import { MoreHorizontal, Star, Users } from "lucide-react";
-import type { MessageKind, Participant, TopicDetail } from "../types/council";
+import type { MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import { AgentAvatar, StatusBadge } from "./presentation";
 import { Composer } from "./Composer";
 import { MessageCard } from "./MessageCard";
@@ -15,16 +15,23 @@ import { MessageCard } from "./MessageCard";
 export interface DiscussionPanelProps {
   topic: TopicDetail;
   participants: Map<string, Participant>;
+  sync: SyncState;
   isPublishing: boolean;
-  onPublish: (kind: MessageKind, content: string) => Promise<void>;
+  onPublish: (kind: MessageKind, content: string) => Promise<boolean>;
 }
 
 export function DiscussionPanel({
   topic,
   participants,
+  sync,
   isPublishing,
   onPublish,
 }: DiscussionPanelProps) {
+  const hiddenMessageCount = Math.max(
+    0,
+    (topic.messageTotal ?? topic.messages.length) - topic.messages.length,
+  );
+
   return (
     <main className="discussion-panel" id="main-content" tabIndex={-1}>
       <header className="topic-header">
@@ -65,12 +72,17 @@ export function DiscussionPanel({
           </button>
           <button type="button" role="tab" aria-selected="false">
             变更记录
-            <span className="count-pill">{topic.messages.length}</span>
+            <span className="count-pill">{topic.messageTotal ?? topic.messages.length}</span>
           </button>
         </div>
       </header>
 
       <section className="message-timeline" aria-label="共享讨论时间线">
+        {hiddenMessageCount > 0 ? (
+          <p className="history-notice">
+            当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
+          </p>
+        ) : null}
         {topic.messages.length > 0 ? (
           topic.messages.map((message, index) => (
             <MessageCard
@@ -91,7 +103,7 @@ export function DiscussionPanel({
         )}
       </section>
 
-      <Composer isPublishing={isPublishing} onPublish={onPublish} />
+      <Composer isPublishing={isPublishing} sync={sync} onPublish={onPublish} />
     </main>
   );
 }

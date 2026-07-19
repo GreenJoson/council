@@ -6,8 +6,6 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { statSync } from "node:fs";
-import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
@@ -19,6 +17,7 @@ import {
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
   MAX_INSTRUCTION_CHARS,
+  MAX_ID_CHARS,
   MAX_LIST_LIMIT,
   MAX_MESSAGE_CHARS,
   MAX_PATH_CHARS,
@@ -30,7 +29,9 @@ import {
   TOPIC_STATUSES,
 } from "./constants.js";
 import { CouncilDatabase } from "./database.js";
+import { CouncilValidationError } from "./errors.js";
 import { logger } from "./logger.js";
+import { normalizeProjectPath } from "./project-path.js";
 import type {
   CouncilConfig,
   CouncilMessage,
@@ -42,6 +43,7 @@ import type {
 
 const topicIdField = z
   .string()
+  .max(MAX_ID_CHARS)
   .regex(/^topic_[A-Za-z0-9-]+$/, "topic_id 格式无效")
   .describe("Council 议题 ID，例如 topic_<uuid>");
 const messageKindField = z.enum(MESSAGE_KINDS);
@@ -97,6 +99,9 @@ function publicError(error: unknown): string {
   if (!(error instanceof Error)) {
     return "操作失败，请查看本地 MCP 日志。";
   }
+  if (error instanceof CouncilValidationError) {
+    return error.message;
+  }
   const safePrefixes = [
     "议题 ",
     "后台 Claude",
@@ -119,26 +124,14 @@ async function executeTool(
   try {
     return await operation();
   } catch (error) {
-    logger.error("mcp-tool", `${name} 执行失败`, error);
+    if (!(error instanceof Error && error.name === "AbortError")) {
+      logger.error("mcp-tool", `${name} 执行失败`, error);
+    }
     return {
       isError: true,
       content: [{ type: "text", text: publicError(error) }],
     };
   }
-}
-
-function normalizeProjectPath(projectPath: string | undefined): string | undefined {
-  if (!projectPath) {
-    return undefined;
-  }
-  if (!path.isAbsolute(projectPath)) {
-    throw new Error("COUNCIL_project_path 必须是绝对路径。");
-  }
-  const stat = statSync(projectPath, { throwIfNoEntry: false });
-  if (!stat?.isDirectory()) {
-    throw new Error("COUNCIL_project_path 不存在或不是文件夹。");
-  }
-  return path.normalize(projectPath);
 }
 
 function formatTopic(topic: Topic): string {
@@ -319,7 +312,7 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
       title: "列出架构议题",
       description: "按项目路径或状态列出本地 Council 议题，支持 offset 分页。",
       inputSchema: {
-        project_path: z.string().max(MAX_PATH_CHARS).optional(),
+        project_path: z.string().min(1).max(MAX_PATH_CHARS).optional(),
         status: topicStatusField.optional(),
         limit: z.number().int().min(1).max(MAX_LIST_LIMIT).optional(),
         offset: z.number().int().min(0).default(0),
@@ -362,7 +355,7 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
         author: authorField,
         kind: messageKindField,
         content: z.string().min(1).max(MAX_MESSAGE_CHARS),
-        parent_message_id: z.string().max(250).optional(),
+        parent_message_id: z.string().max(MAX_ID_CHARS).optional(),
       },
       outputSchema: { message: messageOutput },
       annotations: {
@@ -485,7 +478,7 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
         openWorldHint: true,
       },
     },
-    async ({ topic_id, instruction, message_kind, force_new_session, model }) =>
+    async ({ topic_id, instruction, message_kind, force_new_session, model }, extra) =>
       await executeTool("council_ask_claude", async () => {
         const result = await claudeClient.ask({
           topicId: topic_id,
@@ -493,6 +486,7 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
           messageKind: message_kind,
           forceNewSession: force_new_session,
           ...(model ? { model } : {}),
+          signal: extra.signal,
         });
         return success(formatMessage(result.message), {
           message: result.message,

@@ -156,7 +156,7 @@
   }
 
   .primary-button span,
-  .sync-state,
+  .sync-state:not(.sync-offline),
   .user-menu {
     display: none;
   }

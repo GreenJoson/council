@@ -55,6 +55,8 @@
   --color-agent-user-soft: #2d3b4b;
   --color-agent-chair: #7caeff;
   --color-agent-chair-soft: #19375f;
+  --color-agent-other: #b9a5c9;
+  --color-agent-other-soft: #352c40;
 
   --shadow-small: 0 10px 26px color-mix(in srgb, var(--color-overlay) 48%, transparent);
   --shadow-large: 0 28px 80px color-mix(in srgb, var(--color-overlay) 72%, transparent);

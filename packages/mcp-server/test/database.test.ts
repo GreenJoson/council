@@ -10,7 +10,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
+import { SQLiteCouncilStore } from "council-orchestrator";
 import { CouncilDatabase } from "../src/database.js";
 
 test("CouncilDatabase 保存并分页读取共享讨论", () => {
@@ -101,6 +104,156 @@ test("两个 MCP 进程可通过同一 SQLite 文件互相读取写入", () => {
   } finally {
     codexSide.close();
     claudeSide.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("content/orchestration revision 隔离且 lease 心跳不推进任何 revision", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-revision-split-"));
+  const databasePath = path.join(directory, "council.sqlite3");
+  const database = new CouncilDatabase(databasePath, 5_000);
+  const store = new SQLiteCouncilStore(databasePath, 5_000);
+  try {
+    const topic = database.createTopic({
+      title: "Revision 分域",
+      question: "运行状态与内容刷新能否分离？",
+      constraints: [],
+      createdBy: "human",
+    });
+    const beforeContent = database.getRevisions();
+    database.createMessage({
+      topicId: topic.id,
+      author: "human",
+      kind: "note",
+      content: "内容变更。",
+    });
+    const afterContent = database.getRevisions();
+    assert.ok(afterContent.total > beforeContent.total);
+    assert.ok(afterContent.content > beforeContent.content);
+    assert.equal(afterContent.orchestration, beforeContent.orchestration);
+
+    const run = await store.createRun({
+      topicId: topic.id,
+      plan: [{
+        adapterId: "fake",
+        publicAuthor: "claude",
+        messageKind: "proposal",
+        instruction: "测试 revision",
+      }],
+      policy: {
+        maxRounds: 1,
+        allowedAgents: ["fake"],
+        agentTimeoutMs: 1_000,
+        agentCleanupTimeoutMs: 100,
+        maxAttemptsPerRound: 1,
+        maxManualRecoveries: 0,
+        confirmation: { beforeRounds: [], beforeCompletion: false },
+      },
+    });
+    const afterRun = database.getRevisions();
+    assert.ok(afterRun.total > afterContent.total);
+    assert.equal(afterRun.content, afterContent.content);
+    assert.ok(afterRun.orchestration > afterContent.orchestration);
+
+    const running = await store.replaceRun({ ...run, status: "running" }, run.version);
+    const beforeLease = database.getRevisions();
+    const lease = await store.claimRunLease({
+      runId: running.id,
+      ownerId: "revision-test",
+      ttlMs: 1_000,
+    });
+    const renewed = await store.renewRunLease({ lease, ttlMs: 2_000 });
+    assert.equal(await store.releaseRunLease(renewed), true);
+    assert.deepEqual(database.getRevisions(), beforeLease);
+  } finally {
+    store.close();
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("迁移持锁期间并发写入不会落入缺失 trigger 的 revision 空窗", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-migration-lock-"));
+  const databasePath = path.join(directory, "council.sqlite3");
+  const initial = new CouncilDatabase(databasePath, 5_000);
+  initial.close();
+  const blocker = new DatabaseSync(databasePath, { timeout: 5_000 });
+  const topicId = "topic_migration_lock_test";
+  blocker.exec("BEGIN IMMEDIATE;");
+  const workerSource = `
+    import { parentPort, workerData } from "node:worker_threads";
+    parentPort.postMessage({ type: "constructing" });
+    const { CouncilDatabase } = await import(workerData.moduleUrl);
+    const database = new CouncilDatabase(workerData.databasePath, 5000);
+    database.createMessage({
+      topicId: workerData.topicId,
+      author: "human",
+      kind: "note",
+      content: "迁移完成后的并发写入。"
+    });
+    parentPort.postMessage({ type: "done", revisions: database.getRevisions() });
+    database.close();
+  `;
+  const worker = new Worker(
+    new URL(`data:text/javascript,${encodeURIComponent(workerSource)}`),
+    {
+      workerData: {
+        moduleUrl: new URL("../src/database.js", import.meta.url).href,
+        databasePath,
+        topicId,
+      },
+    },
+  );
+  const constructing = new Promise<void>((resolve, reject) => {
+    worker.on("message", (message: unknown) => {
+      if (
+        typeof message === "object" && message !== null &&
+        "type" in message && message.type === "constructing"
+      ) {
+        resolve();
+      }
+    });
+    worker.once("error", reject);
+  });
+  const done = new Promise<{ total: number; content: number; orchestration: number }>(
+    (resolve, reject) => {
+      worker.on("message", (message: unknown) => {
+        if (
+          typeof message === "object" && message !== null &&
+          "type" in message && message.type === "done" &&
+          "revisions" in message
+        ) {
+          resolve(message.revisions as {
+            total: number;
+            content: number;
+            orchestration: number;
+          });
+        }
+      });
+      worker.once("error", reject);
+    },
+  );
+  try {
+    await constructing;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    const now = new Date().toISOString();
+    blocker.prepare(`
+      INSERT INTO topics (
+        id, title, question, constraints_json, project_path,
+        status, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, '[]', NULL, 'open', 'human', ?, ?)
+    `).run(topicId, "迁移并发", "revision 是否完整？", now, now);
+    blocker.exec("COMMIT;");
+    const revisions = await done;
+    assert.equal(revisions.total, 3);
+    assert.equal(revisions.content, 3);
+    assert.equal(revisions.orchestration, 0);
+  } finally {
+    if (blocker.isTransaction) {
+      blocker.exec("ROLLBACK;");
+    }
+    blocker.close();
+    await worker.terminate();
     rmSync(directory, { recursive: true, force: true });
   }
 });

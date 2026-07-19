@@ -17,6 +17,7 @@ export const messageKindLabels: Record<MessageKind, string> = {
 };
 
 const topicStatusLabels: Record<TopicStatus, string> = {
+  open: "Open",
   proposed: "Proposed",
   discussing: "In discussion",
   synthesis: "Synthesis",
@@ -28,6 +29,7 @@ const agentNames: Record<AgentId, string> = {
   codex: "Codex",
   user: "User",
   chair: "Council",
+  other: "Other",
 };
 
 const agentShortNames: Record<AgentId, string> = {
@@ -35,6 +37,7 @@ const agentShortNames: Record<AgentId, string> = {
   codex: "CX",
   user: "U",
   chair: "CO",
+  other: "OT",
 };
 
 export interface AgentAvatarProps {

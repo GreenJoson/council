@@ -1,7 +1,7 @@
 /**
- * @input  依赖：当前议题、参与者、决策操作与面板状态
- * @output 导出：InspectorPanel 议题摘要和决策检查器
- * @pos    Operator Console 右侧约束、证据、备选方案与决策区域
+ * @input  依赖：当前议题、参与者、自动轮次、决策操作与面板状态
+ * @output 导出：InspectorPanel 议题摘要、自动轮次和决策检查器
+ * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -16,6 +16,12 @@ import {
   X,
 } from "lucide-react";
 import type { Participant, TopicDetail } from "../types/council";
+import type {
+  OrchestrationMessageKind,
+  OrchestrationRun,
+  OrchestrationSnapshot,
+} from "../types/orchestration";
+import { AutoRoundsPanel } from "./AutoRoundsPanel";
 import { AgentAvatar, StatusBadge } from "./presentation";
 
 export interface InspectorPanelProps {
@@ -25,6 +31,17 @@ export interface InspectorPanelProps {
   isOpen: boolean;
   onAccept: () => Promise<void>;
   onClose: () => void;
+  orchestration: OrchestrationSnapshot | null;
+  orchestrationBusyAction: string | null;
+  onCreateAndStartRun: (
+    adapterId: string,
+    messageKind: OrchestrationMessageKind,
+    instruction: string,
+  ) => Promise<boolean>;
+  onStartRun: (runId: string) => Promise<void>;
+  onApproveRun: (run: OrchestrationRun) => Promise<void>;
+  onCancelRun: (runId: string) => Promise<void>;
+  onRecoverRun: (runId: string) => Promise<void>;
 }
 
 export function InspectorPanel({
@@ -34,9 +51,17 @@ export function InspectorPanel({
   isOpen,
   onAccept,
   onClose,
+  orchestration,
+  orchestrationBusyAction,
+  onCreateAndStartRun,
+  onStartRun,
+  onApproveRun,
+  onCancelRun,
+  onRecoverRun,
 }: InspectorPanelProps) {
   const owner = participants.get(topic.owner);
-  const decisionAccepted = topic.decision.status === "accepted";
+  const decision = topic.decision;
+  const decisionAccepted = decision?.status === "accepted";
 
   return (
     <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label="议题摘要">
@@ -72,6 +97,17 @@ export function InspectorPanel({
           <dd>{topic.updatedLabel}</dd>
         </div>
       </dl>
+
+      <AutoRoundsPanel
+        topicId={topic.id}
+        snapshot={orchestration}
+        busyAction={orchestrationBusyAction}
+        onCreateAndStart={onCreateAndStartRun}
+        onStart={onStartRun}
+        onApprove={onApproveRun}
+        onCancel={onCancelRun}
+        onRecover={onRecoverRun}
+      />
 
       <InspectorSection title="约束条件" count={topic.constraints.length}>
         <ul className="inspector-list constraint-list">
@@ -128,27 +164,40 @@ export function InspectorPanel({
         )}
       </InspectorSection>
 
-      <section className={`decision-card ${decisionAccepted ? "decision-accepted" : ""}`}>
-        <div className="decision-title-row">
-          <div>
-            {decisionAccepted ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}
-            <span>{decisionAccepted ? "已接受决策" : "拟议决策"}</span>
+      {decision ? (
+        <section className={`decision-card ${decisionAccepted ? "decision-accepted" : ""}`}>
+          <div className="decision-title-row">
+            <div>
+              {decisionAccepted ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}
+              <span>{decisionAccepted ? "已接受决策" : "拟议决策"}</span>
+            </div>
+            <span className="decision-status">{decisionAccepted ? "Accepted" : "Proposed"}</span>
           </div>
-          <span className="decision-status">{decisionAccepted ? "Accepted" : "Proposed"}</span>
-        </div>
-        <h3>{topic.decision.title}</h3>
-        <p>{topic.decision.summary}</p>
-        <small>{topic.decision.rationale}</small>
-        <button
-          className="accept-button"
-          type="button"
-          disabled={decisionAccepted || isAccepting}
-          onClick={() => void onAccept()}
-        >
-          <CheckCircle2 size={17} />
-          {decisionAccepted ? "决策已接受" : isAccepting ? "记录中…" : "标记为 Accepted"}
-        </button>
-      </section>
+          <h3>{decision.title}</h3>
+          <p>{decision.summary}</p>
+          <small>{decision.rationale}</small>
+          <button
+            className="accept-button"
+            type="button"
+            disabled={decisionAccepted || isAccepting}
+            onClick={() => void onAccept()}
+          >
+            <CheckCircle2 size={17} />
+            {decisionAccepted ? "决策已接受" : isAccepting ? "记录中…" : "标记为 Accepted"}
+          </button>
+        </section>
+      ) : (
+        <section className="decision-card">
+          <div className="decision-title-row">
+            <div>
+              <ShieldCheck size={17} />
+              <span>决策</span>
+            </div>
+          </div>
+          <h3>尚无拟议决策</h3>
+          <p>Agent 提交结构化决策后，可以在这里审阅和接受。</p>
+        </section>
+      )}
     </aside>
   );
 }

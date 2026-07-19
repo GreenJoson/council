@@ -8,7 +8,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 - [首次使用](#首次使用)
 - [模式一：两个桌面手动接力](#模式一两个桌面手动接力)
 - [模式二：Codex 自动调用 Claude](#模式二codex-自动调用-claude)
-- [查看 WebUI 原型](#查看-webui-原型)
+- [模式三：Operator Console 自动轮次](#模式三operator-console-自动轮次)
 - [继续已有议题](#继续已有议题)
 - [常用提示词](#常用提示词)
 - [议题和决策规则](#议题和决策规则)
@@ -21,6 +21,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 |---|---|---|
 | 双桌面手动接力 | 你习惯分别在 Claude Desktop Code 和 Codex App 中讨论 | 不需要 |
 | Codex 自动讨论 | 希望只在 Codex App 发一次指令，由 Codex 自动调用 Claude | 需要 |
+| Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复 Claude 轮次 | 需要 |
 
 日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
 
@@ -104,18 +105,39 @@ Council 会按以下顺序执行：
 
 后台 Claude 默认以规划权限运行。架构讨论本身不应直接修改项目代码。
 
-## 查看 WebUI 原型
+## 模式三：Operator Console 自动轮次
 
-首次安装并启动：
+首次安装：
 
 ```bash
-npm run install:web
-npm run dev:web
+npm run install:all
+cp packages/mcp-server/.env.example packages/mcp-server/.env
+cp packages/web/.env.example packages/web/.env.local
 ```
 
-浏览器打开终端输出的本地地址。当前原型可以搜索和切换议题、发布消息、创建议题及确认决策，所有数据来自内存中的 mock repository，刷新后会恢复示例数据。
+编辑两个本地环境文件：
 
-当前页面上的“自动同步”表示前端订阅接口已经就位，不代表已经连通 Claude、Codex 或 SQLite。后续接入本地 API 后，只要任一 Agent 把回复发布到同一 topic，WebUI 就能自动更新，不需要你再复制粘贴；如果没有开启自动编排，你仍需在另一个客户端发一句“继续这个 topic”来唤醒它。
+- API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 配置使用同一数据目录。
+- Web 的 `VITE_COUNCIL_DATA_MODE` 设为 `http`。
+- `VITE_COUNCIL_API_URL` 填写本地 API origin。
+- `VITE_COUNCIL_PROJECT_PATH` 填写当前项目的绝对路径；Web 新建议题会把它保存为 Claude 的可信工作目录。
+- `COUNCIL_HTTP_CORS_ORIGINS_JSON` 精确列出 WebUI origin。
+
+然后运行：
+
+```bash
+npm run dev
+```
+
+浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。右侧“自动轮次”卡片会显示真实 Agent 能力：Claude CLI 已安装并登录时可以输入本轮指令并“创建并启动”；运行进入人工门时可以批准，活动运行可以取消，失败运行在恢复预算内可以恢复。
+
+启动、恢复和批准只完成原子状态转换后就返回，Claude 在后台继续执行；浏览器刷新或 HTTP 连接断开不会取消任务。显式取消会使持有 lease 的执行者终止 CLI，版本 CAS 会拒绝迟到回复。进程重启时，`running` 可以安全续跑；中断在 `waiting_agent` 的调用不会自动重放，而会转成需要人工恢复的失败状态。
+
+HTTP 模式只加载议题列表、当前议题详情和当前议题的运行列表。内容与编排使用独立 revision 校准，lease 心跳不会触发页面请求风暴。
+
+只想查看视觉原型时，将数据模式保持为 `mock` 并运行 `npm run dev:web`。
+
+只要任一 Agent 把回复发布到同一 topic，SQLite revision 会通过 SSE 通知 WebUI，页面自动更新，不需要你再复制粘贴或手动刷新。Web 可以主动调用 Claude；数据库消息仍不会自动唤醒闲置的 Codex 桌面会话，所以需要 Codex 继续审查时，仍要在 Codex App 中发一句“继续这个 topic”。
 
 ## 继续已有议题
 
@@ -131,9 +153,11 @@ npm run dev:web
 
 > 使用 `$council` 列出项目 `<项目绝对路径>` 的最近议题。
 
-如果后台 Claude 会话明显串题或保留了错误上下文：
+如果通过兼容 MCP 工具直调的后台 Claude 会话明显串题或保留了错误上下文：
 
 > 使用 `$council` 重置 topic `<topic-id>` 的 Claude 顾问会话。不要删除议题和已有消息。
+
+Operator Console 的受控编排 V1 不复用 session；每轮只使用已经公开到 topic 的上下文，因此不需要重置该 session。
 
 ## 常用提示词
 
@@ -212,6 +236,26 @@ claude auth login
 
 先让 Agent 读取 Council 总体状态，再确认两个客户端使用相同的 `COUNCIL_DATA_DIR`。不要新建空数据库覆盖原数据。
 
+### WebUI 显示 API 离线
+
+依次确认：
+
+1. API 与 MCP 使用相同的 `COUNCIL_DATA_DIR`。
+2. HTTP host 是 loopback 主机，API 进程已经启动。
+3. Web API origin 与 HTTP CORS 白名单精确匹配。
+4. `VITE_COUNCIL_PROJECT_PATH` 是存在的项目绝对路径。
+5. 修改环境文件后已经重启对应开发进程。
+
+### 自动轮次显示 Claude 不可用
+
+确认 Claude Code CLI 已安装并登录，然后重启 API，让 capabilities 重新检查运行时状态：
+
+```bash
+claude auth status
+```
+
+Codex 显示为“仅共享回帖”是当前真实能力边界，不是连接故障。
+
 ### Claude 回答与议题无关
 
-让 Council 重置该 topic 的 Claude 顾问 session，然后用完整问题、约束和项目路径重新询问。重置 session 不会删除既有议题、消息和决策。
+如果使用兼容 MCP 直调工具，让 Council 重置该 topic 的 Claude 顾问 session，然后用完整问题、约束和项目路径重新询问。Operator Console 自动轮次没有私有 session，应检查 topic 的公开问题、约束、本轮指令和项目路径。重置 session 不会删除既有议题、消息和决策。

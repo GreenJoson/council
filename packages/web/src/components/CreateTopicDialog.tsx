@@ -14,7 +14,7 @@ export interface CreateTopicDialogProps {
   isOpen: boolean;
   isCreating: boolean;
   onClose: () => void;
-  onCreate: (input: CreateTopicInput) => Promise<void>;
+  onCreate: (input: CreateTopicInput) => Promise<boolean>;
 }
 
 export function CreateTopicDialog({
@@ -48,7 +48,7 @@ export function CreateTopicDialog({
     if (!canCreate) {
       return;
     }
-    await onCreate({
+    const created = await onCreate({
       title: title.trim(),
       question: question.trim(),
       constraints: constraints
@@ -56,9 +56,11 @@ export function CreateTopicDialog({
         .map((item) => item.trim())
         .filter(Boolean),
     });
-    setTitle("");
-    setQuestion("");
-    setConstraints("");
+    if (created) {
+      setTitle("");
+      setQuestion("");
+      setConstraints("");
+    }
   }
 
   return (

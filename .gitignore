@@ -1,8 +1,12 @@
 .DS_Store
 .env
+.env.*
+!.env.example
 node_modules/
 dist/
 coverage/
+__pycache__/
+*.pyc
 *.tsbuildinfo
 *.sqlite
 *.sqlite-shm

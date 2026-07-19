@@ -1,7 +1,7 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
- * @output 导出：MockCouncilRepository 可交互数据实现
- * @pos    UI 原型阶段模拟共享发布、议题创建和决策接受
+ * @output 导出：MockCouncilRepository 同构可交互数据实现
+ * @pos    UI 原型阶段模拟选题、共享发布、议题创建和决策接受
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -41,6 +41,13 @@ export class MockCouncilRepository implements CouncilRepository {
     return cloneSnapshot(this.#snapshot);
   }
 
+  async selectTopic(topicId: string): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    this.#findTopic(topicId);
+    this.#snapshot.activeTopicId = topicId;
+    return cloneSnapshot(this.#snapshot);
+  }
+
   async createTopic(input: CreateTopicInput): Promise<WorkspaceSnapshot> {
     await waitForMockOperation(this.#operationDelayMs);
     const now = new Date();
@@ -71,6 +78,7 @@ export class MockCouncilRepository implements CouncilRepository {
       },
     };
     this.#snapshot.topics.unshift(topic);
+    this.#snapshot.activeTopicId = topicId;
     this.#snapshot.sync = {
       status: "connected",
       label: `Mock 已更新 ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
@@ -81,6 +89,7 @@ export class MockCouncilRepository implements CouncilRepository {
   async publishMessage(input: PublishMessageInput): Promise<WorkspaceSnapshot> {
     await waitForMockOperation(this.#operationDelayMs);
     const topic = this.#findTopic(input.topicId);
+    this.#snapshot.activeTopicId = input.topicId;
     topic.messages.push({
       id: crypto.randomUUID(),
       author: input.author,
@@ -97,6 +106,10 @@ export class MockCouncilRepository implements CouncilRepository {
   async acceptDecision(topicId: string): Promise<WorkspaceSnapshot> {
     await waitForMockOperation(this.#operationDelayMs);
     const topic = this.#findTopic(topicId);
+    this.#snapshot.activeTopicId = topicId;
+    if (!topic.decision) {
+      throw new Error("当前议题没有可接受的拟议决策");
+    }
     topic.decision.status = "accepted";
     topic.status = "decided";
     topic.updatedLabel = "刚刚";

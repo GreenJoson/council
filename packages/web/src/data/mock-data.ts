@@ -21,6 +21,7 @@ const participants: Participant[] = [
   { id: "codex", name: "Codex", shortName: "CX", role: "代码审查" },
   { id: "user", name: "User", shortName: "U", role: "决策者" },
   { id: "chair", name: "Council", shortName: "CO", role: "综合协调" },
+  { id: "other", name: "Other", shortName: "OT", role: "其他参与者" },
 ];
 
 const defaultDecision: CouncilDecision = {
@@ -192,6 +193,7 @@ export function createMockWorkspace(): WorkspaceSnapshot {
         "如何隔离规则发布、执行和回滚，降低错误策略的影响？",
       ),
     ],
+    activeTopicId: primaryTopic.id,
     participants,
     sync: { status: "connected", label: "Mock 原型 · API 待接入" },
   };

@@ -1,14 +1,16 @@
 /**
- * @input  依赖：Council 配置、共享议题记录与 Claude Code 可执行程序
+ * @input  依赖：Council 配置、共享议题记录与纯 ClaudeRuntime
  * @output 导出：ClaudeClient 可用性检查和可恢复顾问调用
- * @pos    MCP 与后台 Claude Code 会话之间的安全适配层
+ * @pos    共享数据库与无副作用 Claude 运行时之间的兼容适配层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { statSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { ClaudeRuntime, type ClaudeAvailability } from "./claude-runtime.js";
+import { MAX_MESSAGE_CHARS } from "./constants.js";
 import type { CouncilDatabase } from "./database.js";
+import { normalizeProjectPath } from "./project-path.js";
+import { buildTrustedPrompt } from "./prompt-budget.js";
 import type {
   ClaudeResponse,
   CouncilConfig,
@@ -16,78 +18,6 @@ import type {
   MessageKind,
   TopicDetail,
 } from "./types.js";
-
-interface ProcessResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-}
-
-interface ClaudeJsonResult {
-  result?: unknown;
-  session_id?: unknown;
-  sessionId?: unknown;
-  model?: unknown;
-  is_error?: unknown;
-  loggedIn?: unknown;
-  authMethod?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseJsonObject(text: string): ClaudeJsonResult | undefined {
-  const candidates = [text.trim(), ...text.trim().split("\n").reverse()];
-  for (const candidate of candidates) {
-    if (!candidate.startsWith("{")) {
-      continue;
-    }
-    try {
-      const parsed: unknown = JSON.parse(candidate);
-      if (isRecord(parsed)) {
-        return parsed;
-      }
-    } catch {
-      // 继续尝试下一行，兼容运行时附带提示文本的情况。
-    }
-  }
-  return undefined;
-}
-
-function parseClaudeOutput(stdout: string): ClaudeResponse {
-  const parsed = parseJsonObject(stdout);
-  if (!parsed) {
-    const content = stdout.trim();
-    if (!content) {
-      throw new Error("Claude Code 没有返回可用内容。");
-    }
-    return { content };
-  }
-  const content = typeof parsed.result === "string" ? parsed.result.trim() : "";
-  if (parsed.is_error === true) {
-    if (/not logged in/i.test(content)) {
-      throw new Error(
-        "Claude Code CLI 未登录。请先完成一次 claude auth login；Claude Desktop 手动接力模式不受影响。",
-      );
-    }
-    throw new Error("Claude Code 返回失败结果，请检查模型权限和本地 MCP 日志。");
-  }
-  if (!content) {
-    throw new Error("Claude Code 返回失败结果，请检查认证、模型和权限配置。");
-  }
-  const rawSessionId = parsed.session_id ?? parsed.sessionId;
-  const sessionId =
-    typeof rawSessionId === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(rawSessionId)
-      ? rawSessionId
-      : undefined;
-  const model = typeof parsed.model === "string" ? parsed.model : undefined;
-  return {
-    content,
-    ...(sessionId ? { sessionId } : {}),
-    ...(model ? { model } : {}),
-  };
-}
 
 function formatMessage(message: CouncilMessage): string {
   return [
@@ -110,122 +40,47 @@ function buildPrompt(detail: TopicDetail, instruction: string, maxChars: number)
     "",
     "# 本轮任务",
     instruction,
-    "",
-    "# 已共享的讨论记录",
   ].join("\n");
   const transcript = detail.messages.map(formatMessage).join("\n\n") || "暂无共享消息。";
-  const available = Math.max(0, maxChars - header.length - 80);
-  const clipped =
-    transcript.length > available
-      ? `[较早记录已截断，只保留最新内容]\n${transcript.slice(-available)}`
-      : transcript;
-  return `${header}\n${clipped}`;
+  return buildTrustedPrompt({
+    trustedPrefix: header,
+    transcriptHeader: "\n\n# 已共享的讨论记录\n",
+    transcript,
+    truncationMarker: "[较早记录已截断，只保留最新内容]\n",
+    maxChars,
+    trustedOverflowError: () => new Error("Claude 顾问的可信议题与本轮任务超过上下文上限。"),
+  });
 }
 
 function assertProjectPath(projectPath: string | undefined): string {
-  if (!projectPath) {
+  const normalized = normalizeProjectPath(projectPath);
+  if (!normalized) {
     throw new Error("后台 Claude 顾问需要绝对项目路径；请创建带 project_path 的议题。");
   }
-  const stat = statSync(projectPath, { throwIfNoEntry: false });
-  if (!stat?.isDirectory()) {
-    throw new Error("议题的 project_path 不存在或不是文件夹，请创建新议题或修正项目路径。");
+  return normalized;
+}
+
+function assertNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    const error = new Error("Claude Code 调用已取消。");
+    error.name = "AbortError";
+    throw error;
   }
-  return projectPath;
 }
 
 export class ClaudeClient {
+  readonly #runtime: ClaudeRuntime;
+
   constructor(
     private readonly config: CouncilConfig,
     private readonly database: CouncilDatabase,
-  ) {}
-
-  async #run(args: string[], input: string, cwd?: string): Promise<ProcessResult> {
-    return await new Promise<ProcessResult>((resolve, reject) => {
-      const child = spawn(this.config.claudeCommand, [...this.config.claudeArgs, ...args], {
-        ...(cwd ? { cwd } : {}),
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: false,
-      });
-      let stdout = "";
-      let stderr = "";
-      let outputExceeded = false;
-      const timeout = setTimeout(() => {
-        child.kill("SIGTERM");
-        reject(new Error("Claude Code 调用超时，请缩小议题或调整 COUNCIL_CLAUDE_TIMEOUT_MS。"));
-      }, this.config.claudeTimeoutMs);
-
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        stdout += chunk;
-        if (stdout.length > this.config.maxOutputChars) {
-          outputExceeded = true;
-          child.kill("SIGTERM");
-        }
-      });
-      child.stderr.on("data", (chunk: string) => {
-        stderr += chunk;
-        if (stderr.length > this.config.maxOutputChars) {
-          stderr = stderr.slice(-this.config.maxOutputChars);
-        }
-      });
-      child.on("error", (error) => {
-        clearTimeout(timeout);
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-          reject(
-            new Error(
-              "找不到 Claude Code 可执行程序，请安装 CLI 或设置 COUNCIL_CLAUDE_COMMAND。",
-            ),
-          );
-          return;
-        }
-        reject(new Error(`无法启动 Claude Code：${error.message}`));
-      });
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        if (outputExceeded) {
-          reject(new Error("Claude Code 输出超过配置上限，请缩小问题或提高 COUNCIL_MAX_OUTPUT_CHARS。"));
-          return;
-        }
-        resolve({ stdout, stderr, exitCode: code });
-      });
-      child.stdin.end(input);
-    });
+    runtime?: ClaudeRuntime,
+  ) {
+    this.#runtime = runtime ?? new ClaudeRuntime(config);
   }
 
-  async checkAvailability(): Promise<{
-    available: boolean;
-    authenticated: boolean;
-    version?: string;
-    authMethod?: string;
-    error?: string;
-  }> {
-    try {
-      const versionResult = await this.#run(["--version"], "");
-      if (versionResult.exitCode !== 0) {
-        throw new Error("Claude Code 版本检查失败。");
-      }
-      const authResult = await this.#run(["auth", "status"], "");
-      const authJson = parseJsonObject(authResult.stdout);
-      const authenticated = authJson?.loggedIn === true;
-      const authMethod =
-        typeof authJson?.authMethod === "string" ? authJson.authMethod : undefined;
-      return {
-        available: true,
-        authenticated,
-        version: versionResult.stdout.trim() || "unknown",
-        ...(authMethod ? { authMethod } : {}),
-        ...(!authenticated
-          ? { error: "Claude Code CLI 尚未登录；自动顾问模式需要先完成一次登录。" }
-          : {}),
-      };
-    } catch (error) {
-      return {
-        available: false,
-        authenticated: false,
-        error: error instanceof Error ? error.message : "Claude Code 可用性检查失败。",
-      };
-    }
+  async checkAvailability(): Promise<ClaudeAvailability> {
+    return await this.#runtime.checkAvailability();
   }
 
   async ask(input: {
@@ -234,6 +89,7 @@ export class ClaudeClient {
     messageKind: MessageKind;
     forceNewSession: boolean;
     model?: string;
+    signal?: AbortSignal;
   }): Promise<{ response: ClaudeResponse; message: CouncilMessage }> {
     const detail = this.database.getTopicDetail(
       input.topicId,
@@ -244,32 +100,31 @@ export class ClaudeClient {
       ? undefined
       : this.database.getAgentSession(input.topicId, "claude");
     const model = input.model?.trim() || this.config.claudeModel;
-    const args = [
-      "--print",
-      "--output-format",
-      "json",
-      "--permission-mode",
-      this.config.claudePermissionMode,
-      "--max-turns",
-      String(this.config.claudeMaxTurns),
-      ...(model ? ["--model", model] : []),
-      ...(storedSession ? ["--resume", storedSession] : []),
-    ];
     const prompt = buildPrompt(detail, input.instruction, this.config.maxContextChars);
-    const processResult = await this.#run(args, prompt, cwd);
-    const response = parseClaudeOutput(processResult.stdout);
-    if (processResult.exitCode !== 0) {
-      throw new Error("Claude Code 调用失败，请检查登录状态、模型权限和本地 MCP 日志。");
+    const response = await this.#runtime.generate({
+      prompt,
+      cwd,
+      ...(storedSession ? { sessionId: storedSession } : {}),
+      ...(model ? { model } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    assertNotAborted(input.signal);
+    const content = response.content.trim();
+    if (!content) {
+      throw new Error("Claude 顾问没有返回可发布的公开内容。");
     }
-    if (response.sessionId) {
-      this.database.setAgentSession(input.topicId, "claude", response.sessionId);
+    if (content.length > MAX_MESSAGE_CHARS) {
+      throw new Error("Claude 顾问返回的公开内容超过消息长度上限。");
     }
     const message = this.database.createMessage({
       topicId: input.topicId,
       author: "claude",
       kind: input.messageKind,
-      content: response.content,
+      content,
     });
-    return { response, message };
+    if (response.sessionId) {
+      this.database.setAgentSession(input.topicId, "claude", response.sessionId);
+    }
+    return { response: { ...response, content }, message };
   }
 }

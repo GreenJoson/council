@@ -23,6 +23,7 @@ export interface HeaderBarProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onCreateTopic: () => void;
+  onRetrySync: () => void;
   onOpenTopics: () => void;
   onOpenInspector: () => void;
 }
@@ -33,6 +34,7 @@ export function HeaderBar({
   searchQuery,
   onSearchChange,
   onCreateTopic,
+  onRetrySync,
   onOpenTopics,
   onOpenInspector,
 }: HeaderBarProps) {
@@ -69,10 +71,22 @@ export function HeaderBar({
       </label>
 
       <div className="header-actions">
-        <span className={`sync-state sync-${sync.status}`} title={sync.label}>
-          <Sparkles size={14} aria-hidden="true" />
-          <span>{sync.label}</span>
-        </span>
+        {sync.status === "offline" ? (
+          <button
+            className={`sync-state sync-${sync.status}`}
+            type="button"
+            title={`${sync.label}，点击重试`}
+            onClick={onRetrySync}
+          >
+            <Sparkles size={14} aria-hidden="true" />
+            <span>{sync.label}</span>
+          </button>
+        ) : (
+          <span className={`sync-state sync-${sync.status}`} title={sync.label}>
+            <Sparkles size={14} aria-hidden="true" />
+            <span>{sync.label}</span>
+          </span>
+        )}
         <button className="primary-button" type="button" onClick={onCreateTopic}>
           <Plus size={17} />
           <span>新建议题</span>

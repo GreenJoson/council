@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前消息类型、发布状态和提交回调
+ * @input  依赖：当前消息类型、同步状态、发布状态和提交回调
  * @output 导出：Composer 公开回复编辑器
  * @pos    将用户可见结论发布到共享 Council 时间线
  *
@@ -8,17 +8,18 @@
 
 import { AtSign, Link2, List, Paperclip, Send } from "lucide-react";
 import { useState } from "react";
-import type { MessageKind } from "../types/council";
+import type { MessageKind, SyncState } from "../types/council";
 import { messageKindLabels } from "./presentation";
 
 const composerKinds: MessageKind[] = ["proposal", "critique", "rebuttal", "synthesis"];
 
 export interface ComposerProps {
   isPublishing: boolean;
-  onPublish: (kind: MessageKind, content: string) => Promise<void>;
+  sync: SyncState;
+  onPublish: (kind: MessageKind, content: string) => Promise<boolean>;
 }
 
-export function Composer({ isPublishing, onPublish }: ComposerProps) {
+export function Composer({ isPublishing, sync, onPublish }: ComposerProps) {
   const [kind, setKind] = useState<MessageKind>("rebuttal");
   const [content, setContent] = useState("");
 
@@ -29,8 +30,10 @@ export function Composer({ isPublishing, onPublish }: ComposerProps) {
     if (!canPublish) {
       return;
     }
-    await onPublish(kind, content.trim());
-    setContent("");
+    const published = await onPublish(kind, content.trim());
+    if (published) {
+      setContent("");
+    }
   }
 
   return (
@@ -51,7 +54,7 @@ export function Composer({ isPublishing, onPublish }: ComposerProps) {
         </div>
         <span className="shared-notice">
           <Link2 size={13} />
-          Mock 数据 · API 接入后自动同步
+          {sync.label}
         </span>
       </div>
 

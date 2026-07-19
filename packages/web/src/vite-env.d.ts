@@ -11,6 +11,14 @@
 interface ImportMetaEnv {
   readonly VITE_COUNCIL_DATA_MODE?: string;
   readonly VITE_COUNCIL_API_URL?: string;
+  readonly VITE_COUNCIL_PROJECT_PATH?: string;
+  readonly VITE_COUNCIL_TOPIC_PAGE_SIZE?: string;
+  readonly VITE_COUNCIL_MESSAGE_PAGE_SIZE?: string;
+  readonly VITE_COUNCIL_EVENT_REFRESH_MAX_ATTEMPTS?: string;
+  readonly VITE_COUNCIL_EVENT_REFRESH_RETRY_DELAY_MS?: string;
+  readonly VITE_COUNCIL_EVENT_RECOVERY_DELAY_MS?: string;
+  readonly VITE_COUNCIL_ORCHESTRATION_PAGE_SIZE?: string;
+  readonly VITE_COUNCIL_ORCHESTRATION_RECOVERY_DELAY_MS?: string;
 }
 
 interface ImportMeta {

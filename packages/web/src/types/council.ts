@@ -6,7 +6,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export type AgentId = "claude" | "codex" | "user" | "chair";
+export type AgentId = "claude" | "codex" | "user" | "chair" | "other";
 
 export type MessageKind =
   | "proposal"
@@ -15,7 +15,7 @@ export type MessageKind =
   | "synthesis"
   | "note";
 
-export type TopicStatus = "proposed" | "discussing" | "synthesis" | "decided";
+export type TopicStatus = "open" | "proposed" | "discussing" | "synthesis" | "decided";
 
 export type DecisionStatus = "proposed" | "accepted";
 
@@ -82,10 +82,11 @@ export interface TopicDetail extends TopicSummary {
   owner: AgentId;
   participants: AgentId[];
   messages: CouncilMessage[];
+  messageTotal?: number;
   constraints: ConstraintItem[];
   evidence: EvidenceItem[];
   alternatives: AlternativeItem[];
-  decision: CouncilDecision;
+  decision?: CouncilDecision;
 }
 
 export interface ProjectSummary {
@@ -101,6 +102,7 @@ export interface SyncState {
 export interface WorkspaceSnapshot {
   project: ProjectSummary;
   topics: TopicDetail[];
+  activeTopicId?: string;
   participants: Participant[];
   sync: SyncState;
 }

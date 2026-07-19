@@ -1,6 +1,6 @@
 # Council WebUI 设计方向
 
-> 当前状态：已选择方案 A，并完成第一版可交互 React 原型。方案 B、C 保留为后续视图方向，不进入当前实现范围。
+> 当前状态：已选择方案 A，并完成可交互 React 界面及真实 REST/SSE 数据层。方案 B、C 保留为后续视图方向，不进入当前实现范围。
 
 ## 共同产品骨架
 
@@ -19,7 +19,7 @@
 
 实现截图：
 
-![方案 A：React 原型](council-webui-a-implemented.png)
+![方案 A：真实 HTTP 自动轮次实现](council-webui-a-implemented.png)
 
 以实时讨论效率为目标。左侧管理项目和议题，中间是完整讨论时间线，右侧持续显示约束、证据、备选方案和决策。
 
@@ -41,13 +41,17 @@
 - 议题搜索、切换、创建和公开消息发布。
 - `Proposal`、`Critique`、`Rebuttal`、`Synthesis` 类型选择。
 - 约束、证据、备选方案、拟议决策和用户确认动作。
-- repository 数据边界，便于后续把 mock 替换为本地 API。
+- `mock/http` repository、SQLite 真实读写和跨进程 SSE 自动刷新。
+- 议题列表与当前详情惰性加载、断线恢复和数据库 revision 校准。
+- 自动轮次能力、运行列表、创建启动、人工批准、取消和失败恢复。
+- 内容 revision 与编排 revision 独立校准，运行心跳不会重载讨论时间线。
+- Claude 主动调用能力与 Codex 仅共享回帖的边界提示。
 
 尚未覆盖：
 
-- Council SQLite/API 的真实读写与跨客户端增量同步。
-- Codex 与 Claude 的自动轮次编排和中继状态。
+- 基于 decision ID 的拒绝、取代和接受状态转换。
 - ADR 导出和多项目持久化筛选。
+- 真实 Codex 后台适配器；当前没有经过验证的外部唤醒接口。
 
 ## 方案 B：Council Table
 

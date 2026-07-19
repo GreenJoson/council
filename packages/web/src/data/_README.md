@@ -4,8 +4,26 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `repository.ts` | 边界 | 定义可替换的数据访问接口 |
+| `repository.ts` | 边界 | 定义列表加载、显式选题和写操作的数据访问接口 |
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
+| `orchestration-repository.ts` | 边界 | 定义独立自动轮次读取、创建、动作和订阅接口 |
+| `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
+| `api-types.ts` | 协议 | 严格解析 canonical API 的未知 JSON 数据 |
+| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、审批结果和运行分页 |
+| `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
+| `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
+| `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
+| `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
+| `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区 |
+| `http-repository.ts` | 真实 | 惰性读取当前详情，并按 SSE revision 串行校准工作区 |
+| `http-orchestration-repository.ts` | 真实 | 仅按 orchestration revision 校准当前议题运行列表 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据 |
-| `mock-repository.ts` | 原型 | 模拟议题创建、发帖、同步和决策接受 |
+| `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步和决策接受 |
+| `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
 | `selectors.ts` | 查询 | 提供可测试的议题筛选逻辑 |
+
+`HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。
+
+初始加载和实时刷新只读取 Topic 分页摘要及当前议题按配置页大小限制的最新消息，侧栏其他议题保持轻量 canonical `open/decided` 状态；显式选题成功后才替换详情。`messageTotal` 用于显示未加载历史数量。
+
+SSE 只传总 revision；两个仓储收到事件后各自读取 `/api/v1/status` 分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在 `revisions.orchestration` 变化时读取当前议题 Runs，避免互相放大请求。事件前已经启动的读取不会消费该事件；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的 drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应 recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。

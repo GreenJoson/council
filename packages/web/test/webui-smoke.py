@@ -12,7 +12,7 @@ from pathlib import Path
 from playwright.sync_api import ConsoleMessage, sync_playwright
 
 
-WEB_URL = os.environ.get("COUNCIL_WEB_URL", "http://127.0.0.1:4173")
+WEB_URL = os.environ.get("COUNCIL_WEB_URL", "http://localhost:4173")
 SCREENSHOT_PATH = os.environ.get("COUNCIL_WEB_SCREENSHOT")
 
 
@@ -30,6 +30,13 @@ def verify_desktop(browser) -> list[str]:
 
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
 
+    page.get_by_placeholder(
+        "例如：先给出可回滚的最小架构方案，并列出失败条件。"
+    ).fill("先审查状态机边界，再给出最小修复。")
+    page.get_by_role("button", name="创建并启动", exact=True).click()
+    page.get_by_text("自动轮次已创建并启动", exact=True).wait_for()
+    page.get_by_text("等待 Agent", exact=True).wait_for()
+
     if SCREENSHOT_PATH:
         screenshot = Path(SCREENSHOT_PATH)
         screenshot.parent.mkdir(parents=True, exist_ok=True)
@@ -42,13 +49,14 @@ def verify_desktop(browser) -> list[str]:
     page.locator(".topic-row", has_text="订单状态机重构").click()
     page.get_by_role("heading", name="订单状态机重构", exact=True).wait_for()
     page.locator(".topic-row", has_text="支付回调幂等方案").click()
+    page.get_by_text("等待 Agent", exact=True).wait_for()
 
     page.get_by_placeholder("写下公开结论、证据或回应…").fill(
         "补充验证：重复回调和乱序回调必须分别覆盖。"
     )
     page.get_by_role("button", name="Critique", exact=True).click()
     page.get_by_role("button", name="发布 Critique", exact=True).click()
-    page.get_by_text("回复已写入当前原型", exact=True).wait_for()
+    page.get_by_text("回复已发布并同步", exact=True).wait_for()
     page.get_by_text("补充验证：重复回调和乱序回调必须分别覆盖。", exact=True).wait_for()
 
     page.get_by_role("button", name="标记为 Accepted", exact=True).click()

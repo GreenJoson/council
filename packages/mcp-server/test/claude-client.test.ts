@@ -7,11 +7,16 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { ClaudeClient } from "../src/claude-client.js";
+import {
+  ClaudeRuntime,
+  type ClaudeRuntimeInput,
+} from "../src/claude-runtime.js";
 import { CouncilDatabase } from "../src/database.js";
 import type { CouncilConfig } from "../src/types.js";
 
@@ -41,6 +46,38 @@ process.stdin.on("end", () => {
 });
 `;
 
+const HANGING_CLAUDE_SOURCE = `
+import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`;
+
+class FakeRuntime {
+  readonly calls: ClaudeRuntimeInput[] = [];
+
+  constructor(private readonly response: { content: string; sessionId?: string }) {}
+
+  async generate(input: ClaudeRuntimeInput): Promise<{ content: string; sessionId?: string }> {
+    this.calls.push(input);
+    return this.response;
+  }
+
+  async checkAvailability(): Promise<{ available: boolean; authenticated: boolean }> {
+    return { available: true, authenticated: true };
+  }
+}
+
+async function waitForPid(pidFile: string): Promise<number> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (existsSync(pidFile)) {
+      return Number(readFileSync(pidFile, "utf8"));
+    }
+    await delay(5);
+  }
+  throw new Error("假 Claude 进程没有按时写入 PID。");
+}
+
 test("ClaudeClient 调用并恢复后台顾问会话", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-claude-test-"));
   const fakeClaudePath = path.join(directory, "fake-claude.mjs");
@@ -52,6 +89,7 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
     claudeArgs: [fakeClaudePath],
     claudePermissionMode: "plan",
     claudeTimeoutMs: 5_000,
+    claudeKillGraceMs: 100,
     claudeMaxTurns: 3,
     sqliteBusyTimeoutMs: 5_000,
     maxContextChars: 20_000,
@@ -90,6 +128,187 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
     });
     assert.match(second.response.content, /fake-rebuttal;resume=session_fake/);
     assert.equal(database.getTopicDetail(topic.id, 20).messages.length, 2);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeClient 取消生成时不写 session 或消息", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-claude-abort-test-"));
+  const fakeClaudePath = path.join(directory, "hanging-claude.mjs");
+  const pidFile = path.join(directory, "claude.pid");
+  writeFileSync(fakeClaudePath, HANGING_CLAUDE_SOURCE, { mode: 0o700 });
+  const config: CouncilConfig = {
+    dataDir: directory,
+    databasePath: path.join(directory, "council.sqlite3"),
+    claudeCommand: process.execPath,
+    claudeArgs: [fakeClaudePath, pidFile],
+    claudePermissionMode: "plan",
+    claudeTimeoutMs: 5_000,
+    claudeKillGraceMs: 50,
+    claudeMaxTurns: 3,
+    sqliteBusyTimeoutMs: 5_000,
+    maxContextChars: 20_000,
+    maxOutputChars: 10_000,
+    defaultMessageLimit: 20,
+  };
+  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  try {
+    const topic = database.createTopic({
+      title: "取消测试",
+      question: "取消后是否保持数据库不变？",
+      constraints: [],
+      projectPath: directory,
+      createdBy: "human",
+    });
+    const controller = new AbortController();
+    const request = new ClaudeClient(config, database).ask({
+      topicId: topic.id,
+      instruction: "保持运行直到被取消",
+      messageKind: "proposal",
+      forceNewSession: false,
+      signal: controller.signal,
+    });
+    await waitForPid(pidFile);
+    controller.abort(new Error("private cancellation reason"));
+    await assert.rejects(request, {
+      name: "AbortError",
+      message: "Claude Code 调用已取消。",
+    });
+    assert.equal(database.getAgentSession(topic.id, "claude"), undefined);
+    assert.equal(database.getTopicDetail(topic.id, 20).messages.length, 0);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeClient 拒绝数据库中绕过入口校验的相对项目路径", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-claude-path-test-"));
+  const config: CouncilConfig = {
+    dataDir: directory,
+    databasePath: path.join(directory, "council.sqlite3"),
+    claudeCommand: process.execPath,
+    claudeArgs: ["--version"],
+    claudePermissionMode: "plan",
+    claudeTimeoutMs: 5_000,
+    claudeKillGraceMs: 50,
+    claudeMaxTurns: 3,
+    sqliteBusyTimeoutMs: 5_000,
+    maxContextChars: 20_000,
+    maxOutputChars: 10_000,
+    defaultMessageLimit: 20,
+  };
+  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  try {
+    const topic = database.createTopic({
+      title: "路径校验测试",
+      question: "兼容层是否再次校验数据库中的路径？",
+      constraints: [],
+      projectPath: "relative-project",
+      createdBy: "human",
+    });
+    await assert.rejects(
+      new ClaudeClient(config, database).ask({
+        topicId: topic.id,
+        instruction: "不应启动 CLI",
+        messageKind: "proposal",
+        forceNewSession: false,
+      }),
+      /项目路径必须是绝对路径/,
+    );
+    assert.equal(database.getTopicDetail(topic.id, 20).messages.length, 0);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeClient 可信议题超限时不调用 Runtime 且数据库零写入", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-client-trusted-overflow-"));
+  const config: CouncilConfig = {
+    dataDir: directory,
+    databasePath: path.join(directory, "council.sqlite3"),
+    claudeCommand: process.execPath,
+    claudeArgs: [],
+    claudePermissionMode: "plan",
+    claudeTimeoutMs: 5_000,
+    claudeKillGraceMs: 50,
+    claudeMaxTurns: 3,
+    sqliteBusyTimeoutMs: 5_000,
+    maxContextChars: 120,
+    maxOutputChars: 40_000,
+    defaultMessageLimit: 20,
+  };
+  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const runtime = new FakeRuntime({ content: "不应返回", sessionId: "session_forbidden" });
+  try {
+    const topic = database.createTopic({
+      title: "t".repeat(500),
+      question: "可信头是否会被裁掉？",
+      constraints: [],
+      projectPath: directory,
+      createdBy: "human",
+    });
+    await assert.rejects(
+      new ClaudeClient(config, database, runtime as unknown as ClaudeRuntime).ask({
+        topicId: topic.id,
+        instruction: "保留本轮任务",
+        messageKind: "proposal",
+        forceNewSession: false,
+      }),
+      /可信议题与本轮任务超过上下文上限/,
+    );
+    assert.equal(runtime.calls.length, 0);
+    assert.equal(database.getAgentSession(topic.id, "claude"), undefined);
+    assert.equal(database.getTopicDetail(topic.id, 20).messageTotal, 0);
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeClient 超长公开输出不推进 session 且不写消息", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-client-output-limit-"));
+  const config: CouncilConfig = {
+    dataDir: directory,
+    databasePath: path.join(directory, "council.sqlite3"),
+    claudeCommand: process.execPath,
+    claudeArgs: [],
+    claudePermissionMode: "plan",
+    claudeTimeoutMs: 5_000,
+    claudeKillGraceMs: 50,
+    claudeMaxTurns: 3,
+    sqliteBusyTimeoutMs: 5_000,
+    maxContextChars: 20_000,
+    maxOutputChars: 40_000,
+    defaultMessageLimit: 20,
+  };
+  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const runtime = new FakeRuntime({
+    content: "x".repeat(30_001),
+    sessionId: "session_must_not_advance",
+  });
+  try {
+    const topic = database.createTopic({
+      title: "输出上限",
+      question: "超长回复能否污染会话？",
+      constraints: [],
+      projectPath: directory,
+      createdBy: "human",
+    });
+    await assert.rejects(
+      new ClaudeClient(config, database, runtime as unknown as ClaudeRuntime).ask({
+        topicId: topic.id,
+        instruction: "生成公开回复",
+        messageKind: "proposal",
+        forceNewSession: false,
+      }),
+      /超过消息长度上限/,
+    );
+    assert.equal(database.getAgentSession(topic.id, "claude"), undefined);
+    assert.equal(database.getTopicDetail(topic.id, 20).messageTotal, 0);
   } finally {
     database.close();
     rmSync(directory, { recursive: true, force: true });

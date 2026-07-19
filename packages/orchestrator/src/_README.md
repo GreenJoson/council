@@ -1,0 +1,13 @@
+# src - 编排领域核心
+
+> ⚠️ 一旦本文件夹有所变化，请更新本文件
+
+| 文件名 | 地位 | 功能 |
+|---|---|---|
+| `constants.ts` | 协议 | 定义状态、公开作者、消息类型、失败原因和安全边界 |
+| `types.ts` | 模型 | 定义计划、状态候选分页、幂等批准、lease、运行快照和 Agent 输入输出 |
+| `ports.ts` | 边界 | 隔离消息传播、状态恢复查询、lease fencing 与 Agent 主动触发 |
+| `errors.ts` | 错误 | 提供可判定的配置、状态、冲突、lease、超时和调用错误 |
+| `orchestrator.ts` | 核心 | 分离 begin/drive，执行 cleanup 屏障、人工门、取消和恢复 |
+| `index.ts` | 入口 | 汇总导出公开 API |
+| `sqlite/` | 持久化 | 实现事务、CAS、单活动 run、lease fencing 和严格快照读取 |
