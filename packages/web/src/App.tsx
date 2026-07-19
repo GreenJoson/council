@@ -6,15 +6,26 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { LoaderCircle, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
+import {
+  Database,
+  FolderOpen,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
+import { DesktopSetup } from "./components/DesktopSetup";
 import { DiscussionPanel } from "./components/DiscussionPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { TopicSidebar } from "./components/TopicSidebar";
 import { createCouncilRepository } from "./data/create-repository";
 import { createOrchestrationRepository } from "./data/create-orchestration-repository";
+import type { DesktopSettings } from "./data/desktop-bridge";
+import { isNativeCouncilRepository } from "./data/native-repository";
 import { filterTopics } from "./data/selectors";
 import type {
   CreateTopicInput,
@@ -35,6 +46,7 @@ function getErrorMessage(error: unknown): string {
 export default function App() {
   const repository = useMemo(() => createCouncilRepository(), []);
   const orchestrationRepository = useMemo(() => createOrchestrationRepository(), []);
+  const nativeRepository = isNativeCouncilRepository(repository) ? repository : undefined;
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -54,8 +66,36 @@ export default function App() {
   const [orchestration, setOrchestration] = useState<OrchestrationSnapshot | null>(null);
   const [orchestrationBusyAction, setOrchestrationBusyAction] = useState<string | null>(null);
   const selectionRequestId = useRef(0);
+  const [desktopSettings, setDesktopSettings] = useState<DesktopSettings | null>(null);
+  const [desktopSettingsLoaded, setDesktopSettingsLoaded] = useState(!nativeRepository);
+  const [desktopBusyAction, setDesktopBusyAction] = useState<"logs" | "project" | null>(null);
+  const [desktopErrorMessage, setDesktopErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!nativeRepository) {
+      return;
+    }
+    let active = true;
+    void nativeRepository.getDesktopSettings()
+      .then((settings) => {
+        if (active) {
+          setDesktopSettings(settings);
+          setDesktopSettingsLoaded(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setDesktopErrorMessage(getErrorMessage(error));
+          setDesktopSettingsLoaded(true);
+        }
+      });
+    return () => { active = false; };
+  }, [nativeRepository]);
+
+  useEffect(() => {
+    if (nativeRepository && (!desktopSettings?.logLibrary || !desktopSettings.currentProjectPath)) {
+      return;
+    }
     let active = true;
     const unsubscribe = repository.subscribe((snapshot) => {
       if (active) {
@@ -89,7 +129,7 @@ export default function App() {
       active = false;
       unsubscribe();
     };
-  }, [loadAttempt, repository]);
+  }, [desktopSettings?.currentProjectPath, desktopSettings?.logLibrary, loadAttempt, nativeRepository, repository]);
 
   useEffect(() => {
     let active = true;
@@ -155,14 +195,41 @@ export default function App() {
     };
   }, [activeTopicId, orchestrationRepository, runsLoadAttempt]);
 
+  if (nativeRepository && !desktopSettingsLoaded) {
+    return <LoadingState />;
+  }
+
+  if (
+    nativeRepository
+    && (!desktopSettings?.logLibrary || !desktopSettings.currentProjectPath)
+  ) {
+    return (
+      <DesktopSetup
+        hasLogLibrary={Boolean(desktopSettings?.logLibrary)}
+        hasProject={Boolean(desktopSettings?.currentProjectPath)}
+        busyAction={desktopBusyAction}
+        errorMessage={desktopErrorMessage}
+        onChooseLogLibrary={() => handleDesktopSelection("logs")}
+        onChooseProject={() => handleDesktopSelection("project")}
+      />
+    );
+  }
+
   if (contentErrorMessage && !workspace) {
     return (
       <FatalState
-        message={contentErrorMessage}
+        message={desktopErrorMessage ?? contentErrorMessage}
         onRetry={() => {
           setContentErrorMessage(null);
           setLoadAttempt((current) => current + 1);
         }}
+        busyAction={desktopBusyAction}
+        onChooseLogLibrary={nativeRepository
+          ? () => handleDesktopSelection("logs")
+          : undefined}
+        onChooseProject={nativeRepository
+          ? () => handleDesktopSelection("project")
+          : undefined}
       />
     );
   }
@@ -174,6 +241,47 @@ export default function App() {
   const visibleTopics = filterTopics(workspace.topics, searchQuery);
   const recoverableErrorMessage =
     capabilitiesErrorMessage ?? runsErrorMessage ?? contentErrorMessage;
+
+  async function handleDesktopSelection(action: "logs" | "project"): Promise<void> {
+    if (!nativeRepository) {
+      return;
+    }
+    setDesktopBusyAction(action);
+    setDesktopErrorMessage(null);
+    try {
+      const settings = action === "logs"
+        ? await nativeRepository.chooseLogLibrary()
+        : await nativeRepository.chooseProject();
+      if (settings) {
+        setDesktopSettings(settings);
+        if (settings.logLibrary && settings.currentProjectPath) {
+          setWorkspace(null);
+          setLoadAttempt((current) => current + 1);
+        }
+      }
+    } catch (error: unknown) {
+      setDesktopErrorMessage(getErrorMessage(error));
+    } finally {
+      setDesktopBusyAction(null);
+    }
+  }
+
+  async function handleRecentProject(path: string): Promise<void> {
+    if (!nativeRepository) {
+      return;
+    }
+    setDesktopBusyAction("project");
+    try {
+      const settings = await nativeRepository.selectRecentProject(path);
+      setDesktopSettings(settings);
+      setWorkspace(null);
+      setLoadAttempt((current) => current + 1);
+    } catch (error: unknown) {
+      setDesktopErrorMessage(getErrorMessage(error));
+    } finally {
+      setDesktopBusyAction(null);
+    }
+  }
 
   function handleRetrySync(): void {
     setContentErrorMessage(null);
@@ -355,6 +463,10 @@ export default function App() {
           onRetrySync={handleRetrySync}
           onOpenTopics={() => setIsTopicsOpen(true)}
           onOpenInspector={() => setIsInspectorOpen(true)}
+          desktopSettings={desktopSettings ?? undefined}
+          onChooseProject={() => handleDesktopSelection("project")}
+          onChooseLogLibrary={() => handleDesktopSelection("logs")}
+          onSelectRecentProject={handleRecentProject}
         />
         <div className="workspace-grid empty-workspace-grid">
           <TopicSidebar
@@ -405,6 +517,10 @@ export default function App() {
         onRetrySync={handleRetrySync}
         onOpenTopics={() => setIsTopicsOpen(true)}
         onOpenInspector={() => setIsInspectorOpen(true)}
+        desktopSettings={desktopSettings ?? undefined}
+        onChooseProject={() => handleDesktopSelection("project")}
+        onChooseLogLibrary={() => handleDesktopSelection("logs")}
+        onSelectRecentProject={handleRecentProject}
       />
       <div className="workspace-grid">
         <TopicSidebar
@@ -492,18 +608,51 @@ function RecoverableError({ message, onRetry, onClose }: RecoverableErrorProps) 
 interface FatalStateProps {
   message: string;
   onRetry: () => void;
+  busyAction?: "logs" | "project" | null;
+  onChooseLogLibrary?: () => Promise<void>;
+  onChooseProject?: () => Promise<void>;
 }
 
-function FatalState({ message, onRetry }: FatalStateProps) {
+function FatalState({
+  message,
+  onRetry,
+  busyAction,
+  onChooseLogLibrary,
+  onChooseProject,
+}: FatalStateProps) {
   return (
     <main className="full-state">
       <TriangleAlert size={28} />
       <h1>无法加载 Council</h1>
       <p>{message}</p>
-      <button className="primary-button" type="button" onClick={onRetry}>
-        <RefreshCw size={17} />
-        重试
-      </button>
+      <div className="full-state-actions">
+        <button className="primary-button" type="button" disabled={Boolean(busyAction)} onClick={onRetry}>
+          <RefreshCw size={17} />
+          重试
+        </button>
+        {onChooseLogLibrary ? (
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={Boolean(busyAction)}
+            onClick={() => void onChooseLogLibrary()}
+          >
+            {busyAction === "logs" ? <LoaderCircle className="spinner" size={17} /> : <Database size={17} />}
+            重选日志库
+          </button>
+        ) : null}
+        {onChooseProject ? (
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={Boolean(busyAction)}
+            onClick={() => void onChooseProject()}
+          >
+            {busyAction === "project" ? <LoaderCircle className="spinner" size={17} /> : <FolderOpen size={17} />}
+            重选项目
+          </button>
+        ) : null}
+      </div>
     </main>
   );
 }

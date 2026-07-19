@@ -9,7 +9,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_COUNCIL_DATA_MODE?: string;
+  readonly VITE_COUNCIL_DATA_MODE?: "mock" | "http" | "desktop";
   readonly VITE_COUNCIL_API_URL?: string;
   readonly VITE_COUNCIL_PROJECT_PATH?: string;
   readonly VITE_COUNCIL_TOPIC_PAGE_SIZE?: string;

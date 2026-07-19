@@ -4,21 +4,26 @@
   "private": true,
   "description": "Local multi-agent architecture discussion workspace",
   "scripts": {
-    "install:all": "npm run install:orchestrator && npm run install:mcp && npm run install:web",
+    "install:all": "npm run install:orchestrator && npm run install:mcp && npm run install:web && npm run install:desktop",
+    "install:desktop": "npm install --prefix packages/desktop",
     "install:mcp": "npm install --prefix packages/mcp-server",
     "install:web": "npm install --prefix packages/web",
     "install:orchestrator": "npm install --prefix packages/orchestrator",
     "predev": "npm run build --prefix packages/orchestrator",
     "dev": "node scripts/dev.mjs",
+    "dev:desktop": "npm run dev --prefix packages/desktop",
     "predev:api": "npm run build --prefix packages/orchestrator",
     "dev:api": "npm run dev:http --prefix packages/mcp-server",
     "dev:web": "npm run dev --prefix packages/web",
     "build": "npm run build --prefix packages/orchestrator && npm run build --prefix packages/mcp-server && npm run build --prefix packages/web",
-    "check": "npm run check --prefix packages/orchestrator && npm run check --prefix packages/mcp-server && npm run check --prefix packages/web",
-    "test": "npm test --prefix packages/orchestrator && npm test --prefix packages/mcp-server && npm test --prefix packages/web",
+    "build:desktop": "npm run build --prefix packages/desktop",
+    "check": "npm run check --prefix packages/orchestrator && npm run check --prefix packages/mcp-server && npm run check --prefix packages/web && npm run check:rust",
+    "check:rust": "cargo fmt --manifest-path crates/council-core/Cargo.toml -- --check && cargo clippy --manifest-path crates/council-core/Cargo.toml --all-targets --locked -- -D warnings && cargo fmt --manifest-path packages/desktop/src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path packages/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+    "test": "npm test --prefix packages/orchestrator && npm test --prefix packages/mcp-server && npm test --prefix packages/web && npm run test:rust",
+    "test:rust": "cargo test --manifest-path crates/council-core/Cargo.toml --locked && cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml --locked",
     "pretest:e2e": "npm run build",
     "test:e2e": "node scripts/e2e.mjs",
     "test:all": "npm test && npm run test:e2e",
-    "audit": "npm audit --prefix packages/orchestrator --audit-level=high && npm audit --prefix packages/mcp-server --audit-level=high && npm audit --prefix packages/web --audit-level=high"
+    "audit": "npm audit --prefix packages/orchestrator --audit-level=high && npm audit --prefix packages/mcp-server --audit-level=high && npm audit --prefix packages/web --audit-level=high && npm audit --prefix packages/desktop --audit-level=high"
   }
 }

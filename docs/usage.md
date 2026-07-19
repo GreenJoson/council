@@ -6,6 +6,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 
 - [先选使用模式](#先选使用模式)
 - [首次使用](#首次使用)
+- [桌面应用](#桌面应用)
 - [模式一：两个桌面手动接力](#模式一两个桌面手动接力)
 - [模式二：Codex 自动调用 Claude](#模式二codex-自动调用-claude)
 - [模式三：Operator Console 自动轮次](#模式三operator-console-自动轮次)
@@ -22,6 +23,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 | 双桌面手动接力 | 你习惯分别在 Claude Desktop Code 和 Codex App 中讨论 | 不需要 |
 | Codex 自动讨论 | 希望只在 Codex App 发一次指令，由 Codex 自动调用 Claude | 需要 |
 | Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复 Claude 轮次 | 需要 |
+| 桌面工作台 | 希望双击启动、原生切项目并直接读写共享日志库 | 内容协作不需要 |
 
 日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
 
@@ -36,6 +38,28 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 > 使用 `$council` 检查 Council 状态，并告诉我 MCP 是否正常。
 
 如果只使用双桌面接力，到这里就可以开始，不需要打开终端。
+
+## 桌面应用
+
+开发和构建：
+
+```bash
+npm run install:all
+npm run dev:desktop
+npm run build:desktop
+```
+
+正式构建会生成可双击启动的系统应用。桌面窗口直接通过 Tauri IPC 调用 Rust 内容核心，不需要另外启动 WebUI 或 HTTP API。
+
+首次启动时：
+
+1. 选择一个源码目录之外的“日志库”。Council 会在其中读取或创建 `council.sqlite3`。
+2. 选择当前项目目录。新建议题会记录该项目路径，后台 Agent 才能检查正确的代码。
+3. 以后点击左上角项目名即可切换，最近使用的项目会保存在本机应用设置中。
+
+日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
+
+桌面 V1 支持议题、消息、决策、项目切换和跨进程内容刷新。浏览器 HTTP 模式已有的自动 Claude 轮次尚未迁入 Rust 桌面层，因此桌面界面会明确标记该能力不可用；需要自动轮次时暂时继续使用下面的 Operator Console 模式。
 
 ## 模式一：两个桌面手动接力
 

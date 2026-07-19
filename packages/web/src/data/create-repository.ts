@@ -13,6 +13,7 @@ import {
 } from "./api-constants";
 import { HttpCouncilRepository } from "./http-repository";
 import { MockCouncilRepository } from "./mock-repository";
+import { NativeCouncilRepository } from "./native-repository";
 import { readProjectPathConfig } from "./project-path";
 import type { CouncilRepository } from "./repository";
 
@@ -35,6 +36,28 @@ export function createCouncilRepository(): CouncilRepository {
   const mode = import.meta.env.VITE_COUNCIL_DATA_MODE ?? "mock";
   if (mode === "mock") {
     return new MockCouncilRepository();
+  }
+  if (mode === "desktop") {
+    return new NativeCouncilRepository({
+      topicPageSize: readIntegerConfig(
+        import.meta.env.VITE_COUNCIL_TOPIC_PAGE_SIZE,
+        "VITE_COUNCIL_TOPIC_PAGE_SIZE",
+        1,
+        COUNCIL_API_MAX_PAGE_SIZE,
+      ),
+      messagePageSize: readIntegerConfig(
+        import.meta.env.VITE_COUNCIL_MESSAGE_PAGE_SIZE,
+        "VITE_COUNCIL_MESSAGE_PAGE_SIZE",
+        1,
+        COUNCIL_API_MAX_PAGE_SIZE,
+      ),
+      recoveryDelayMs: readIntegerConfig(
+        import.meta.env.VITE_COUNCIL_EVENT_RECOVERY_DELAY_MS,
+        "VITE_COUNCIL_EVENT_RECOVERY_DELAY_MS",
+        1,
+        BROWSER_MAX_TIMER_DELAY_MS,
+      ),
+    });
   }
   if (mode === "http") {
     const baseUrl = import.meta.env.VITE_COUNCIL_API_URL?.trim();
@@ -76,5 +99,5 @@ export function createCouncilRepository(): CouncilRepository {
       ),
     });
   }
-  throw new Error(`不支持的数据模式：${mode}，仅允许 mock 或 http`);
+  throw new Error(`不支持的数据模式：${mode}，仅允许 mock、http 或 desktop`);
 }

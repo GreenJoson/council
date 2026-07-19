@@ -7,3 +7,4 @@
 | `mcp-server/` | 核心 | 提供共享存储、MCP/REST/SSE、Claude Adapter 和后台执行管理器 |
 | `web/` | 前端 | 提供 Operator Console、内容同步与自动轮次控制面 |
 | `orchestrator/` | 编排 | 提供受控状态机、SQLite Store、lease fencing、人工门、取消和恢复 |
+| `desktop/` | 桌面 | 提供 Tauri 2 桌面壳、本机设置、原生目录选择与 Rust IPC |

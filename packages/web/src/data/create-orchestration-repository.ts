@@ -14,6 +14,7 @@ import {
 import { readIntegerConfig } from "./create-repository";
 import { HttpOrchestrationRepository } from "./http-orchestration-repository";
 import { MockOrchestrationRepository } from "./mock-orchestration-repository";
+import { UnavailableOrchestrationRepository } from "./unavailable-orchestration-repository";
 import type { OrchestrationRepository } from "./orchestration-repository";
 
 export function createOrchestrationRepository(): OrchestrationRepository {
@@ -21,8 +22,11 @@ export function createOrchestrationRepository(): OrchestrationRepository {
   if (mode === "mock") {
     return new MockOrchestrationRepository();
   }
+  if (mode === "desktop") {
+    return new UnavailableOrchestrationRepository();
+  }
   if (mode !== "http") {
-    throw new Error(`不支持的数据模式：${mode}，仅允许 mock 或 http`);
+    throw new Error(`不支持的数据模式：${mode}，仅允许 mock、http 或 desktop`);
   }
   const baseUrl = import.meta.env.VITE_COUNCIL_API_URL?.trim();
   if (!baseUrl) {

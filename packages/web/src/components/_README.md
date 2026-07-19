@@ -4,7 +4,8 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `HeaderBar.tsx` | 导航 | 提供项目、搜索、同步状态、离线重试和全局操作 |
+| `HeaderBar.tsx` | 导航 | 提供原生项目切换、日志库设置、搜索、同步状态和全局操作 |
+| `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `TopicSidebar.tsx` | 导航 | 展示轻量议题列表并触发受控详情加载 |
 | `DiscussionPanel.tsx` | 核心 | 组织议题头部、最近消息、历史总数、同步状态和回复编辑器 |
 | `MessageCard.tsx` | 核心 | 展示公开 proposal、critique、rebuttal 和 synthesis |

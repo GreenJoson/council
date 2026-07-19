@@ -75,10 +75,25 @@
 | 运行 REST 与 ExecutionManager | 子代理：产品接线 | 已完成并独立复审 |
 | Web 自动轮次控制 | 子代理：前端运行面 | 已完成并独立复审 |
 | 契约整合与端到端验收 | 主代理 | 已完成 |
+| Rust SQLite 内容核心 | 子代理：Rust 数据流 | 已完成 |
+| Tauri 桌面壳与本机设置 | 主代理 | 已完成 |
+| React 桌面仓储与项目切换 | 主代理整合 | 已完成并完成真实桌面验收 |
+
+## G6：Tauri 桌面工作台（已完成）
+
+交付物：
+
+- Tauri 2 桌面壳，打包现有 React Operator Console。
+- 与 TypeScript 内容 schema 同构的 `council-core` Rust crate，直接读写同一 `council.sqlite3`。
+- 原生日志库设置、项目目录选择、最近项目和首次运行引导。
+- 桌面内容仓储、revision 校准与跨进程回帖刷新。
+
+验收：桌面应用无需手动启动 API；已通过原生目录选择器绑定外部日志库、切换到现有项目，并加载历史议题与完整讨论链。SQLite 迁移只在首次打开或切库时执行，常规轮询复用持久连接；项目切换用设置世代隔离旧请求，目录失效可直接从错误页重选。创建议题、发布消息和确认决策由同一 Rust IPC/SQLite 路径覆盖；桌面自动轮次在 Rust Runtime 接通前明确不可用。
 
 ## 后续目标
 
-1. Codex 无可靠后台适配器时继续通过 Council MCP 与人工门参与，不伪造自动唤醒。
-2. 把 accepted 决策导出为项目 ADR，并保留来源 topic 与证据链接。
-3. 增加运行审计视图、筛选和保留策略。
-4. 只有在出现稳定、可取消的外部触发接口后，才新增 Codex 或其他 Agent 适配器。
+1. 把现有 Claude Runtime 与 ExecutionManager 迁入 Rust 桌面服务层。
+2. Codex 无可靠后台适配器时继续通过 Council MCP 与人工门参与，不伪造自动唤醒。
+3. 把 accepted 决策导出为项目 ADR，并保留来源 topic 与证据链接。
+4. 增加运行审计视图、筛选和保留策略。
+5. 只有在出现稳定、可取消的外部触发接口后，才新增 Codex 或其他 Agent 适配器。

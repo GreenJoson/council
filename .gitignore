@@ -2,12 +2,15 @@
 .env
 .env.*
 !.env.example
+!.env.desktop
 node_modules/
 dist/
 coverage/
 __pycache__/
 *.pyc
 *.tsbuildinfo
+target/
+packages/desktop/src-tauri/gen/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

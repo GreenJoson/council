@@ -128,6 +128,17 @@
 }
 
 @media (max-width: 680px) {
+  .desktop-setup {
+    padding: 18px;
+  }
+
+  .desktop-setup-card {
+    padding: 28px 20px;
+  }
+
+  .desktop-setup-steps button {
+    padding-inline: 13px;
+  }
   :root {
     --header-height: 58px;
   }

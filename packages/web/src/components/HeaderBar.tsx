@@ -9,12 +9,16 @@
 import {
   Bell,
   ChevronDown,
+  Database,
+  FolderOpen,
   Menu,
   PanelRight,
   Plus,
   Search,
   Sparkles,
 } from "lucide-react";
+import { useState } from "react";
+import type { DesktopSettings } from "../data/desktop-bridge";
 import type { ProjectSummary, SyncState } from "../types/council";
 
 export interface HeaderBarProps {
@@ -26,6 +30,10 @@ export interface HeaderBarProps {
   onRetrySync: () => void;
   onOpenTopics: () => void;
   onOpenInspector: () => void;
+  desktopSettings?: DesktopSettings;
+  onChooseProject?: () => Promise<void>;
+  onChooseLogLibrary?: () => Promise<void>;
+  onSelectRecentProject?: (path: string) => Promise<void>;
 }
 
 export function HeaderBar({
@@ -37,7 +45,12 @@ export function HeaderBar({
   onRetrySync,
   onOpenTopics,
   onOpenInspector,
+  desktopSettings,
+  onChooseProject,
+  onChooseLogLibrary,
+  onSelectRecentProject,
 }: HeaderBarProps) {
+  const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
   return (
     <header className="header-bar">
       <div className="brand-cluster">
@@ -52,11 +65,52 @@ export function HeaderBar({
         <a className="brand" href="#main-content" aria-label="Council 首页">
           Council
         </a>
-        <button className="project-switcher" type="button" aria-label="切换项目">
-          <span className="project-mark" aria-hidden="true" />
-          <span>{project.name}</span>
-          <ChevronDown size={15} />
-        </button>
+        <div className="project-switcher-shell">
+          <button
+            className="project-switcher"
+            type="button"
+            aria-label="切换项目"
+            aria-expanded={desktopSettings ? isProjectMenuOpen : undefined}
+            onClick={() => {
+              if (desktopSettings) {
+                setIsProjectMenuOpen((current) => !current);
+              }
+            }}
+          >
+            <span className="project-mark" aria-hidden="true" />
+            <span>{project.name}</span>
+            <ChevronDown size={15} />
+          </button>
+          {desktopSettings && isProjectMenuOpen ? (
+            <div className="project-menu">
+              <div className="project-menu-label">最近项目</div>
+              {desktopSettings.recentProjectPaths.map((path) => (
+                <button
+                  type="button"
+                  key={path}
+                  title={path}
+                  onClick={() => {
+                    setIsProjectMenuOpen(false);
+                    void onSelectRecentProject?.(path);
+                  }}
+                >
+                  <FolderOpen size={15} />
+                  <span>{path.split(/[\\/]/).filter(Boolean).at(-1)}</span>
+                  {path === desktopSettings.currentProjectPath ? <small>当前</small> : null}
+                </button>
+              ))}
+              <div className="project-menu-divider" />
+              <button type="button" onClick={() => {
+                setIsProjectMenuOpen(false);
+                void onChooseProject?.();
+              }}><FolderOpen size={15} /><span>打开其他项目…</span></button>
+              <button type="button" onClick={() => {
+                setIsProjectMenuOpen(false);
+                void onChooseLogLibrary?.();
+              }}><Database size={15} /><span>设置日志库…</span></button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <label className="global-search">

@@ -1,0 +1,23 @@
+# council-core - SQLite 内容存储核心
+
+> ⚠️ 一旦本文件夹有所变化，请更新本文件
+
+| 文件名 | 地位 | 功能 |
+|---|---|---|
+| `Cargo.toml` | 工程 | 固定 Rust 版本、SQLite 与领域序列化依赖 |
+| `.gitignore` | 工程 | 阻止包含本机构建路径的 Cargo target 产物进入版本库 |
+| `src/lib.rs` | 入口 | 导出存储、错误、领域类型和输入结构 |
+| `src/error.rs` | 错误 | 定义可识别的 SQLite、NotFound、Conflict 和数据错误 |
+| `src/types.rs` | 类型 | 定义与 TypeScript camelCase JSON 兼容的内容领域模型 |
+| `src/store.rs` | 核心 | 迁移并读写现有 `council.sqlite3` 内容表和 revision |
+| `tests/compatibility.rs` | 集成 | 验证分页、跨连接、TypeScript schema fixture、revision 和迁移锁连续性 |
+
+## 公开 API
+
+`CouncilStore::open` 打开或迁移现有数据库；实例提供 `list_topics`、`get_topic`、`create_topic`、`post_message`、`record_decision` 和 `get_revisions`。写入方法接收显式领域输入，不依赖环境变量或固定文件位置。
+
+```bash
+CARGO_TARGET_DIR=<temporary-target-dir> cargo test --manifest-path crates/council-core/Cargo.toml
+```
+
+连接初始化会启用 WAL、foreign keys、NORMAL synchronous 和可配置 busy timeout。迁移在 `BEGIN IMMEDIATE` 等价事务中重建内容 revision triggers，避免并发写入落入 trigger 空窗。

@@ -20,6 +20,9 @@
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步和决策接受 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
+| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event 与目录选择器 |
+| `native-repository.ts` | 桌面 | 直接调用 Rust core 并用事件/轮询校准外部写入 |
+| `unavailable-orchestration-repository.ts` | 能力边界 | Rust Runtime 未接通前明确禁用桌面自动轮次 |
 | `selectors.ts` | 查询 | 提供可测试的议题筛选逻辑 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。
@@ -27,3 +30,5 @@
 初始加载和实时刷新只读取 Topic 分页摘要及当前议题按配置页大小限制的最新消息，侧栏其他议题保持轻量 canonical `open/decided` 状态；显式选题成功后才替换详情。`messageTotal` 用于显示未加载历史数量。
 
 SSE 只传总 revision；两个仓储收到事件后各自读取 `/api/v1/status` 分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在 `revisions.orchestration` 变化时读取当前议题 Runs，避免互相放大请求。事件前已经启动的读取不会消费该事件；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的 drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应 recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。
+
+`NativeCouncilRepository` 复用相同 parser 和 mapper，Rust 返回未经信任的裸领域对象仍必须先校验。Tauri 本进程写入通过 `council://changed` 立即刷新；其他 Codex/Claude MCP 进程写入通过配置化 status 轮询发现。项目或日志库变化会递增设置世代并废弃旧的在途加载，防止旧项目结果覆盖新项目。最后一个 listener 退出时同时撤销事件监听并清理轮询。
