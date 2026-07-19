@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css 语义变量和 React 组件类名
- * @output 导出：全局、顶栏、三栏布局和基础交互样式
+ * @output 导出：全局、顶栏、三栏/两栏工作区布局（含 workspace-grid-full 全宽面板修饰类）和基础交互样式
  * @pos    Operator Console 的桌面端空间骨架
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -26,7 +26,7 @@ body {
     var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-body);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.5;
 }
 
@@ -170,11 +170,19 @@ textarea:focus-visible {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   color: var(--color-text);
-  font-size: 25px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.045em;
   text-decoration: none;
+}
+
+.brand-logo {
+  display: block;
+  flex: none;
 }
 
 .project-switcher,
@@ -182,12 +190,11 @@ textarea:focus-visible {
 .secondary-button,
 .publish-button,
 .accept-button,
-.archive-button,
 .project-nav-item,
 .topic-row,
 .attachment-chip,
 .kind-option,
-.user-menu,
+.filter-chip,
 .icon-button {
   border: 0;
   transition:
@@ -220,12 +227,52 @@ textarea:focus-visible {
   top: calc(100% + 8px);
   left: 0;
   z-index: var(--z-header);
-  width: 270px;
+  width: 330px;
   padding: 8px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-medium);
   background: var(--color-surface-raised);
   box-shadow: var(--shadow-large);
+}
+
+.project-menu-current {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-selected);
+  color: var(--color-text);
+}
+
+.project-current-check {
+  color: var(--color-positive);
+}
+
+.project-entry {
+  display: block;
+  min-width: 0;
+}
+
+.project-entry-name {
+  display: block;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-entry-path {
+  display: block;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
 }
 
 .project-menu-label {
@@ -262,9 +309,8 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.project-menu button small {
-  color: var(--color-positive);
-  font-size: 10px;
+.project-menu button code {
+  font-weight: 400;
 }
 
 .project-menu-divider {
@@ -276,6 +322,16 @@ textarea:focus-visible {
 .project-switcher:hover {
   border-color: var(--color-primary);
   background: var(--color-surface-raised);
+}
+
+/* Web 模式没有项目切换能力：呈现为静态标签而非假按钮 */
+.project-switcher.is-static {
+  cursor: default;
+}
+
+.project-switcher.is-static:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
 }
 
 .project-switcher svg {
@@ -376,7 +432,7 @@ button.sync-offline:hover {
   padding: 0 15px;
   border-radius: var(--radius-small);
   background: var(--color-primary);
-  color: var(--color-text);
+  color: var(--color-text-on-primary);
   font-weight: 600;
   box-shadow: 0 8px 22px color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
@@ -425,15 +481,6 @@ button.sync-offline:hover {
 .icon-button.compact {
   width: 32px;
   height: 32px;
-}
-
-.user-menu {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--color-agent-user-soft);
-  color: var(--color-text);
-  font-weight: 600;
 }
 
 .mobile-panel-button,
@@ -497,7 +544,7 @@ button.sync-offline:hover {
 
 .topic-title-line h1 {
   margin: 0;
-  font-size: clamp(22px, 1.8vw, 28px);
+  font-size: clamp(18px, 1.4vw, 22px);
   font-weight: 650;
   letter-spacing: -0.03em;
 }
@@ -602,6 +649,12 @@ button.sync-offline:hover {
   box-shadow: var(--shadow-large);
 }
 
+.desktop-setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .desktop-setup-kicker {
   color: var(--color-positive);
   font-family: var(--font-mono);
@@ -613,7 +666,7 @@ button.sync-offline:hover {
 
 .desktop-setup h1 {
   margin: 12px 0 10px;
-  font-size: clamp(30px, 5vw, 48px);
+  font-size: clamp(24px, 3.5vw, 34px);
   letter-spacing: -0.045em;
 }
 
@@ -688,7 +741,7 @@ button.sync-offline:hover {
 
 .full-state h1 {
   margin: 16px 0 4px;
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .full-state p {
@@ -703,7 +756,8 @@ button.sync-offline:hover {
   gap: 10px;
 }
 
-.empty-workspace-grid {
+/* 工作区没有议题时的议题视图，以及架构视图/决策记录视图：都是「侧栏 + 单一全宽面板」两列布局 */
+.workspace-grid-full {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
 
@@ -718,7 +772,7 @@ button.sync-offline:hover {
 
 .empty-workspace h1 {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 20px;
 }
 
 .empty-workspace p {

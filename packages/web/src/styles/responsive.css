@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Operator Console 桌面布局与语义组件
+ * @input  依赖：Operator Console 桌面布局与语义组件，含架构视图看板与决策记录归档
  * @output 导出：平板、手机、低动态偏好的适配规则
  * @pos    保证 375px 至 1440px 无横向滚动和可访问交互
  *
@@ -125,6 +125,30 @@
     margin-right: 18px;
     margin-left: 70px;
   }
+
+  /* 决策记录：窄屏下列表与详情改为上下堆叠，避免详情区被压缩到无法阅读 */
+  .decision-records-view {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .decision-records-list {
+    flex: none;
+    max-height: 42vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border-strong);
+  }
+
+  .decision-records-detail {
+    flex: none;
+    overflow: visible;
+  }
+
+  .architecture-view-header,
+  .architecture-board {
+    padding-inline: 18px;
+  }
 }
 
 @media (max-width: 680px) {
@@ -167,8 +191,7 @@
   }
 
   .primary-button span,
-  .sync-state:not(.sync-offline),
-  .user-menu {
+  .sync-state:not(.sync-offline) {
     display: none;
   }
 
@@ -186,7 +209,7 @@
   }
 
   .topic-title-line h1 {
-    font-size: 20px;
+    font-size: 17px;
   }
 
   .topic-question {
@@ -228,7 +251,7 @@
   }
 
   .message-surface h2 {
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .composer {
@@ -257,6 +280,23 @@
 
   .publish-button span {
     display: none;
+  }
+
+  .architecture-view-header {
+    padding: 15px 13px 0;
+  }
+
+  .architecture-board {
+    padding: 14px 13px 18px;
+  }
+
+  .architecture-column {
+    flex-basis: 208px;
+  }
+
+  .decision-record-article,
+  .decision-records-skeleton {
+    padding: 18px 14px 28px;
   }
 }
 

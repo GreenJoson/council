@@ -1,12 +1,12 @@
 /**
- * @input  依赖：CouncilMessage 与参与者资料
+ * @input  依赖：CouncilMessage、参与者资料与引用回复回调
  * @output 导出：MessageCard 讨论时间线卡片
- * @pos    展示 Agent 公开方案、批评、回应和综合结论
+ * @pos    展示 Agent 公开方案、批评、回应和综合结论，并发起引用回复
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Bookmark, FileText, MoreHorizontal, Reply } from "lucide-react";
+import { FileText, Reply } from "lucide-react";
 import type { CouncilMessage, Participant } from "../types/council";
 import { AgentAvatar, messageKindLabels } from "./presentation";
 
@@ -14,9 +14,11 @@ export interface MessageCardProps {
   message: CouncilMessage;
   participant?: Participant;
   index: number;
+  /** 点击"引用回复"时把这条消息交给 Composer 生成引用草稿 */
+  onQuote: (message: CouncilMessage) => void;
 }
 
-export function MessageCard({ message, participant, index }: MessageCardProps) {
+export function MessageCard({ message, participant, index, onQuote }: MessageCardProps) {
   return (
     <article
       className={`message-card message-${message.kind}`}
@@ -32,14 +34,14 @@ export function MessageCard({ message, participant, index }: MessageCardProps) {
             <span>{message.createdLabel}</span>
           </div>
           <div className="message-actions">
-            <button className="icon-button compact" type="button" aria-label="回复消息">
+            <button
+              className="icon-button compact"
+              type="button"
+              aria-label="引用回复"
+              title="引用回复"
+              onClick={() => onQuote(message)}
+            >
               <Reply size={16} />
-            </button>
-            <button className="icon-button compact" type="button" aria-label="收藏消息">
-              <Bookmark size={16} />
-            </button>
-            <button className="icon-button compact" type="button" aria-label="更多消息操作">
-              <MoreHorizontal size={16} />
             </button>
           </div>
         </header>

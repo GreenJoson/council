@@ -1,15 +1,16 @@
 /**
  * @input  依赖：当前议题、参与者、同步/发布状态与消息回调
- * @output 导出：DiscussionPanel 中央讨论工作区
- * @pos    Operator Console 的主要阅读和回复区域
+ * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、引用回复发起）
+ * @pos    Operator Console 的主要阅读、元数据核查和回复区域
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { MoreHorizontal, Star, Users } from "lucide-react";
-import type { MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
+import { Check, Copy } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import { AgentAvatar, StatusBadge } from "./presentation";
-import { Composer } from "./Composer";
+import { Composer, type QuoteSeed } from "./Composer";
 import { MessageCard } from "./MessageCard";
 
 export interface DiscussionPanelProps {
@@ -20,6 +21,19 @@ export interface DiscussionPanelProps {
   onPublish: (kind: MessageKind, content: string) => Promise<boolean>;
 }
 
+type DiscussionTab = "discussion" | "metadata";
+
+const QUOTE_LINE_LIMIT = 88;
+
+/** 把消息首行截断为合理长度后组装成 Markdown 引用，供 Composer 续写 */
+function buildQuoteText(message: CouncilMessage, participants: Map<string, Participant>): string {
+  const authorName = participants.get(message.author)?.name ?? message.author;
+  const firstLine = message.content.split("\n")[0]?.trim() ?? "";
+  const truncated =
+    firstLine.length > QUOTE_LINE_LIMIT ? `${firstLine.slice(0, QUOTE_LINE_LIMIT)}…` : firstLine;
+  return `> ${authorName}：${truncated}\n\n`;
+}
+
 export function DiscussionPanel({
   topic,
   participants,
@@ -27,10 +41,48 @@ export function DiscussionPanel({
   isPublishing,
   onPublish,
 }: DiscussionPanelProps) {
+  const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
+  const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
+  const [isIdCopied, setIsIdCopied] = useState(false);
+  const quoteNonceRef = useRef(0);
+  const copyResetTimeoutRef = useRef<number | undefined>(undefined);
+
+  // 切换议题时回到"讨论" tab，避免带着上一个议题的元数据视图
+  useEffect(() => {
+    setActiveTab("discussion");
+  }, [topic.id]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const hiddenMessageCount = Math.max(
     0,
     (topic.messageTotal ?? topic.messages.length) - topic.messages.length,
   );
+  const owner = participants.get(topic.owner);
+
+  function handleQuote(message: CouncilMessage): void {
+    quoteNonceRef.current += 1;
+    setQuoteSeed({ text: buildQuoteText(message, participants), nonce: quoteNonceRef.current });
+  }
+
+  async function handleCopyId(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(topic.id);
+      setIsIdCopied(true);
+      if (copyResetTimeoutRef.current) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => setIsIdCopied(false), 1600);
+    } catch {
+      // 剪贴板权限缺失时静默失败，不打断操作员当前操作
+    }
+  }
 
   return (
     <main className="discussion-panel" id="main-content" tabIndex={-1}>
@@ -39,9 +91,6 @@ export function DiscussionPanel({
           <div>
             <div className="topic-title-line">
               <h1>{topic.title}</h1>
-              <button className="icon-button compact" type="button" aria-label="收藏议题">
-                <Star size={18} />
-              </button>
             </div>
             <div className="topic-metadata">
               <StatusBadge status={topic.status} />
@@ -54,56 +103,153 @@ export function DiscussionPanel({
             {topic.participants.map((agent) => (
               <AgentAvatar agent={agent} key={agent} size="small" />
             ))}
-            <button className="icon-button compact" type="button" aria-label="邀请参与者">
-              <Users size={17} />
-            </button>
-            <button className="icon-button compact" type="button" aria-label="更多议题操作">
-              <MoreHorizontal size={18} />
-            </button>
           </div>
         </div>
         <p className="topic-question">{topic.question}</p>
         <div className="topic-tabs" role="tablist" aria-label="议题视图">
-          <button className="active" type="button" role="tab" aria-selected="true">
+          <button
+            className={activeTab === "discussion" ? "active" : ""}
+            type="button"
+            role="tab"
+            id="discussion-tab"
+            aria-selected={activeTab === "discussion"}
+            aria-controls="discussion-tabpanel"
+            onClick={() => setActiveTab("discussion")}
+          >
             讨论
-          </button>
-          <button type="button" role="tab" aria-selected="false">
-            元数据
-          </button>
-          <button type="button" role="tab" aria-selected="false">
-            变更记录
             <span className="count-pill">{topic.messageTotal ?? topic.messages.length}</span>
+          </button>
+          <button
+            className={activeTab === "metadata" ? "active" : ""}
+            type="button"
+            role="tab"
+            id="metadata-tab"
+            aria-selected={activeTab === "metadata"}
+            aria-controls="metadata-tabpanel"
+            onClick={() => setActiveTab("metadata")}
+          >
+            元数据
           </button>
         </div>
       </header>
 
-      <section className="message-timeline" aria-label="共享讨论时间线">
-        {hiddenMessageCount > 0 ? (
-          <p className="history-notice">
-            当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
-          </p>
-        ) : null}
-        {topic.messages.length > 0 ? (
-          topic.messages.map((message, index) => (
-            <MessageCard
-              message={message}
-              participant={participants.get(message.author)}
-              index={index}
-              key={message.id}
-            />
-          ))
-        ) : (
-          <div className="empty-discussion">
-            <AgentAvatar agent="chair" />
-            <div>
-              <h2>议题已经准备好</h2>
-              <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
+      {activeTab === "discussion" ? (
+        <>
+          <section
+            className="message-timeline"
+            id="discussion-tabpanel"
+            role="tabpanel"
+            aria-labelledby="discussion-tab"
+            aria-label="共享讨论时间线"
+          >
+            {hiddenMessageCount > 0 ? (
+              <p className="history-notice">
+                当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
+              </p>
+            ) : null}
+            {topic.messages.length > 0 ? (
+              topic.messages.map((message, index) => (
+                <MessageCard
+                  message={message}
+                  participant={participants.get(message.author)}
+                  index={index}
+                  onQuote={handleQuote}
+                  key={message.id}
+                />
+              ))
+            ) : (
+              <div className="empty-discussion">
+                <AgentAvatar agent="chair" />
+                <div>
+                  <h2>议题已经准备好</h2>
+                  <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <Composer
+            isPublishing={isPublishing}
+            sync={sync}
+            onPublish={onPublish}
+            quoteSeed={quoteSeed}
+          />
+        </>
+      ) : (
+        <section
+          className="topic-metadata-panel"
+          id="metadata-tabpanel"
+          role="tabpanel"
+          aria-labelledby="metadata-tab"
+          aria-label="议题元数据"
+        >
+          <div className="metadata-field">
+            <span className="metadata-label">议题 ID</span>
+            <div className="metadata-id-row">
+              <code className="metadata-id-value">{topic.id}</code>
+              <button
+                className={`copy-id-button ${isIdCopied ? "is-copied" : ""}`}
+                type="button"
+                onClick={() => void handleCopyId()}
+              >
+                {isIdCopied ? <Check size={14} /> : <Copy size={14} />}
+                <span>{isIdCopied ? "已复制" : "复制"}</span>
+              </button>
             </div>
           </div>
-        )}
-      </section>
 
-      <Composer isPublishing={isPublishing} sync={sync} onPublish={onPublish} />
+          <div className="metadata-field">
+            <span className="metadata-label">完整问题描述</span>
+            <p className="metadata-question-full">{topic.question}</p>
+          </div>
+
+          <div className="metadata-field-row">
+            <div className="metadata-field">
+              <span className="metadata-label">创建时间</span>
+              <span className="metadata-value">{topic.createdLabel}</span>
+            </div>
+            <div className="metadata-field">
+              <span className="metadata-label">最近更新</span>
+              <span className="metadata-value">{topic.updatedLabel}</span>
+            </div>
+          </div>
+
+          <div className="metadata-field">
+            <span className="metadata-label">所有者</span>
+            <div className="metadata-people-row">
+              <span className="metadata-person">
+                <AgentAvatar agent={topic.owner} size="small" />
+                <span>{owner?.name ?? topic.owner}</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="metadata-field">
+            <span className="metadata-label">参与者</span>
+            <div className="metadata-people-row">
+              {topic.participants.map((agent) => (
+                <span className="metadata-person" key={agent}>
+                  <AgentAvatar agent={agent} size="small" />
+                  <span>{participants.get(agent)?.name ?? agent}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="metadata-field-row">
+            <div className="metadata-field">
+              <span className="metadata-label">已加载消息</span>
+              <span className="metadata-value metadata-value-mono">{topic.messages.length}</span>
+            </div>
+            <div className="metadata-field">
+              <span className="metadata-label">消息总数</span>
+              <span className="metadata-value metadata-value-mono">
+                {topic.messageTotal ?? topic.messages.length}
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
     </main>
   );
 }

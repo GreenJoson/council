@@ -7,6 +7,7 @@
  */
 
 import { Check, Database, FolderOpen, LoaderCircle } from "lucide-react";
+import { BrandLogo } from "./presentation";
 
 export interface DesktopSetupProps {
   hasLogLibrary: boolean;
@@ -28,7 +29,10 @@ export function DesktopSetup({
   return (
     <main className="desktop-setup">
       <div className="desktop-setup-card">
-        <span className="desktop-setup-kicker">Council Desktop</span>
+        <div className="desktop-setup-brand">
+          <BrandLogo size={40} />
+          <span className="desktop-setup-kicker">Council Desktop</span>
+        </div>
         <h1>把议事厅接到你的项目</h1>
         <p>日志库保存共享讨论，项目目录决定 Agent 检查哪一份代码。两者都只记录在本机。</p>
         <div className="desktop-setup-steps">

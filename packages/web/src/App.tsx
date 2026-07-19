@@ -1,7 +1,7 @@
 /**
- * @input  依赖：Council/Orchestration Repository、三栏组件和工作区领域模型
+ * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构视图/决策记录）和三栏组件
  * @output 导出：App Operator Console 根组件
- * @pos    协调内容与自动轮次的独立加载、选题、恢复和写操作状态
+ * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -16,17 +16,25 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ArchitectureView } from "./components/ArchitectureView";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
+import { DecisionRecordsView } from "./components/DecisionRecordsView";
 import { DesktopSetup } from "./components/DesktopSetup";
 import { DiscussionPanel } from "./components/DiscussionPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { InspectorPanel } from "./components/InspectorPanel";
-import { TopicSidebar } from "./components/TopicSidebar";
+import { TopicSidebar, type WorkspaceView } from "./components/TopicSidebar";
 import { createCouncilRepository } from "./data/create-repository";
 import { createOrchestrationRepository } from "./data/create-orchestration-repository";
 import type { DesktopSettings } from "./data/desktop-bridge";
 import { isNativeCouncilRepository } from "./data/native-repository";
-import { filterTopics } from "./data/selectors";
+import { filterTopics, type TopicStatusFilter } from "./data/selectors";
+import {
+  applyThemePreference,
+  resolveInitialPreference,
+  watchSystemTheme,
+  type ThemePreference,
+} from "./data/theme";
 import type {
   CreateTopicInput,
   MessageKind,
@@ -50,6 +58,17 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<TopicStatusFilter>("all");
+  const [activeView, setActiveView] = useState<WorkspaceView>("topics");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(resolveInitialPreference);
+
+  // 跟随系统时监听操作系统深浅色变化并实时重放到根节点
+  useEffect(() => {
+    if (themePreference !== "system") {
+      return;
+    }
+    return watchSystemTheme(() => applyThemePreference("system"));
+  }, [themePreference]);
   const [contentErrorMessage, setContentErrorMessage] = useState<string | null>(null);
   const [capabilitiesErrorMessage, setCapabilitiesErrorMessage] = useState<string | null>(null);
   const [runsErrorMessage, setRunsErrorMessage] = useState<string | null>(null);
@@ -238,11 +257,23 @@ export default function App() {
     return <LoadingState />;
   }
 
-  const visibleTopics = filterTopics(workspace.topics, searchQuery);
+  const visibleTopics = filterTopics(workspace.topics, searchQuery, statusFilter);
   const recoverableErrorMessage =
     capabilitiesErrorMessage ?? runsErrorMessage ?? contentErrorMessage;
 
-  async function handleDesktopSelection(action: "logs" | "project"): Promise<void> {
+  function handleCycleTheme(): void {
+    setThemePreference((current) => {
+      const next: ThemePreference =
+        current === "light" ? "dark" : current === "dark" ? "system" : "light";
+      applyThemePreference(next);
+      return next;
+    });
+  }
+
+  async function handleDesktopSelection(
+    action: "logs" | "project",
+    options?: { keepWorkspace?: boolean },
+  ): Promise<void> {
     if (!nativeRepository) {
       return;
     }
@@ -254,7 +285,9 @@ export default function App() {
         : await nativeRepository.chooseProject();
       if (settings) {
         setDesktopSettings(settings);
-        if (settings.logLibrary && settings.currentProjectPath) {
+        // keepWorkspace：新建议题对话框内浏览目录时不清空工作区，
+        // 避免对话框被卸载丢失草稿；工作区会因项目路径变化自动重载
+        if (!options?.keepWorkspace && settings.logLibrary && settings.currentProjectPath) {
           setWorkspace(null);
           setLoadAttempt((current) => current + 1);
         }
@@ -325,6 +358,12 @@ export default function App() {
     }
   }
 
+  /** 架构视图卡片、决策记录"在讨论中打开"和侧栏议题列表共用：切回议题视图并选中该议题 */
+  async function handleOpenTopic(topicId: string): Promise<void> {
+    setActiveView("topics");
+    await handleSelectTopic(topicId);
+  }
+
   async function handlePublish(kind: MessageKind, content: string): Promise<boolean> {
     setIsPublishing(true);
     setContentErrorMessage(null);
@@ -357,9 +396,21 @@ export default function App() {
     }
   }
 
-  async function handleCreateTopic(input: CreateTopicInput): Promise<boolean> {
+  async function handleCreateTopic(
+    input: CreateTopicInput,
+    targetProjectPath?: string,
+  ): Promise<boolean> {
     setIsCreating(true);
     try {
+      // 目标项目 ≠ 当前项目时，先切换项目再创建，保证议题写入所选项目
+      if (
+        nativeRepository
+        && targetProjectPath
+        && targetProjectPath !== desktopSettings?.currentProjectPath
+      ) {
+        const settings = await nativeRepository.selectRecentProject(targetProjectPath);
+        setDesktopSettings(settings);
+      }
       const snapshot = await repository.createTopic(input);
       const createdTopicId = snapshot.activeTopicId ?? snapshot.topics[0]?.id;
       if (createdTopicId) {
@@ -451,60 +502,9 @@ export default function App() {
     setIsInspectorOpen(false);
   };
 
-  if (!selectedTopic) {
-    return (
-      <div className="app-shell">
-        <HeaderBar
-          project={workspace.project}
-          sync={workspace.sync}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          onCreateTopic={() => setIsCreateDialogOpen(true)}
-          onRetrySync={handleRetrySync}
-          onOpenTopics={() => setIsTopicsOpen(true)}
-          onOpenInspector={() => setIsInspectorOpen(true)}
-          desktopSettings={desktopSettings ?? undefined}
-          onChooseProject={() => handleDesktopSelection("project")}
-          onChooseLogLibrary={() => handleDesktopSelection("logs")}
-          onSelectRecentProject={handleRecentProject}
-        />
-        <div className="workspace-grid empty-workspace-grid">
-          <TopicSidebar
-            topics={visibleTopics}
-            selectedTopicId=""
-            isOpen={isTopicsOpen}
-            onSelectTopic={(topicId) => void handleSelectTopic(topicId)}
-            onClose={() => setIsTopicsOpen(false)}
-          />
-          <main className="empty-workspace" id="main-content">
-            <h1>这个工作区还没有议题</h1>
-            <p>创建第一个架构议题，Agent 的回复将写回同一条共享时间线。</p>
-            <button className="primary-button" type="button" onClick={() => setIsCreateDialogOpen(true)}>
-              <Plus size={17} />
-              创建议题
-            </button>
-          </main>
-        </div>
-        <CreateTopicDialog
-          isOpen={isCreateDialogOpen}
-          isCreating={isCreating}
-          onClose={() => setIsCreateDialogOpen(false)}
-          onCreate={handleCreateTopic}
-        />
-        {recoverableErrorMessage ? (
-          <RecoverableError
-            message={recoverableErrorMessage}
-            onRetry={handleRetryError}
-            onClose={() => {
-              setContentErrorMessage(null);
-              setCapabilitiesErrorMessage(null);
-              setRunsErrorMessage(null);
-            }}
-          />
-        ) : null}
-      </div>
-    );
-  }
+  // 议题视图且工作区没有任何议题，或架构视图/决策记录视图（合并中右两栏为单一全宽面板）时，
+  // workspace-grid 都退化为「侧栏 + 单栏」两列布局，共用同一个修饰类
+  const showsSingleColumn = activeView !== "topics" || !selectedTopic;
 
   return (
     <div className="app-shell">
@@ -512,6 +512,8 @@ export default function App() {
         project={workspace.project}
         sync={workspace.sync}
         searchQuery={searchQuery}
+        themePreference={themePreference}
+        onCycleTheme={handleCycleTheme}
         onSearchChange={setSearchQuery}
         onCreateTopic={() => setIsCreateDialogOpen(true)}
         onRetrySync={handleRetrySync}
@@ -522,36 +524,67 @@ export default function App() {
         onChooseLogLibrary={() => handleDesktopSelection("logs")}
         onSelectRecentProject={handleRecentProject}
       />
-      <div className="workspace-grid">
+      <div className={`workspace-grid ${showsSingleColumn ? "workspace-grid-full" : ""}`}>
         <TopicSidebar
           topics={visibleTopics}
-          selectedTopicId={selectedTopic.id}
+          selectedTopicId={selectedTopic?.id ?? ""}
           isOpen={isTopicsOpen}
-          onSelectTopic={(topicId) => void handleSelectTopic(topicId)}
+          statusFilter={statusFilter}
+          activeView={activeView}
+          onSelectView={setActiveView}
+          onStatusFilterChange={setStatusFilter}
+          onSelectTopic={(topicId) => void handleOpenTopic(topicId)}
           onClose={() => setIsTopicsOpen(false)}
         />
-        <DiscussionPanel
-          topic={selectedTopic}
-          participants={participants}
-          sync={workspace.sync}
-          isPublishing={isPublishing}
-          onPublish={handlePublish}
-        />
-        <InspectorPanel
-          topic={selectedTopic}
-          participants={participants}
-          isAccepting={isAccepting}
-          isOpen={isInspectorOpen}
-          onAccept={handleAccept}
-          onClose={() => setIsInspectorOpen(false)}
-          orchestration={orchestration}
-          orchestrationBusyAction={orchestrationBusyAction}
-          onCreateAndStartRun={handleCreateAndStartRun}
-          onStartRun={(runId) => handleRunAction("start", runId)}
-          onApproveRun={handleApproveRun}
-          onCancelRun={(runId) => handleRunAction("cancel", runId)}
-          onRecoverRun={(runId) => handleRunAction("recover", runId)}
-        />
+        {activeView === "architecture" ? (
+          <ArchitectureView
+            projectName={workspace.project.name}
+            topics={workspace.topics}
+            onOpenTopic={(topicId) => void handleOpenTopic(topicId)}
+            onCreateTopic={() => setIsCreateDialogOpen(true)}
+          />
+        ) : activeView === "decisions" ? (
+          <DecisionRecordsView
+            topics={workspace.topics}
+            participants={participants}
+            onLoadDetail={(topicId) => repository.loadTopicDetail(topicId)}
+            onOpenTopic={(topicId) => void handleOpenTopic(topicId)}
+          />
+        ) : selectedTopic ? (
+          <>
+            <DiscussionPanel
+              topic={selectedTopic}
+              participants={participants}
+              sync={workspace.sync}
+              isPublishing={isPublishing}
+              onPublish={handlePublish}
+            />
+            <InspectorPanel
+              topic={selectedTopic}
+              participants={participants}
+              isAccepting={isAccepting}
+              isOpen={isInspectorOpen}
+              onAccept={handleAccept}
+              onClose={() => setIsInspectorOpen(false)}
+              orchestration={orchestration}
+              orchestrationBusyAction={orchestrationBusyAction}
+              onCreateAndStartRun={handleCreateAndStartRun}
+              onStartRun={(runId) => handleRunAction("start", runId)}
+              onApproveRun={handleApproveRun}
+              onCancelRun={(runId) => handleRunAction("cancel", runId)}
+              onRecoverRun={(runId) => handleRunAction("recover", runId)}
+            />
+          </>
+        ) : (
+          <main className="empty-workspace" id="main-content">
+            <h1>这个工作区还没有议题</h1>
+            <p>创建第一个架构议题，Agent 的回复将写回同一条共享时间线。</p>
+            <button className="primary-button" type="button" onClick={() => setIsCreateDialogOpen(true)}>
+              <Plus size={17} />
+              创建议题
+            </button>
+          </main>
+        )}
       </div>
       {(isTopicsOpen || isInspectorOpen) ? (
         <button
@@ -566,6 +599,11 @@ export default function App() {
         isCreating={isCreating}
         onClose={() => setIsCreateDialogOpen(false)}
         onCreate={handleCreateTopic}
+        desktopSettings={desktopSettings ?? undefined}
+        isBrowsingProject={desktopBusyAction === "project"}
+        onBrowseProject={nativeRepository
+          ? () => handleDesktopSelection("project", { keepWorkspace: true })
+          : undefined}
       />
       {recoverableErrorMessage ? (
         <RecoverableError

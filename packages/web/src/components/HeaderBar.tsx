@@ -1,5 +1,5 @@
 /**
- * @input  依赖：项目、同步状态、搜索与面板操作回调
+ * @input  依赖：项目、同步状态、主题、搜索与面板操作回调
  * @output 导出：HeaderBar 顶部命令栏
  * @pos    Operator Console 的全局导航和状态入口
  *
@@ -7,24 +7,57 @@
  */
 
 import {
-  Bell,
+  Check,
   ChevronDown,
   Database,
   FolderOpen,
   Menu,
+  Monitor,
+  Moon,
   PanelRight,
   Plus,
   Search,
   Sparkles,
+  Sun,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DesktopSettings } from "../data/desktop-bridge";
+import type { ThemePreference } from "../data/theme";
 import type { ProjectSummary, SyncState } from "../types/council";
+import { BrandLogo } from "./presentation";
+
+function pathBasename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+const themePreferenceLabels: Record<ThemePreference, string> = {
+  light: "日光模式",
+  dark: "暗黑模式",
+  system: "跟随系统",
+};
+
+const nextThemePreference: Record<ThemePreference, ThemePreference> = {
+  light: "dark",
+  dark: "system",
+  system: "light",
+};
+
+function ThemePreferenceIcon({ preference }: { preference: ThemePreference }) {
+  if (preference === "light") {
+    return <Sun size={18} />;
+  }
+  if (preference === "dark") {
+    return <Moon size={18} />;
+  }
+  return <Monitor size={18} />;
+}
 
 export interface HeaderBarProps {
   project: ProjectSummary;
   sync: SyncState;
   searchQuery: string;
+  themePreference: ThemePreference;
+  onCycleTheme: () => void;
   onSearchChange: (query: string) => void;
   onCreateTopic: () => void;
   onRetrySync: () => void;
@@ -40,6 +73,8 @@ export function HeaderBar({
   project,
   sync,
   searchQuery,
+  themePreference,
+  onCycleTheme,
   onSearchChange,
   onCreateTopic,
   onRetrySync,
@@ -51,6 +86,50 @@ export function HeaderBar({
   onSelectRecentProject,
 }: HeaderBarProps) {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
+  const projectShellRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // 菜单打开时：点击菜单外或按 Esc 关闭
+  useEffect(() => {
+    if (!isProjectMenuOpen) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!projectShellRef.current?.contains(event.target as Node)) {
+        setIsProjectMenuOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsProjectMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isProjectMenuOpen]);
+
+  // ⌘K / Ctrl+K 聚焦全局搜索
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const currentProjectPath = desktopSettings?.currentProjectPath ?? null;
+  const recentProjectPaths = (desktopSettings?.recentProjectPaths ?? []).filter(
+    (path) => path !== currentProjectPath,
+  );
+
   return (
     <header className="header-bar">
       <div className="brand-cluster">
@@ -63,42 +142,67 @@ export function HeaderBar({
           <Menu size={19} />
         </button>
         <a className="brand" href="#main-content" aria-label="Council 首页">
-          Council
+          <BrandLogo size={24} />
+          <span>Council</span>
         </a>
-        <div className="project-switcher-shell">
-          <button
-            className="project-switcher"
-            type="button"
-            aria-label="切换项目"
-            aria-expanded={desktopSettings ? isProjectMenuOpen : undefined}
-            onClick={() => {
-              if (desktopSettings) {
-                setIsProjectMenuOpen((current) => !current);
-              }
-            }}
-          >
-            <span className="project-mark" aria-hidden="true" />
-            <span>{project.name}</span>
-            <ChevronDown size={15} />
-          </button>
+        <div className="project-switcher-shell" ref={projectShellRef}>
+          {desktopSettings ? (
+            <button
+              className="project-switcher"
+              type="button"
+              aria-label="切换项目"
+              aria-haspopup="menu"
+              aria-expanded={isProjectMenuOpen}
+              title={currentProjectPath ?? project.name}
+              onClick={() => setIsProjectMenuOpen((current) => !current)}
+            >
+              <span className="project-mark" aria-hidden="true" />
+              <span>{project.name}</span>
+              <ChevronDown size={15} />
+            </button>
+          ) : (
+            <span className="project-switcher is-static" title={project.name}>
+              <span className="project-mark" aria-hidden="true" />
+              <span>{project.name}</span>
+            </span>
+          )}
           {desktopSettings && isProjectMenuOpen ? (
-            <div className="project-menu">
-              <div className="project-menu-label">最近项目</div>
-              {desktopSettings.recentProjectPaths.map((path) => (
-                <button
-                  type="button"
-                  key={path}
-                  title={path}
-                  onClick={() => {
-                    setIsProjectMenuOpen(false);
-                    void onSelectRecentProject?.(path);
-                  }}
-                >
-                  <FolderOpen size={15} />
-                  <span>{path.split(/[\\/]/).filter(Boolean).at(-1)}</span>
-                  {path === desktopSettings.currentProjectPath ? <small>当前</small> : null}
-                </button>
-              ))}
+            <div className="project-menu" role="menu">
+              {currentProjectPath ? (
+                <>
+                  <div className="project-menu-label">当前项目</div>
+                  <div className="project-menu-current">
+                    <FolderOpen size={15} />
+                    <span className="project-entry">
+                      <span className="project-entry-name">{pathBasename(currentProjectPath)}</span>
+                      <code className="project-entry-path">{currentProjectPath}</code>
+                    </span>
+                    <Check size={15} className="project-current-check" />
+                  </div>
+                </>
+              ) : null}
+              {recentProjectPaths.length > 0 ? (
+                <>
+                  <div className="project-menu-label">最近项目</div>
+                  {recentProjectPaths.map((path) => (
+                    <button
+                      type="button"
+                      key={path}
+                      title={path}
+                      onClick={() => {
+                        setIsProjectMenuOpen(false);
+                        void onSelectRecentProject?.(path);
+                      }}
+                    >
+                      <FolderOpen size={15} />
+                      <span className="project-entry">
+                        <span className="project-entry-name">{pathBasename(path)}</span>
+                        <code className="project-entry-path">{path}</code>
+                      </span>
+                    </button>
+                  ))}
+                </>
+              ) : null}
               <div className="project-menu-divider" />
               <button type="button" onClick={() => {
                 setIsProjectMenuOpen(false);
@@ -117,9 +221,10 @@ export function HeaderBar({
         <Search size={17} aria-hidden="true" />
         <span className="sr-only">搜索议题</span>
         <input
+          ref={searchInputRef}
           value={searchQuery}
           onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="搜索 topics、参与者或内容…"
+          placeholder="搜索议题标题或问题…"
         />
         <kbd>⌘ K</kbd>
       </label>
@@ -145,8 +250,18 @@ export function HeaderBar({
           <Plus size={17} />
           <span>新建议题</span>
         </button>
-        <button className="icon-button desktop-action" type="button" aria-label="通知">
-          <Bell size={18} />
+        <button
+          className="icon-button desktop-action"
+          type="button"
+          aria-label={`主题：${themePreferenceLabels[themePreference]}，点击切换为${
+            themePreferenceLabels[nextThemePreference[themePreference]]
+          }`}
+          title={`主题：${themePreferenceLabels[themePreference]}，点击切换为${
+            themePreferenceLabels[nextThemePreference[themePreference]]
+          }`}
+          onClick={onCycleTheme}
+        >
+          <ThemePreferenceIcon preference={themePreference} />
         </button>
         <button
           className="icon-button inspector-mobile-button"
@@ -155,9 +270,6 @@ export function HeaderBar({
           onClick={onOpenInspector}
         >
           <PanelRight size={18} />
-        </button>
-        <button className="user-menu" type="button" aria-label="打开用户菜单">
-          U
         </button>
       </div>
     </header>

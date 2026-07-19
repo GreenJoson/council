@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：议题、消息、编辑器、检查器和对话框细节样式
+ * @output 导出：议题、消息、编辑器、检查器、对话框、架构视图看板与决策记录归档细节样式
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -74,6 +74,32 @@
   color: var(--color-text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.topic-filter-chips {
+  display: flex;
+  gap: 6px;
+  padding: 0 4px 10px 10px;
+}
+
+.filter-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.filter-chip:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.filter-chip.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-text);
 }
 
 .topic-list {
@@ -178,25 +204,6 @@
   color: var(--color-positive);
 }
 
-.archive-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  min-height: 42px;
-  margin-top: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-  background: transparent;
-  color: var(--color-text-muted);
-}
-
-.archive-button:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-}
-
 .empty-topics,
 .empty-discussion {
   display: flex;
@@ -222,7 +229,7 @@
 
 .empty-discussion h2 {
   color: var(--color-text);
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .history-notice {
@@ -334,7 +341,7 @@
 }
 
 .message-header strong {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .message-header span {
@@ -393,7 +400,7 @@
 
 .message-surface h2 {
   margin: 10px 0 5px;
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 620;
   letter-spacing: -0.015em;
 }
@@ -402,7 +409,7 @@
   max-width: 76ch;
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.68;
 }
 
@@ -487,6 +494,12 @@
   white-space: nowrap;
 }
 
+.composer-hint {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .composer label {
   cursor: text;
 }
@@ -520,7 +533,7 @@
 
 .inspector-heading h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .summary-grid {
@@ -607,7 +620,7 @@
 
 .auto-rounds-heading h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .mini-sync {
@@ -1033,7 +1046,7 @@
 
 .decision-card h3 {
   margin: 12px 0 5px;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .decision-card p {
@@ -1106,7 +1119,7 @@
 
 .create-topic-dialog h2 {
   margin: 4px 0 0;
-  font-size: 21px;
+  font-size: 18px;
 }
 
 .create-topic-dialog label {
@@ -1121,7 +1134,8 @@
 }
 
 .create-topic-dialog input,
-.create-topic-dialog textarea {
+.create-topic-dialog textarea,
+.create-topic-dialog select {
   width: 100%;
   padding: 10px 12px;
   resize: vertical;
@@ -1132,8 +1146,15 @@
   color: var(--color-text);
 }
 
+.create-topic-dialog select {
+  min-height: 41px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .create-topic-dialog input:focus,
-.create-topic-dialog textarea:focus {
+.create-topic-dialog textarea:focus,
+.create-topic-dialog select:focus {
   border-color: var(--color-focus);
 }
 
@@ -1145,4 +1166,482 @@
 @keyframes message-enter {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================== */
+/* 议题元数据 tab：只展示 TopicDetail 已有数据，不发起新请求 */
+/* ============================== */
+
+.topic-metadata-panel {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  gap: 22px;
+  align-content: start;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 26px 24px 32px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.metadata-field {
+  display: grid;
+  gap: 7px;
+}
+
+.metadata-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.metadata-label {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.metadata-value {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.metadata-value-mono {
+  font-family: var(--font-mono);
+}
+
+.metadata-id-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.metadata-id-value {
+  padding: 7px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.copy-id-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  transition:
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.copy-id-button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.copy-id-button.is-copied {
+  border-color: var(--color-positive);
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+}
+
+.metadata-question-full {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.68;
+  white-space: pre-wrap;
+}
+
+.metadata-people-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.metadata-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+/* ============================== */
+/* 架构视图：五列看板，按 TopicStatus 分组展示议题摘要，只读不发起请求 */
+/* ============================== */
+
+.architecture-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-canvas) 96%, transparent);
+}
+
+.architecture-view-header {
+  flex: none;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.architecture-view-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 4px;
+  font-size: clamp(18px, 1.4vw, 22px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.architecture-view-header h1 svg {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.architecture-view-header p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.architecture-board {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 14px;
+  padding: 20px 24px 24px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.architecture-column {
+  display: flex;
+  flex: 0 0 232px;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--column-accent, var(--color-border-strong));
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.architecture-column-open {
+  --column-accent: var(--color-cyan);
+}
+
+.architecture-column-proposed {
+  --column-accent: var(--color-positive);
+}
+
+.architecture-column-discussing {
+  --column-accent: var(--color-primary);
+}
+
+.architecture-column-synthesis {
+  --column-accent: var(--color-violet);
+}
+
+.architecture-column-decided {
+  --column-accent: var(--color-positive);
+}
+
+.architecture-column-header {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.architecture-column-header h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.architecture-column-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--column-accent, var(--color-text-muted));
+}
+
+.architecture-column-body {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.architecture-column-body > [role="listitem"] {
+  min-width: 0;
+}
+
+.architecture-card {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.architecture-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hover);
+}
+
+.architecture-card-title {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.architecture-card-updated {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.architecture-column-empty {
+  margin: 0;
+  padding: 14px 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.architecture-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  align-content: center;
+  padding: 32px;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.architecture-empty svg {
+  color: var(--color-primary);
+}
+
+.architecture-empty h2 {
+  margin: 14px 0 6px;
+  color: var(--color-text);
+  font-size: 16px;
+}
+
+.architecture-empty p {
+  max-width: 420px;
+  margin: 0 0 18px;
+}
+
+/* ============================== */
+/* 决策记录：左列表右详情的 ADR 归档视图，详情按需懒加载 */
+/* ============================== */
+
+.decision-records-view {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-canvas) 96%, transparent);
+}
+
+.decision-records-list {
+  display: flex;
+  flex: 0 0 300px;
+  flex-direction: column;
+  min-height: 0;
+  padding: 18px 12px 14px;
+  border-right: 1px solid var(--color-border);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.decision-records-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 14px;
+}
+
+.decision-records-list-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.decision-records-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.decision-records-placeholder {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: 280px;
+  height: 100%;
+  padding: 32px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.decision-records-placeholder svg {
+  color: var(--color-primary);
+}
+
+.decision-records-placeholder p {
+  max-width: 320px;
+  margin: 0;
+}
+
+.decision-records-skeleton {
+  display: grid;
+  max-width: 680px;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 26px 24px;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-hover);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-line-title {
+  width: 45%;
+  height: 22px;
+}
+
+.skeleton-block {
+  height: 130px;
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-hover);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.decision-record-article {
+  display: grid;
+  max-width: 680px;
+  gap: 20px;
+  margin: 0 auto;
+  padding: 26px 24px 40px;
+}
+
+.decision-record-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.decision-record-header > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.decision-record-header h2 {
+  margin: 0;
+  font-size: clamp(18px, 1.4vw, 22px);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.decision-record-updated {
+  flex: none;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.decision-record-proposer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--color-positive) 30%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.decision-record-honest-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.decision-record-honest-notice svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+
+.decision-record-owner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.decision-record-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-divider);
 }

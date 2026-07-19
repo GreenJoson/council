@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "council-web-mock",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_COUNCIL_DATA_MODE=mock",
+        "npm",
+        "run",
+        "dev",
+        "--prefix",
+        "packages/web",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5173"
+      ],
+      "port": 5173
+    }
+  ]
+}

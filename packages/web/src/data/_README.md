@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `repository.ts` | 边界 | 定义列表加载、显式选题和写操作的数据访问接口 |
+| `repository.ts` | 边界 | 定义列表加载、显式选题、写操作和只读议题详情加载的数据访问接口 |
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
 | `orchestration-repository.ts` | 边界 | 定义独立自动轮次读取、创建、动作和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
@@ -15,19 +15,22 @@
 | `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
 | `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区 |
-| `http-repository.ts` | 真实 | 惰性读取当前详情，并按 SSE revision 串行校准工作区 |
+| `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，并提供不改状态的只读议题详情加载 |
 | `http-orchestration-repository.ts` | 真实 | 仅按 orchestration revision 校准当前议题运行列表 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据 |
-| `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步和决策接受 |
+| `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、决策接受和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
 | `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event 与目录选择器 |
-| `native-repository.ts` | 桌面 | 直接调用 Rust core 并用事件/轮询校准外部写入 |
+| `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，并提供不参与设置世代的只读议题详情加载 |
 | `unavailable-orchestration-repository.ts` | 能力边界 | Rust Runtime 未接通前明确禁用桌面自动轮次 |
-| `selectors.ts` | 查询 | 提供可测试的议题筛选逻辑 |
+| `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑，以及架构视图看板用的 topicStatusOrder/groupTopicsByStatus 按状态分组 |
+| `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。
 
 初始加载和实时刷新只读取 Topic 分页摘要及当前议题按配置页大小限制的最新消息，侧栏其他议题保持轻量 canonical `open/decided` 状态；显式选题成功后才替换详情。`messageTotal` 用于显示未加载历史数量。
+
+`loadTopicDetail(topicId)` 是三个实现共有的只读旁路：mock 直接深拷贝内部数据，http 与 native 复用既有的详情请求和 `mapApiTopicDetail` 映射，但都不写回 `#topics`/`#activeTopicId`/`#snapshot`，也不调用 `#publishSnapshot`/`#publish`，因此不会改变当前选中议题，也不会触发订阅者收到新快照；native 实现中该方法不做设置世代校验，因为它本身无状态、不缓存任何跨调用结果。
 
 SSE 只传总 revision；两个仓储收到事件后各自读取 `/api/v1/status` 分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在 `revisions.orchestration` 变化时读取当前议题 Runs，避免互相放大请求。事件前已经启动的读取不会消费该事件；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的 drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应 recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。
 

@@ -1,19 +1,44 @@
 /**
  * @input  依赖：Council Operator Console 视觉方向
- * @output 导出：颜色、字体、阴影、间距和层级语义变量
+ * @output 导出：颜色（深/浅双主题）、字体、阴影、间距和层级语义变量
  * @pos    WebUI 唯一视觉常量来源，组件禁止硬编码颜色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+/* ============================================================
+ * 跨主题共享 token（字体、圆角、尺寸、层级）
+ * ============================================================ */
 :root {
-  color-scheme: dark;
   font-family: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
   --font-body: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
   --font-mono: "JetBrains Mono Variable", "SFMono-Regular", monospace;
+
+  --radius-small: 7px;
+  --radius-medium: 11px;
+  --radius-large: 16px;
+  --header-height: 64px;
+  --sidebar-width: 296px;
+  --inspector-width: 340px;
+  --transition-fast: 160ms ease;
+  --transition-medium: 240ms ease;
+
+  --z-header: 30;
+  --z-scrim: 40;
+  --z-panel: 50;
+  --z-dialog: 60;
+  --z-toast: 70;
+}
+
+/* ============================================================
+ * 深色主题（data-theme="dark"，也是未标记时的回退值）
+ * ============================================================ */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
   --color-canvas: #07101c;
   --color-canvas-deep: #050b14;
@@ -30,6 +55,7 @@
   --color-text-secondary: #aab8ca;
   --color-text-muted: #74869b;
   --color-text-inverse: #06101b;
+  --color-text-on-primary: #ffffff;
 
   --color-primary: #2388ff;
   --color-primary-strong: #0b6ee5;
@@ -60,19 +86,58 @@
 
   --shadow-small: 0 10px 26px color-mix(in srgb, var(--color-overlay) 48%, transparent);
   --shadow-large: 0 28px 80px color-mix(in srgb, var(--color-overlay) 72%, transparent);
+}
 
-  --radius-small: 7px;
-  --radius-medium: 11px;
-  --radius-large: 16px;
-  --header-height: 64px;
-  --sidebar-width: 296px;
-  --inspector-width: 340px;
-  --transition-fast: 160ms ease;
-  --transition-medium: 240ms ease;
+/* ============================================================
+ * 浅色主题（data-theme="light"，桌面端默认）
+ * ============================================================ */
+:root[data-theme="light"] {
+  color-scheme: light;
 
-  --z-header: 30;
-  --z-scrim: 40;
-  --z-panel: 50;
-  --z-dialog: 60;
-  --z-toast: 70;
+  --color-canvas: #eef1f6;
+  --color-canvas-deep: #e6ebf3;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-hover: #eff3f9;
+  --color-surface-selected: #e1edfc;
+  --color-overlay: #16283f;
+  --color-border: #d5dce6;
+  --color-border-strong: #b7c2d1;
+  --color-divider: #e3e8f0;
+
+  --color-text: #1a2432;
+  --color-text-secondary: #46566a;
+  --color-text-muted: #6e7f93;
+  --color-text-inverse: #ffffff;
+  --color-text-on-primary: #ffffff;
+
+  --color-primary: #1769d6;
+  --color-primary-strong: #0f56b3;
+  --color-primary-soft: #dbe9fb;
+  --color-focus: #1e7ff2;
+
+  --color-positive: #178a55;
+  --color-positive-soft: #d7f2e4;
+  --color-warning: #a36a08;
+  --color-warning-soft: #fbecc9;
+  --color-danger: #ce3a45;
+  --color-danger-soft: #fbdfe1;
+  --color-violet: #6d4fe0;
+  --color-violet-soft: #e9e3fb;
+  --color-cyan: #0e93a6;
+  --color-cyan-soft: #d4f1f6;
+
+  --color-agent-claude: #0c8898;
+  --color-agent-claude-soft: #d2eef2;
+  --color-agent-codex: #9c6d05;
+  --color-agent-codex-soft: #f7e8c6;
+  --color-agent-user: #4c5d72;
+  --color-agent-user-soft: #e2e8f0;
+  --color-agent-chair: #2360c2;
+  --color-agent-chair-soft: #dce8fa;
+  --color-agent-other: #6f5590;
+  --color-agent-other-soft: #e9e1f4;
+
+  --shadow-small: 0 6px 18px color-mix(in srgb, var(--color-overlay) 10%, transparent);
+  --shadow-large: 0 22px 60px color-mix(in srgb, var(--color-overlay) 16%, transparent);
 }
