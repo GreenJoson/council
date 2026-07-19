@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council REST/SSE API、严格解析器与 Workspace 映射器
- * @output 导出：惰性详情、revision 解析与 HttpCouncilRepository
+ * @output 导出：惰性详情、revision 解析、只读议题详情加载与 HttpCouncilRepository
  * @pos    Operator Console 的 HTTP 写入和 REST/SSE 串行校准协调器
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -24,10 +24,11 @@ import {
 import type { CouncilRepository, WorkspaceListener } from "./repository";
 import { readProjectPathConfig } from "./project-path";
 import { parseCouncilStatusRevisions } from "./status-revisions";
-import { mapWorkspaceFromTopics } from "./workspace-mapper";
+import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
   CreateTopicInput,
   PublishMessageInput,
+  TopicDetail,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -233,6 +234,11 @@ export class HttpCouncilRepository implements CouncilRepository {
       parseApiDecision,
     );
     return this.#reloadAfterMutation(topicId);
+  }
+
+  async loadTopicDetail(topicId: string): Promise<TopicDetail> {
+    const detail = await this.#loadTopicDetail(topicId);
+    return mapApiTopicDetail(detail);
   }
 
   subscribe(listener: WorkspaceListener): () => void {

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
  * @output 导出：MockCouncilRepository 同构可交互数据实现
- * @pos    UI 原型阶段模拟选题、共享发布、议题创建和决策接受
+ * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受与只读议题详情加载
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -114,6 +114,11 @@ export class MockCouncilRepository implements CouncilRepository {
     topic.status = "decided";
     topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();
+  }
+
+  async loadTopicDetail(topicId: string): Promise<TopicDetail> {
+    await waitForMockOperation(this.#operationDelayMs);
+    return structuredClone(this.#findTopic(topicId));
   }
 
   subscribe(listener: WorkspaceListener): () => void {

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpCouncilRepository、HTTP 客户端和可控 Fetch/SSE 替身
- * @output 导出：HTTP 错误、真实写入和事件合并刷新测试
+ * @output 导出：HTTP 错误、真实写入、事件合并刷新与只读议题详情加载测试
  * @pos    Web 真实数据层的传输与实时同步回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -237,6 +237,51 @@ describe("HttpCouncilRepository", () => {
     expect(selected.topics[0]?.messageTotal).toBeUndefined();
     expect(selected.topics[1]?.messageTotal).toBe(0);
     expect(fixture.requests.at(-1)?.url.pathname).toBe("/api/v1/topics/topic-three");
+  });
+
+  it("只读加载议题详情，映射决策字段，且不改变当前选题或触发订阅", async () => {
+    const fixture = createApiFixture();
+    const repository = new HttpCouncilRepository({
+      ...HTTP_OPTIONS,
+      baseUrl: "https://example.com",
+      fetcher: fixture.fetcher,
+      eventStreamFactory: () => new FakeEventStream(),
+    });
+    const initial = await repository.loadWorkspace();
+    expect(initial.activeTopicId).toBe("topic-one");
+
+    const listener = vi.fn();
+    const unsubscribe = repository.subscribe(listener);
+    listener.mockClear();
+
+    const detail = await repository.loadTopicDetail("topic-one");
+    expect(detail.id).toBe("topic-one");
+    expect(detail.decision).toMatchObject({
+      title: "版本号校验",
+      summary: "使用版本号拒绝旧写入。",
+      status: "proposed",
+    });
+    expect(detail.alternatives[0]?.title).toBe("固定 TTL");
+    expect(listener).not.toHaveBeenCalled();
+
+    const afterRead = await repository.loadWorkspace();
+    expect(afterRead.activeTopicId).toBe("topic-one");
+    unsubscribe();
+  });
+
+  it("加载不存在议题的详情时向上传播 HTTP 错误", async () => {
+    const fixture = createApiFixture();
+    const repository = new HttpCouncilRepository({
+      ...HTTP_OPTIONS,
+      baseUrl: "https://example.com",
+      fetcher: fixture.fetcher,
+      eventStreamFactory: () => new FakeEventStream(),
+    });
+    await repository.loadWorkspace();
+
+    const error = await repository.loadTopicDetail("topic-missing").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CouncilApiError);
+    expect(error).toMatchObject({ message: "议题不存在", httpStatus: 404 });
   });
 
   it("通过真实 API 创建、发帖和接受当前拟议决策", async () => {

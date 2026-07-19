@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 假实现与 Rust 同形领域响应
- * @output 导出：NativeCouncilRepository 加载、映射和项目切换测试
+ * @output 导出：NativeCouncilRepository 加载、映射、项目切换与只读议题详情加载测试
  * @pos    桌面内容闭环不依赖真实 Tauri 窗口的回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -179,5 +179,82 @@ describe("NativeCouncilRepository", () => {
     await expect(staleLoad).rejects.toThrow("旧工作区加载结果已忽略");
     expect(currentSnapshot.project.name).toBe("project-beta");
     expect(currentSnapshot.topics[0]?.id).toBe(betaTopic.id);
+  });
+
+  it("只读加载议题详情，映射决策字段，且不改变当前选题或触发订阅", async () => {
+    const injected = bridge();
+    const repository = new NativeCouncilRepository({
+      bridge: injected,
+      topicPageSize: 100,
+      messagePageSize: 100,
+      recoveryDelayMs: 60_000,
+    });
+    await repository.getDesktopSettings();
+    const initial = await repository.loadWorkspace();
+    expect(initial.activeTopicId).toBe(TOPIC.id);
+
+    const listener = vi.fn();
+    const unsubscribe = repository.subscribe(listener);
+    listener.mockClear();
+
+    injected.getTopic = vi.fn(async () => ({
+      topic: TOPIC,
+      messages: [],
+      decisions: [
+        {
+          id: "decision_alpha",
+          topicId: TOPIC.id,
+          title: "结论",
+          decision: "采用",
+          rationale: "简单",
+          alternatives: ["备选方案"],
+          status: "accepted",
+          createdBy: "claude",
+          createdAt: TOPIC.updatedAt,
+          updatedAt: TOPIC.updatedAt,
+        },
+      ],
+      messageTotal: 0,
+      messageLimit: 100,
+      messageOffset: 0,
+      hasMoreMessages: false,
+    }));
+
+    const detail = await repository.loadTopicDetail(TOPIC.id);
+    expect(detail.id).toBe(TOPIC.id);
+    expect(detail.decision).toMatchObject({
+      title: "结论",
+      summary: "采用",
+      status: "accepted",
+    });
+    expect(detail.alternatives[0]?.title).toBe("备选方案");
+    expect(injected.getTopic).toHaveBeenCalledWith({
+      topicId: TOPIC.id,
+      messageLimit: 100,
+      messageOffset: 0,
+    });
+    expect(listener).not.toHaveBeenCalled();
+
+    const afterRead = await repository.loadWorkspace();
+    expect(afterRead.activeTopicId).toBe(TOPIC.id);
+    unsubscribe();
+  });
+
+  it("桥接命令失败时向上传播错误，不吞掉异常", async () => {
+    const injected = bridge();
+    const repository = new NativeCouncilRepository({
+      bridge: injected,
+      topicPageSize: 100,
+      messagePageSize: 100,
+      recoveryDelayMs: 60_000,
+    });
+    await repository.getDesktopSettings();
+    await repository.loadWorkspace();
+
+    injected.getTopic = vi.fn(async () => {
+      throw new Error("桥接调用失败");
+    });
+
+    await expect(repository.loadTopicDetail(TOPIC.id)).rejects.toThrow("桥接调用失败");
   });
 });

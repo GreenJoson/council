@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge、API 严格解析器和 Workspace mapper
- * @output 导出：NativeCouncilRepository 与桌面仓储类型守卫
+ * @output 导出：NativeCouncilRepository（含只读议题详情加载）与桌面仓储类型守卫
  * @pos    Tauri 模式下绕过 HTTP、直接读写 Rust council-core 的内容仓储
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,10 +23,11 @@ import {
 import { readProjectPathConfig } from "./project-path";
 import type { CouncilRepository, WorkspaceListener } from "./repository";
 import { parseCouncilStatusRevisions } from "./status-revisions";
-import { mapWorkspaceFromTopics } from "./workspace-mapper";
+import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
   CreateTopicInput,
   PublishMessageInput,
+  TopicDetail,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -176,6 +177,15 @@ export class NativeCouncilRepository implements CouncilRepository {
     this.#assertGeneration(generation);
     this.#activeTopicId = topicId;
     return this.loadWorkspace();
+  }
+
+  async loadTopicDetail(topicId: string): Promise<TopicDetail> {
+    const detail = parseApiTopicDetail(await this.#bridge.getTopic({
+      topicId,
+      messageLimit: this.#messagePageSize,
+      messageOffset: 0,
+    }));
+    return mapApiTopicDetail(detail);
   }
 
   subscribe(listener: WorkspaceListener): () => void {
