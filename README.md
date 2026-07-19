@@ -52,6 +52,10 @@ npm test
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 
+## WebUI 设计探索
+
+第一轮包含三种信息架构：深色工程控制台、浅色双栏协作台和编辑式决策档案库。设计稿与取舍见 [WebUI 设计方向](docs/designs/ui-directions.md)。
+
 ## 后续演进
 
 优先顺序建议：
