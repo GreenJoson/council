@@ -1,0 +1,76 @@
+/**
+ * @input  依赖：Council Operator Console 视觉方向
+ * @output 导出：颜色、字体、阴影、间距和层级语义变量
+ * @pos    WebUI 唯一视觉常量来源，组件禁止硬编码颜色
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+:root {
+  color-scheme: dark;
+  font-family: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  --font-body: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "SFMono-Regular", monospace;
+
+  --color-canvas: #07101c;
+  --color-canvas-deep: #050b14;
+  --color-surface: #0b1624;
+  --color-surface-raised: #101d2d;
+  --color-surface-hover: #14243a;
+  --color-surface-selected: #102a46;
+  --color-overlay: #030812;
+  --color-border: #213247;
+  --color-border-strong: #314760;
+  --color-divider: #17283b;
+
+  --color-text: #edf4ff;
+  --color-text-secondary: #aab8ca;
+  --color-text-muted: #74869b;
+  --color-text-inverse: #06101b;
+
+  --color-primary: #2388ff;
+  --color-primary-strong: #0b6ee5;
+  --color-primary-soft: #12365a;
+  --color-focus: #5cb3ff;
+
+  --color-positive: #55d79a;
+  --color-positive-soft: #123b30;
+  --color-warning: #ffbd58;
+  --color-warning-soft: #453015;
+  --color-danger: #ff7f82;
+  --color-danger-soft: #481f28;
+  --color-violet: #b59aff;
+  --color-violet-soft: #2d2650;
+  --color-cyan: #36d7e6;
+  --color-cyan-soft: #0d3d48;
+
+  --color-agent-claude: #32d5df;
+  --color-agent-claude-soft: #0b3942;
+  --color-agent-codex: #f7b43f;
+  --color-agent-codex-soft: #46310c;
+  --color-agent-user: #c4d0df;
+  --color-agent-user-soft: #2d3b4b;
+  --color-agent-chair: #7caeff;
+  --color-agent-chair-soft: #19375f;
+
+  --shadow-small: 0 10px 26px color-mix(in srgb, var(--color-overlay) 48%, transparent);
+  --shadow-large: 0 28px 80px color-mix(in srgb, var(--color-overlay) 72%, transparent);
+
+  --radius-small: 7px;
+  --radius-medium: 11px;
+  --radius-large: 16px;
+  --header-height: 64px;
+  --sidebar-width: 296px;
+  --inspector-width: 340px;
+  --transition-fast: 160ms ease;
+  --transition-medium: 240ms ease;
+
+  --z-header: 30;
+  --z-scrim: 40;
+  --z-panel: 50;
+  --z-dialog: 60;
+  --z-toast: 70;
+}

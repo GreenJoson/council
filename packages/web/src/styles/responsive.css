@@ -1,0 +1,261 @@
+/**
+ * @input  依赖：Operator Console 桌面布局与语义组件
+ * @output 导出：平板、手机、低动态偏好的适配规则
+ * @pos    保证 375px 至 1440px 无横向滚动和可访问交互
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+@media (max-width: 1260px) {
+  .header-bar {
+    grid-template-columns: minmax(350px, 1fr) minmax(280px, 430px) minmax(350px, 1fr);
+    gap: 14px;
+  }
+
+  .sync-state span {
+    display: none;
+  }
+
+  .workspace-grid {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  }
+
+  .inspector-mobile-button {
+    display: inline-grid;
+  }
+
+  .inspector-panel {
+    position: fixed;
+    top: var(--header-height);
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-panel);
+    width: min(var(--inspector-width), calc(100vw - 36px));
+    border-left: 1px solid var(--color-border-strong);
+    background: var(--color-canvas);
+    box-shadow: var(--shadow-large);
+    transform: translateX(102%);
+    transition: transform var(--transition-medium);
+  }
+
+  .inspector-panel.panel-open {
+    transform: translateX(0);
+  }
+
+  .inspector-heading .inspector-close {
+    display: inline-grid;
+  }
+
+  .panel-scrim {
+    position: fixed;
+    inset: var(--header-height) 0 0;
+    z-index: var(--z-scrim);
+    display: block;
+    border: 0;
+    background: color-mix(in srgb, var(--color-overlay) 72%, transparent);
+  }
+}
+
+@media (max-width: 920px) {
+  .header-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .project-switcher {
+    min-width: 0;
+    width: 42px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .project-switcher span:not(.project-mark),
+  .project-switcher svg,
+  .desktop-action {
+    display: none;
+  }
+
+  .global-search kbd {
+    display: none;
+  }
+
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-panel-button {
+    display: inline-grid;
+  }
+
+  .topic-sidebar {
+    position: fixed;
+    top: var(--header-height);
+    bottom: 0;
+    left: 0;
+    z-index: var(--z-panel);
+    width: min(var(--sidebar-width), calc(100vw - 36px));
+    border-right: 1px solid var(--color-border-strong);
+    background: var(--color-canvas);
+    box-shadow: var(--shadow-large);
+    transform: translateX(-102%);
+    transition: transform var(--transition-medium);
+  }
+
+  .topic-sidebar.panel-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-mobile-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    color: var(--color-text-secondary);
+    font-weight: 600;
+  }
+
+  .topic-header {
+    padding-inline: 18px;
+  }
+
+  .message-timeline {
+    padding-inline: 18px;
+  }
+
+  .composer {
+    margin-right: 18px;
+    margin-left: 70px;
+  }
+}
+
+@media (max-width: 680px) {
+  :root {
+    --header-height: 58px;
+  }
+
+  .header-bar {
+    gap: 8px;
+    padding-inline: 9px;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .brand-cluster,
+  .header-actions {
+    gap: 4px;
+  }
+
+  .global-search {
+    height: 38px;
+  }
+
+  .primary-button {
+    width: 40px;
+    padding: 0;
+  }
+
+  .primary-button span,
+  .sync-state,
+  .user-menu {
+    display: none;
+  }
+
+  .topic-header {
+    padding: 15px 13px 0;
+  }
+
+  .topic-heading-row {
+    align-items: flex-start;
+  }
+
+  .topic-participants .agent-avatar,
+  .topic-participants .icon-button:first-of-type {
+    display: none;
+  }
+
+  .topic-title-line h1 {
+    font-size: 20px;
+  }
+
+  .topic-question {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .topic-tabs {
+    gap: 16px;
+  }
+
+  .message-timeline {
+    padding: 16px 10px 12px;
+  }
+
+  .message-card {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .message-card:not(:last-child)::before {
+    left: 14px;
+  }
+
+  .agent-avatar-medium {
+    width: 30px;
+    height: 30px;
+    font-size: 8px;
+  }
+
+  .message-surface {
+    padding: 13px;
+  }
+
+  .message-actions {
+    display: none;
+  }
+
+  .message-surface h2 {
+    font-size: 15px;
+  }
+
+  .composer {
+    margin: 0 10px 10px;
+    padding: 10px;
+  }
+
+  .composer-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .shared-notice {
+    white-space: normal;
+  }
+
+  .composer-toolbar {
+    align-items: flex-end;
+  }
+
+  .publish-button {
+    min-width: 46px;
+    width: 46px;
+    padding: 0;
+  }
+
+  .publish-button span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

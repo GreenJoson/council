@@ -8,6 +8,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 - [首次使用](#首次使用)
 - [模式一：两个桌面手动接力](#模式一两个桌面手动接力)
 - [模式二：Codex 自动调用 Claude](#模式二codex-自动调用-claude)
+- [查看 WebUI 原型](#查看-webui-原型)
 - [继续已有议题](#继续已有议题)
 - [常用提示词](#常用提示词)
 - [议题和决策规则](#议题和决策规则)
@@ -102,6 +103,19 @@ Council 会按以下顺序执行：
 5. Codex 综合结果并记录候选决策。
 
 后台 Claude 默认以规划权限运行。架构讨论本身不应直接修改项目代码。
+
+## 查看 WebUI 原型
+
+首次安装并启动：
+
+```bash
+npm run install:web
+npm run dev:web
+```
+
+浏览器打开终端输出的本地地址。当前原型可以搜索和切换议题、发布消息、创建议题及确认决策，所有数据来自内存中的 mock repository，刷新后会恢复示例数据。
+
+当前页面上的“自动同步”表示前端订阅接口已经就位，不代表已经连通 Claude、Codex 或 SQLite。后续接入本地 API 后，只要任一 Agent 把回复发布到同一 topic，WebUI 就能自动更新，不需要你再复制粘贴；如果没有开启自动编排，你仍需在另一个客户端发一句“继续这个 topic”来唤醒它。
 
 ## 继续已有议题
 
@@ -201,4 +215,3 @@ claude auth login
 ### Claude 回答与议题无关
 
 让 Council 重置该 topic 的 Claude 顾问 session，然后用完整问题、约束和项目路径重新询问。重置 session 不会删除既有议题、消息和决策。
-

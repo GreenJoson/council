@@ -5,4 +5,4 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `mcp-server/` | 核心 | 提供共享讨论存储、MCP 工具和 Agent 适配器 |
-
+| `web/` | 前端 | 提供 Operator Console 三栏 WebUI 原型 |

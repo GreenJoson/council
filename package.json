@@ -5,8 +5,10 @@
   "description": "Local multi-agent architecture discussion workspace",
   "scripts": {
     "install:mcp": "npm install --prefix packages/mcp-server",
-    "build": "npm run build --prefix packages/mcp-server",
-    "check": "npm run check --prefix packages/mcp-server",
-    "test": "npm test --prefix packages/mcp-server"
+    "install:web": "npm install --prefix packages/web",
+    "dev:web": "npm run dev --prefix packages/web",
+    "build": "npm run build --prefix packages/mcp-server && npm run build --prefix packages/web",
+    "check": "npm run check --prefix packages/mcp-server && npm run check --prefix packages/web",
+    "test": "npm test --prefix packages/mcp-server && npm test --prefix packages/web"
   }
 }
