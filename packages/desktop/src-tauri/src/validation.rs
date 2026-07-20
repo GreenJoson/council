@@ -95,7 +95,11 @@ pub fn loopback_http_base_url(value: &str) -> Result<LoopbackEndpoint, String> {
         let port_text = if remainder.is_empty() {
             None
         } else {
-            Some(remainder.strip_prefix(':').ok_or_else(|| FORMAT_HINT.to_string())?)
+            Some(
+                remainder
+                    .strip_prefix(':')
+                    .ok_or_else(|| FORMAT_HINT.to_string())?,
+            )
         };
         (host, port_text)
     } else if let Some((host, port_text)) = rest.rsplit_once(':') {
@@ -115,7 +119,9 @@ pub fn loopback_http_base_url(value: &str) -> Result<LoopbackEndpoint, String> {
         None => DEFAULT_HTTP_PORT,
     };
     if !is_loopback_host(host) {
-        return Err("编排服务地址只允许 loopback 主机（localhost、127.0.0.0/8 或 [::1]）".to_string());
+        return Err(
+            "编排服务地址只允许 loopback 主机（localhost、127.0.0.0/8 或 [::1]）".to_string(),
+        );
     }
     Ok(LoopbackEndpoint {
         host: host.to_string(),
@@ -140,7 +146,9 @@ pub fn string_list(
 
 #[cfg(test)]
 mod tests {
-    use super::{identifier, loopback_http_base_url, non_blank, page, string_list, LoopbackEndpoint};
+    use super::{
+        LoopbackEndpoint, identifier, loopback_http_base_url, non_blank, page, string_list,
+    };
 
     #[test]
     fn validates_protocol_identifiers_and_text_boundaries() {
@@ -158,19 +166,31 @@ mod tests {
     fn accepts_loopback_http_base_urls() {
         assert_eq!(
             loopback_http_base_url("http://127.0.0.1:4317"),
-            Ok(LoopbackEndpoint { host: "127.0.0.1".into(), port: 4317 })
+            Ok(LoopbackEndpoint {
+                host: "127.0.0.1".into(),
+                port: 4317
+            })
         );
         assert_eq!(
             loopback_http_base_url(" http://localhost:8080/ "),
-            Ok(LoopbackEndpoint { host: "localhost".into(), port: 8080 })
+            Ok(LoopbackEndpoint {
+                host: "localhost".into(),
+                port: 8080
+            })
         );
         assert_eq!(
             loopback_http_base_url("http://[::1]:4317"),
-            Ok(LoopbackEndpoint { host: "::1".into(), port: 4317 })
+            Ok(LoopbackEndpoint {
+                host: "::1".into(),
+                port: 4317
+            })
         );
         assert_eq!(
             loopback_http_base_url("http://127.0.0.1"),
-            Ok(LoopbackEndpoint { host: "127.0.0.1".into(), port: 80 })
+            Ok(LoopbackEndpoint {
+                host: "127.0.0.1".into(),
+                port: 80
+            })
         );
     }
 

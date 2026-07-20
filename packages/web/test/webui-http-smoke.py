@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE 共享与 Claude 自动轮次的端到端验收
+@output 导出：项目隔离、REST/SSE 共享、多适配器能力与 Claude 自动轮次验收
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -72,8 +72,11 @@ with sync_playwright() as playwright:
     assert capabilities["adapters"][0]["id"] == "claude"
     assert capabilities["adapters"][0]["available"] is True
     capability_ledger = page.get_by_label("Agent 主动调用能力")
-    capability_ledger.get_by_text("Claude Code", exact=True).wait_for()
-    capability_ledger.get_by_text("可由 Web 主动调用", exact=True).wait_for()
+    claude_capability = capability_ledger.locator(
+        ".adapter-ledger-row", has_text="Claude Code"
+    )
+    claude_capability.get_by_text("Claude Code", exact=True).wait_for()
+    claude_capability.get_by_text("可由 Web 主动调用", exact=True).wait_for()
     page.get_by_placeholder(
         "例如：先给出可回滚的最小架构方案，并列出失败条件。"
     ).fill("真实编排 E2E：请给出可回滚的最小方案。")

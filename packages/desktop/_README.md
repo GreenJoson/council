@@ -10,4 +10,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是复用 Node 编排服务（与桌面共享同一 SQLite 库文件）：编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令；服务离线时面板显示可执行指引并自动重试接入。
 
-当前桌面发行版本为 `0.2.1`；`package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json` 必须同步递增。
+当前桌面发行版本为 `0.3.1`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本修复 `@codex` 长过程事件流被误判为最终正文超限的问题，保留最终正文独立上限，并让长上下文任务获得 10 分钟默认执行窗口。

@@ -15,8 +15,9 @@ Claude Desktop ──┘                │
 浏览器 ───────────── Operator Console ── REST/SSE ─┘
 
 Council.app ───────── React UI ── Tauri IPC ── Rust council-core ── SQLite
+        └──────────── 本地 REST/SSE ── ExecutionManager ── Claude/Codex CLI
 
-Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
+Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
                                       │
                                       └── SQLiteCouncilStore / lease fencing
 
@@ -24,7 +25,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 ```
 
 - `skills/council/`：Agent 触发规则、协作流程和讨论协议。
-- `packages/mcp-server/`：MCP、版本化本地 API、SSE、SQLite 和后台 Claude 适配器。
+- `packages/mcp-server/`：MCP、版本化本地 API、SSE、SQLite 和 Claude/Codex 后台适配器。
 - `packages/web/`：方案 A 的 React Operator Console，支持显式 `mock` 或真实 `http` 数据模式。
 - `packages/desktop/`：Tauri 2 桌面壳、本机日志库设置、原生项目切换和 Rust IPC。
 - `crates/council-core/`：与现有 TypeScript schema 同构的 Rust SQLite 内容核心。
@@ -41,9 +42,9 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 明确隔离私有聊天历史，只共享主动发布的公开结论与证据。
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
-- Operator Console 可创建、启动、批准、取消和恢复 Claude 自动轮次。
+- Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
-- Claude 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
+- 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
 - 提供无需手动启动 Web/API 服务的桌面模式；桌面端直接通过 Rust 读取共享 SQLite。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
 - 桌面端使用独立的多 Agent 圆桌图标，并生成各平台所需的打包尺寸。
@@ -73,7 +74,7 @@ API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 使用同一目录；Web
 
 Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP 配置应调用 MCP 构建产物，并通过环境变量注入数据目录和运行参数。
 
-桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。桌面内容读写不依赖本地 HTTP 服务。首次启动时选择日志库和项目目录；MCP 客户端的 `COUNCIL_DATA_DIR` 必须指向同一日志库，才能继续共享议题。
+桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。桌面内容读写不依赖本地 HTTP 服务，`@claude` / `@codex` 直召和自动轮次则通过可自动托管的本地 Agent 服务。首次启动时选择日志库和项目目录；MCP 客户端与本地服务的 `COUNCIL_DATA_DIR` 必须指向同一日志库。
 
 ## 使用方式
 
@@ -85,7 +86,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 > 使用 `$council` 读取 topic `<topic-id>`，检查项目代码，审查方案并把 critique 发布回去。
 
-自动调用后台 Claude 前，需要先完成 Claude Code CLI 登录。手动双桌面接力不依赖 CLI 登录。Web 能主动调用 Claude；Codex App 当前没有经过验证的后台唤醒接口，仍通过 Council MCP 参与和自动传播公开回帖。
+自动调用后台 Agent 前，需要先完成对应 Claude Code CLI 或 Codex CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 
@@ -93,14 +94,13 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 第一轮包含三种信息架构。当前已选择方案 A，并完成深色 Operator Console、真实 REST/SSE 数据层及 Tauri 桌面适配；设计稿、实现截图与取舍见 [WebUI 设计方向](docs/designs/ui-directions.md)。
 
-当前边界：消息自动传播与后台 Claude 自动触发是两个独立能力。浏览器 HTTP 模式已有 Claude 自动轮次；桌面 V1 先提供共享内容读写和项目切换，自动轮次明确显示不可用。Codex 没有经过验证的后台适配器；系统不会伪装成已经唤醒 Codex，也不会把模型输出自动标记为 `accepted`。
+当前边界：消息传播与后台 Agent 触发仍是两个独立能力。只有在 Composer 中明确写 `@claude` 或 `@codex`，或在自动轮次面板创建运行，系统才会调用对应 CLI；普通消息只写入共享议题。Agent 回复不会自动标记为 `accepted`。
 
 ## 后续演进
 
 优先顺序建议：
 
-1. 把受控 Claude Runtime 迁到 Rust 桌面服务层，恢复桌面自动轮次。
-2. 在没有可靠 Codex 后台适配器前，以人工门承接 Codex 轮次。
-3. 将最终决策导出为项目 ADR。
-4. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
-5. 如果未来出现稳定的 Codex 外部触发接口，再实现真实适配器和对应取消语义。
+1. 将最终决策导出为项目 ADR。
+2. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
+3. 为本地 Agent 服务增加桌面内可视化配置和诊断日志入口。
+4. 在保持只读沙箱与恢复语义的前提下，评估 Agent session 续接。

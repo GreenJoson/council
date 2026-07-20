@@ -1,6 +1,6 @@
 /**
- * @input  依赖：子进程命令、stdin 输入、定时与输出上限配置和调用方文案
- * @output 导出：有界运行子进程、进程树逐级终止与 CLI 选项规范化工具
+ * @input  依赖：子进程命令、stdin、定时、输出上限与 stdout 溢出策略
+ * @output 导出：有界运行、首尾截断、进程树终止与 CLI 选项规范化工具
  * @pos    Claude 与 Codex 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -39,6 +39,11 @@ export interface BoundedProcessOptions {
   timeoutMs: number;
   killGraceMs: number;
   maxOutputChars: number;
+  /**
+   * stop：stdout 超限即终止子进程；truncate：持续排空 stdout，只保留首尾窗口。
+   * CLI 的 JSONL 事件流可远大于最终正文时使用 truncate，最终正文仍须在上层单独限长。
+   */
+  stdoutOverflow?: "stop" | "truncate";
   messages: BoundedProcessMessages;
 }
 
@@ -46,6 +51,19 @@ export const IS_POSIX = process.platform !== "win32";
 export const MAX_NODE_TIMER_MS = 2_147_483_647;
 export const MAX_RUNTIME_OPTION_CHARS = 200;
 const PROCESS_POLL_INTERVAL_MS = 10;
+
+function appendTruncatedOutput(current: string, chunk: string, maximum: number): string {
+  const combined = current + chunk;
+  if (combined.length <= maximum) {
+    return combined;
+  }
+  const separator = "\n";
+  const available = Math.max(0, maximum - separator.length);
+  const headLength = Math.floor(available / 2);
+  const tailLength = available - headLength;
+  const tail = tailLength === 0 ? "" : combined.slice(-tailLength);
+  return combined.slice(0, headLength) + separator + tail;
+}
 
 export function makeAbortError(message: string): Error {
   const error = new Error(message);
@@ -218,7 +236,7 @@ async function terminateAndWait(
 }
 
 /**
- * 有界运行一个 CLI 子进程：prompt 走 stdin，stdout 限长、stderr 滚动截断，
+ * 有界运行一个 CLI 子进程：prompt 走 stdin，stdout 按策略停止或截断、stderr 滚动截断，
  * 支持超时、AbortSignal 与 POSIX 进程组 SIGTERM→SIGKILL 逐级终止。
  */
 export async function runBoundedProcess(options: BoundedProcessOptions): Promise<ProcessResult> {
@@ -257,6 +275,10 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
+    if (options.stdoutOverflow === "truncate") {
+      stdout = appendTruncatedOutput(stdout, chunk, options.maxOutputChars);
+      return;
+    }
     if (stdout.length > options.maxOutputChars) {
       return;
     }

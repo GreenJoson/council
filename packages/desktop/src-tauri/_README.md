@@ -6,7 +6,7 @@
 |---|---|---|
 | `Cargo.toml` | 依赖清单 | 固定 Rust、Tauri 与原生插件依赖 |
 | `build.rs` | 构建入口 | 生成 Tauri 资源和权限元数据 |
-| `tauri.conf.json` | 应用配置 | 窗口、CSP、React 构建、版本和显式桌面图标设置 |
+| `tauri.conf.json` | 应用配置 | 窗口、CSP、React 构建、版本、图标与 macOS 本地 ad-hoc 整包签名设置 |
 | `capabilities/default.json` | 权限边界 | 主窗口可使用的最小原生能力 |
 | `icons/` | 品牌资源 | 多 Agent 圆桌主题的 Council 图标源图与各平台打包尺寸 |
 | `src/lib.rs` | IPC 入口 | 注册桌面设置、持久 SQLite 连接、内容与 revision 事件命令，以及本地 Agent 服务配置/健康/拉起命令和退出清理 |

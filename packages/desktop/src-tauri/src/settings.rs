@@ -265,8 +265,14 @@ mod tests {
             .orchestration_autostart
             .expect("autostart configured");
         assert_eq!(autostart.command, "npm");
-        assert_eq!(autostart.args, vec!["run".to_string(), "start:http".to_string()]);
-        assert_eq!(autostart.cwd.as_deref(), Some(std::path::Path::new("/path/to/service")));
+        assert_eq!(
+            autostart.args,
+            vec!["run".to_string(), "start:http".to_string()]
+        );
+        assert_eq!(
+            autostart.cwd.as_deref(),
+            Some(std::path::Path::new("/path/to/service"))
+        );
         assert_eq!(
             autostart.env.get("COUNCIL_HTTP_PORT").map(String::as_str),
             Some("14317")
@@ -275,7 +281,10 @@ mod tests {
         // 写回其他设置后编排配置必须原样保留。
         store.configure_log_library(logs).expect("configure logs");
         let reopened = SettingsStore::open(root.path()).expect("reopen settings");
-        assert_eq!(reopened.snapshot().orchestration_base_url, "http://127.0.0.1:14317");
+        assert_eq!(
+            reopened.snapshot().orchestration_base_url,
+            "http://127.0.0.1:14317"
+        );
         assert!(reopened.snapshot().orchestration_autostart.is_some());
     }
 

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 CodexRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、GFM 排版要求、历史裁剪和 V1 无 session 测试
+ * @output 导出：可信 prompt、历史裁剪、V1 无 session 与失败重试分类测试
  * @pos    Codex Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,7 @@ import test from "node:test";
 import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
 import {
   CodexRuntime,
+  CodexRuntimeError,
   type CodexRuntimeInput,
 } from "../src/codex-runtime.js";
 import { CodexAgentAdapter } from "../src/orchestration/codex-agent-adapter.js";
@@ -22,6 +23,14 @@ class FakeRuntime {
   async generate(input: CodexRuntimeInput): Promise<{ content: string }> {
     this.calls.push(input);
     return { content: "公开回复" };
+  }
+}
+
+class FailingRuntime {
+  constructor(private readonly error: Error) {}
+
+  async generate(_input: CodexRuntimeInput): Promise<never> {
+    throw this.error;
   }
 }
 
@@ -107,4 +116,42 @@ test("可信议题和当前 instruction 自身超限时拒绝调用运行时", a
       error instanceof AgentInvocationError && /可信议题与本轮指令超过/.test(error.message),
   );
   assert.equal(runtime.calls.length, 0);
+});
+
+test("临时 Codex 运行时失败允许用户恢复", async () => {
+  const runtime = new FailingRuntime(
+    new CodexRuntimeError("脱敏临时失败", true, "transient_exit_1"),
+  );
+  const adapter = new CodexAgentAdapter(runtime as unknown as CodexRuntime, {
+    maxContextChars: 10_000,
+  });
+
+  await assert.rejects(
+    adapter.invoke(invocation(path.resolve(".")), {
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof AgentInvocationError &&
+      error.retryable &&
+      /暂时失败/.test(error.message),
+  );
+});
+
+test("Codex 登录等确定性失败不消耗恢复重试", async () => {
+  const runtime = new FailingRuntime(
+    new CodexRuntimeError("脱敏登录失败", false, "authentication_failed"),
+  );
+  const adapter = new CodexAgentAdapter(runtime as unknown as CodexRuntime, {
+    maxContextChars: 10_000,
+  });
+
+  await assert.rejects(
+    adapter.invoke(invocation(path.resolve(".")), {
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) =>
+      error instanceof AgentInvocationError &&
+      !error.retryable &&
+      /调用失败/.test(error.message),
+  );
 });

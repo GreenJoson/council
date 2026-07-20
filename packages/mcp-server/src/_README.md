@@ -11,11 +11,11 @@
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
-| `process-utils.ts` | 安全基础 | 提供有界子进程运行、进程树逐级终止与 CLI 选项规范化 |
+| `process-utils.ts` | 安全基础 | 提供有界子进程运行、stdout 停止/首尾截断策略、进程树终止与 CLI 选项规范化 |
 | `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code 子进程，不接触数据库 |
-| `codex-runtime.ts` | 核心 | 纯生成、强制只读沙箱地管理 Codex 子进程，不接触数据库 |
+| `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；过程 JSONL 有界截断，最终正文独立限长并输出安全诊断码 |
 | `claude-client.ts` | 适配 | 组装公开上下文、恢复 session，并在成功后写入共享数据库 |
-| `config.ts` | 配置 | 集中校验运行参数、只规划权限/只读沙箱、保留参数和定时器上限 |
+| `config.ts` | 配置 | 集中校验运行参数、只规划权限/只读沙箱、保留参数和定时器上限；Codex 默认容纳长上下文任务 |
 | `constants.ts` | 常量 | 定义协议枚举和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |

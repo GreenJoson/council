@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Codex CLI、AbortController 与纯 CodexRuntime
- * @output 导出：只读沙箱、resume、正文回退、取消、超时和安全错误边界测试
+ * @output 导出：只读沙箱、JSONL 截断、正文限长、取消、超时和错误分类测试
  * @pos    Codex 无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { CodexRuntime } from "../src/codex-runtime.js";
+import { CodexRuntime, CodexRuntimeError } from "../src/codex-runtime.js";
 import type { CouncilConfig } from "../src/types.js";
 
 // 假 CLI 复刻实测（codex-cli 0.144.6）行为：--json 输出 thread.started /
@@ -73,15 +73,27 @@ if (mode === "hang") {
     const cd = cdIndex >= 0 ? args[cdIndex + 1] : "no-cd";
     const skipGit = args.includes("--skip-git-repo-check") ? "skip-git" : "no-skip-git";
     const text = [input, sandbox, cd, skipGit, resumed, model].join(";");
+    const finalText = mode === "oversized-final" ? "x".repeat(2_000) : text;
+    if (mode === "verbose-json") {
+      process.stdout.write(JSON.stringify({
+        type: "thread.started",
+        thread_id: "codex_runtime_session",
+      }) + "\\n");
+      const noisyEvents = Array.from({ length: 30 }, (_, index) => ({
+        type: "item.completed",
+        item: { id: "tool_" + String(index), type: "command_execution", output: "z".repeat(200) },
+      }));
+      process.stdout.write(noisyEvents.map(event => JSON.stringify(event)).join("\\n") + "\\n");
+    }
     const events = [
       { type: "thread.started", thread_id: "codex_runtime_session" },
       { type: "turn.started" },
-      { type: "item.completed", item: { id: "item_0", type: "agent_message", text } },
+      { type: "item.completed", item: { id: "item_0", type: "agent_message", text: finalText } },
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
     ];
     process.stdout.write(events.map(event => JSON.stringify(event)).join("\\n") + "\\n");
     if (outFile && mode !== "no-last-file") {
-      writeFileSync(outFile, mode === "file-differs" ? "FILE_CONTENT" : text);
+      writeFileSync(outFile, mode === "file-differs" ? "FILE_CONTENT" : finalText);
     }
   });
 }
@@ -212,6 +224,46 @@ test("CodexRuntime 正文文件缺失时回退解析 JSONL agent_message", async
   }
 });
 
+test("CodexRuntime 大型 JSONL 事件流只截断传输窗口，不终止最终回复", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-verbose-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new CodexRuntime(
+      createConfig(directory, fakeCodexPath, "verbose-json", { maxOutputChars: 512 }),
+    );
+    const response = await runtime.generate({ prompt: "public prompt", cwd: directory });
+    assert.equal(
+      response.content,
+      `public prompt;read-only;${directory};skip-git;none;none`,
+    );
+    assert.equal(response.sessionId, "codex_runtime_session");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntime 仍拒绝超过配置上限的最终正文", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-final-limit-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new CodexRuntime(
+      createConfig(directory, fakeCodexPath, "oversized-final", { maxOutputChars: 512 }),
+    );
+    await assert.rejects(
+      runtime.generate({ prompt: "public prompt", cwd: directory }),
+      (error: unknown) =>
+        error instanceof CodexRuntimeError &&
+        !error.retryable &&
+        error.diagnosticCode === "final_output_limit" &&
+        /Codex 输出超过配置上限/.test(error.message),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("CodexRuntime 非零退出不泄露 stderr", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-codex-nonzero-"));
   const fakeCodexPath = path.join(directory, "fake-codex.mjs");
@@ -221,9 +273,11 @@ test("CodexRuntime 非零退出不泄露 stderr", async () => {
     await assert.rejects(
       runtime.generate({ prompt: "public prompt", cwd: directory }),
       (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /Codex 调用失败/);
+        assert.ok(error instanceof CodexRuntimeError);
+        assert.match(error.message, /Codex 进程异常退出/);
         assert.doesNotMatch(error.message, /private codex diagnostic/);
+        assert.equal(error.retryable, true);
+        assert.equal(error.diagnosticCode, "unknown_exit_7");
         return true;
       },
     );
@@ -241,9 +295,11 @@ test("CodexRuntime 将未登录失败转换为脱敏登录指引", async () => {
     await assert.rejects(
       runtime.generate({ prompt: "public prompt", cwd: directory }),
       (error: unknown) => {
-        assert.ok(error instanceof Error);
+        assert.ok(error instanceof CodexRuntimeError);
         assert.match(error.message, /Codex CLI 未登录/);
         assert.doesNotMatch(error.message, /private token detail/);
+        assert.equal(error.retryable, false);
+        assert.equal(error.diagnosticCode, "authentication_failed");
         return true;
       },
     );

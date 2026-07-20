@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 prompt、Codex CLI 配置、共享进程工具与可选 AbortSignal
- * @output 导出：纯 CodexRuntime 生成接口和可用性检查
- * @pos    无数据库副作用、强制只读沙箱的 Codex 子进程运行边界
+ * @input  依赖：公开 prompt、Codex CLI 配置、JSONL 传输与可选 AbortSignal
+ * @output 导出：纯 CodexRuntime、结构化安全错误和可用性检查
+ * @pos    分离过程事件与最终正文上限、强制只读沙箱的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -43,6 +43,18 @@ export interface CodexAvailability {
   version?: string;
   authMethod?: string;
   error?: string;
+}
+
+export class CodexRuntimeError extends Error {
+  override readonly name = "CodexRuntimeError";
+
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly diagnosticCode: string,
+  ) {
+    super(message);
+  }
 }
 
 const ABORT_MESSAGE = "Codex 调用已取消。";
@@ -120,13 +132,49 @@ function extractLastAgentMessage(events: CodexEvent[]): string {
   return latest;
 }
 
-function loginError(): Error {
-  return new Error("Codex CLI 未登录。请先运行一次 codex login，再重试自动顾问调用。");
+function loginError(): CodexRuntimeError {
+  return new CodexRuntimeError(
+    "Codex CLI 未登录。请先运行一次 codex login，再重试自动顾问调用。",
+    false,
+    "authentication_failed",
+  );
 }
 
 function looksLikeLoginFailure(result: ProcessResult): boolean {
   return /not\s+logged\s+in|codex\s+login|unauthorized|401/i.test(
     `${result.stdout}\n${result.stderr}`,
+  );
+}
+
+function classifyProcessFailure(result: ProcessResult): CodexRuntimeError {
+  if (looksLikeLoginFailure(result)) {
+    return loginError();
+  }
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (
+    /(?:429|rate.?limit|temporar(?:y|ily)|overloaded|try again|service unavailable|connection|network|timed?\s*out)/i
+      .test(output)
+  ) {
+    return new CodexRuntimeError(
+      "Codex 服务暂时不可用或请求受限，可使用“恢复”稍后重试。",
+      true,
+      `transient_exit_${String(result.exitCode ?? "signal")}`,
+    );
+  }
+  if (
+    /(?:model[^\n]*(?:not found|unsupported|unavailable|permission|access)|does not have access[^\n]*model)/i
+      .test(output)
+  ) {
+    return new CodexRuntimeError(
+      "Codex 模型不可用或当前账号无权限，请检查 COUNCIL_CODEX_MODEL。",
+      false,
+      `model_unavailable_${String(result.exitCode ?? "signal")}`,
+    );
+  }
+  return new CodexRuntimeError(
+    "Codex 进程异常退出，可使用“恢复”重试。",
+    true,
+    `unknown_exit_${String(result.exitCode ?? "signal")}`,
   );
 }
 
@@ -173,6 +221,7 @@ export class CodexRuntime {
       timeoutMs: this.config.codexTimeoutMs,
       killGraceMs: this.config.codexKillGraceMs,
       maxOutputChars: this.config.maxOutputChars,
+      stdoutOverflow: "truncate",
       messages: PROCESS_MESSAGES,
     });
   }
@@ -238,17 +287,25 @@ export class CodexRuntime {
         throw makeAbortError(ABORT_MESSAGE);
       }
       if (result.exitCode !== 0) {
-        if (looksLikeLoginFailure(result)) {
-          throw loginError();
-        }
-        throw new Error("Codex 调用失败，请检查登录状态、模型权限和本地 MCP 日志。");
+        throw classifyProcessFailure(result);
       }
       const events = parseEvents(result.stdout);
       const content =
         (await readFile(lastMessageFile, "utf8").catch(() => "")).trim() ||
         extractLastAgentMessage(events);
       if (!content) {
-        throw new Error("Codex 没有返回可用内容。");
+        throw new CodexRuntimeError(
+          "Codex 没有返回可用内容，可使用“恢复”重试。",
+          true,
+          "empty_response",
+        );
+      }
+      if (content.length > this.config.maxOutputChars) {
+        throw new CodexRuntimeError(
+          PROCESS_MESSAGES.outputLimit,
+          false,
+          "final_output_limit",
+        );
       }
       const threadId = extractSessionId(events);
       return {

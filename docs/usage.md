@@ -22,8 +22,8 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 |---|---|---|
 | 双桌面手动接力 | 你习惯分别在 Claude Desktop Code 和 Codex App 中讨论 | 不需要 |
 | Codex 自动讨论 | 希望只在 Codex App 发一次指令，由 Codex 自动调用 Claude | 需要 |
-| Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复 Claude 轮次 | 需要 |
-| 桌面工作台 | 希望双击启动、原生切项目并直接读写共享日志库 | 内容协作不需要 |
+| Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复 Claude/Codex 轮次 | 调谁就需登录谁 |
+| 桌面工作台 | 希望双击启动、原生切项目并用 `@claude` / `@codex` 直召 | 内容协作不需要；直召需要 |
 
 日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
 
@@ -59,7 +59,9 @@ npm run build:desktop
 
 日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
 
-桌面 V1 支持议题、消息、决策、项目切换和跨进程内容刷新。浏览器 HTTP 模式已有的自动 Claude 轮次尚未迁入 Rust 桌面层，因此桌面界面会明确标记该能力不可用；需要自动轮次时暂时继续使用下面的 Operator Console 模式。
+桌面应用支持议题、消息、决策、项目切换、跨进程刷新和自动轮次。Composer 输入 `@claude` 或 `@codex` 后选择候选并发布，会先保存公开消息，再创建对应 CLI 的后台运行；回复成功后自动回贴到当前议题，不需要复制或再次转发。直召依赖本地 Agent 服务，界面右上角显示连接状态；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
+
+`@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者都只接收当前议题的公开上下文和项目目录，并以无 session 的独立轮次运行。
 
 ## 模式一：两个桌面手动接力
 
@@ -153,15 +155,15 @@ cp packages/web/.env.example packages/web/.env.local
 npm run dev
 ```
 
-浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。右侧“自动轮次”卡片会显示真实 Agent 能力：Claude CLI 已安装并登录时可以输入本轮指令并“创建并启动”；运行进入人工门时可以批准，活动运行可以取消，失败运行在恢复预算内可以恢复。
+浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。右侧“自动轮次”卡片会显示 Claude 与 Codex 的真实能力：对应 CLI 已安装并登录时可以输入本轮指令并“创建并启动”；运行进入人工门时可以批准，活动运行可以取消，临时失败在恢复预算内可以恢复。
 
-启动、恢复和批准只完成原子状态转换后就返回，Claude 在后台继续执行；浏览器刷新或 HTTP 连接断开不会取消任务。显式取消会使持有 lease 的执行者终止 CLI，版本 CAS 会拒绝迟到回复。进程重启时，`running` 可以安全续跑；中断在 `waiting_agent` 的调用不会自动重放，而会转成需要人工恢复的失败状态。
+启动、恢复和批准只完成原子状态转换后就返回，Agent 在后台继续执行；浏览器刷新或 HTTP 连接断开不会取消任务。显式取消会使持有 lease 的执行者终止 CLI，版本 CAS 会拒绝迟到回复。进程重启时，`running` 可以安全续跑；中断在 `waiting_agent` 的调用不会自动重放，而会转成需要人工恢复的失败状态。
 
 HTTP 模式只加载议题列表、当前议题详情和当前议题的运行列表。内容与编排使用独立 revision 校准，lease 心跳不会触发页面请求风暴。
 
 只想查看视觉原型时，将数据模式保持为 `mock` 并运行 `npm run dev:web`。
 
-只要任一 Agent 把回复发布到同一 topic，SQLite revision 会通过 SSE 通知 WebUI，页面自动更新，不需要你再复制粘贴或手动刷新。Web 可以主动调用 Claude；数据库消息仍不会自动唤醒闲置的 Codex 桌面会话，所以需要 Codex 继续审查时，仍要在 Codex App 中发一句“继续这个 topic”。
+只要任一 Agent 把回复发布到同一 topic，SQLite revision 会通过 SSE 通知 WebUI，页面自动更新，不需要你再复制粘贴或手动刷新。Web 与 Council 桌面应用都能主动调用 Claude/Codex CLI；普通数据库消息仍不会自动唤醒另一个闲置的 Codex App 或 Claude Desktop 私有会话。
 
 ## 继续已有议题
 
@@ -270,15 +272,20 @@ claude auth login
 4. `VITE_COUNCIL_PROJECT_PATH` 是存在的项目绝对路径。
 5. 修改环境文件后已经重启对应开发进程。
 
-### 自动轮次显示 Claude 不可用
+### 自动轮次显示 Agent 不可用
 
-确认 Claude Code CLI 已安装并登录，然后重启 API，让 capabilities 重新检查运行时状态：
+确认对应 CLI 已安装并登录。创建运行时会强制复检能力，通常不必重启服务：
 
 ```bash
 claude auth status
+codex login status
 ```
 
-Codex 显示为“仅共享回帖”是当前真实能力边界，不是连接故障。
+如果失败卡片提供“恢复”，表示故障被判定为临时失败，可直接恢复；登录、模型权限或最终正文超限等确定性错误需要先修正配置。
+
+### `@codex` 已识别但运行失败
+
+消息中的 `@codex` 芯片和运行卡片说明召唤语法已经解析成功，问题发生在 CLI 调用阶段。先确认本地 Agent 服务在线和 `codex login status` 正常，再查看运行是否允许“恢复”。Council `0.3.1` 起，Codex 的 JSONL 过程事件采用有界截断，最终正文单独限长，长过程不会再被误判为正文超限；默认 Agent/Codex 超时提高为 10 分钟，仍可在运行卡片中取消或通过环境变量覆盖。本地日志只保留脱敏诊断码，不记录 prompt、项目路径或 CLI stderr。
 
 ### Claude 回答与议题无关
 

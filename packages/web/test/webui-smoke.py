@@ -42,9 +42,9 @@ def verify_desktop(browser) -> list[str]:
         screenshot.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot), full_page=True)
 
-    page.get_by_placeholder("搜索 topics、参与者或内容…").fill("状态机")
+    page.get_by_placeholder("搜索议题标题或问题…").fill("状态机")
     assert page.locator(".topic-row").count() == 1
-    page.get_by_placeholder("搜索 topics、参与者或内容…").fill("")
+    page.get_by_placeholder("搜索议题标题或问题…").fill("")
 
     page.locator(".topic-row", has_text="订单状态机重构").click()
     page.get_by_role("heading", name="订单状态机重构", exact=True).wait_for()

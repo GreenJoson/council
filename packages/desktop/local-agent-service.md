@@ -57,11 +57,8 @@ fetch 与 SSE。
 
 - **开发链路**：默认 `.env.example` 已包含 `http://localhost:5173`；如 devUrl 用的是
   `127.0.0.1`，把 `http://127.0.0.1:5173` 加入 `COUNCIL_HTTP_CORS_ORIGINS_JSON`。
-- **生产链路（当前已知限制）**：服务端 `COUNCIL_HTTP_CORS_ORIGINS_JSON` 的配置校验
-  目前只接受 http/https origin，无法登记 `tauri://localhost`，因此 macOS 生产构建的
-  编排请求会被服务端 403 拒绝。需要服务端放行该固定 origin
-  （例如允许 `tauri://localhost` 通过 origin 校验）后，生产链路才能打通；
-  本仓库桌面侧已按实测 origin 准备就绪。
+- **生产链路**：服务端只对固定字面量 `tauri://localhost` 开例外，其他自定义协议 origin
+  仍被拒绝。把该值加入 `COUNCIL_HTTP_CORS_ORIGINS_JSON` 后，生产构建可直接使用编排服务。
 
 ## 验收步骤（全链路）
 

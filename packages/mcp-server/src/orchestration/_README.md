@@ -5,7 +5,7 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，把公开上下文转为无 session 的 Agent 回复 |
-| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime（强制只读沙箱），把公开上下文转为无 session 的 Agent 回复 |
+| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，把公开上下文转为无 session 回复，并记录脱敏诊断码与恢复分类 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、检查 Agent 可用性并组装生产依赖 |
 
@@ -24,3 +24,5 @@ Agent 收到取消后还必须在独立 cleanup 期限内退出，超时不得�
 生产初始化会检查 Claude Code CLI 与 Codex CLI 的可用性和登录状态。不可用适配器在
 capabilities 中标记 `available=false`，返回注册时提供的可执行提示（如 Codex 的
 "运行 codex login"）或通用限制说明，并在创建运行时被拒绝；底层本机错误不会进入响应。
+Codex 非零退出按认证、模型权限、暂时性服务故障和未知进程退出分类；未知退出默认允许一次
+人工恢复。日志只记录脱敏诊断码和 retryable 标志，不记录 prompt、项目路径或 CLI stderr。

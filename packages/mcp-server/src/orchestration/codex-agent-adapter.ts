@@ -1,6 +1,6 @@
 /**
- * @input  依赖：公开 Council 上下文、纯 CodexRuntime 与 Agent AbortSignal
- * @output 导出：不写数据库、不恢复 session 的 CodexAgentAdapter
+ * @input  依赖：公开 Council 上下文、CodexRuntime 与 Agent AbortSignal
+ * @output 导出：无 session、带脱敏诊断与恢复分类的 CodexAgentAdapter
  * @pos    编排 AgentAdapter 与 Codex 只读沙箱运行时之间的安全桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,7 +13,8 @@ import {
   type AgentInvocationOptions,
   type AgentResult,
 } from "council-orchestrator";
-import { CodexRuntime } from "../codex-runtime.js";
+import { CodexRuntime, CodexRuntimeError } from "../codex-runtime.js";
+import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
 
@@ -66,7 +67,21 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
 }
 
 function safeInvocationError(error: unknown): AgentInvocationError {
-  const retryable = error instanceof Error && /超时|暂时|已取消/.test(error.message);
+  const message = error instanceof Error ? error.message : "";
+  const retryable = error instanceof CodexRuntimeError
+    ? error.retryable
+    : /超时|暂时|已取消/.test(message) || !(
+      /未登录|找不到|无法启动|格式无效|输出超过|上下文上限|模型不可用|配置/.test(message)
+    );
+  const diagnosticCode = error instanceof CodexRuntimeError
+    ? error.diagnosticCode
+    : error instanceof Error
+      ? error.name
+      : "unknown_error";
+  logger.error(
+    "codex-agent",
+    `Codex 调用失败：code=${diagnosticCode} retryable=${String(retryable)}`,
+  );
   return new AgentInvocationError(
     retryable
       ? "Codex Agent 调用暂时失败，内部原因未公开。"

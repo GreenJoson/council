@@ -37,7 +37,7 @@ test("Codex 配置未设置时使用安全默认值", () => {
     assert.deepEqual(config.codexArgs, []);
     assert.equal(config.codexModel, undefined);
     assert.equal(config.codexSandboxMode, "read-only");
-    assert.equal(config.codexTimeoutMs, 180_000);
+    assert.equal(config.codexTimeoutMs, 600_000);
     assert.equal(config.codexKillGraceMs, 3_000);
   } finally {
     rmSync(directory, { recursive: true, force: true });
