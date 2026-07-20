@@ -1,14 +1,27 @@
 /**
- * @input  依赖：当前消息类型、同步状态、发布状态、提交回调与引用回复种子
+ * @input  依赖：当前消息类型、同步状态、发布状态、提交回调、引用回复种子与自动轮次快照
+ *         （用于 @claude/@codex 召唤自动补全、可用性与"每议题一个活动 run"冲突判断）
  * @output 导出：Composer 公开回复编辑器
- * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复
+ * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
+ *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次单轮自动 run
+ *         （召唤解析见 data/mention-parser.ts，冲突判断复用 AutoRoundsPanel 的
+ *         getCreateRunBlockedReason，保持与自动轮次面板同一套互斥规则）；
+ *         召唤成功时讨论消息的 kind 固定改写为 note，kind 选择器转而描述 Agent
+ *         回应应呈现的类型（通过 MentionPublishRequest.responseKind 传给 App）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Link2, Send } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Bot, Link2, Send, TriangleAlert } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  findActiveMentionQuery,
+  hasMentionAttempt,
+  parseMention,
+} from "../data/mention-parser";
 import type { MessageKind, SyncState } from "../types/council";
+import type { OrchestrationAdapter, OrchestrationSnapshot } from "../types/orchestration";
+import { getCreateRunBlockedReason } from "./AutoRoundsPanel";
 import { messageKindLabels } from "./presentation";
 
 const composerKinds: MessageKind[] = ["proposal", "critique", "rebuttal", "synthesis"];
@@ -19,18 +32,55 @@ export interface QuoteSeed {
   nonce: number;
 }
 
+/**
+ * @claude/@codex 召唤成功时随 onPublish 一起交给调用方的补充信息。
+ * responseKind 是 Composer 当前选中的 kind——它此时描述的是"Agent 回应应呈现的类型"，
+ * 不是这条用户消息自身的 kind（那个已经被固定为 note，随 onPublish 的第一个参数传出）。
+ */
+export interface MentionPublishRequest {
+  adapterId: string;
+  instruction: string;
+  responseKind: MessageKind;
+}
+
 export interface ComposerProps {
   isPublishing: boolean;
   sync: SyncState;
-  onPublish: (kind: MessageKind, content: string) => Promise<boolean>;
+  /**
+   * mention 非空时：kind 固定传入 "note"（这条消息是指令性发言，不是提案本身）；
+   * 调用方（App）应在公开发帖成功后额外发起一次 createRun + startRun，
+   * plan.messageKind 取 mention.responseKind，instruction 取 mention.instruction。
+   */
+  onPublish: (kind: MessageKind, content: string, mention?: MentionPublishRequest) => Promise<boolean>;
   quoteSeed?: QuoteSeed | null;
+  /** 当前议题 id，用于从 orchestration 快照里筛出"属于本议题"的 Run 判断活动冲突 */
+  topicId: string;
+  orchestration: OrchestrationSnapshot | null;
+  orchestrationBusyAction: string | null;
 }
 
-export function Composer({ isPublishing, sync, onPublish, quoteSeed }: ComposerProps) {
+export function Composer({
+  isPublishing,
+  sync,
+  onPublish,
+  quoteSeed,
+  topicId,
+  orchestration,
+  orchestrationBusyAction,
+}: ComposerProps) {
   const [kind, setKind] = useState<MessageKind>("rebuttal");
   const [content, setContent] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const appliedQuoteNonceRef = useRef<number | null>(null);
+  const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionStart, setMentionStart] = useState<number | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+
+  const mentionAdapters: OrchestrationAdapter[] = orchestration?.capabilities?.adapters ?? [];
+  const isOrchestrationOffline = orchestration?.sync.status === "offline";
+  const runsForTopic = orchestration?.activeTopicId === topicId ? orchestration.runs : [];
+  const mentionRunBlockedReason = getCreateRunBlockedReason(runsForTopic, orchestrationBusyAction);
 
   // 引用回复：把消息卡片发起的引用文本追加到草稿开头，再聚焦并把光标移到末尾方便续写
   useEffect(() => {
@@ -38,6 +88,7 @@ export function Composer({ isPublishing, sync, onPublish, quoteSeed }: ComposerP
       return;
     }
     appliedQuoteNonceRef.current = quoteSeed.nonce;
+    setIsMentionMenuOpen(false);
     setContent((current) => `${quoteSeed.text}${current}`);
     const frameId = requestAnimationFrame(() => {
       const textarea = textareaRef.current;
@@ -51,16 +102,136 @@ export function Composer({ isPublishing, sync, onPublish, quoteSeed }: ComposerP
     return () => cancelAnimationFrame(frameId);
   }, [quoteSeed]);
 
-  const canPublish = content.trim().length > 0 && !isPublishing;
+  const mentionCandidates = useMemo(() => {
+    if (!isMentionMenuOpen) {
+      return [];
+    }
+    const query = mentionQuery.toLocaleLowerCase();
+    if (!query) {
+      return mentionAdapters;
+    }
+    return mentionAdapters.filter(
+      (adapter) =>
+        adapter.publicAuthor.toLocaleLowerCase().includes(query)
+        || adapter.label.toLocaleLowerCase().includes(query),
+    );
+  }, [isMentionMenuOpen, mentionQuery, mentionAdapters]);
+
+  const mention = useMemo(() => parseMention(content, mentionAdapters), [content, mentionAdapters]);
+  const mentionAdapter = mention
+    ? mentionAdapters.find((adapter) => adapter.id === mention.adapterId)
+    : undefined;
+
+  type MentionStatus =
+    | { kind: "none" }
+    | { kind: "ready"; adapter: OrchestrationAdapter }
+    | { kind: "blocked"; reason: string };
+
+  let mentionStatus: MentionStatus = { kind: "none" };
+  if (mention && mentionAdapter) {
+    if (!mentionAdapter.available) {
+      mentionStatus = {
+        kind: "blocked",
+        reason: mentionAdapter.limitation ?? `${mentionAdapter.label} 当前不能被 Web 主动调用。`,
+      };
+    } else if (mentionRunBlockedReason) {
+      mentionStatus = { kind: "blocked", reason: mentionRunBlockedReason };
+    } else {
+      mentionStatus = { kind: "ready", adapter: mentionAdapter };
+    }
+  } else if (isOrchestrationOffline && hasMentionAttempt(content)) {
+    mentionStatus = { kind: "blocked", reason: "自动编排当前离线，暂时无法通过 @ 召唤 Agent。" };
+  }
+
+  const canPublish = content.trim().length > 0 && !isPublishing && mentionStatus.kind !== "blocked";
+
+  function applyMentionCandidate(candidate: OrchestrationAdapter): void {
+    if (mentionStart === null || !candidate.available) {
+      return;
+    }
+    const textarea = textareaRef.current;
+    const cursor = textarea?.selectionStart ?? content.length;
+    const before = content.slice(0, mentionStart);
+    const after = content.slice(cursor);
+    const inserted = `@${candidate.publicAuthor} `;
+    const nextContent = `${before}${inserted}${after}`;
+    setContent(nextContent);
+    setIsMentionMenuOpen(false);
+    const nextCursor = before.length + inserted.length;
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
+  function handleContentChange(event: React.ChangeEvent<HTMLTextAreaElement>): void {
+    const value = event.target.value;
+    setContent(value);
+    const cursor = event.target.selectionStart ?? value.length;
+    const active = findActiveMentionQuery(value, cursor);
+    if (active) {
+      setIsMentionMenuOpen(true);
+      setMentionQuery(active.query);
+      setMentionStart(active.start);
+      setActiveMentionIndex(0);
+    } else {
+      setIsMentionMenuOpen(false);
+    }
+  }
+
+  function handleTextareaKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>): void {
+    if (isMentionMenuOpen && mentionCandidates.length > 0 && !event.metaKey && !event.ctrlKey) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveMentionIndex((current) => (current + 1) % mentionCandidates.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveMentionIndex(
+          (current) => (current - 1 + mentionCandidates.length) % mentionCandidates.length,
+        );
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        const candidate = mentionCandidates[activeMentionIndex];
+        if (candidate?.available) {
+          event.preventDefault();
+          applyMentionCandidate(candidate);
+        } else if (event.key === "Enter") {
+          // 高亮的候选当前不可用：吞掉换行，但不插入，等用户切到可用候选或自行取消
+          event.preventDefault();
+        }
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setIsMentionMenuOpen(false);
+        return;
+      }
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canPublish) {
       return;
     }
-    const published = await onPublish(kind, content.trim());
+    const trimmed = content.trim();
+    const mentionPayload: MentionPublishRequest | undefined =
+      mentionStatus.kind === "ready" && mention
+        ? { adapterId: mention.adapterId, instruction: mention.instruction, responseKind: kind }
+        : undefined;
+    // 召唤成功时，这条讨论消息本身固定记录为 note——它是"指令性发言"，
+    // 不是用户在 kind 选择器里点的那个提案类型；kind 选择器此时改为描述 Agent 回应的类型。
+    const published = await onPublish(mentionPayload ? "note" : kind, trimmed, mentionPayload);
     if (published) {
       setContent("");
+      setIsMentionMenuOpen(false);
     }
   }
 
@@ -91,22 +262,70 @@ export function Composer({ isPublishing, sync, onPublish, quoteSeed }: ComposerP
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(event) => setContent(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-          placeholder="写下公开结论、证据或回应…"
+          onChange={handleContentChange}
+          onKeyDown={handleTextareaKeyDown}
+          placeholder="写下公开结论、证据或回应…输入 @ 可召唤 Agent 直接回应"
           rows={4}
         />
+        {isMentionMenuOpen ? (
+          <div className="mention-menu" role="listbox" aria-label="召唤 Agent">
+            {mentionCandidates.length > 0 ? (
+              mentionCandidates.map((candidate, index) => (
+                <button
+                  className={`mention-option ${index === activeMentionIndex ? "active" : ""} ${
+                    candidate.available ? "" : "is-disabled"
+                  }`}
+                  type="button"
+                  key={candidate.id}
+                  role="option"
+                  aria-selected={index === activeMentionIndex}
+                  aria-disabled={!candidate.available}
+                  disabled={!candidate.available}
+                  onMouseEnter={() => setActiveMentionIndex(index)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    applyMentionCandidate(candidate);
+                  }}
+                >
+                  <span className={`agent-avatar agent-${candidate.publicAuthor} agent-avatar-small`}>
+                    {candidate.label.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="mention-option-body">
+                    <strong>{candidate.label}</strong>
+                    <small>{candidate.available ? "可主动调用" : candidate.limitation ?? "当前不可主动调用"}</small>
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="mention-menu-empty">没有匹配的 Agent</p>
+            )}
+          </div>
+        ) : null}
       </label>
+
+      {mentionStatus.kind === "ready" ? (
+        <p className="composer-mention-hint">
+          <Bot size={13} />
+          {mentionStatus.adapter.label} 将以 {messageKindLabels[kind]} 回应；这条召唤消息本身记录为 Note
+        </p>
+      ) : null}
+      {mentionStatus.kind === "blocked" ? (
+        <p className="composer-mention-blocked" role="alert">
+          <TriangleAlert size={13} />
+          {mentionStatus.reason}
+        </p>
+      ) : null}
 
       <div className="composer-toolbar">
         <span className="composer-hint">⌘ Enter 快速发布</span>
         <button className="publish-button" type="submit" disabled={!canPublish}>
-          <span>{isPublishing ? "发布中…" : `发布 ${messageKindLabels[kind]}`}</span>
+          <span>
+            {isPublishing
+              ? "发布中…"
+              : mentionStatus.kind === "ready"
+                ? `发布并召唤 ${mentionStatus.adapter.label}`
+                : `发布 ${messageKindLabels[kind]}`}
+          </span>
           <Send size={16} />
         </button>
       </div>

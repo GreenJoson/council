@@ -1,5 +1,6 @@
 /**
- * @input  依赖：当前议题、参与者、同步/发布状态、消息回调与 MarkdownContent
+ * @input  依赖：当前议题、参与者、同步/发布状态、消息回调、MarkdownContent 与自动轮次快照
+ *         （透传给 Composer 支撑 @claude/@codex 召唤自动补全与冲突判断）
  * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、引用回复发起）
  * @pos    Operator Console 的主要阅读、元数据核查和回复区域；议题问题按 Markdown 渲染
  *
@@ -9,8 +10,9 @@
 import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
+import type { OrchestrationSnapshot } from "../types/orchestration";
 import { AgentAvatar, StatusBadge } from "./presentation";
-import { Composer, type QuoteSeed } from "./Composer";
+import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 
@@ -19,7 +21,9 @@ export interface DiscussionPanelProps {
   participants: Map<string, Participant>;
   sync: SyncState;
   isPublishing: boolean;
-  onPublish: (kind: MessageKind, content: string) => Promise<boolean>;
+  onPublish: (kind: MessageKind, content: string, mention?: MentionPublishRequest) => Promise<boolean>;
+  orchestration: OrchestrationSnapshot | null;
+  orchestrationBusyAction: string | null;
 }
 
 type DiscussionTab = "discussion" | "metadata";
@@ -41,6 +45,8 @@ export function DiscussionPanel({
   sync,
   isPublishing,
   onPublish,
+  orchestration,
+  orchestrationBusyAction,
 }: DiscussionPanelProps) {
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
   const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
@@ -176,6 +182,9 @@ export function DiscussionPanel({
             sync={sync}
             onPublish={onPublish}
             quoteSeed={quoteSeed}
+            topicId={topic.id}
+            orchestration={orchestration}
+            orchestrationBusyAction={orchestrationBusyAction}
           />
         </>
       ) : (

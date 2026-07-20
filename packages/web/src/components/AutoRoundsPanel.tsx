@@ -158,7 +158,7 @@ export function AutoRoundsPanel({
 
       <p className="runtime-boundary">
         {availableAdapters.length > 0
-          ? "Claude 可主动调用；Codex 当前仅自动共享回帖，不会从 Web 主动唤醒。"
+          ? `可主动调用：${availableAdapters.map((adapter) => adapter.label).join("、")}`
           : adapters[0]?.limitation ?? "当前没有可主动调用的 Agent。"}
       </p>
 

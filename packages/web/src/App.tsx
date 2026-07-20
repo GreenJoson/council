@@ -2,7 +2,9 @@
  * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构档案/决策记录）和三栏组件
  * @output 导出：App Operator Console 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
- *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位
+ *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
+ *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
+ *         额外触发一次 createRun + startRun（triggerMentionRun），失败不回滚已发布的消息
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,6 +23,7 @@ import { ArchitectureView } from "./components/ArchitectureView";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
 import { DecisionRecordsView, type DecisionRecordFocusRequest } from "./components/DecisionRecordsView";
 import { DesktopSetup } from "./components/DesktopSetup";
+import type { MentionPublishRequest } from "./components/Composer";
 import { DiscussionPanel } from "./components/DiscussionPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { InspectorPanel } from "./components/InspectorPanel";
@@ -376,7 +379,18 @@ export default function App() {
     setDecisionFocus((current) => ({ topicId, nonce: (current?.nonce ?? 0) + 1 }));
   }
 
-  async function handlePublish(kind: MessageKind, content: string): Promise<boolean> {
+  /**
+   * mention 非空时是 "@claude/@codex 召唤" 语法糖：kind 此时已被 Composer 固定为 note
+   * （这条讨论消息是指令性发言，不是提案本身），发布成功后额外发起一次单轮自动 run
+   * （plan.messageKind 取 mention.responseKind，即 Agent 回应应呈现的类型，来自用户在
+   * kind 选择器里实际点的那个值）。Run 创建/启动失败不回滚已发布的消息——用诚实的错误
+   * 提示告知"消息已发布，但自动回应启动失败"，而不是让用户以为整条操作失败。
+   */
+  async function handlePublish(
+    kind: MessageKind,
+    content: string,
+    mention?: MentionPublishRequest,
+  ): Promise<boolean> {
     setIsPublishing(true);
     setContentErrorMessage(null);
     try {
@@ -386,13 +400,40 @@ export default function App() {
         kind,
         content,
       });
-      setToastMessage("回复已发布并同步");
+      if (!mention) {
+        setToastMessage("回复已发布并同步");
+        return true;
+      }
+      await triggerMentionRun(mention);
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
       return false;
     } finally {
       setIsPublishing(false);
+    }
+  }
+
+  async function triggerMentionRun(mention: MentionPublishRequest): Promise<void> {
+    setOrchestrationBusyAction("create");
+    setRunsErrorMessage(null);
+    try {
+      const created = await orchestrationRepository.createRun({
+        topicId: activeTopicId,
+        plan: [{
+          adapterId: mention.adapterId,
+          messageKind: mention.responseKind,
+          instruction: mention.instruction,
+        }],
+      });
+      setOrchestrationBusyAction(`start:${created.id}`);
+      const snapshot = await orchestrationRepository.startRun(created.id);
+      setOrchestration(snapshot);
+      setToastMessage("消息已发布，自动轮次已启动");
+    } catch (error: unknown) {
+      setRunsErrorMessage(`消息已发布，但自动回应启动失败：${getErrorMessage(error)}`);
+    } finally {
+      setOrchestrationBusyAction(null);
     }
   }
 
@@ -575,6 +616,8 @@ export default function App() {
               sync={workspace.sync}
               isPublishing={isPublishing}
               onPublish={handlePublish}
+              orchestration={orchestration}
+              orchestrationBusyAction={orchestrationBusyAction}
             />
             <InspectorPanel
               topic={selectedTopic}
