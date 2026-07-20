@@ -1,7 +1,7 @@
 /**
- * @input  依赖：当前议题、参与者、同步/发布状态与消息回调
+ * @input  依赖：当前议题、参与者、同步/发布状态、消息回调与 MarkdownContent
  * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、引用回复发起）
- * @pos    Operator Console 的主要阅读、元数据核查和回复区域
+ * @pos    Operator Console 的主要阅读、元数据核查和回复区域；议题问题按 Markdown 渲染
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import { AgentAvatar, StatusBadge } from "./presentation";
 import { Composer, type QuoteSeed } from "./Composer";
+import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 
 export interface DiscussionPanelProps {
@@ -105,7 +106,9 @@ export function DiscussionPanel({
             ))}
           </div>
         </div>
-        <p className="topic-question">{topic.question}</p>
+        <div className="topic-question">
+          <MarkdownContent content={topic.question} />
+        </div>
         <div className="topic-tabs" role="tablist" aria-label="议题视图">
           <button
             className={activeTab === "discussion" ? "active" : ""}
@@ -200,7 +203,9 @@ export function DiscussionPanel({
 
           <div className="metadata-field">
             <span className="metadata-label">完整问题描述</span>
-            <p className="metadata-question-full">{topic.question}</p>
+            <div className="metadata-question-full">
+              <MarkdownContent content={topic.question} />
+            </div>
           </div>
 
           <div className="metadata-field-row">

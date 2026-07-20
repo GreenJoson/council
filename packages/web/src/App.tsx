@@ -1,7 +1,8 @@
 /**
- * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构视图/决策记录）和三栏组件
+ * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构档案/决策记录）和三栏组件
  * @output 导出：App Operator Console 根组件
- * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态
+ * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
+ *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -18,7 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArchitectureView } from "./components/ArchitectureView";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
-import { DecisionRecordsView } from "./components/DecisionRecordsView";
+import { DecisionRecordsView, type DecisionRecordFocusRequest } from "./components/DecisionRecordsView";
 import { DesktopSetup } from "./components/DesktopSetup";
 import { DiscussionPanel } from "./components/DiscussionPanel";
 import { HeaderBar } from "./components/HeaderBar";
@@ -60,6 +61,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<TopicStatusFilter>("all");
   const [activeView, setActiveView] = useState<WorkspaceView>("topics");
+  const [decisionFocus, setDecisionFocus] = useState<DecisionRecordFocusRequest | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>(resolveInitialPreference);
 
   // 跟随系统时监听操作系统深浅色变化并实时重放到根节点
@@ -358,10 +360,20 @@ export default function App() {
     }
   }
 
-  /** 架构视图卡片、决策记录"在讨论中打开"和侧栏议题列表共用：切回议题视图并选中该议题 */
+  /** 架构档案时间线、决策记录"在讨论中打开"和侧栏议题列表共用：切回议题视图并选中该议题 */
   async function handleOpenTopic(topicId: string): Promise<void> {
     setActiveView("topics");
     await handleSelectTopic(topicId);
+  }
+
+  /**
+   * 架构档案时间线的已决策条目（含"已被 ADR-xxx 取代"徽章）跳转到决策记录视图并定位到
+   * 对应条目；nonce 递增而不是只传 topicId，保证重复点击同一条 ADR 也能重新触发定位
+   * （DecisionRecordsView 的 focusRequest 依赖对象引用变化，不比较 topicId 是否相同）。
+   */
+  function handleOpenDecisionRecord(topicId: string): void {
+    setActiveView("decisions");
+    setDecisionFocus((current) => ({ topicId, nonce: (current?.nonce ?? 0) + 1 }));
   }
 
   async function handlePublish(kind: MessageKind, content: string): Promise<boolean> {
@@ -502,7 +514,7 @@ export default function App() {
     setIsInspectorOpen(false);
   };
 
-  // 议题视图且工作区没有任何议题，或架构视图/决策记录视图（合并中右两栏为单一全宽面板）时，
+  // 议题视图且工作区没有任何议题，或架构档案/决策记录视图（合并中右两栏为单一全宽面板）时，
   // workspace-grid 都退化为「侧栏 + 单栏」两列布局，共用同一个修饰类
   const showsSingleColumn = activeView !== "topics" || !selectedTopic;
 
@@ -539,8 +551,12 @@ export default function App() {
         {activeView === "architecture" ? (
           <ArchitectureView
             projectName={workspace.project.name}
+            projectPath={desktopSettings?.currentProjectPath ?? undefined}
             topics={workspace.topics}
+            participants={participants}
+            onLoadDetail={(topicId) => repository.loadTopicDetail(topicId)}
             onOpenTopic={(topicId) => void handleOpenTopic(topicId)}
+            onOpenDecisionRecord={handleOpenDecisionRecord}
             onCreateTopic={() => setIsCreateDialogOpen(true)}
           />
         ) : activeView === "decisions" ? (
@@ -549,6 +565,7 @@ export default function App() {
             participants={participants}
             onLoadDetail={(topicId) => repository.loadTopicDetail(topicId)}
             onOpenTopic={(topicId) => void handleOpenTopic(topicId)}
+            focusRequest={decisionFocus}
           />
         ) : selectedTopic ? (
           <>

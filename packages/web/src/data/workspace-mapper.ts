@@ -1,7 +1,10 @@
 /**
  * @input  依赖：严格解析后的 API 议题详情和 Web 领域模型
  * @output 导出：Author、Topic 摘要、TopicDetail 与 WorkspaceSnapshot 映射函数
- * @pos    后端协议和 Operator Console 展示模型之间的纯转换层
+ * @pos    后端协议和 Operator Console 展示模型之间的纯转换层；decision.status 会原样
+ *         透传 accepted/superseded（只丢弃 rejected），decidedAt 取 ApiDecision.updatedAt
+ *         兜底，供架构档案的 ADR 编号排序使用（真实后端没有专门的"首次接受时间"字段，
+ *         这是当前可得的最佳近似，见 mapDecision 内部注释）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -80,21 +83,36 @@ function mapMessage(message: ApiMessage): CouncilMessage {
   };
 }
 
+/**
+ * 只有 rejected 决策整条丢弃（该状态目前在 Web UI 没有任何呈现位置）；
+ * proposed/accepted/superseded 都要浮现——superseded 曾经是本议题的定论，
+ * 架构档案需要它来渲染"已被取代"的 ADR 历史，不能像过去那样直接判定为"无决策"。
+ */
 function findCurrentDecision(decisions: ApiDecision[]): ApiDecision | undefined {
   const latestDecision = decisions.at(-1);
-  return latestDecision?.status === "proposed" || latestDecision?.status === "accepted"
-    ? latestDecision
-    : undefined;
+  return latestDecision?.status === "rejected" ? undefined : latestDecision;
+}
+
+function mapDecisionStatus(status: ApiDecision["status"]): DecisionStatus {
+  if (status === "accepted" || status === "superseded") {
+    return status;
+  }
+  return "proposed";
 }
 
 function mapDecision(decision: ApiDecision): CouncilDecision {
-  const status: DecisionStatus = decision.status === "accepted" ? "accepted" : "proposed";
+  const status = mapDecisionStatus(decision.status);
   return {
     title: decision.title,
     summary: decision.decision,
     rationale: decision.rationale,
     status,
     proposedBy: mapApiAuthor(decision.createdBy),
+    // decidedAt 用决策记录自身的 updatedAt 兜底：真实后端没有单独记录"首次被接受的时间"，
+    // 这是当前可得的最佳近似值（accepted 时会被写入一次；若之后转为 superseded，
+    // updatedAt 会被再次推进，ADR 编号排序因此可能随取代动作发生的顺序而非首次接受顺序
+    // 轻微漂移——这是已知的、可接受的近似，真正精确的排序需要后端补一个 acceptedAt 字段）。
+    ...(status === "accepted" || status === "superseded" ? { decidedAt: decision.updatedAt } : {}),
   };
 }
 
@@ -102,7 +120,7 @@ function mapTopicStatus(detail: ApiTopicDetail, decision: ApiDecision | undefine
   if (detail.topic.status === "decided" || detail.topic.status === "closed") {
     return "decided";
   }
-  if (decision?.status === "accepted") {
+  if (decision?.status === "accepted" || decision?.status === "superseded") {
     return "decided";
   }
   if (detail.messages.at(-1)?.kind === "synthesis") {

@@ -1,7 +1,9 @@
 /**
- * @input  依赖：当前议题、参与者、自动轮次、决策操作与面板状态
+ * @input  依赖：当前议题、参与者、自动轮次、决策操作、面板状态与 MarkdownContent
  * @output 导出：InspectorPanel 议题摘要、自动轮次和决策检查器
- * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域
+ * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策 summary/rationale
+ *         按 Markdown 渲染（含内嵌 mermaid 围栏）；决策状态徽章走 presentation.tsx 的
+ *         DecisionStatusBadge，proposed/accepted/superseded 三态共用同一套文案
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -10,6 +12,7 @@ import {
   Check,
   CheckCircle2,
   FileText,
+  History,
   Plus,
   ShieldCheck,
   TriangleAlert,
@@ -22,7 +25,8 @@ import type {
   OrchestrationSnapshot,
 } from "../types/orchestration";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
-import { AgentAvatar, StatusBadge } from "./presentation";
+import { MarkdownContent } from "./MarkdownContent";
+import { AgentAvatar, decisionStatusLabels, DecisionStatusBadge, StatusBadge } from "./presentation";
 
 export interface InspectorPanelProps {
   topic: TopicDetail;
@@ -62,6 +66,7 @@ export function InspectorPanel({
   const owner = participants.get(topic.owner);
   const decision = topic.decision;
   const decisionAccepted = decision?.status === "accepted";
+  const decisionSuperseded = decision?.status === "superseded";
 
   return (
     <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label="议题摘要">
@@ -165,25 +170,43 @@ export function InspectorPanel({
       </InspectorSection>
 
       {decision ? (
-        <section className={`decision-card ${decisionAccepted ? "decision-accepted" : ""}`}>
+        <section
+          className={`decision-card ${decisionAccepted ? "decision-accepted" : ""} ${decisionSuperseded ? "decision-superseded" : ""}`}
+        >
           <div className="decision-title-row">
             <div>
-              {decisionAccepted ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}
-              <span>{decisionAccepted ? "已接受决策" : "拟议决策"}</span>
+              {decisionAccepted ? (
+                <CheckCircle2 size={17} />
+              ) : decisionSuperseded ? (
+                <History size={17} />
+              ) : (
+                <ShieldCheck size={17} />
+              )}
+              <span>{decisionStatusLabels[decision.status]}</span>
             </div>
-            <span className="decision-status">{decisionAccepted ? "Accepted" : "Proposed"}</span>
+            <DecisionStatusBadge status={decision.status} />
           </div>
           <h3>{decision.title}</h3>
-          <p>{decision.summary}</p>
-          <small>{decision.rationale}</small>
+          <div className="decision-summary-block">
+            <MarkdownContent content={decision.summary} />
+          </div>
+          <div className="decision-rationale-block">
+            <MarkdownContent content={decision.rationale} />
+          </div>
           <button
             className="accept-button"
             type="button"
-            disabled={decisionAccepted || isAccepting}
+            disabled={decision.status !== "proposed" || isAccepting}
             onClick={() => void onAccept()}
           >
             <CheckCircle2 size={17} />
-            {decisionAccepted ? "决策已接受" : isAccepting ? "记录中…" : "标记为 Accepted"}
+            {decisionAccepted
+              ? "决策已接受"
+              : decisionSuperseded
+                ? "决策已被取代"
+                : isAccepting
+                  ? "记录中…"
+                  : "标记为 Accepted"}
           </button>
         </section>
       ) : (

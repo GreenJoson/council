@@ -1,87 +1,144 @@
 /**
- * @input  依赖：已加载的工作区议题摘要、项目名称与议题打开/创建回调
- * @output 导出：ArchitectureView 五列状态看板
- * @pos    Operator Console 架构视图：按 TopicStatus 分组展示项目议题总览，不发起任何请求
+ * @input  依赖：项目名/路径、议题摘要列表、只读议题详情懒加载回调（经共享的 useTopicDetails
+ *         hook 一次性加载全部议题）、跳转讨论/决策记录/创建议题三个回调，以及
+ *         data/selectors.ts 的架构档案聚合纯函数（buildArchitectureTimeline/
+ *         aggregateConstraints/collectArchitectureDiagrams）
+ * @output 导出：ArchitectureView 项目架构档案——从讨论决策中聚合生成的架构沉淀页，
+ *         由项目概览、架构演进时间线、架构不变量、架构图/业务解析图集四个区块组成
+ * @pos    Operator Console 架构档案视图：只读聚合已加载数据，不改变全局选中状态；
+ *         四个内容区块拆分在 components/architecture/ 下，本文件只做数据编排与 Lightbox 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Boxes, GitBranch, Plus } from "lucide-react";
-import { groupTopicsByStatus, topicStatusOrder } from "../data/selectors";
-import type { TopicSummary } from "../types/council";
-import { topicStatusLabels } from "./presentation";
+import { Boxes, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArchitectureConstraints } from "./architecture/ArchitectureConstraints";
+import { ArchitectureDiagramGallery } from "./architecture/ArchitectureDiagramGallery";
+import { ArchitectureOverview } from "./architecture/ArchitectureOverview";
+import { ArchitectureTimeline } from "./architecture/ArchitectureTimeline";
+import { Lightbox, type LightboxContent } from "./Lightbox";
+import { useTopicDetails } from "../hooks/useTopicDetails";
+import {
+  aggregateConstraints,
+  buildArchitectureTimeline,
+  collectArchitectureDiagrams,
+} from "../data/selectors";
+import type { Participant, TopicDetail, TopicSummary } from "../types/council";
 
 export interface ArchitectureViewProps {
   projectName: string;
-  /** 只读取摘要字段（标题/状态/更新时间），复用已加载的 workspace.topics，不发起请求 */
+  /** 桌面原生模式下的当前项目绝对路径；mock/http 模式下没有该信息 */
+  projectPath?: string;
+  /** 只读取摘要字段（id/title/status/updatedLabel），复用已加载的 workspace.topics，不发起请求 */
   topics: TopicSummary[];
+  participants: Map<string, Participant>;
+  /** 只读旁路加载完整详情；不改变 activeTopicId，不触发订阅（见 CouncilRepository.loadTopicDetail） */
+  onLoadDetail: (topicId: string) => Promise<TopicDetail>;
   onOpenTopic: (topicId: string) => void;
+  onOpenDecisionRecord: (topicId: string) => void;
   onCreateTopic: () => void;
 }
 
-export function ArchitectureView({ projectName, topics, onOpenTopic, onCreateTopic }: ArchitectureViewProps) {
-  const grouped = groupTopicsByStatus(topics);
+export function ArchitectureView({
+  projectName,
+  projectPath,
+  topics,
+  participants,
+  onLoadDetail,
+  onOpenTopic,
+  onOpenDecisionRecord,
+  onCreateTopic,
+}: ArchitectureViewProps) {
+  const topicIds = useMemo(() => topics.map((topic) => topic.id), [topics]);
+  const { details, errors, retry } = useTopicDetails(topicIds, onLoadDetail);
+  const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
 
-  return (
-    <section className="architecture-view" aria-label="架构视图">
-      <header className="architecture-view-header">
-        <h1>
-          <GitBranch size={18} aria-hidden="true" />
-          架构视图
-        </h1>
-        <p>
-          {projectName} · 共 {topics.length} 个议题
-        </p>
-      </header>
+  // 只用已经加载完成的议题详情聚合四个区块：不阻塞整页渲染，随加载进度逐步补全。
+  const loadedTopics = useMemo(
+    () =>
+      topics
+        .map((topic) => details.get(topic.id))
+        .filter((detail): detail is TopicDetail => Boolean(detail)),
+    [topics, details],
+  );
 
-      {topics.length === 0 ? (
+  const timelineEntries = useMemo(() => buildArchitectureTimeline(loadedTopics), [loadedTopics]);
+  const constraints = useMemo(() => aggregateConstraints(loadedTopics), [loadedTopics]);
+  const diagrams = useMemo(() => collectArchitectureDiagrams(loadedTopics), [loadedTopics]);
+
+  const acceptedCount = loadedTopics.filter((topic) => topic.decision?.status === "accepted").length;
+  const proposedCount = loadedTopics.filter((topic) => topic.decision?.status === "proposed").length;
+
+  const loadingProgressLabel =
+    details.size < topics.length ? `正在加载议题详情…（${String(details.size)}/${String(topics.length)}）` : null;
+
+  if (topics.length === 0) {
+    return (
+      <section className="architecture-view" aria-label="项目架构档案">
         <div className="architecture-empty">
           <Boxes size={28} aria-hidden="true" />
           <h2>这个工作区还没有议题</h2>
-          <p>创建第一个架构议题，即可在这里按状态追踪它的推进节奏。</p>
+          <p>
+            架构档案来自讨论中的决策：在方案与综合消息里用 ```mermaid 围栏画图、在决策里写下
+            约束，都会自动归档到这里。先创建第一个议题开始讨论吧。
+          </p>
           <button className="primary-button" type="button" onClick={onCreateTopic}>
             <Plus size={17} />
             创建议题
           </button>
         </div>
-      ) : (
-        <div className="architecture-board">
-          {topicStatusOrder.map((status) => {
-            const columnTopics = grouped[status];
-            return (
-              <div className={`architecture-column architecture-column-${status}`} key={status}>
-                <header className="architecture-column-header">
-                  <span className="architecture-column-dot" aria-hidden="true" />
-                  <h2>{topicStatusLabels[status]}</h2>
-                  <span className="count-pill">{columnTopics.length}</span>
-                </header>
-                <div
-                  className="architecture-column-body"
-                  role="list"
-                  aria-label={`${topicStatusLabels[status]}议题`}
-                >
-                  {columnTopics.length > 0 ? (
-                    columnTopics.map((topic) => (
-                      <div role="listitem" key={topic.id}>
-                        <button
-                          className="architecture-card"
-                          type="button"
-                          onClick={() => onOpenTopic(topic.id)}
-                        >
-                          <span className="architecture-card-title">{topic.title}</span>
-                          <span className="architecture-card-updated">{topic.updatedLabel}</span>
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="architecture-column-empty">暂无议题</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      </section>
+    );
+  }
+
+  return (
+    <section className="architecture-view" aria-label="项目架构档案">
+      <header className="architecture-view-header">
+        <h1>项目架构档案</h1>
+        <p>从讨论决策中聚合生成的架构沉淀页，随每一次接受决策自动更新</p>
+      </header>
+
+      {errors.size > 0 ? (
+        <div className="architecture-error-banner" role="alert">
+          <TriangleAlert size={16} aria-hidden="true" />
+          <span>{errors.size} 个议题详情加载失败，架构档案可能不完整</span>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => errors.forEach((_message, topicId) => retry(topicId))}
+          >
+            <RefreshCw size={14} />
+            重试失败项
+          </button>
         </div>
-      )}
+      ) : null}
+
+      <div className="architecture-view-body">
+        <ArchitectureOverview
+          projectName={projectName}
+          projectPath={projectPath}
+          topicCount={topics.length}
+          acceptedCount={acceptedCount}
+          proposedCount={proposedCount}
+          loadingProgressLabel={loadingProgressLabel}
+        />
+        <ArchitectureTimeline
+          entries={timelineEntries}
+          onOpenTopic={onOpenTopic}
+          onOpenDecisionRecord={onOpenDecisionRecord}
+        />
+        <ArchitectureConstraints constraints={constraints} />
+        <ArchitectureDiagramGallery
+          diagrams={diagrams}
+          participants={participants}
+          onOpenLightbox={setLightboxContent}
+        />
+      </div>
+
+      {lightboxContent ? (
+        <Lightbox content={lightboxContent} onClose={() => setLightboxContent(null)} />
+      ) : null}
     </section>
   );
 }

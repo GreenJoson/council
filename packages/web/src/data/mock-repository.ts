@@ -1,7 +1,8 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
  * @output 导出：MockCouncilRepository 同构可交互数据实现
- * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受与只读议题详情加载
+ * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受（同时写入 decidedAt 供架构档案
+ *         ADR 编号排序）与只读议题详情加载
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -111,6 +112,7 @@ export class MockCouncilRepository implements CouncilRepository {
       throw new Error("当前议题没有可接受的拟议决策");
     }
     topic.decision.status = "accepted";
+    topic.decision.decidedAt = new Date().toISOString();
     topic.status = "decided";
     topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();

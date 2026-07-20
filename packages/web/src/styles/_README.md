@@ -5,6 +5,6 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `theme.css` | 正本 | 集中定义深/浅双主题颜色（`data-theme` 切换）、Agent、字体、阴影和层级变量 |
-| `app.css` | 布局 | 定义品牌 logo、顶栏项目菜单（含路径展示）、桌面首次设置、三栏骨架（含 workspace-grid-full 全宽面板修饰类）和错误恢复 |
-| `components.css` | 组件 | 定义议题、状态筛选 chips、消息、编辑器、自动轮次、检查器、对话框（含目标项目选择）、架构视图看板与决策记录归档视觉 |
+| `app.css` | 布局 | 定义品牌 logo、顶栏项目菜单（含路径展示，顶栏本身不带投影，只用 1px 底边框分隔，与内容区同底色）、桌面首次设置、三栏骨架（含 workspace-grid-full 全宽面板修饰类）和错误恢复 |
+| `components.css` | 组件 | 定义议题、状态筛选 chips、消息、编辑器、自动轮次、检查器、对话框（含目标项目选择）、决策记录归档视觉、决策状态徽章（proposed/accepted/superseded）与 MarkdownContent 排版/图片 Lightbox/长内容折叠（"Markdown 渲染"分块）；末尾另有 mermaid 图渲染容器（"Mermaid 架构图"分块）与项目架构档案四区块（"架构档案"分块）两个新分块 |
 | `responsive.css` | 适配 | 定义桌面设置卡、平板、手机离线入口和低动态偏好规则 |

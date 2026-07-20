@@ -29,7 +29,7 @@ const statusFilterOptions: { id: TopicStatusFilter; label: string }[] = [
 
 const workspaceViewOptions: { id: WorkspaceView; label: string; Icon: ComponentType<{ size?: number }> }[] = [
   { id: "topics", label: "议题", Icon: Boxes },
-  { id: "architecture", label: "架构视图", Icon: GitBranch },
+  { id: "architecture", label: "架构档案", Icon: GitBranch },
   { id: "decisions", label: "决策记录", Icon: FileCheck2 },
 ];
 

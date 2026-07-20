@@ -1,12 +1,14 @@
 /**
- * @input  依赖：Agent、消息和议题状态类型
- * @output 导出：BrandLogo、AgentAvatar、StatusBadge、messageKindLabels 与 topicStatusLabels 展示标签
- * @pos    Operator Console 跨区域复用的基础展示组件
+ * @input  依赖：Agent、消息、议题状态与决策状态类型
+ * @output 导出：BrandLogo、AgentAvatar、StatusBadge、DecisionStatusBadge、messageKindLabels、
+ *         topicStatusLabels 与 decisionStatusLabels 展示标签
+ * @pos    Operator Console 跨区域复用的基础展示组件；DecisionStatusBadge 供检查器、
+ *         决策记录与架构档案三处共用同一套 proposed/accepted/superseded 文案与配色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import type { AgentId, MessageKind, TopicStatus } from "../types/council";
+import type { AgentId, DecisionStatus, MessageKind, TopicStatus } from "../types/council";
 
 export interface BrandLogoProps {
   size?: number;
@@ -97,6 +99,33 @@ export function StatusBadge({ status }: StatusBadgeProps) {
     <span className={`status-badge status-${status}`}>
       <span className="status-dot" aria-hidden="true" />
       {topicStatusLabels[status]}
+    </span>
+  );
+}
+
+/** 决策卡片标题行使用的中文文案（"拟议决策"/"已接受决策"/"已被取代"） */
+export const decisionStatusLabels: Record<DecisionStatus, string> = {
+  proposed: "拟议决策",
+  accepted: "已接受决策",
+  superseded: "已被取代",
+};
+
+/** 决策卡片右上角的英文状态短标签，沿用既有 Proposed/Accepted 风格追加 Superseded */
+export const decisionStatusBadgeLabels: Record<DecisionStatus, string> = {
+  proposed: "Proposed",
+  accepted: "Accepted",
+  superseded: "Superseded",
+};
+
+export interface DecisionStatusBadgeProps {
+  status: DecisionStatus;
+}
+
+/** 决策自身的 proposed/accepted/superseded 徽章；InspectorPanel、决策记录、架构档案共用 */
+export function DecisionStatusBadge({ status }: DecisionStatusBadgeProps) {
+  return (
+    <span className={`decision-status-badge decision-status-${status}`}>
+      {decisionStatusBadgeLabels[status]}
     </span>
   );
 }

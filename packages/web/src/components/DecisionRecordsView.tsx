@@ -1,7 +1,11 @@
 /**
- * @input  依赖：已决策议题摘要、参与者、只读议题详情懒加载回调（CouncilRepository.loadTopicDetail）与打开讨论回调
+ * @input  依赖：已决策议题摘要、参与者、只读议题详情懒加载回调（CouncilRepository.loadTopicDetail，
+ *         经共享的 useTopicDetails hook）、外部跳转定位请求（focusRequest）、打开讨论回调与 MarkdownContent
  * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）
- * @pos    Operator Console 决策记录视图：归档已接受/拟议中的结构化决策，详情按需懒加载并缓存
+ * @pos    Operator Console 决策记录视图：归档已接受/拟议中/已被取代的结构化决策
+ *         （summary/rationale/原始问题按 Markdown 渲染、不折叠，含内嵌 mermaid 围栏），
+ *         详情经 useTopicDetails 按需懒加载并缓存；架构档案时间线点击某条 ADR 后
+ *         通过 focusRequest 定位到对应条目
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,13 +16,22 @@ import {
   CheckCircle2,
   FileCheck2,
   FileText,
+  History,
   RefreshCw,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useTopicDetails } from "../hooks/useTopicDetails";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
-import { AgentAvatar, StatusBadge } from "./presentation";
+import { MarkdownContent } from "./MarkdownContent";
+import { AgentAvatar, decisionStatusLabels, DecisionStatusBadge, StatusBadge } from "./presentation";
+
+/** 外部触发的定位请求：nonce 保证重复点击同一 ADR 也能重新生效（见 App.tsx handleOpenDecisionRecord） */
+export interface DecisionRecordFocusRequest {
+  topicId: string;
+  nonce: number;
+}
 
 export interface DecisionRecordsViewProps {
   /** 只读取摘要字段用于左列表，复用已加载的 workspace.topics，不发起请求 */
@@ -27,6 +40,8 @@ export interface DecisionRecordsViewProps {
   /** 只读旁路加载完整详情；不改变 activeTopicId，不触发订阅（见 CouncilRepository.loadTopicDetail） */
   onLoadDetail: (topicId: string) => Promise<TopicDetail>;
   onOpenTopic: (topicId: string) => void;
+  /** 架构档案时间线跳转过来时携带的定位请求；为空表示按默认规则自动选中最新一条 */
+  focusRequest?: DecisionRecordFocusRequest | null;
 }
 
 export function DecisionRecordsView({
@@ -34,15 +49,13 @@ export function DecisionRecordsView({
   participants,
   onLoadDetail,
   onOpenTopic,
+  focusRequest,
 }: DecisionRecordsViewProps) {
   const decidedTopics = useMemo(
     () => topics.filter((topic) => topic.status === "decided"),
     [topics],
   );
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
-  const [detailCache, setDetailCache] = useState<Map<string, TopicDetail>>(() => new Map());
-  const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
-  const [retryNonce, setRetryNonce] = useState(0);
 
   // 已决策列表变化时：当前选中项若已不在列表中（或尚未选中），自动定位到最新的一条
   useEffect(() => {
@@ -55,38 +68,20 @@ export function DecisionRecordsView({
     });
   }, [decidedTopics]);
 
-  // 只读懒加载完整决策详情，命中缓存则跳过；用 active 局部闭包（与 App.tsx 选题效果同一范式）
-  // 防止组件卸载或选中项已切换（含 StrictMode 开发期二次调用）后的过期响应写入状态。
+  // 架构档案时间线点击跳转：nonce 变化即视为一次新的定位请求，即使 topicId 与当前选中相同
   useEffect(() => {
-    if (!selectedTopicId || detailCache.has(selectedTopicId)) {
-      setLoadErrorMessage(null);
+    if (!focusRequest) {
       return;
     }
-    let active = true;
-    setLoadErrorMessage(null);
-    void onLoadDetail(selectedTopicId)
-      .then((detail) => {
-        if (!active) {
-          return; // 组件已卸载或选中项已切换：这是过期响应，丢弃
-        }
-        setDetailCache((current) => new Map(current).set(selectedTopicId, detail));
-      })
-      .catch((error: unknown) => {
-        if (!active) {
-          return;
-        }
-        setLoadErrorMessage(error instanceof Error ? error.message : "加载议题详情失败");
-      });
-    return () => {
-      active = false;
-    };
-    // selectedTopicId 变化或手动重试才应发起新请求。
-    // detailCache 只用于判断是否命中缓存，不放入依赖数组，否则写入缓存会立刻重触发本 effect；
-    // onLoadDetail 由父组件每次渲染都可能创建新的函数引用，放入依赖数组会让父组件任何重渲染
-    // 都触发多余的重复请求，这里只需读取调用时刻的最新闭包值。
-  }, [selectedTopicId, retryNonce]);
+    setSelectedTopicId(focusRequest.topicId);
+  }, [focusRequest]);
 
-  const selectedDetail = selectedTopicId ? detailCache.get(selectedTopicId) : undefined;
+  const { details, errors, retry } = useTopicDetails(
+    selectedTopicId ? [selectedTopicId] : [],
+    onLoadDetail,
+  );
+  const selectedDetail = selectedTopicId ? details.get(selectedTopicId) : undefined;
+  const loadErrorMessage = selectedTopicId ? (errors.get(selectedTopicId) ?? null) : null;
   const isLoading = Boolean(selectedTopicId) && !selectedDetail && !loadErrorMessage;
 
   return (
@@ -132,7 +127,7 @@ export function DecisionRecordsView({
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setRetryNonce((current) => current + 1)}
+              onClick={() => selectedTopicId && retry(selectedTopicId)}
             >
               <RefreshCw size={15} />
               重试
@@ -162,6 +157,7 @@ interface DecisionRecordArticleProps {
 function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRecordArticleProps) {
   const decision = detail.decision;
   const decisionAccepted = decision?.status === "accepted";
+  const decisionSuperseded = decision?.status === "superseded";
   const owner = participants.get(detail.owner);
   const proposer = decision ? participants.get(decision.proposedBy) : undefined;
 
@@ -176,17 +172,29 @@ function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRe
       </header>
 
       {decision ? (
-        <section className={`decision-card ${decisionAccepted ? "decision-accepted" : ""}`}>
+        <section
+          className={`decision-card ${decisionAccepted ? "decision-accepted" : ""} ${decisionSuperseded ? "decision-superseded" : ""}`}
+        >
           <div className="decision-title-row">
             <div>
-              {decisionAccepted ? <CheckCircle2 size={17} /> : <ShieldCheck size={17} />}
-              <span>{decisionAccepted ? "已接受决策" : "拟议决策"}</span>
+              {decisionAccepted ? (
+                <CheckCircle2 size={17} />
+              ) : decisionSuperseded ? (
+                <History size={17} />
+              ) : (
+                <ShieldCheck size={17} />
+              )}
+              <span>{decisionStatusLabels[decision.status]}</span>
             </div>
-            <span className="decision-status">{decisionAccepted ? "Accepted" : "Proposed"}</span>
+            <DecisionStatusBadge status={decision.status} />
           </div>
           <h3>{decision.title}</h3>
-          <p>{decision.summary}</p>
-          <small>{decision.rationale}</small>
+          <div className="decision-summary-block">
+            <MarkdownContent content={decision.summary} />
+          </div>
+          <div className="decision-rationale-block">
+            <MarkdownContent content={decision.rationale} />
+          </div>
           <div className="decision-record-proposer">
             <AgentAvatar agent={decision.proposedBy} size="small" />
             <span>由 {proposer?.name ?? decision.proposedBy} 提出</span>
@@ -282,7 +290,9 @@ function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRe
             <h3>议题原始问题</h3>
           </div>
         </header>
-        <p className="metadata-question-full">{detail.question}</p>
+        <div className="metadata-question-full">
+          <MarkdownContent content={detail.question} />
+        </div>
       </section>
 
       <div className="decision-record-owner">

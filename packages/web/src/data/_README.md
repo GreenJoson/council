@@ -14,16 +14,16 @@
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
 | `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
-| `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区 |
+| `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected），decidedAt 取 ApiDecision.updatedAt 兜底供架构档案 ADR 编号排序使用 |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，并提供不改状态的只读议题详情加载 |
 | `http-orchestration-repository.ts` | 真实 | 仅按 orchestration revision 校准当前议题运行列表 |
-| `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据 |
-| `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、决策接受和只读议题详情加载 |
+| `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
+| `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、决策接受（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
 | `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event 与目录选择器 |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，并提供不参与设置世代的只读议题详情加载 |
 | `unavailable-orchestration-repository.ts` | 能力边界 | Rust Runtime 未接通前明确禁用桌面自动轮次 |
-| `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑，以及架构视图看板用的 topicStatusOrder/groupTopicsByStatus 按状态分组 |
+| `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。

@@ -132,8 +132,7 @@ textarea:focus-visible {
   height: var(--header-height);
   padding: 0 18px;
   border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-canvas-deep) 94%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-overlay) 28%, transparent);
+  background: var(--color-canvas);
 }
 
 .brand-cluster,
@@ -192,7 +191,6 @@ textarea:focus-visible {
 .accept-button,
 .project-nav-item,
 .topic-row,
-.attachment-chip,
 .kind-option,
 .filter-chip,
 .icon-button {
@@ -756,7 +754,7 @@ button.sync-offline:hover {
   gap: 10px;
 }
 
-/* 工作区没有议题时的议题视图，以及架构视图/决策记录视图：都是「侧栏 + 单一全宽面板」两列布局 */
+/* 工作区没有议题时的议题视图，以及架构档案/决策记录视图：都是「侧栏 + 单一全宽面板」两列布局 */
 .workspace-grid-full {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
 }
