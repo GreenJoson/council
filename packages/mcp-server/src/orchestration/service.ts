@@ -53,6 +53,9 @@ function missingRun(error: unknown): boolean {
   return error instanceof RunNotFoundError;
 }
 
+/** 可用性检测缓存时长：CLI 登录状态变化最迟这么久反映到 capabilities，无需重启服务。 */
+export const AVAILABILITY_TTL_MS = 30_000;
+
 export class CouncilOrchestrationService {
   readonly orchestrator: CouncilOrchestrator;
   readonly manager: RunExecutionManager;
@@ -67,6 +70,9 @@ export class CouncilOrchestrationService {
   }> = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
   readonly #unavailableLimitations = new Map<string, string>();
+  readonly #baseLimitations = new Map<string, string | undefined>();
+  #availabilityCheckedAt = 0;
+  #availabilityRefresh: Promise<void> | null = null;
 
   constructor(
     private readonly config: CouncilHttpConfig,
@@ -97,6 +103,7 @@ export class CouncilOrchestrationService {
           registration.checkAvailability,
         );
       }
+      this.#baseLimitations.set(registration.adapter.adapterId, registration.limitation);
       if (registration.limitationWhenUnavailable) {
         this.#unavailableLimitations.set(
           registration.adapter.adapterId,
@@ -139,6 +146,14 @@ export class CouncilOrchestrationService {
   }
 
   async createRun(topicId: string, plan: readonly PublicRoundInput[]): Promise<OrchestrationRun> {
+    const hasUnavailableTarget = plan.some((round) => {
+      const capability = this.#capabilities.find((item) => item.id === round.adapterId);
+      return capability !== undefined && !capability.available;
+    });
+    if (hasUnavailableTarget) {
+      // 用户明确点名了被标记不可用的适配器：强制复检而非等 TTL，让 CLI 刚登录立即可用
+      await this.#ensureFreshAvailability(true);
+    }
     const rounds = plan.map((round) => {
       const publicAuthor = this.#authors.get(round.adapterId);
       if (!publicAuthor) {
@@ -206,6 +221,27 @@ export class CouncilOrchestrationService {
   }
 
   async initialize(): Promise<void> {
+    await this.#ensureFreshAvailability(true);
+    await this.manager.recoverOnStartup();
+  }
+
+  /** 返回 capabilities 前按 TTL 重新检测可用性，让 CLI 登录状态变化无需重启即可生效。 */
+  async capabilitiesFresh(): Promise<object> {
+    await this.#ensureFreshAvailability();
+    return this.capabilities();
+  }
+
+  async #ensureFreshAvailability(force = false): Promise<void> {
+    if (!force && Date.now() - this.#availabilityCheckedAt < AVAILABILITY_TTL_MS) {
+      return;
+    }
+    this.#availabilityRefresh ??= this.#refreshAvailability().finally(() => {
+      this.#availabilityRefresh = null;
+    });
+    await this.#availabilityRefresh;
+  }
+
+  async #refreshAvailability(): Promise<void> {
     await Promise.all(this.#capabilities.map(async (capability) => {
       const check = this.#availabilityChecks.get(capability.id);
       if (!check) {
@@ -216,13 +252,21 @@ export class CouncilOrchestrationService {
       } catch {
         capability.available = false;
       }
-      if (!capability.available && !capability.limitation) {
+      const base = this.#baseLimitations.get(capability.id);
+      if (capability.available) {
+        if (base) {
+          capability.limitation = base;
+        } else {
+          delete capability.limitation;
+        }
+      } else {
         capability.limitation =
+          base ??
           this.#unavailableLimitations.get(capability.id) ??
           "本地 Agent 自动调用当前不可用。";
       }
     }));
-    await this.manager.recoverOnStartup();
+    this.#availabilityCheckedAt = Date.now();
   }
 
   async shutdown(): Promise<void> {

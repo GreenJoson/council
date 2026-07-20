@@ -299,6 +299,61 @@ test("不可用 Agent 优先展示注册时提供的可执行 limitation 提示"
   }
 });
 
+test("CLI 登录后无需重启服务：createRun 强制复检并让缓存立即更新", async () => {
+  let cliLoggedIn = false;
+  let checkCount = 0;
+  const agent = new FakeAgent("claude", async () => ({ content: "登录后的公开回复。" }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    publicAuthor: "claude",
+    label: "Claude Code",
+    checkAvailability: async () => {
+      checkCount += 1;
+      return cliLoggedIn;
+    },
+  }]);
+  try {
+    // 启动时检测一次：不可用
+    assert.equal(checkCount, 1);
+    const stale = await readEnvelope<{
+      adapters: Array<{ available: boolean }>;
+    }>(await fetch(`${harness.baseUrl}/api/v1/orchestration/capabilities`));
+    assert.equal(stale.data?.adapters[0]?.available, false);
+    // TTL 内 capabilities 走缓存，不重复拉起 CLI 检测
+    assert.equal(checkCount, 1);
+
+    // 模拟用户完成 CLI 登录
+    cliLoggedIn = true;
+
+    // 点名不可用适配器创建 run：强制复检后放行，而不是被旧缓存拦截
+    const topic = harness.database.createTopic({
+      title: "登录后直召",
+      question: "登录后是否需要重启服务？",
+      constraints: [],
+      createdBy: "human",
+    });
+    const created = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        plan: [{ adapterId: "claude", messageKind: "note", instruction: "确认已接入" }],
+      }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal(checkCount, 2);
+
+    // 强制复检的结果写回缓存：capabilities 立即反映可用，且无额外检测
+    const fresh = await readEnvelope<{
+      adapters: Array<{ available: boolean; limitation?: string }>;
+    }>(await fetch(`${harness.baseUrl}/api/v1/orchestration/capabilities`));
+    assert.equal(fresh.data?.adapters[0]?.available, true);
+    assert.equal(fresh.data?.adapters[0]?.limitation, undefined);
+    assert.equal(checkCount, 2);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("产品服务将配置的消息上限传入 Agent 上下文 Store", async () => {
   const agent = new FakeAgent("fake", async () => ({ content: "只使用有界上下文。" }));
   const harness = await startHttpHarness(

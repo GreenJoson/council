@@ -209,10 +209,10 @@ export function createCouncilHttpApp(
     });
   });
 
-  app.get("/api/v1/orchestration/capabilities", (_request, response) => {
+  app.get("/api/v1/orchestration/capabilities", async (_request, response) => {
     sendSuccess(
       response,
-      orchestration?.capabilities() ?? {
+      (await orchestration?.capabilitiesFresh()) ?? {
         adapters: [],
         defaultPolicy: {
           maxRounds: config.orchestrationDefaultMaxRounds,
