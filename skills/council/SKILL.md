@@ -24,8 +24,9 @@ Read [references/discussion-protocol.md](references/discussion-protocol.md) befo
 3. Keep messages typed as `brief`, `proposal`, `critique`, `rebuttal`, `synthesis`, or `note`.
 4. Challenge weak assumptions. Do not manufacture consensus or accept another model's claim without current evidence.
 5. Keep each posted message self-contained and concise. Reference files and test results instead of dumping large logs.
-6. Record a decision only after alternatives, risks, and verification are explicit. Use `proposed` when the user has not accepted it.
-7. Tell the user the topic ID and current status so either desktop app can continue later.
+6. Format every posted message as clean GFM Markdown: start with a one-sentence conclusion, organize the body with `## ` sections (pick from 方案 / 理由 / 风险 / 失败条件 / 验证 as needed), use `- ` bullet lists, fenced ``` blocks for code, commands, and directory trees, tables for comparisons, and blank lines between paragraphs. Describe architecture, module-dependency, business-flow, and sequence diagrams with ```mermaid fences — the UI renders them as diagrams and archives diagrams from decisions and syntheses into the architecture view. Never post a single wall-of-text paragraph — the Council UI renders Markdown as-is.
+7. Record a decision only after alternatives, risks, and verification are explicit. Use `proposed` when the user has not accepted it.
+8. Tell the user the topic ID and current status so either desktop app can continue later.
 
 ## Background Claude rules
 

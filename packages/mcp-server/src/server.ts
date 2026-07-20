@@ -231,7 +231,7 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
           .string()
           .min(1)
           .max(MAX_QUESTION_CHARS)
-          .describe("待解决的问题、预期行为和失败条件"),
+          .describe("待解决的问题、预期行为和失败条件；支持 GFM Markdown 排版"),
         constraints: z
           .array(z.string().min(1).max(MAX_CONSTRAINT_CHARS))
           .max(MAX_CONSTRAINT_COUNT)
@@ -349,12 +349,19 @@ export function createCouncilServer(config: CouncilConfig): CouncilServerBundle 
     {
       title: "发布架构消息",
       description:
-        "向议题发布一条可供另一模型读取的公开消息。只发布结论、证据、批评或回应；不得写入秘密和隐藏推理。",
+        "向议题发布一条可供另一模型读取的公开消息。只发布结论、证据、批评或回应；不得写入秘密和隐藏推理。" +
+        "content 必须是规范 GFM Markdown 排版：首段先给一句话结论；正文用「## 」小节组织（按需选用 方案/理由/风险/失败条件/验证）；" +
+        "要点用「- 」列表；代码、命令与目录结构放 ``` 围栏；对比用表格；段落之间留空行；禁止把全文挤成单个长段落。" +
+        "架构图、模块依赖图、业务流程或时序图用 ```mermaid 围栏描述，UI 会渲染成图并归档到架构视图。",
       inputSchema: {
         topic_id: topicIdField,
         author: authorField,
         kind: messageKindField,
-        content: z.string().min(1).max(MAX_MESSAGE_CHARS),
+        content: z
+          .string()
+          .min(1)
+          .max(MAX_MESSAGE_CHARS)
+          .describe("GFM Markdown 正文；遵守工具描述中的排版规范"),
         parent_message_id: z.string().max(MAX_ID_CHARS).optional(),
       },
       outputSchema: { message: messageOutput },
