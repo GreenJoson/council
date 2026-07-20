@@ -1,10 +1,11 @@
 /**
- * @input  依赖：Tauri 运行时、原生对话框与本机 SettingsStore
- * @output 导出：Council 桌面命令和 run 启动函数
+ * @input  依赖：Tauri 运行时、原生对话框、本机 SettingsStore 与本地 Agent 服务探测/托管
+ * @output 导出：Council 桌面命令（内容、设置、编排服务接入）和 run 启动函数
  * @pos    React 界面进入 Rust 桌面能力的唯一 IPC 边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+mod orchestration;
 mod settings;
 mod validation;
 
@@ -16,6 +17,7 @@ use council_core::{
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
 use std::path::PathBuf;
+use std::process::Child;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -30,6 +32,8 @@ struct DesktopState {
     settings: SettingsStore,
     database_path: Option<PathBuf>,
     store: Option<CouncilStore>,
+    /// 由 autostart 托管的本地 Agent 服务子进程；退出时随应用一并终止。
+    service_child: Option<Child>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +48,27 @@ struct DesktopStatus {
 struct DesktopStatusRevisions {
     content: u64,
     orchestration: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationConfig {
+    base_url: String,
+    autostart_configured: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationHealth {
+    base_url: String,
+    reachable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationStartResult {
+    /// "spawned"：本次拉起；"alreadyRunning"：托管子进程仍在运行。
+    status: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -290,6 +315,89 @@ fn select_project(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn get_orchestration_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<OrchestrationConfig, String> {
+    let snapshot = state
+        .inner
+        .lock()
+        .map_err(|_| "桌面状态锁已损坏".to_string())?
+        .settings
+        .snapshot();
+    validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
+    Ok(OrchestrationConfig {
+        base_url: snapshot.orchestration_base_url,
+        autostart_configured: snapshot.orchestration_autostart.is_some(),
+    })
+}
+
+#[tauri::command]
+async fn check_orchestration_service(
+    state: tauri::State<'_, AppState>,
+) -> Result<OrchestrationHealth, String> {
+    // 先取配置并立即释放锁，网络探测期间不得持有桌面状态锁。
+    let base_url = state
+        .inner
+        .lock()
+        .map_err(|_| "桌面状态锁已损坏".to_string())?
+        .settings
+        .snapshot()
+        .orchestration_base_url;
+    let endpoint = validation::loopback_http_base_url(&base_url)?;
+    let reachable =
+        tauri::async_runtime::spawn_blocking(move || orchestration::probe_http_service(&endpoint))
+            .await
+            .map_err(|_| "本地 Agent 服务健康探测任务异常退出".to_string())?;
+    Ok(OrchestrationHealth {
+        base_url,
+        reachable,
+    })
+}
+
+#[tauri::command]
+fn start_orchestration_service(
+    state: tauri::State<'_, AppState>,
+) -> Result<OrchestrationStartResult, String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "桌面状态锁已损坏".to_string())?;
+    if let Some(child) = inner.service_child.as_mut() {
+        match child.try_wait() {
+            Ok(None) => {
+                return Ok(OrchestrationStartResult {
+                    status: "alreadyRunning",
+                });
+            }
+            // 子进程已退出或状态不可读：清掉句柄后按新启动处理。
+            _ => inner.service_child = None,
+        }
+    }
+    let snapshot = inner.settings.snapshot();
+    validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
+    let Some(autostart) = snapshot.orchestration_autostart else {
+        return Err(
+            "未配置本地 Agent 服务自动启动；请手动启动服务，或在桌面 settings.json 中配置 orchestrationAutostart。"
+                .to_string(),
+        );
+    };
+    let child = orchestration::spawn_service(&autostart)?;
+    inner.service_child = Some(child);
+    Ok(OrchestrationStartResult { status: "spawned" })
+}
+
+/// 应用退出时终止托管的服务子进程，防止 macOS 上留下孤儿进程。
+fn shutdown_managed_service(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        if let Ok(mut inner) = state.inner.lock() {
+            if let Some(mut child) = inner.service_child.take() {
+                orchestration::terminate_service(&mut child);
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -303,6 +411,7 @@ pub fn run() {
                     settings,
                     database_path: None,
                     store: None,
+                    service_child: None,
                 }),
             });
             Ok(())
@@ -316,10 +425,18 @@ pub fn run() {
             create_topic,
             post_message,
             record_decision,
-            get_status
+            get_status,
+            get_orchestration_config,
+            check_orchestration_service,
+            start_orchestration_service
         ])
-        .run(tauri::generate_context!())
-        .expect("Council 桌面应用启动失败");
+        .build(tauri::generate_context!())
+        .expect("Council 桌面应用启动失败")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                shutdown_managed_service(app_handle);
+            }
+        });
 }
 
 #[cfg(test)]
@@ -344,6 +461,7 @@ mod tests {
             settings,
             database_path: None,
             store: None,
+            service_child: None,
         };
 
         let first_store = state.ensure_store().expect("open first store") as *const _;

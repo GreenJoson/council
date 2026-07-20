@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri invoke、event 与原生目录对话框
- * @output 导出：可注入测试的 DesktopBridge 和设置类型
+ * @output 导出：可注入测试的 DesktopBridge、设置类型与本地 Agent 服务配置/健康解析
  * @pos    浏览器领域代码进入 Tauri IPC 的唯一低层边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,16 @@ export interface DesktopSettings {
   logLibrary: string | null;
   currentProjectPath: string | null;
   recentProjectPaths: string[];
+}
+
+export interface DesktopOrchestrationConfig {
+  baseUrl: string;
+  autostartConfigured: boolean;
+}
+
+export interface DesktopOrchestrationHealth {
+  baseUrl: string;
+  reachable: boolean;
 }
 
 export interface DesktopRuntime {
@@ -34,6 +44,9 @@ export interface DesktopBridge {
   recordDecision(input: Record<string, unknown>): Promise<unknown>;
   getStatus(): Promise<unknown>;
   listenChanged(handler: (payload: unknown) => void): Promise<UnlistenFn>;
+  getOrchestrationConfig(): Promise<DesktopOrchestrationConfig>;
+  checkOrchestrationService(): Promise<DesktopOrchestrationHealth>;
+  startOrchestrationService(): Promise<void>;
 }
 
 async function tauriListen<T>(
@@ -52,11 +65,56 @@ const tauriRuntime: DesktopRuntime = {
   },
 };
 
-function parseSettings(value: unknown): DesktopSettings {
+function asRecord(value: unknown, name: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("桌面设置响应必须是对象");
+    throw new Error(`${name}必须是对象`);
   }
-  const record = value as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
+/** 校验本地 Agent 服务地址：必须是 http/https 绝对 URL；供仓储与测试直接复用。 */
+export function parseOrchestrationBaseUrl(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("编排服务地址必须是非空字符串");
+  }
+  const trimmed = value.trim();
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("编排服务地址必须是有效的绝对 URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("编排服务地址只允许 http 或 https 协议");
+  }
+  return trimmed;
+}
+
+function parseBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${name} 必须是布尔值`);
+  }
+  return value;
+}
+
+export function parseOrchestrationConfig(value: unknown): DesktopOrchestrationConfig {
+  const record = asRecord(value, "编排服务配置响应");
+  return {
+    baseUrl: parseOrchestrationBaseUrl(record.baseUrl),
+    autostartConfigured: parseBoolean(record.autostartConfigured, "autostartConfigured"),
+  };
+}
+
+export function parseOrchestrationHealth(value: unknown): DesktopOrchestrationHealth {
+  const record = asRecord(value, "编排服务健康响应");
+  return {
+    baseUrl: parseOrchestrationBaseUrl(record.baseUrl),
+    reachable: parseBoolean(record.reachable, "reachable"),
+  };
+}
+
+function parseSettings(value: unknown): DesktopSettings {
+  const record = asRecord(value, "桌面设置响应");
   const parsePath = (key: string): string | null => {
     const path = record[key];
     if (path === null || path === undefined) {
@@ -102,5 +160,12 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
     recordDecision: (input) => runtime.invoke("record_decision", { input }),
     getStatus: () => runtime.invoke("get_status"),
     listenChanged: (handler) => runtime.listen("council://changed", handler),
+    getOrchestrationConfig: async () =>
+      parseOrchestrationConfig(await runtime.invoke("get_orchestration_config")),
+    checkOrchestrationService: async () =>
+      parseOrchestrationHealth(await runtime.invoke("check_orchestration_service")),
+    startOrchestrationService: async () => {
+      await runtime.invoke("start_orchestration_service");
+    },
   };
 }

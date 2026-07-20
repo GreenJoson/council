@@ -18,6 +18,24 @@
         "5173"
       ],
       "port": 5173
+    },
+    {
+      "name": "council-web-http",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_COUNCIL_DATA_MODE=http",
+        "npm",
+        "run",
+        "dev",
+        "--prefix",
+        "packages/web",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5173"
+      ],
+      "port": 5173
     }
   ]
 }

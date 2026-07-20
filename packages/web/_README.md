@@ -23,7 +23,7 @@ npm run dev
 
 默认 `VITE_COUNCIL_DATA_MODE=mock`，用于不依赖后端的视觉与交互验证。连接真实共享数据时，复制 `.env.example` 为 `.env.local`，将模式改为 `http`，通过 `VITE_COUNCIL_API_URL` 提供 Council API origin，并通过 `VITE_COUNCIL_PROJECT_PATH` 提供当前项目的绝对路径。支持 POSIX、盘符和 UNC 形式；相对路径会在启动时被拒绝。服务地址和项目路径不得写入源码。
 
-`desktop` 模式只由 Tauri 构建使用。它通过 `invoke` 直接调用 Rust 内容命令，以原生目录选择器配置日志库和项目，并用事件加低频 status 轮询发现其他 MCP 进程的写入；不要求本地 HTTP 服务。
+`desktop` 模式只由 Tauri 构建使用。内容读写通过 `invoke` 直接调用 Rust 内容命令，以原生目录选择器配置日志库和项目，并用事件加低频 status 轮询发现其他 MCP 进程的写入。自动轮次则复用本地 Agent 服务（Node 编排服务，与桌面共享同一 SQLite 库文件）：服务地址由 Rust 设置层提供，桌面探测到服务可达后经 loopback HTTP/SSE 直连编排 API；服务离线时面板显示带地址的可执行指引，并按 `VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS` 周期重试，服务启动后自动转 LIVE。接入前提与 CORS 配置见 `packages/desktop/local-agent-service.md`。
 
 `http` 模式通过 REST 创建议题、发帖和接受决策，并通过独立 orchestration API 创建、启动、批准、恢复和取消自动轮次。普通内容写入不提交作者字段，由服务端固定 human；Agent 输出只走 orchestration。Claude 可由 Web 主动调用，Codex 当前仅自动共享回帖，不从 Web 主动唤醒。同一议题存在待启动或进行中的 Run 时不会重复新建，运行 policy 的人工恢复预算耗尽后也不会展示无效恢复操作。
 

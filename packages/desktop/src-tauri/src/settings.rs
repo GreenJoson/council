@@ -1,11 +1,12 @@
 /**
  * @input  依赖：操作系统应用配置目录、用户选择的绝对目录
- * @output 导出：DesktopSettings 与原子持久化 SettingsStore
- * @pos    日志库、当前项目和最近项目的本机唯一设置边界
+ * @output 导出：DesktopSettings（含本地 Agent 服务配置）与原子持久化 SettingsStore
+ * @pos    日志库、当前项目、最近项目和本地 Agent 服务接入的本机唯一设置边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,12 +15,56 @@ use thiserror::Error;
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const MAX_RECENT_PROJECTS: usize = 10;
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+// ============================================================
+// 本地 Agent 服务默认地址：与 Node 编排服务的默认端口保持一致。
+// 这是唯一允许出现该默认值的位置；其余代码一律从设置读取。
+// ============================================================
+pub const DEFAULT_ORCHESTRATION_BASE_URL: &str = "http://127.0.0.1:4317";
+
+fn default_orchestration_base_url() -> String {
+    DEFAULT_ORCHESTRATION_BASE_URL.to_string()
+}
+
+/// 本地 Agent 服务的可选自动拉起配置；None 表示只探测已运行的服务。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationAutostart {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub cwd: Option<PathBuf>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSettings {
+    #[serde(default)]
     pub log_library: Option<PathBuf>,
+    #[serde(default)]
     pub current_project_path: Option<PathBuf>,
+    #[serde(default)]
     pub recent_project_paths: Vec<PathBuf>,
+    /// 本地 Agent 服务（Node 编排服务）的 loopback 基础地址。
+    #[serde(default = "default_orchestration_base_url")]
+    pub orchestration_base_url: String,
+    /// 可选自动拉起配置；旧版 settings.json 缺失该键时保持 None。
+    #[serde(default)]
+    pub orchestration_autostart: Option<OrchestrationAutostart>,
+}
+
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self {
+            log_library: None,
+            current_project_path: None,
+            recent_project_paths: Vec::new(),
+            orchestration_base_url: default_orchestration_base_url(),
+            orchestration_autostart: None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -167,8 +212,71 @@ mod tests {
                 log_library: Some(logs),
                 current_project_path: Some(first_project.clone()),
                 recent_project_paths: vec![first_project, second_project],
+                ..DesktopSettings::default()
             }
         );
+    }
+
+    #[test]
+    fn upgrades_legacy_settings_without_orchestration_fields() {
+        let root = tempfile::tempdir().expect("create temp root");
+        // 旧版本 settings.json 只有三个内容字段；升级后必须无损解析并落到默认编排配置。
+        fs::write(
+            root.path().join("settings.json"),
+            r#"{"logLibrary":null,"currentProjectPath":null,"recentProjectPaths":[]}"#,
+        )
+        .expect("write legacy settings");
+
+        let store = SettingsStore::open(root.path()).expect("open legacy settings");
+        let snapshot = store.snapshot();
+        assert_eq!(
+            snapshot.orchestration_base_url,
+            super::DEFAULT_ORCHESTRATION_BASE_URL
+        );
+        assert!(snapshot.orchestration_autostart.is_none());
+    }
+
+    #[test]
+    fn parses_and_persists_orchestration_autostart() {
+        let root = tempfile::tempdir().expect("create temp root");
+        let logs = root.path().join("logs");
+        fs::create_dir_all(&logs).expect("create logs");
+        fs::write(
+            root.path().join("settings.json"),
+            r#"{
+                "logLibrary": null,
+                "currentProjectPath": null,
+                "recentProjectPaths": [],
+                "orchestrationBaseUrl": "http://127.0.0.1:14317",
+                "orchestrationAutostart": {
+                    "command": "npm",
+                    "args": ["run", "start:http"],
+                    "cwd": "/path/to/service",
+                    "env": {"COUNCIL_HTTP_PORT": "14317"}
+                }
+            }"#,
+        )
+        .expect("write settings with autostart");
+
+        let mut store = SettingsStore::open(root.path()).expect("open settings");
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.orchestration_base_url, "http://127.0.0.1:14317");
+        let autostart = snapshot
+            .orchestration_autostart
+            .expect("autostart configured");
+        assert_eq!(autostart.command, "npm");
+        assert_eq!(autostart.args, vec!["run".to_string(), "start:http".to_string()]);
+        assert_eq!(autostart.cwd.as_deref(), Some(std::path::Path::new("/path/to/service")));
+        assert_eq!(
+            autostart.env.get("COUNCIL_HTTP_PORT").map(String::as_str),
+            Some("14317")
+        );
+
+        // 写回其他设置后编排配置必须原样保留。
+        store.configure_log_library(logs).expect("configure logs");
+        let reopened = SettingsStore::open(root.path()).expect("reopen settings");
+        assert_eq!(reopened.snapshot().orchestration_base_url, "http://127.0.0.1:14317");
+        assert!(reopened.snapshot().orchestration_autostart.is_some());
     }
 
     #[test]

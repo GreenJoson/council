@@ -20,11 +20,12 @@
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、决策接受（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
-| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event 与目录选择器 |
+| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器与本地 Agent 服务配置/健康命令 |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，并提供不参与设置世代的只读议题详情加载 |
-| `unavailable-orchestration-repository.ts` | 能力边界 | Rust Runtime 未接通前明确禁用桌面自动轮次 |
+| `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
+| `mention-parser.ts` | 查询 | @claude/@codex 召唤的纯函数解析层：`parseMention` 按 adapter.publicAuthor 匹配行首或空白后的首个 `@token`（逐行围栏状态机同 selectors.ts，围栏内 @ 不触发），返回去除标记后的 `{adapterId, instruction}`（不检查 adapter.available，交给调用方判断）；`hasMentionAttempt` 只做语法层探测，供离线场景下 adapter 解析失败仍能诚实提示；`findActiveMentionQuery` 供 Composer 定位光标前正在输入的 `@query` 以驱动候选下拉；`extractLeadingMentionChip` 只认消息正文最开头的 `@claude`/`@codex` 标记（比 parseMention 更严格），供 MessageCard 抠出渲染成高亮芯片，避免误伤正文中间提到 "@claude" 的普通讨论消息 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。
 
@@ -35,3 +36,5 @@
 SSE 只传总 revision；两个仓储收到事件后各自读取 `/api/v1/status` 分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在 `revisions.orchestration` 变化时读取当前议题 Runs，避免互相放大请求。事件前已经启动的读取不会消费该事件；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的 drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应 recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。
 
 `NativeCouncilRepository` 复用相同 parser 和 mapper，Rust 返回未经信任的裸领域对象仍必须先校验。Tauri 本进程写入通过 `council://changed` 立即刷新；其他 Codex/Claude MCP 进程写入通过配置化 status 轮询发现。项目或日志库变化会递增设置世代并废弃旧的在途加载，防止旧项目结果覆盖新项目。最后一个 listener 退出时同时撤销事件监听并清理轮询。
+
+桌面自动轮次不再是显式 stub：`DesktopOrchestrationRepository` 通过 `get_orchestration_config` 从 Rust 设置层拿到本地 Agent 服务地址（默认集中在 Rust `settings.rs` 一处，前端不硬编码），用 `check_orchestration_service` 做 Rust 侧健康探测（不受 CORS 影响），可达时创建 `HttpOrchestrationRepository` 直连编排 REST/SSE；不可达时返回带可执行指引的离线快照（含服务地址），按 `VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS` 周期重试，若设置里配置了 `orchestrationAutostart` 则只自动拉起一次。服务启动后自动转 LIVE：重新加载能力、回放当前议题选择并停止健康轮询，无需重启应用。写操作在离线态直接抛出与面板一致的诚实指引。
