@@ -56,6 +56,10 @@ const envSchema = z
     COUNCIL_ORCHESTRATION_SHUTDOWN_TIMEOUT_MS: timerInteger,
   });
 
+// Tauri webview（macOS/Linux 生产构建）的固定 origin：自定义协议经 new URL()
+// 归一化后 origin 为 "null"，无法通过下方 http/https 校验，因此按字面量放行。
+const TAURI_WEBVIEW_ORIGIN = "tauri://localhost";
+
 function parseAllowedOrigins(raw: string): string[] {
   let value: unknown;
   try {
@@ -68,6 +72,9 @@ function parseAllowedOrigins(raw: string): string[] {
     throw new Error("COUNCIL_HTTP_CORS_ORIGINS_JSON 必须是非空 URL 字符串数组。");
   }
   const origins = result.data.map((item) => {
+    if (item === TAURI_WEBVIEW_ORIGIN) {
+      return item;
+    }
     const url = new URL(item);
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("CORS origin 只允许 HTTP 或 HTTPS 协议。");

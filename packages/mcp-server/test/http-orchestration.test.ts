@@ -275,6 +275,30 @@ test("不可用 Agent 在 capabilities 标记 false 且 create 严格拒绝", as
   }
 });
 
+test("不可用 Agent 优先展示注册时提供的可执行 limitation 提示", async () => {
+  const agent = new FakeAgent("codex", async () => ({ content: "不应调用" }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    publicAuthor: "codex",
+    label: "Codex CLI",
+    limitationWhenUnavailable: "请安装 codex 并运行 codex login 后重试。",
+    checkAvailability: async () => false,
+  }]);
+  try {
+    const response = await fetch(`${harness.baseUrl}/api/v1/orchestration/capabilities`);
+    const envelope = await readEnvelope<{
+      adapters: Array<{ available: boolean; limitation?: string }>;
+    }>(response);
+    assert.equal(envelope.data?.adapters[0]?.available, false);
+    assert.equal(
+      envelope.data?.adapters[0]?.limitation,
+      "请安装 codex 并运行 codex login 后重试。",
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
 test("产品服务将配置的消息上限传入 Agent 上下文 Store", async () => {
   const agent = new FakeAgent("fake", async () => ({ content: "只使用有界上下文。" }));
   const harness = await startHttpHarness(

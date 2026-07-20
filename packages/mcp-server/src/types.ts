@@ -28,6 +28,12 @@ export interface CouncilConfig {
   claudeTimeoutMs: number;
   claudeKillGraceMs: number;
   claudeMaxTurns: number;
+  codexCommand: string;
+  codexArgs: string[];
+  codexModel?: string;
+  codexSandboxMode: "read-only";
+  codexTimeoutMs: number;
+  codexKillGraceMs: number;
   sqliteBusyTimeoutMs: number;
   maxContextChars: number;
   maxOutputChars: number;
@@ -122,4 +128,9 @@ export interface ClaudeResponse {
   content: string;
   sessionId?: string;
   model?: string;
+}
+
+export interface CodexResponse {
+  content: string;
+  sessionId?: string;
 }

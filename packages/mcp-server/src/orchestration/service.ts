@@ -1,5 +1,5 @@
 /**
- * @input  依赖：HTTP/Claude 配置、SQLiteCouncilStore、Agent 注册与 ExecutionManager
+ * @input  依赖：HTTP/Claude/Codex 配置、SQLiteCouncilStore、Agent 注册与 ExecutionManager
  * @output 导出：浏览器不可伪造身份和策略的编排产品服务
  * @pos    REST 契约使用的编排聚合根与生产依赖工厂
  *
@@ -19,9 +19,11 @@ import {
   type PublicAuthor,
 } from "council-orchestrator";
 import { ClaudeRuntime } from "../claude-runtime.js";
+import { CodexRuntime } from "../codex-runtime.js";
 import { CouncilNotFoundError } from "../errors.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
+import { CodexAgentAdapter } from "./codex-agent-adapter.js";
 import { RunExecutionManager } from "./execution-manager.js";
 
 export interface RegisteredAgentAdapter {
@@ -30,6 +32,8 @@ export interface RegisteredAgentAdapter {
   label?: string;
   available?: boolean;
   limitation?: string;
+  /** 可用性检查失败时展示的可执行提示；未提供则回退到通用不可用说明。 */
+  limitationWhenUnavailable?: string;
   checkAvailability?: () => Promise<boolean>;
 }
 
@@ -62,6 +66,7 @@ export class CouncilOrchestrationService {
     limitation?: string;
   }> = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
+  readonly #unavailableLimitations = new Map<string, string>();
 
   constructor(
     private readonly config: CouncilHttpConfig,
@@ -90,6 +95,12 @@ export class CouncilOrchestrationService {
         this.#availabilityChecks.set(
           registration.adapter.adapterId,
           registration.checkAvailability,
+        );
+      }
+      if (registration.limitationWhenUnavailable) {
+        this.#unavailableLimitations.set(
+          registration.adapter.adapterId,
+          registration.limitationWhenUnavailable,
         );
       }
     }
@@ -206,7 +217,9 @@ export class CouncilOrchestrationService {
         capability.available = false;
       }
       if (!capability.available && !capability.limitation) {
-        capability.limitation = "本地 Agent 自动调用当前不可用。";
+        capability.limitation =
+          this.#unavailableLimitations.get(capability.id) ??
+          "本地 Agent 自动调用当前不可用。";
       }
     }));
     await this.manager.recoverOnStartup();
@@ -225,10 +238,15 @@ export function createProductionOrchestrationService(
   httpConfig: CouncilHttpConfig,
   councilConfig: CouncilConfig,
 ): CouncilOrchestrationService {
-  const runtime = new ClaudeRuntime(councilConfig);
-  const claude = new ClaudeAgentAdapter(runtime, {
+  const claudeRuntime = new ClaudeRuntime(councilConfig);
+  const claude = new ClaudeAgentAdapter(claudeRuntime, {
     maxContextChars: councilConfig.maxContextChars,
     ...(councilConfig.claudeModel ? { model: councilConfig.claudeModel } : {}),
+  });
+  const codexRuntime = new CodexRuntime(councilConfig);
+  const codex = new CodexAgentAdapter(codexRuntime, {
+    maxContextChars: councilConfig.maxContextChars,
+    ...(councilConfig.codexModel ? { model: councilConfig.codexModel } : {}),
   });
   return new CouncilOrchestrationService(httpConfig, [
     {
@@ -236,7 +254,18 @@ export function createProductionOrchestrationService(
       publicAuthor: "claude",
       label: "Claude Code",
       checkAvailability: async () => {
-        const availability = await runtime.checkAvailability();
+        const availability = await claudeRuntime.checkAvailability();
+        return availability.available && availability.authenticated;
+      },
+    },
+    {
+      adapter: codex,
+      publicAuthor: "codex",
+      label: "Codex CLI",
+      limitationWhenUnavailable:
+        "Codex CLI 当前不可用或未登录；请安装 codex 并运行 codex login 后重试。",
+      checkAvailability: async () => {
+        const availability = await codexRuntime.checkAvailability();
         return availability.available && availability.authenticated;
       },
     },

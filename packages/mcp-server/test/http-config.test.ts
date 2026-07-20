@@ -79,6 +79,18 @@ test("HTTP 配置只接受完整、有效且 exact 的 origin", () => {
     originWithPath.COUNCIL_HTTP_CORS_ORIGINS_JSON = '["https://web.example/path"]';
     assert.throws(() => loadHttpConfig(originWithPath), /只包含协议、主机和端口/);
 
+    const tauriOrigin = createEnv(directory);
+    tauriOrigin.COUNCIL_HTTP_CORS_ORIGINS_JSON =
+      '["https://web.example", "tauri://localhost"]';
+    assert.deepEqual(loadHttpConfig(tauriOrigin).allowedOrigins, [
+      "https://web.example",
+      "tauri://localhost",
+    ]);
+
+    const tauriLikeOrigin = createEnv(directory);
+    tauriLikeOrigin.COUNCIL_HTTP_CORS_ORIGINS_JSON = '["tauri://evil.example"]';
+    assert.throws(() => loadHttpConfig(tauriLikeOrigin), /HTTP 或 HTTPS/);
+
     const invalidBoolean = createEnv(directory);
     invalidBoolean.COUNCIL_ORCHESTRATION_CONFIRM_COMPLETION = "yes";
     assert.throws(() => loadHttpConfig(invalidBoolean), /CONFIRM_COMPLETION/);
