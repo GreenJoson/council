@@ -44,7 +44,7 @@ export interface DesktopOrchestrationRepositoryOptions {
 
 export function buildOfflineLimitation(baseUrl: string | undefined): string {
   return baseUrl
-    ? `未检测到本地 Council 服务（${baseUrl}）。启动服务后将自动接入。`
+    ? `内置 Agent 服务暂未就绪（${baseUrl}）。Council 正在自动重试；持续失败请查看本地服务日志。`
     : "尚未获取本地 Agent 服务地址，正在重试读取桌面设置。";
 }
 

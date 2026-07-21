@@ -25,7 +25,7 @@ fn default_orchestration_base_url() -> String {
     DEFAULT_ORCHESTRATION_BASE_URL.to_string()
 }
 
-/// 本地 Agent 服务的可选自动拉起配置；None 表示只探测已运行的服务。
+/// 本地 Agent 服务的可选开发者启动覆盖；None 表示使用安装包内置 sidecar。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestrationAutostart {
@@ -50,7 +50,7 @@ pub struct DesktopSettings {
     /// 本地 Agent 服务（Node 编排服务）的 loopback 基础地址。
     #[serde(default = "default_orchestration_base_url")]
     pub orchestration_base_url: String,
-    /// 可选自动拉起配置；旧版 settings.json 缺失该键时保持 None。
+    /// 可选开发者启动覆盖；旧版 settings.json 可继续使用，普通用户无需配置。
     #[serde(default)]
     pub orchestration_autostart: Option<OrchestrationAutostart>,
 }

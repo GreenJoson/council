@@ -149,6 +149,7 @@ fn get_desktop_settings(state: tauri::State<'_, AppState>) -> Result<DesktopSett
 fn configure_log_library(
     path: PathBuf,
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<DesktopSettings, String> {
     validation::directory(&path, "日志库")?;
     let database_path = path.join(DATABASE_FILE_NAME);
@@ -163,6 +164,11 @@ fn configure_log_library(
         .map_err(|error| error.to_string())?;
     inner.database_path = Some(database_path);
     inner.store = Some(store);
+    if let Some(mut child) = inner.service_child.take() {
+        orchestration::terminate_service(&mut child);
+    }
+    // 日志库决定 sidecar 的 SQLite 路径；切换后必须重启，避免 UI 与 Agent 写入不同库。
+    let _ = start_managed_service(&mut inner, &app);
     Ok(settings)
 }
 
@@ -328,7 +334,8 @@ fn get_orchestration_config(
     validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
     Ok(OrchestrationConfig {
         base_url: snapshot.orchestration_base_url,
-        autostart_configured: snapshot.orchestration_autostart.is_some(),
+        autostart_configured: snapshot.log_library.is_some()
+            || snapshot.orchestration_autostart.is_some(),
     })
 }
 
@@ -356,13 +363,10 @@ async fn check_orchestration_service(
 }
 
 #[tauri::command]
-fn start_orchestration_service(
-    state: tauri::State<'_, AppState>,
+fn start_managed_service(
+    inner: &mut DesktopState,
+    app: &tauri::AppHandle,
 ) -> Result<OrchestrationStartResult, String> {
-    let mut inner = state
-        .inner
-        .lock()
-        .map_err(|_| "桌面状态锁已损坏".to_string())?;
     if let Some(child) = inner.service_child.as_mut() {
         match child.try_wait() {
             Ok(None) => {
@@ -375,16 +379,45 @@ fn start_orchestration_service(
         }
     }
     let snapshot = inner.settings.snapshot();
-    validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
-    let Some(autostart) = snapshot.orchestration_autostart else {
-        return Err(
-            "未配置本地 Agent 服务自动启动；请手动启动服务，或在桌面 settings.json 中配置 orchestrationAutostart。"
-                .to_string(),
-        );
+    let endpoint = validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
+    if orchestration::probe_http_service(&endpoint) {
+        return Ok(OrchestrationStartResult {
+            status: "alreadyRunning",
+        });
+    }
+    let autostart = if let Some(custom) = snapshot.orchestration_autostart {
+        custom
+    } else {
+        let log_library = snapshot
+            .log_library
+            .as_deref()
+            .ok_or_else(|| "请先设置 Council 日志库".to_string())?;
+        orchestration::built_in_autostart(
+            orchestration::bundled_service_binary()?,
+            log_library,
+            &endpoint,
+        )?
     };
-    let child = orchestration::spawn_service(&autostart)?;
+    let log_directory = app
+        .path()
+        .app_log_dir()
+        .map_err(|error| format!("无法定位 Council 日志目录：{error}"))?;
+    let log_path = orchestration::service_log_path(&log_directory);
+    let child = orchestration::spawn_service(&autostart, &log_path)?;
     inner.service_child = Some(child);
     Ok(OrchestrationStartResult { status: "spawned" })
+}
+
+#[tauri::command]
+fn start_orchestration_service(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<OrchestrationStartResult, String> {
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "桌面状态锁已损坏".to_string())?;
+    start_managed_service(&mut inner, &app)
 }
 
 /// 应用退出时终止托管的服务子进程，防止 macOS 上留下孤儿进程。
@@ -406,13 +439,19 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let settings = SettingsStore::open(&config_dir)
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let mut desktop_state = DesktopState {
+                settings,
+                database_path: None,
+                store: None,
+                service_child: None,
+            };
+            if desktop_state.settings.snapshot().log_library.is_some() {
+                // 已完成首次配置的用户打开 App 即拉起服务；失败不阻断内容阅读，
+                // 前端健康轮询仍会显示离线并允许后续重试。
+                let _ = start_managed_service(&mut desktop_state, app.handle());
+            }
             app.manage(AppState {
-                inner: Mutex::new(DesktopState {
-                    settings,
-                    database_path: None,
-                    store: None,
-                    service_child: None,
-                }),
+                inner: Mutex::new(desktop_state),
             });
             Ok(())
         })

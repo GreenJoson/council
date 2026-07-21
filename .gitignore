@@ -11,6 +11,11 @@ __pycache__/
 *.tsbuildinfo
 target/
 packages/desktop/src-tauri/gen/
+packages/desktop/.sidecar-build/
+packages/desktop/.sidecar-cache/
+packages/desktop/src-tauri/binaries/council-agent-service-*
+packages/desktop/src-tauri/resources/node-LICENSE
+packages/desktop/src-tauri/resources/agent-service-THIRD-PARTY-NOTICES.txt
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal

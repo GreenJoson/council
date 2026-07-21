@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE 共享、模型设置、多适配器能力与 Claude 自动轮次验收
+@output 导出：项目隔离、REST/SSE 共享、按需 Provider 设置、多适配器能力与 Claude 自动轮次验收
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -74,22 +74,28 @@ with sync_playwright() as playwright:
 
     page.get_by_role("button", name="打开模型与 Provider 设置", exact=True).click()
     page.get_by_role("heading", name="模型与 Provider", exact=True).wait_for()
-    claude_settings = page.locator(".agent-setting-card", has_text="Claude Code")
+    claude_settings = page.locator(".agent-setting-editor", has_text="Claude Code")
     claude_settings.locator("input:not([type='checkbox'])").first.fill(
-        "claude-opus-test"
+        "claude-opus-router-test"
     )
     claude_settings.get_by_role("button", name="保存", exact=True).click()
     page.get_by_text(
-        "Claude Code 已保存；后续新轮次立即使用 claude-opus-test。",
+        "Claude Code 已保存；后续新轮次立即使用 claude-opus-router-test。",
         exact=True,
     ).wait_for()
-    page.locator(".agent-setting-card", has_text="DeepSeek").wait_for()
-    page.locator(".agent-setting-card", has_text="Kimi").wait_for()
+    assert page.locator(".agent-setting-list-item", has_text="DeepSeek").count() == 0
+    assert page.locator(".agent-setting-list-item", has_text="Kimi").count() == 0
+    page.get_by_role("button", name="添加 Provider", exact=False).click()
+    page.get_by_role("button", name="DeepSeek", exact=False).wait_for()
+    page.get_by_role("button", name="Kimi", exact=False).wait_for()
+    page.get_by_role("button", name="DeepSeek", exact=False).click()
+    page.get_by_text("添加 DeepSeek", exact=True).wait_for()
+    page.get_by_role("button", name="取消", exact=True).click()
     page.get_by_role("button", name="关闭模型设置", exact=True).click()
     agent_settings = api_request("GET", "/api/v1/settings/agents")
     assert next(
         agent for agent in agent_settings["agents"] if agent["id"] == "claude"
-    )["model"] == "claude-opus-test"
+    )["model"] == "claude-opus-router-test"
 
     capability_ledger = page.get_by_label("Agent 主动调用能力")
     claude_capability = capability_ledger.locator(

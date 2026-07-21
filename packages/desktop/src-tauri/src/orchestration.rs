@@ -1,14 +1,17 @@
 /**
- * @input  依赖：validation::LoopbackEndpoint、settings::OrchestrationAutostart 与 std 网络/进程原语
- * @output 导出：本地 Agent 服务的健康探测、自动拉起与随应用退出的终止函数
- * @pos    桌面壳与 Node 编排服务之间唯一的进程与连通性边界（不承载业务状态机）
+ * @input  依赖：loopback 端点、日志库、内置 sidecar/默认配置与 std 网络/进程原语
+ * @output 导出：Agent 服务启动配置构造、健康探测、进程拉起与随应用退出的终止函数
+ * @pos    桌面壳与内置 Agent Service 之间唯一的进程、配置和连通性边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 use crate::settings::OrchestrationAutostart;
 use crate::validation::{self, LoopbackEndpoint};
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -19,9 +22,126 @@ use std::time::Duration;
 const PROBE_CONNECT_TIMEOUT_MS: u64 = 1_000;
 const PROBE_IO_TIMEOUT_MS: u64 = 2_000;
 const PROBE_PATH: &str = "/api/v1/status";
+const SIDECAR_BINARY_NAME: &str = "council-agent-service";
+const SERVICE_LOG_FILE_NAME: &str = "agent-service.log";
+const LOGIN_SHELL_PATH_MARKER: &str = "__COUNCIL_PATH__";
+const LOGIN_SHELL_POLL_COUNT: u32 = 50;
 /// SIGTERM 后的有界等待：20 次 × 100ms = 2 秒，超时升级 SIGKILL。
 const TERMINATE_POLL_COUNT: u32 = 20;
 const TERMINATE_POLL_INTERVAL_MS: u64 = 100;
+
+/// Tauri 在开发输出和发行包里都会把 externalBin 放在主程序旁边，并移除 target triple 后缀。
+pub fn bundled_service_binary() -> Result<PathBuf, String> {
+    let executable =
+        std::env::current_exe().map_err(|error| format!("无法定位 Council 主程序：{error}"))?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| "Council 主程序路径缺少父目录".to_string())?;
+    let binary = directory.join(format!(
+        "{SIDECAR_BINARY_NAME}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    if !binary.is_file() {
+        return Err("Council 安装包缺少内置 Agent Service，请重新安装应用。".to_string());
+    }
+    Ok(binary)
+}
+
+/// 从用户的登录 shell 获取完整 PATH。Finder 启动的 GUI 通常拿不到 CLI 安装目录；
+/// 此处只读取 PATH，固定脚本不拼接任何用户输入。
+fn login_shell_path() -> Option<String> {
+    let shell = std::env::var_os("SHELL")?;
+    let shell_path = Path::new(&shell);
+    if !shell_path.is_absolute() || !shell_path.is_file() {
+        return None;
+    }
+    let mut command = Command::new(shell_path);
+    command
+        .args(["-lc", "printf '\n__COUNCIL_PATH__%s' \"$PATH\""])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let mut completed = None;
+    for _ in 0..LOGIN_SHELL_POLL_COUNT {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                completed = Some(status);
+                break;
+            }
+            Ok(None) => {
+                std::thread::sleep(Duration::from_millis(TERMINATE_POLL_INTERVAL_MS));
+            }
+            Err(_) => break,
+        }
+    }
+    if completed.is_none() {
+        completed = child.try_wait().ok().flatten();
+    }
+    let Some(status) = completed else {
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+        #[cfg(not(unix))]
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = reader.join();
+        return None;
+    };
+    let output = reader.join().ok()?.ok()?;
+    if !status.success() {
+        return None;
+    }
+    let output = String::from_utf8(output).ok()?;
+    let path = output.rsplit_once(LOGIN_SHELL_PATH_MARKER)?.1.trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+fn service_defaults() -> Result<BTreeMap<String, String>, String> {
+    serde_json::from_str(include_str!("../resources/agent-service-defaults.json"))
+        .map_err(|error| format!("内置 Agent Service 默认配置无效：{error}"))
+}
+
+/// 构造内置 sidecar 的完整环境。动态路径和监听端点覆盖只读默认配置；
+/// 模型与远程 Provider 密钥仍由共享 SQLite / 系统 Keychain 管理。
+pub fn built_in_autostart(
+    binary: PathBuf,
+    log_library: &Path,
+    endpoint: &LoopbackEndpoint,
+) -> Result<OrchestrationAutostart, String> {
+    validation::directory(log_library, "日志库")?;
+    let data_dir = log_library
+        .to_str()
+        .ok_or_else(|| "日志库路径必须是有效 UTF-8".to_string())?;
+    let mut env = service_defaults()?;
+    env.insert("COUNCIL_DATA_DIR".to_string(), data_dir.to_string());
+    env.insert("COUNCIL_HTTP_HOST".to_string(), endpoint.host.clone());
+    env.insert("COUNCIL_HTTP_PORT".to_string(), endpoint.port.to_string());
+    if let Some(path) = login_shell_path().or_else(|| std::env::var("PATH").ok()) {
+        env.insert("PATH".to_string(), path);
+    }
+    Ok(OrchestrationAutostart {
+        command: binary.to_string_lossy().into_owned(),
+        args: Vec::new(),
+        cwd: None,
+        env,
+    })
+}
+
+pub fn service_log_path(log_directory: &Path) -> PathBuf {
+    log_directory.join(SERVICE_LOG_FILE_NAME)
+}
 
 /// 探测本地 Agent 服务是否可达：TCP 连通 + 最小 HTTP GET。
 /// 只要对端回出合法 HTTP 状态行（包括 4xx/5xx）即视为服务在监听；
@@ -64,16 +184,34 @@ pub fn probe_http_service(endpoint: &LoopbackEndpoint) -> bool {
 
 /// 按 autostart 配置拉起本地 Agent 服务子进程。
 /// Unix 下放入独立进程组，便于退出时把 npm/node 之类的整棵子进程树一起终止。
-pub fn spawn_service(autostart: &OrchestrationAutostart) -> Result<Child, String> {
+pub fn spawn_service(autostart: &OrchestrationAutostart, log_path: &Path) -> Result<Child, String> {
     if autostart.command.trim().is_empty() {
         return Err("orchestrationAutostart.command 不能为空".to_string());
     }
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("无法创建 Agent Service 日志目录：{error}"))?;
+    }
+    let mut log_options = OpenOptions::new();
+    log_options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        log_options.mode(0o600);
+    }
+    let log = log_options
+        .open(log_path)
+        .map_err(|error| format!("无法打开 Agent Service 日志：{error}"))?;
+    let error_log = log
+        .try_clone()
+        .map_err(|error| format!("无法复制 Agent Service 日志句柄：{error}"))?;
+
     let mut command = Command::new(&autostart.command);
     command
         .args(&autostart.args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(error_log));
     if let Some(cwd) = &autostart.cwd {
         validation::directory(cwd, "orchestrationAutostart.cwd")?;
         command.current_dir(cwd);
@@ -126,7 +264,7 @@ pub fn terminate_service(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::probe_http_service;
+    use super::{built_in_autostart, probe_http_service, service_defaults};
     use crate::validation::LoopbackEndpoint;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -161,5 +299,45 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
         assert!(!probe_http_service(&endpoint(port)));
+    }
+
+    #[test]
+    fn builds_sidecar_environment_from_defaults_and_dynamic_paths() {
+        let logs = tempfile::tempdir().expect("create logs");
+        let config = built_in_autostart(
+            std::path::PathBuf::from("/tmp/council-agent-service"),
+            logs.path(),
+            &LoopbackEndpoint {
+                host: "localhost".to_string(),
+                port: 14_317,
+            },
+        )
+        .expect("build autostart");
+        assert_eq!(
+            config.env.get("COUNCIL_DATA_DIR").map(String::as_str),
+            logs.path().to_str()
+        );
+        assert_eq!(
+            config.env.get("COUNCIL_HTTP_HOST").map(String::as_str),
+            Some("localhost")
+        );
+        assert_eq!(
+            config.env.get("COUNCIL_HTTP_PORT").map(String::as_str),
+            Some("14317")
+        );
+        assert_eq!(
+            config
+                .env
+                .get("COUNCIL_CLAUDE_PERMISSION_MODE")
+                .map(String::as_str),
+            Some("plan")
+        );
+    }
+
+    #[test]
+    fn bundled_defaults_never_contain_user_data_or_api_keys() {
+        let defaults = service_defaults().expect("parse defaults");
+        assert!(!defaults.contains_key("COUNCIL_DATA_DIR"));
+        assert!(defaults.keys().all(|key| !key.contains("API_KEY")));
     }
 }

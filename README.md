@@ -15,7 +15,7 @@ Claude Desktop ──┘                │
 浏览器 ───────────── Operator Console ── REST/SSE ─┘
 
 Council.app ───────── React UI ── Tauri IPC ── Rust council-core ── SQLite
-        └──────────── 本地 REST/SSE ── ExecutionManager ── Claude/Codex CLI
+        └──────────── 内置 Agent Service sidecar ── ExecutionManager ── Claude/Codex CLI
 
 Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
                                       │
@@ -43,11 +43,11 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
 - Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
-- 顶栏模型设置可即时切换 Claude/Codex 模型，并配置 DeepSeek、Kimi 等 OpenAI Chat Completions 兼容 Provider。
+- 顶栏模型路由台可即时切换 Claude/Codex 模型；DeepSeek、Kimi 等兼容 Provider 按需添加，右侧一次只编辑一项，候选数量不会撑高设置窗口。
 - 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
-- 提供无需手动启动 Web/API 服务的桌面模式；桌面端直接通过 Rust 读取共享 SQLite。
+- 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
 - 桌面端使用独立的多 Agent 圆桌图标，并生成各平台所需的打包尺寸。
 
@@ -76,7 +76,7 @@ API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 使用同一目录；Web
 
 Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP 配置应调用 MCP 构建产物，并通过环境变量注入数据目录和运行参数。
 
-桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。桌面内容读写不依赖本地 HTTP 服务，`@claude` / `@codex` 直召和自动轮次则通过可自动托管的本地 Agent 服务。首次启动时选择日志库和项目目录；MCP 客户端与本地服务的 `COUNCIL_DATA_DIR` 必须指向同一日志库。
+桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。两条命令都会先生成内置 Agent Service sidecar；构建配置固定在 `packages/desktop/sidecar-build.json`，下载的官方 Node 运行时必须通过锁定的 SHA-256 校验。安装后的 Council.app 打开即自动启动 sidecar，不需要 Node/npm。首次启动时只需选择日志库和项目目录；MCP 客户端仍应把 `COUNCIL_DATA_DIR` 指向同一日志库。
 
 ## 使用方式
 

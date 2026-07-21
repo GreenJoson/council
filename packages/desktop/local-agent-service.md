@@ -1,80 +1,84 @@
-# 桌面自动轮次 × 本地 Agent 服务接入说明
+# 桌面内置 Agent Service 说明
 
-> ⚠️ 一旦接入方式（命令、设置字段、CORS 要求）有所变化，请更新本文件
+> ⚠️ 一旦打包、启动生命周期、配置或诊断方式有所变化，请更新本文件
 
-## 架构
+## 用户结论
 
-桌面端**不在 Rust 重写编排状态机**。自动轮次复用 `packages/mcp-server` 的 Node HTTP/SSE 编排服务（"本地 Agent 服务"），与桌面共享同一个 SQLite 库文件：
+Council.app 已内置 Agent Service 和 Node.js 运行时。正常使用时不需要打开终端，不需要执行 `npm run dev:api`，也不需要提前启动常驻服务。
 
-- 内容读写（议题、消息、决策）仍走 Tauri 原生命令直连 Rust `council-core`；
-- 编排与设置请求（capabilities、runs、actions、Agent settings、SSE）走 loopback HTTP 直连本地 Agent 服务；
-- 服务地址只保存在桌面设置层（`settings.json`），前端与业务代码不硬编码端口。
+生命周期由桌面端统一管理：
 
-服务离线时，自动轮次面板显示离线徽章与可执行指引（含服务地址），桌面按
-`VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS` 周期做 Rust 侧健康探测；服务启动后自动转
-LIVE（重新加载能力、回放当前议题），无需重启应用。
+1. 首次启动选择日志库后，Rust 立即启动内置 sidecar；
+2. 后续打开 App 时自动启动；
+3. 切换日志库时终止旧 sidecar，再以新日志库重启；
+4. 退出 App 时先发 SIGTERM，超时后终止整个进程组，不留下后台孤儿进程；
+5. sidecar 暂未就绪时，界面保持离线并自动健康探测，就绪后自动转为 LIVE。
 
-## 桌面设置（settings.json）
+用户仍需分别完成 Claude Code CLI / Codex CLI 的安装和登录。模型选择、兼容 Provider 与 API Key 在 Council 的设置中心完成；API Key 只进入系统 Keychain，不写入 SQLite、设置文件或 sidecar 配置。
 
-位于操作系统应用配置目录（macOS：`~/Library/Application Support/app.council.desktop/settings.json`）。
-新增两个可选字段，旧版设置文件无损升级：
+## 运行架构
 
-```json
-{
-  "orchestrationBaseUrl": "http://127.0.0.1:4317",
-  "orchestrationAutostart": {
-    "command": "npm",
-    "args": ["run", "start:http"],
-    "cwd": "/absolute/path/to/council/packages/mcp-server",
-    "env": {}
-  }
-}
+桌面端不在 Rust 重写编排状态机，而是复用经过测试的 Node 编排实现：
+
+```text
+React UI ── Tauri IPC ── Rust council-core ── SQLite
+    │                         │
+    └── loopback REST/SSE ── 内置 Agent Service sidecar
+                                  └── Claude/Codex CLI + 兼容 Provider
 ```
 
-- `orchestrationBaseUrl`：缺省为 `http://127.0.0.1:4317`（与服务端 `COUNCIL_HTTP_PORT`
-  默认一致；默认值唯一来源是 `src-tauri/src/settings.rs`）。只接受
-  `http://<loopback 主机>[:端口]`，不允许路径/查询/非 loopback 主机。
-- `orchestrationAutostart`：缺省 `None`——只探测已运行的服务，不自动拉起。配置后，
-  桌面在首次探测失败时拉起该命令一次（Unix 下放入独立进程组），应用退出时对整个
-  进程组先 SIGTERM、2 秒有界等待后 SIGKILL，不留孤儿进程。`cwd` 必须是存在的绝对目录。
+- 内容读写（议题、消息、决策）走 Tauri IPC，Rust 直接访问 SQLite；
+- 自动轮次、Agent 设置、连接测试与 SSE 走 loopback HTTP；
+- Rust 与 sidecar 使用桌面选择的同一日志库，因此共享同一个 `council.sqlite3`；
+- 前端不保存端口，服务地址由桌面设置层统一提供；
+- sidecar 只监听 loopback，CORS 只允许 Council 的开发与生产 webview origin。
 
-## 服务端前提（packages/mcp-server 的 .env）
+## 构建链
 
-1. 服务与桌面必须指向**同一个数据目录**：`COUNCIL_DATA_DIR` 指向桌面所选日志库目录
-   （两者共用其中的 `council.sqlite3`）。
-2. CORS 白名单需包含桌面 webview 的 Origin（见下）。
-3. 端口如改动，桌面 `orchestrationBaseUrl` 需同步修改。
-4. 远程 Provider 需要配置 `COUNCIL_KEYCHAIN_COMMAND`；API Key 由系统 Keychain 保存，
-   SQLite 和 HTTP 设置响应均不包含密钥正文。
+`npm run dev:desktop`、`npm run build:desktop`、桌面检查和测试都会先运行 `scripts/build-agent-sidecar.mjs`：
 
-### 桌面 webview 的 Origin（实测值）
+1. 编译 `packages/orchestrator` 与 `packages/mcp-server`；
+2. 用 esbuild 将 HTTP 服务及 JavaScript 依赖合并为单文件；
+3. 按 `sidecar-build.json` 下载固定版本的 Node 官方发行归档；
+4. 对归档执行锁定的 SHA-256 校验，失败时删除缓存并终止构建；
+5. 使用 Node SEA + postject 生成独立可执行程序并重新签名；
+6. 交给 Tauri `externalBin` 放入应用包，并在 Hardened Runtime 签名时应用 V8 所需的最小 JIT/可执行内存 entitlement；
+7. 同时带上实际 Node 发行版许可证。
 
-| 运行方式 | 实测 Origin |
-|---|---|
-| `tauri dev`（webview 加载 Vite devUrl） | `http://127.0.0.1:5173` |
-| 生产/`tauri build` 构建（macOS，含 `--debug`） | `tauri://localhost` |
+生成的运行时、缓存和二进制均被 `.gitignore` 排除。源码仓库只提交构建脚本、锁定配置和非敏感运行默认值。
 
-注意：Rust 侧健康探测不带 Origin 头，不受 CORS 白名单影响；受影响的是 webview 内的
-fetch 与 SSE。
+当前构建链支持 Apple Silicon 与 Intel macOS 归档；脚本必须在对应架构主机上原生构建，拒绝把错误架构的 Node 运行时注入目标程序。
 
-- **开发链路**：默认 `.env.example` 已包含 `http://localhost:5173`；如 devUrl 用的是
-  `127.0.0.1`，把 `http://127.0.0.1:5173` 加入 `COUNCIL_HTTP_CORS_ORIGINS_JSON`。
-- **生产链路**：服务端只对固定字面量 `tauri://localhost` 开例外，其他自定义协议 origin
-  仍被拒绝。把该值加入 `COUNCIL_HTTP_CORS_ORIGINS_JSON` 后，生产构建可直接使用编排服务。
+## 配置边界
 
-## 验收步骤（全链路）
+`src-tauri/resources/agent-service-defaults.json` 是内置服务非敏感默认配置的正本，包含超时、轮次、限流和 loopback 参数。Rust 启动时动态覆盖：
 
-1. 配置服务：复制 `packages/mcp-server/.env.example` 为 `.env`，设置
-   `COUNCIL_DATA_DIR=<桌面日志库目录>`，并按上表补充 CORS origin。
-2. 启动服务：`cd packages/mcp-server && npm run start:http`（或配置
-   `orchestrationAutostart` 交由桌面拉起）。
-3. 启动桌面：`cd packages/desktop && npm run dev`（或运行打包产物）。
-4. 期望看到：
-   - 服务未启动时，自动轮次面板显示「离线」徽章与
-     「未检测到本地 Council 服务（http://127.0.0.1:4317）。启动服务后将自动接入。」；
-   - 启动服务后数秒内面板自动转 LIVE，适配器列表出现服务端能力（如 Claude Code），
-     无需重启桌面应用；
-   - 顶栏齿轮可切换 Claude/Codex 模型，并配置、测试 DeepSeek/Kimi 兼容 Provider；
-   - 选中议题后能创建并启动自动轮次，Run 状态经 SSE 实时校准；
-   - 停止服务后面板回到断线提示（HTTP 仓储自身的重连逻辑接管），服务重启后恢复。
-5. 退出桌面应用后确认无遗留服务子进程（仅在配置了 autostart 时需要检查）。
+- `COUNCIL_DATA_DIR`：桌面当前日志库；
+- `COUNCIL_HTTP_HOST` / `COUNCIL_HTTP_PORT`：桌面设置解析后的 loopback 端点；
+- `PATH`：从用户登录 shell 读取，解决从 Finder 打开 App 时找不到 `claude` / `codex` 的问题。
+
+日志库路径、项目路径和 API Key 不进入构建资源。模型与 Provider 的非敏感配置保存在共享 SQLite，密钥保存在系统 Keychain。
+
+旧版 `settings.json` 中的 `orchestrationAutostart` 仍作为开发者覆盖保留；普通用户不需要新增或修改该字段。若未设置覆盖，桌面始终使用安装包内置 sidecar。
+
+## 浏览器开发模式
+
+独立浏览器 Operator Console 仍然是开发模式，不属于安装后的 Council.app。需要调试 Web/API 时可运行：
+
+```bash
+npm run dev
+```
+
+该命令会启动开发 HTTP 服务和 Vite。桌面 App 的日常使用不依赖它，也不会要求项目源码目录继续存在。
+
+## 故障排查
+
+如果自动轮次长时间没有转为 LIVE：
+
+1. 在 Council 设置中分别测试 Claude、Codex 或远程 Provider；
+2. 确认对应 CLI 已安装并完成登录；
+3. 查看操作系统分配的 Council 应用日志目录中的 `agent-service.log`；
+4. 确认没有另一个开发服务占用相同 loopback 端口；
+5. 退出并重新打开 Council，桌面会重新拉起干净的 sidecar。
+
+sidecar 启动失败不会阻断议题、消息和决策的本地阅读；只有 `@agent` 与自动轮次会保持离线。

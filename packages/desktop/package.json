@@ -1,15 +1,22 @@
 {
   "name": "council-desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "scripts": {
+    "build:sidecar": "node ../../scripts/build-agent-sidecar.mjs",
+    "predev": "npm run build:sidecar",
     "dev": "tauri dev",
+    "prebuild": "npm run build:sidecar",
     "build": "tauri build",
+    "precheck": "npm run build:sidecar",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "pretest": "npm run build:sidecar",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.11.4"
+    "@tauri-apps/cli": "2.11.4",
+    "esbuild": "0.28.1",
+    "postject": "1.0.0-alpha.6"
   }
 }

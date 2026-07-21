@@ -194,7 +194,7 @@ describe("桌面编排离线快照", () => {
     const snapshot = buildOfflineOrchestrationSnapshot(BASE_URL, "topic-1");
     const limitation = snapshot.capabilities?.adapters[0]?.limitation ?? "";
     expect(limitation).toContain(BASE_URL);
-    expect(limitation).toContain("启动服务后将自动接入");
+    expect(limitation).toContain("Council 正在自动重试");
     expect(JSON.stringify(snapshot)).not.toContain("Rust");
     expect(snapshot.sync.status).toBe("offline");
     expect(snapshot.activeTopicId).toBe("topic-1");
@@ -227,7 +227,7 @@ describe.sequential("DesktopOrchestrationRepository", () => {
   it("离线时写操作抛出与面板一致的诚实指引", async () => {
     const { repository } = createFixture();
     await expect(repository.createRun({ topicId: "topic-1", plan: [] }))
-      .rejects.toThrow(/未检测到本地 Council 服务/);
+      .rejects.toThrow(/内置 Agent 服务暂未就绪/);
   });
 
   it("离线时选题返回带 activeTopicId 的离线快照", async () => {

@@ -10,10 +10,11 @@
 | `orchestration-repository.test.ts` | 编排测试 | 验证 policy 解析、双 revision 分流、双向选题竞态、审批重放和 timer 生命周期 |
 | `configuration.test.ts` | 配置测试 | 验证 http 模式拒绝空值、相对路径和残缺 UNC 项目路径，以及 desktop 模式编排工厂的完整配置要求 |
 | `desktop-orchestration.test.ts` | 桌面编排 | 验证服务地址解析、离线降级与诚实文案、autostart 只拉起一次、服务恢复后自动转 LIVE 和健康轮询生命周期 |
+| `agent-settings.test.ts` | UI 逻辑 | 验证本机 Agent 常驻、未配置远程 Provider 按需隐藏及有状态 Provider 回到路由列表 |
 | `auto-rounds.test.ts` | UI 逻辑 | 验证创建互斥、全局 busy 锁定和人工恢复预算耗尽状态 |
 | `selectors.test.ts` | 查询测试 | 验证议题搜索的空值、中文和大小写行为，以及 groupTopicsByStatus 的固定分组顺序、组内保序与空数组场景 |
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
 | `mention-parser.test.ts` | 查询测试 | 验证本机 publicAuthor 与远程 adapter ID 召唤解析、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
 | `webui-smoke.py` | 浏览器测试 | 验证自动轮次、桌面交互、移动端抽屉、无横向滚动和控制台错误 |
-| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、模型设置、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |
+| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、按需 Provider 设置、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |

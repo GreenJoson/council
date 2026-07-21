@@ -5,9 +5,10 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `package.json` | 工具入口 | 固定 Tauri CLI 版本并提供开发、构建和检查命令 |
+| `sidecar-build.json` | 构建配置 | 固定 Node 官方运行时版本、下载源、平台归档与 SHA-256 |
 | `src-tauri/` | 核心 | Rust 桌面壳、本机设置、共享 SQLite 接入、本地 Agent 服务托管与原生能力 |
 | `local-agent-service.md` | 接入说明 | 桌面自动轮次接入本地 Agent 服务的配置、CORS 与验收步骤 |
 
-桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是复用 Node 编排服务（与桌面共享同一 SQLite 库文件）：编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令；服务离线时面板显示可执行指引并自动重试接入。
+桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.4.0`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本加入模型与 Provider 设置中心，可即时切换 Claude/Codex 模型，并通过 macOS Keychain 安全接入 DeepSeek、Kimi 等兼容 Provider；同时修复 Claude 运行时内部超时和失败分类。
+当前桌面发行版本为 `0.4.1`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本把 Agent Service 和 Node 运行时一并打进安装包，用户无需再手动执行服务启动命令；模型路由台采用固定高度列表与单项编辑器，远程 Provider 按需添加，设置继续由共享 SQLite 和系统 Keychain 管理。

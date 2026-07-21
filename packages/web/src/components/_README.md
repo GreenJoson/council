@@ -5,8 +5,8 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `HeaderBar.tsx` | 导航 | 提供品牌 logo、原生项目切换、日志库设置、模型设置、⌘K 搜索、主题切换和同步状态 |
-| `AgentSettingsDialog.tsx` | 设置 | 管理本机 Agent 模型、远程 Provider、Keychain API Key、启用状态和连接测试 |
-| `AgentSettingCard.tsx` | 设置 | 隔离单个本机/远程 Agent 的字段、凭据状态与保存/测试操作 |
+| `AgentSettingsDialog.tsx` | 设置 | 以固定高度的左侧路由列表管理已添加模型；未配置远程 Provider 仅在“添加 Provider”目录中按需出现 |
+| `AgentSettingEditor.tsx` | 设置 | 右侧一次只编辑一个本机 Agent 或远程 Provider，处理 Keychain 凭据、启停、保存、测试与移除确认 |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `TopicSidebar.tsx` | 导航 | 导出 WorkspaceView 视图路由类型；展示轻量议题列表、状态筛选 chips 和议题/架构档案/决策记录三个真实可切换的导航项 |
 | `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/元数据双 tab（元数据含议题 ID 复制、完整问题、所有者/参与者、消息统计）、历史总数、同步状态、引用回复发起和回复编辑器；议题问题经 MarkdownContent 渲染（不折叠）；把自动轮次快照与忙碌态透传给 Composer，支撑 @claude/@codex 召唤自动补全与冲突判断 |
