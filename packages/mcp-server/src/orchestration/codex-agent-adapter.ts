@@ -21,6 +21,7 @@ import { buildTrustedPrompt } from "../prompt-budget.js";
 export interface CodexAgentAdapterOptions {
   maxContextChars: number;
   model?: string;
+  getModel?: () => string | undefined;
 }
 
 function formatTrustedPrefix(input: AgentInvocation): string {
@@ -115,10 +116,11 @@ export class CodexAgentAdapter implements AgentAdapter {
     }
     const prompt = buildPrompt(input, this.options.maxContextChars);
     try {
+      const model = this.options.getModel?.() ?? this.options.model;
       const response = await this.runtime.generate({
         prompt,
         cwd,
-        ...(this.options.model ? { model: this.options.model } : {}),
+        ...(model ? { model } : {}),
         signal: options.signal,
       });
       return { content: response.content };

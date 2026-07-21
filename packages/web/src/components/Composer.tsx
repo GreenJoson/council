@@ -16,6 +16,7 @@ import { Bot, Link2, Send, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   findActiveMentionQuery,
+  getMentionToken,
   hasMentionAttempt,
   parseMention,
 } from "../data/mention-parser";
@@ -112,7 +113,7 @@ export function Composer({
     }
     return mentionAdapters.filter(
       (adapter) =>
-        adapter.publicAuthor.toLocaleLowerCase().includes(query)
+        getMentionToken(adapter).toLocaleLowerCase().includes(query)
         || adapter.label.toLocaleLowerCase().includes(query),
     );
   }, [isMentionMenuOpen, mentionQuery, mentionAdapters]);
@@ -153,7 +154,7 @@ export function Composer({
     const cursor = textarea?.selectionStart ?? content.length;
     const before = content.slice(0, mentionStart);
     const after = content.slice(cursor);
-    const inserted = `@${candidate.publicAuthor} `;
+    const inserted = `@${getMentionToken(candidate)} `;
     const nextContent = `${before}${inserted}${after}`;
     setContent(nextContent);
     setIsMentionMenuOpen(false);

@@ -13,13 +13,15 @@ import {
   type AgentInvocationOptions,
   type AgentResult,
 } from "council-orchestrator";
-import { ClaudeRuntime } from "../claude-runtime.js";
+import { ClaudeRuntime, ClaudeRuntimeError } from "../claude-runtime.js";
+import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
 
 export interface ClaudeAgentAdapterOptions {
   maxContextChars: number;
   model?: string;
+  getModel?: () => string | undefined;
 }
 
 function formatTrustedPrefix(input: AgentInvocation): string {
@@ -65,7 +67,18 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
 }
 
 function safeInvocationError(error: unknown): AgentInvocationError {
-  const retryable = error instanceof Error && /超时|暂时|已取消/.test(error.message);
+  const retryable = error instanceof ClaudeRuntimeError
+    ? error.retryable
+    : error instanceof Error && /超时|暂时|已取消/.test(error.message);
+  const diagnosticCode = error instanceof ClaudeRuntimeError
+    ? error.diagnosticCode
+    : error instanceof Error
+      ? error.name
+      : "unknown_error";
+  logger.error(
+    "claude-agent",
+    `Claude 调用失败：code=${diagnosticCode} retryable=${String(retryable)}`,
+  );
   return new AgentInvocationError(
     retryable
       ? "Claude Agent 调用暂时失败，内部原因未公开。"
@@ -99,10 +112,11 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     }
     const prompt = buildPrompt(input, this.options.maxContextChars);
     try {
+      const model = this.options.getModel?.() ?? this.options.model;
       const response = await this.runtime.generate({
         prompt,
         cwd,
-        ...(this.options.model ? { model: this.options.model } : {}),
+        ...(model ? { model } : {}),
         signal: options.signal,
       });
       return { content: response.content };

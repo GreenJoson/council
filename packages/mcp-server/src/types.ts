@@ -34,6 +34,7 @@ export interface CouncilConfig {
   codexSandboxMode: "read-only";
   codexTimeoutMs: number;
   codexKillGraceMs: number;
+  keychainCommand?: string;
   sqliteBusyTimeoutMs: number;
   maxContextChars: number;
   maxOutputChars: number;

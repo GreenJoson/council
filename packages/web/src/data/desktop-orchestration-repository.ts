@@ -18,6 +18,11 @@ import type {
   OrchestrationSnapshot,
 } from "../types/orchestration";
 import type {
+  AgentConnectionTest,
+  AgentSetting,
+  UpdateAgentSettingInput,
+} from "../types/agent-settings";
+import type {
   OrchestrationListener,
   OrchestrationRepository,
 } from "./orchestration-repository";
@@ -143,6 +148,18 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async recoverRun(runId: string): Promise<OrchestrationSnapshot> {
     return (await this.#requireLive()).recoverRun(runId);
+  }
+
+  async listAgentSettings(): Promise<AgentSetting[]> {
+    return (await this.#requireLive()).listAgentSettings();
+  }
+
+  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
+    return (await this.#requireLive()).updateAgentSetting(input);
+  }
+
+  async testAgentSetting(agentId: string): Promise<AgentConnectionTest> {
+    return (await this.#requireLive()).testAgentSetting(agentId);
   }
 
   subscribe(listener: OrchestrationListener): () => void {

@@ -6,10 +6,11 @@
 |---|---|---|
 | `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，把公开上下文转为无 session 的 Agent 回复 |
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，把公开上下文转为无 session 回复，并记录脱敏诊断码与恢复分类 |
+| `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的 DeepSeek/Kimi 兼容 API，并标记 Provider 与模型 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、检查 Agent 可用性并组装生产依赖 |
 
-生产工厂注册 `claude` 与 `codex` 两个后台适配器。适配器不调用兼容层客户端，
+生产工厂注册 `claude`、`codex`、`deepseek` 与 `kimi` 四个后台适配器。适配器不调用兼容层客户端，
 因此不会提前写消息；回复只能由 `SQLiteCouncilStore.commitRound` 在 lease 和
 运行版本校验通过后原子发布。V1 也不恢复任何 Agent session，避免把兼容层的
 双写语义带入编排。
@@ -26,3 +27,7 @@ capabilities 中标记 `available=false`，返回注册时提供的可执行提�
 "运行 codex login"）或通用限制说明，并在创建运行时被拒绝；底层本机错误不会进入响应。
 Codex 非零退出按认证、模型权限、暂时性服务故障和未知进程退出分类；未知退出默认允许一次
 人工恢复。日志只记录脱敏诊断码和 retryable 标志，不记录 prompt、项目路径或 CLI stderr。
+
+Claude/Codex 每次调用从 `AgentSettingsService` 读取当前模型。远程 Provider 只有在模型、
+HTTPS/loopback Base URL、Keychain API Key 与启用状态同时有效时才进入 capabilities；两个
+远程 Agent 共用有界 Chat Completions 运行时，并以各自 adapter ID 支持 `@deepseek`、`@kimi`。

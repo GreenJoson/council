@@ -12,6 +12,11 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
+import type {
+  AgentConnectionTest,
+  AgentSetting,
+  UpdateAgentSettingInput,
+} from "../types/agent-settings";
 
 export type OrchestrationListener = (snapshot: OrchestrationSnapshot) => void;
 
@@ -24,5 +29,8 @@ export interface OrchestrationRepository {
   approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot>;
   cancelRun(runId: string): Promise<OrchestrationSnapshot>;
   recoverRun(runId: string): Promise<OrchestrationSnapshot>;
+  listAgentSettings(): Promise<AgentSetting[]>;
+  updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting>;
+  testAgentSetting(agentId: string): Promise<AgentConnectionTest>;
   subscribe(listener: OrchestrationListener): () => void;
 }

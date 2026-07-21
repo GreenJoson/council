@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArchitectureView } from "./components/ArchitectureView";
+import { AgentSettingsDialog } from "./components/AgentSettingsDialog";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
 import { DecisionRecordsView, type DecisionRecordFocusRequest } from "./components/DecisionRecordsView";
 import { DesktopSetup } from "./components/DesktopSetup";
@@ -84,6 +85,7 @@ export default function App() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isTopicsOpen, setIsTopicsOpen] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [isAgentSettingsOpen, setIsAgentSettingsOpen] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [capabilitiesLoadAttempt, setCapabilitiesLoadAttempt] = useState(0);
   const [runsLoadAttempt, setRunsLoadAttempt] = useState(0);
@@ -572,6 +574,7 @@ export default function App() {
         onRetrySync={handleRetrySync}
         onOpenTopics={() => setIsTopicsOpen(true)}
         onOpenInspector={() => setIsInspectorOpen(true)}
+        onOpenSettings={() => setIsAgentSettingsOpen(true)}
         desktopSettings={desktopSettings ?? undefined}
         onChooseProject={() => handleDesktopSelection("project")}
         onChooseLogLibrary={() => handleDesktopSelection("logs")}
@@ -664,6 +667,12 @@ export default function App() {
         onBrowseProject={nativeRepository
           ? () => handleDesktopSelection("project", { keepWorkspace: true })
           : undefined}
+      />
+      <AgentSettingsDialog
+        isOpen={isAgentSettingsOpen}
+        repository={orchestrationRepository}
+        onClose={() => setIsAgentSettingsOpen(false)}
+        onChanged={() => setCapabilitiesLoadAttempt((current) => current + 1)}
       />
       {recoverableErrorMessage ? (
         <RecoverableError

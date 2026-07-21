@@ -12,6 +12,7 @@ import test from "node:test";
 import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
 import {
   ClaudeRuntime,
+  ClaudeRuntimeError,
   type ClaudeRuntimeInput,
 } from "../src/claude-runtime.js";
 import { ClaudeAgentAdapter } from "../src/orchestration/claude-agent-adapter.js";
@@ -104,4 +105,19 @@ test("可信议题和当前 instruction 自身超限时拒绝调用运行时", a
       error instanceof AgentInvocationError && /可信议题与本轮指令超过/.test(error.message),
   );
   assert.equal(runtime.calls.length, 0);
+});
+
+test("Claude 配额失败保持不可重试分类", async () => {
+  const runtime = {
+    generate: async () => {
+      throw new ClaudeRuntimeError("额度不足", false, "quota_exhausted");
+    },
+  };
+  const adapter = new ClaudeAgentAdapter(runtime as unknown as ClaudeRuntime, {
+    maxContextChars: 2_000,
+  });
+  await assert.rejects(
+    adapter.invoke(invocation(path.resolve(".")), { signal: new AbortController().signal }),
+    (error: unknown) => error instanceof AgentInvocationError && error.retryable === false,
+  );
 });

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { ClaudeRuntime } from "../src/claude-runtime.js";
+import { ClaudeRuntime, ClaudeRuntimeError } from "../src/claude-runtime.js";
 import type { CouncilConfig } from "../src/types.js";
 
 const FAKE_RUNTIME_SOURCE = `
@@ -72,6 +72,11 @@ if (mode === "tree-hang") {
     }
     if (mode === "login-error") {
       process.stdout.write(JSON.stringify({ result: "Not logged in: private detail", is_error: true }));
+      process.exitCode = 1;
+      return;
+    }
+    if (mode === "quota-error") {
+      process.stdout.write(JSON.stringify({ result: "You're out of usage credits. private detail", is_error: true }));
       process.exitCode = 1;
       return;
     }
@@ -507,6 +512,27 @@ test("ClaudeRuntime 将登录失败转换为脱敏指引", async () => {
       (error: unknown) => {
         assert.ok(error instanceof Error);
         assert.match(error.message, /Claude Code CLI 未登录/);
+        assert.doesNotMatch(error.message, /private detail/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 将模型额度耗尽分类为不可重试且不泄露原文", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-quota-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "quota-error"));
+    await assert.rejects(
+      runtime.generate({ prompt: "public prompt", cwd: directory }),
+      (error: unknown) => {
+        assert.ok(error instanceof ClaudeRuntimeError);
+        assert.equal(error.diagnosticCode, "quota_exhausted");
+        assert.equal(error.retryable, false);
         assert.doesNotMatch(error.message, /private detail/);
         return true;
       },

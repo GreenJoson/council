@@ -17,6 +17,8 @@
 | `http-events.test.ts` | 集成测试 | 验证跨连接变更、独立 retry 与 Last-Event-ID 重连语义 |
 | `claude-agent-adapter.test.ts` | 安全测试 | 验证可信指令保留、只裁公开历史和 V1 无 session |
 | `codex-agent-adapter.test.ts` | 安全测试 | 验证 Codex 可信指令、只裁公开历史、V1 无 session 与失败恢复分类 |
+| `agent-settings.test.ts` | 安全测试 | 验证模型设置持久化、API Key 零落盘、Provider URL 校验与连接测试 |
+| `openai-compatible-runtime.test.ts` | 协议测试 | 验证远程 Chat Completions 请求、错误脱敏分类与有界响应 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |
 | `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、上下文限制转发、断线、取消、审批、恢复与 sweeper |
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |

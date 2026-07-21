@@ -186,7 +186,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CLAUDE_ARGS_JSON: JSON.stringify([
       path.join(ROOT, "packages/mcp-server/test/fake-claude.mjs"),
     ]),
-    COUNCIL_CLAUDE_MODEL: "",
+    COUNCIL_CLAUDE_MODEL: "claude-opus-test",
     COUNCIL_CLAUDE_PERMISSION_MODE: "plan",
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",

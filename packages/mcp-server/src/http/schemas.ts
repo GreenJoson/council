@@ -44,6 +44,22 @@ export const runIdSchema = z
 
 export const runParamsSchema = z.object({ runId: runIdSchema }).strict();
 
+export const agentSettingParamsSchema = z
+  .object({
+    agentId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/, "agentId 格式无效"),
+  })
+  .strict();
+
+export const updateAgentSettingBodySchema = z
+  .object({
+    model: z.string().max(200),
+    baseUrl: z.string().max(2_048).optional(),
+    enabled: z.boolean(),
+    apiKey: z.string().min(1).max(4_096).optional(),
+    clearApiKey: z.boolean().optional(),
+  })
+  .strict();
+
 export const listTopicsQuerySchema = z
   .object({
     projectPath: z

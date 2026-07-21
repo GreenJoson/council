@@ -3,7 +3,7 @@
  *         data/mention-parser 的 extractLeadingMentionChip
  * @output 导出：MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
- *         正文以 @claude/@codex 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
+ *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
  *         高亮芯片，其余正文照常交给 MarkdownContent
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -56,8 +56,8 @@ export function MessageCard({ message, participant, index, onQuote }: MessageCar
         </span>
         <h2>{message.title}</h2>
         {mentionChip ? (
-          <span className={`mention-chip mention-chip-${mentionChip.publicAuthor}`}>
-            @{mentionChip.publicAuthor}
+          <span className={`mention-chip mention-chip-${mentionChip.token}`}>
+            @{mentionChip.token}
           </span>
         ) : null}
         <MarkdownContent content={mentionChip ? mentionChip.remainder : message.content} collapsible />

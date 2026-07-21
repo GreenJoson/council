@@ -88,9 +88,9 @@ export async function requestApiData<T>(
   }
 }
 
-export function jsonRequest(body: unknown): RequestInit {
+export function jsonRequest(body: unknown, method: "POST" | "PUT" = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   };

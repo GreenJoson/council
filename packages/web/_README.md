@@ -12,7 +12,7 @@
 | `.env.example` | 配置 | 声明 mock/http 模式、API 地址、分页与恢复参数 |
 | `.env.desktop` | 配置 | 为 Tauri 构建启用 desktop 数据模式和本地 revision 轮询 |
 | `src/` | 核心 | 保存应用、组件、数据边界、样式和类型 |
-| `test/` | 验证 | 验证内容/编排 repository、协议映射、SSE 分流及浏览器交互 |
+| `test/` | 验证 | 验证内容/编排/模型设置 repository、协议映射、SSE 分流及浏览器交互 |
 
 ## 使用
 
@@ -25,6 +25,6 @@ npm run dev
 
 `desktop` 模式只由 Tauri 构建使用。内容读写通过 `invoke` 直接调用 Rust 内容命令，以原生目录选择器配置日志库和项目，并用事件加低频 status 轮询发现其他 MCP 进程的写入。自动轮次则复用本地 Agent 服务（Node 编排服务，与桌面共享同一 SQLite 库文件）：服务地址由 Rust 设置层提供，桌面探测到服务可达后经 loopback HTTP/SSE 直连编排 API；服务离线时面板显示带地址的可执行指引，并按 `VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS` 周期重试，服务启动后自动转 LIVE。接入前提与 CORS 配置见 `packages/desktop/local-agent-service.md`。
 
-`http` 模式通过 REST 创建议题、发帖和接受决策，并通过独立 orchestration API 创建、启动、批准、恢复和取消自动轮次。普通内容写入不提交作者字段，由服务端固定 human；Agent 输出只走 orchestration。Claude 可由 Web 主动调用，Codex 当前仅自动共享回帖，不从 Web 主动唤醒。同一议题存在待启动或进行中的 Run 时不会重复新建，运行 policy 的人工恢复预算耗尽后也不会展示无效恢复操作。
+`http` 模式通过 REST 创建议题、发帖和接受决策，并通过独立 orchestration API 创建、启动、批准、恢复和取消自动轮次。顶栏模型设置通过同一安全本地服务切换 Claude/Codex 模型，并管理 DeepSeek/Kimi 兼容 Provider；API Key 不进入前端回读数据。普通内容写入不提交作者字段，由服务端固定 human；Agent 输出只走 orchestration。同一议题存在待启动或进行中的 Run 时不会重复新建，运行 policy 的人工恢复预算耗尽后也不会展示无效恢复操作。
 
 内容和编排仓储各自订阅 `/api/v1/events` 的 `council.changed` 总 revision，再读取 `/api/v1/status`，分别按 `revisions.content` 与 `revisions.orchestration` 校准，互不触发对方的数据重载。EventSource 断线时保留最后快照，由浏览器负责原生重连；快速重试耗尽后以配置化低频定时器继续恢复。

@@ -15,6 +15,7 @@ import { initTheme } from "./data/theme";
 import "./styles/theme.css";
 import "./styles/app.css";
 import "./styles/components.css";
+import "./styles/agent-settings.css";
 import "./styles/responsive.css";
 
 initTheme();

@@ -157,6 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     throw new Error("COUNCIL_CLAUDE_PERMISSION_MODE 必须为 plan。");
   }
   const codexModel = env.COUNCIL_CODEX_MODEL?.trim();
+  const keychainCommand = env.COUNCIL_KEYCHAIN_COMMAND?.trim();
   const codexSandboxMode = env.COUNCIL_CODEX_SANDBOX_MODE?.trim() || REQUIRED_CODEX_SANDBOX_MODE;
   if (codexSandboxMode !== REQUIRED_CODEX_SANDBOX_MODE) {
     throw new Error("COUNCIL_CODEX_SANDBOX_MODE 必须为 read-only。");
@@ -181,6 +182,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_CODEX_KILL_GRACE_MS,
     ),
+    ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),
     maxContextChars: parsePositiveInteger("COUNCIL_MAX_CONTEXT_CHARS", env),
     maxOutputChars: parsePositiveInteger("COUNCIL_MAX_OUTPUT_CHARS", env),

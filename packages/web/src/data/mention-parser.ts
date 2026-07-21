@@ -4,7 +4,7 @@
  *         findActiveMentionQuery（Composer 自动补全的实时光标态）、hasMentionAttempt
  *         （不依赖具体 adapter 解析的"看起来像召唤"探测）、LeadingMentionChip、
  *         extractLeadingMentionChip（消息流展示层的前导召唤芯片提取）
- * @pos    Composer "@claude / @codex" 召唤语法的唯一解析入口；纯函数，不发起任何请求，
+ * @pos    Composer 动态 Agent 召唤语法的唯一解析入口；纯函数，不发起任何请求，
  *         不关心 adapter.available——是否可用是调用方（Composer）结合实时 orchestration
  *         快照另行判断的业务问题，本文件只负责语法层面的识别
  *
@@ -28,7 +28,7 @@ export interface ActiveMentionQuery {
 }
 
 export interface LeadingMentionChip {
-  publicAuthor: "claude" | "codex";
+  token: string;
   /** 去掉前导召唤标记（含其后一个空白）后剩余的正文，未 trim 结尾，仅 trimStart */
   remainder: string;
 }
@@ -39,8 +39,21 @@ export interface LeadingMentionChip {
  */
 const MENTION_PATTERN = /(^|\s)@([A-Za-z][\w-]*)/;
 
-const KNOWN_MENTION_AUTHORS: ReadonlySet<string> = new Set(["claude", "codex"]);
+const KNOWN_MENTION_TOKENS: ReadonlySet<string> = new Set([
+  "claude",
+  "codex",
+  "deepseek",
+  "kimi",
+]);
 const LEADING_MENTION_PATTERN = /^@([A-Za-z][\w-]*)(\s|$)/;
+
+/**
+ * 本机 Agent 保持用户熟悉的作者名；共享 `other` 作者槽位的远程 Provider 使用唯一 adapter ID，
+ * 防止 DeepSeek、Kimi 等多个 Provider 全部退化成冲突的 `@other`。
+ */
+export function getMentionToken(adapter: OrchestrationAdapter): string {
+  return adapter.publicAuthor === "other" ? adapter.id : adapter.publicAuthor;
+}
 
 /**
  * 逐行标记"该行处于围栏代码块内部"（含起止围栏行本身）；规则与 selectors.ts 的
@@ -115,8 +128,9 @@ function findFirstMentionMatch(text: string): MentionMatch | null {
  *
  * 规则（单测固化于 test/mention-parser.test.ts）：
  * - 无 @ → null。
- * - 命中的 token 大小写不敏感地匹配某个 adapter 的 publicAuthor 才算召唤成功；
- *   匹配不到任何 adapter（未知名，或该 publicAuthor 当前不在 adapters 列表里，
+ * - 命中的 token 大小写不敏感地匹配某个 adapter 的稳定召唤标识才算召唤成功；
+ *   本机 Agent 使用 publicAuthor，`other` 远程 Provider 使用 adapter.id。
+ *   匹配不到任何 adapter（未知名，或当前不在 adapters 列表里，
  *   例如编排离线时列表只剩占位 adapter）→ null。是否"可用"（adapter.available）
  *   不在这里判断，调用方按需读取解析结果对应的 adapter.available 再决定是否阻止发布。
  * - 代码围栏（``` / ~~~）内部的 @ 不参与匹配。
@@ -133,7 +147,7 @@ export function parseMention(
     return null;
   }
   const lowerToken = found.token.toLowerCase();
-  const adapter = adapters.find((candidate) => candidate.publicAuthor.toLowerCase() === lowerToken);
+  const adapter = adapters.find((candidate) => getMentionToken(candidate).toLowerCase() === lowerToken);
   if (!adapter) {
     return null;
   }
@@ -182,10 +196,11 @@ export function findActiveMentionQuery(content: string, cursorIndex: number): Ac
 }
 
 /**
- * 消息流展示专用：只认"正文最开头"的 @claude/@codex（大小写不敏感），用于 MessageCard
+ * 消息流展示专用：只认正文最开头的已知召唤标识（大小写不敏感），用于 MessageCard
  * 把它渲染成召唤芯片、正文其余部分照常交给 MarkdownContent。故意只认绝对开头这一种
  * 位置（比 parseMention 更严格）：消息中间提到 "...@claude 的方案..." 属于正常讨论文本，
- * 不该被当成召唤强行抠出来做成芯片。识别的身份是产品里固定的已知集合（claude/codex），
+ * 不该被当成召唤强行抠出来做成芯片。识别的身份是产品里固定的已知集合
+ * （claude/codex/deepseek/kimi），
  * 不依赖动态编排能力列表——展示历史消息时不应该因为当前 adapters 是否可用而改变外观。
  */
 export function extractLeadingMentionChip(content: string): LeadingMentionChip | null {
@@ -194,11 +209,11 @@ export function extractLeadingMentionChip(content: string): LeadingMentionChip |
     return null;
   }
   const token = (match[1] ?? "").toLowerCase();
-  if (!KNOWN_MENTION_AUTHORS.has(token)) {
+  if (!KNOWN_MENTION_TOKENS.has(token)) {
     return null;
   }
   return {
-    publicAuthor: token as "claude" | "codex",
+    token,
     remainder: content.slice(match[0].length).trimStart(),
   };
 }

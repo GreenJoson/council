@@ -1,7 +1,7 @@
 /**
  * @input  依赖：mention-parser 纯函数与 OrchestrationAdapter 领域类型
  * @output 导出：parseMention/hasMentionAttempt/findActiveMentionQuery/extractLeadingMentionChip 回归测试
- * @pos    "@claude / @codex" 召唤语法边界规则的固化验证（无 @、未知名、代码围栏、多 @、
+ * @pos    动态 Agent 召唤语法边界规则的固化验证（无 @、未知名、代码围栏、多 @、
  *         空指令、大小写、可用性无关性、自动补全实时光标态、消息流展示前导芯片提取）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -25,6 +25,8 @@ const ADAPTERS: OrchestrationAdapter[] = [
     available: false,
     limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
   },
+  { id: "deepseek", publicAuthor: "other", label: "DeepSeek", available: true },
+  { id: "kimi", publicAuthor: "other", label: "Kimi", available: true },
 ];
 
 describe("parseMention", () => {
@@ -53,6 +55,15 @@ describe("parseMention", () => {
       adapterId: "codex-shared",
       instruction: "看看这个假设是否成立",
     });
+  });
+
+  it("共享 other 作者槽位的远程 Provider 使用唯一 adapter ID 召唤", () => {
+    expect(parseMention("@deepseek 复核并发风险", ADAPTERS)).toEqual({
+      adapterId: "deepseek",
+      instruction: "复核并发风险",
+    });
+    expect(parseMention("@kimi 给出替代方案", ADAPTERS)?.adapterId).toBe("kimi");
+    expect(parseMention("@other 无歧义目标", ADAPTERS)).toBeNull();
   });
 
   it("代码围栏内的 @ 不误触发召唤", () => {
@@ -124,14 +135,18 @@ describe("findActiveMentionQuery", () => {
 });
 
 describe("extractLeadingMentionChip", () => {
-  it("正文最开头是 @claude/@codex 时提取芯片信息与剩余正文", () => {
+  it("正文最开头是已知 Agent 标识时提取芯片信息与剩余正文", () => {
     expect(extractLeadingMentionChip("@claude 总结整理当前分歧")).toEqual({
-      publicAuthor: "claude",
+      token: "claude",
       remainder: "总结整理当前分歧",
     });
     expect(extractLeadingMentionChip("@CODEX 看看这个假设")).toEqual({
-      publicAuthor: "codex",
+      token: "codex",
       remainder: "看看这个假设",
+    });
+    expect(extractLeadingMentionChip("@deepseek 复核边界")).toEqual({
+      token: "deepseek",
+      remainder: "复核边界",
     });
   });
 
@@ -144,6 +159,6 @@ describe("extractLeadingMentionChip", () => {
   });
 
   it("只有召唤标记、没有其余正文时仍能提取（remainder 为空字符串）", () => {
-    expect(extractLeadingMentionChip("@claude")).toEqual({ publicAuthor: "claude", remainder: "" });
+    expect(extractLeadingMentionChip("@claude")).toEqual({ token: "claude", remainder: "" });
   });
 });

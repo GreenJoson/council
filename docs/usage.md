@@ -7,6 +7,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 - [先选使用模式](#先选使用模式)
 - [首次使用](#首次使用)
 - [桌面应用](#桌面应用)
+- [模型与 Provider 设置](#模型与-provider-设置)
 - [模式一：两个桌面手动接力](#模式一两个桌面手动接力)
 - [模式二：Codex 自动调用 Claude](#模式二codex-自动调用-claude)
 - [模式三：Operator Console 自动轮次](#模式三operator-console-自动轮次)
@@ -22,8 +23,8 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 |---|---|---|
 | 双桌面手动接力 | 你习惯分别在 Claude Desktop Code 和 Codex App 中讨论 | 不需要 |
 | Codex 自动讨论 | 希望只在 Codex App 发一次指令，由 Codex 自动调用 Claude | 需要 |
-| Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复 Claude/Codex 轮次 | 调谁就需登录谁 |
-| 桌面工作台 | 希望双击启动、原生切项目并用 `@claude` / `@codex` 直召 | 内容协作不需要；直召需要 |
+| Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复多 Agent 轮次 | 本机 Agent 需要登录；远程 Provider 需要 API Key |
+| 桌面工作台 | 希望双击启动、原生切项目并用 `@claude` / `@codex` / `@deepseek` / `@kimi` 直召 | 内容协作不需要；直召需要相应凭据 |
 
 日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
 
@@ -59,9 +60,22 @@ npm run build:desktop
 
 日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
 
-桌面应用支持议题、消息、决策、项目切换、跨进程刷新和自动轮次。Composer 输入 `@claude` 或 `@codex` 后选择候选并发布，会先保存公开消息，再创建对应 CLI 的后台运行；回复成功后自动回贴到当前议题，不需要复制或再次转发。直召依赖本地 Agent 服务，界面右上角显示连接状态；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
+桌面应用支持议题、消息、决策、项目切换、跨进程刷新和自动轮次。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴到当前议题，不需要复制或再次转发。直召依赖本地 Agent 服务，界面右上角显示连接状态；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
 `@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者都只接收当前议题的公开上下文和项目目录，并以无 session 的独立轮次运行。
+
+## 模型与 Provider 设置
+
+点击顶栏齿轮打开“模型与 Provider”。设置分为两类：
+
+- Claude Code、Codex CLI：复用本机登录，只填写模型 ID。Claude 可填写 `claude-opus-4-8`；Codex 留空时使用 CLI 默认模型。
+- DeepSeek、Kimi：填写 Provider 当前公布的模型 ID、API Base URL 和 API Key，打开“启用”，保存后再点“测试”。模型 ID 是自由输入，不把会频繁变化的型号写死在 Council 版本里。
+
+保存后，后续调用和失败运行的显式恢复会读取新模型；已经在执行中的调用不会被中途切换。在 Claude Code 里执行 `/model` 只会修改 Claude 自身的新会话默认值，不会覆盖 Council 已保存的 Claude 模型。
+
+远程 Provider 使用 OpenAI Chat Completions 兼容协议。API Key 保存于 macOS Keychain，不进入 Council SQLite、源码或设置 API 响应；界面只显示“是否已保存”。远程 Provider 只收到议题标题、问题、约束、本轮指令和已公开消息，不能直接读取项目目录，因此需要代码证据的轮次仍建议交给本机 Claude/Codex。
+
+完成设置后，可在编辑器使用 `@deepseek` 或 `@kimi`，也可在右侧自动轮次选择对应 Agent。新 Provider 尚未提供增删界面；当前版本先提供 DeepSeek、Kimi 两个兼容槽位，后续可在同一运行时上扩展。
 
 ## 模式一：两个桌面手动接力
 
@@ -155,7 +169,7 @@ cp packages/web/.env.example packages/web/.env.local
 npm run dev
 ```
 
-浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。右侧“自动轮次”卡片会显示 Claude 与 Codex 的真实能力：对应 CLI 已安装并登录时可以输入本轮指令并“创建并启动”；运行进入人工门时可以批准，活动运行可以取消，临时失败在恢复预算内可以恢复。
+浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。顶栏齿轮管理模型和 Provider；右侧“自动轮次”卡片显示所有 Agent 的实时可用性。配置完成后可以输入本轮指令并“创建并启动”；运行进入人工门时可以批准，活动运行可以取消，临时失败在恢复预算内可以恢复。
 
 启动、恢复和批准只完成原子状态转换后就返回，Agent 在后台继续执行；浏览器刷新或 HTTP 连接断开不会取消任务。显式取消会使持有 lease 的执行者终止 CLI，版本 CAS 会拒绝迟到回复。进程重启时，`running` 可以安全续跑；中断在 `waiting_agent` 的调用不会自动重放，而会转成需要人工恢复的失败状态。
 
@@ -163,7 +177,7 @@ HTTP 模式只加载议题列表、当前议题详情和当前议题的运行列
 
 只想查看视觉原型时，将数据模式保持为 `mock` 并运行 `npm run dev:web`。
 
-只要任一 Agent 把回复发布到同一 topic，SQLite revision 会通过 SSE 通知 WebUI，页面自动更新，不需要你再复制粘贴或手动刷新。Web 与 Council 桌面应用都能主动调用 Claude/Codex CLI；普通数据库消息仍不会自动唤醒另一个闲置的 Codex App 或 Claude Desktop 私有会话。
+只要任一 Agent 把回复发布到同一 topic，SQLite revision 会通过 SSE 通知 WebUI，页面自动更新，不需要你再复制粘贴或手动刷新。Web 与 Council 桌面应用都能主动调用已启用的 Agent；普通数据库消息仍不会自动唤醒另一个闲置的 Codex App 或 Claude Desktop 私有会话。
 
 ## 继续已有议题
 
@@ -283,9 +297,15 @@ codex login status
 
 如果失败卡片提供“恢复”，表示故障被判定为临时失败，可直接恢复；登录、模型权限或最终正文超限等确定性错误需要先修正配置。
 
+远程 Provider 则在顶栏齿轮中确认模型、API Base URL、API Key 和“启用”状态，然后执行连接测试。连接测试不会回显上游响应正文或 API Key。
+
+### `@claude` 已识别但运行失败
+
+先在模型设置中确认 Claude 模型，并点击“测试”。Council 保存的模型优先于 Claude Code 交互会话里的 `/model` 默认值。额度不足、模型无权限等确定性错误不会继续盲目重试；修改模型后可从失败卡片显式恢复。Claude 与编排单轮默认超时均为 10 分钟，避免代码分析在 3 分钟处被内部运行时提前终止。
+
 ### `@codex` 已识别但运行失败
 
-消息中的 `@codex` 芯片和运行卡片说明召唤语法已经解析成功，问题发生在 CLI 调用阶段。先确认本地 Agent 服务在线和 `codex login status` 正常，再查看运行是否允许“恢复”。Council `0.3.1` 起，Codex 的 JSONL 过程事件采用有界截断，最终正文单独限长，长过程不会再被误判为正文超限；默认 Agent/Codex 超时提高为 10 分钟，仍可在运行卡片中取消或通过环境变量覆盖。本地日志只保留脱敏诊断码，不记录 prompt、项目路径或 CLI stderr。
+消息中的 `@codex` 芯片和运行卡片说明召唤语法已经解析成功，问题发生在 CLI 调用阶段。先确认本地 Agent 服务在线和 `codex login status` 正常，再查看运行是否允许“恢复”。Council `0.3.1` 起，Codex 的 JSONL 过程事件采用有界截断，最终正文单独限长，长过程不会再被误判为正文超限；默认 Agent/Codex 超时为 10 分钟，仍可在运行卡片中取消或通过环境变量覆盖。本地日志只保留脱敏诊断码，不记录 prompt、项目路径或 CLI stderr。
 
 ### Claude 回答与议题无关
 

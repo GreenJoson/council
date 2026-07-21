@@ -7,7 +7,7 @@
 桌面端**不在 Rust 重写编排状态机**。自动轮次复用 `packages/mcp-server` 的 Node HTTP/SSE 编排服务（"本地 Agent 服务"），与桌面共享同一个 SQLite 库文件：
 
 - 内容读写（议题、消息、决策）仍走 Tauri 原生命令直连 Rust `council-core`；
-- 编排请求（capabilities、runs、actions、SSE）走 loopback HTTP 直连本地 Agent 服务；
+- 编排与设置请求（capabilities、runs、actions、Agent settings、SSE）走 loopback HTTP 直连本地 Agent 服务；
 - 服务地址只保存在桌面设置层（`settings.json`），前端与业务代码不硬编码端口。
 
 服务离线时，自动轮次面板显示离线徽章与可执行指引（含服务地址），桌面按
@@ -44,6 +44,8 @@ LIVE（重新加载能力、回放当前议题），无需重启应用。
    （两者共用其中的 `council.sqlite3`）。
 2. CORS 白名单需包含桌面 webview 的 Origin（见下）。
 3. 端口如改动，桌面 `orchestrationBaseUrl` 需同步修改。
+4. 远程 Provider 需要配置 `COUNCIL_KEYCHAIN_COMMAND`；API Key 由系统 Keychain 保存，
+   SQLite 和 HTTP 设置响应均不包含密钥正文。
 
 ### 桌面 webview 的 Origin（实测值）
 
@@ -72,6 +74,7 @@ fetch 与 SSE。
      「未检测到本地 Council 服务（http://127.0.0.1:4317）。启动服务后将自动接入。」；
    - 启动服务后数秒内面板自动转 LIVE，适配器列表出现服务端能力（如 Claude Code），
      无需重启桌面应用；
+   - 顶栏齿轮可切换 Claude/Codex 模型，并配置、测试 DeepSeek/Kimi 兼容 Provider；
    - 选中议题后能创建并启动自动轮次，Run 状态经 SSE 实时校准；
    - 停止服务后面板回到断线提示（HTTP 仓储自身的重连逻辑接管），服务重启后恢复。
 5. 退出桌面应用后确认无遗留服务子进程（仅在配置了 autostart 时需要检查）。

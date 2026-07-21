@@ -14,6 +14,6 @@
 | `selectors.test.ts` | 查询测试 | 验证议题搜索的空值、中文和大小写行为，以及 groupTopicsByStatus 的固定分组顺序、组内保序与空数组场景 |
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
-| `mention-parser.test.ts` | 查询测试 | 验证 @claude/@codex 召唤解析：无 @、未知 @name、行首/句中触发、围栏内 @ 被跳过且围栏本身保留在正文、多个 @ 只认第一个且其余原样保留、`findActiveMentionQuery` 的光标定位、`extractLeadingMentionChip` 只认开头标记不误伤正文中间提及 |
+| `mention-parser.test.ts` | 查询测试 | 验证本机 publicAuthor 与远程 adapter ID 召唤解析、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
 | `webui-smoke.py` | 浏览器测试 | 验证自动轮次、桌面交互、移动端抽屉、无横向滚动和控制台错误 |
-| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |
+| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、模型设置、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |

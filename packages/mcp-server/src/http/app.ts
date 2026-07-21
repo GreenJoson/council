@@ -43,6 +43,7 @@ import {
   createTopicBodySchema,
   approveRunBodySchema,
   createRunBodySchema,
+  agentSettingParamsSchema,
   emptyActionBodySchema,
   eventsQuerySchema,
   listRunsQuerySchema,
@@ -50,6 +51,7 @@ import {
   runParamsSchema,
   topicDetailQuerySchema,
   topicParamsSchema,
+  updateAgentSettingBodySchema,
 } from "./schemas.js";
 
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -79,7 +81,7 @@ function createCorsMiddleware(
     response.vary("Origin");
     response.set({
       "Access-Control-Allow-Headers": "Content-Type, Last-Event-ID",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Origin": parsedOrigin.data,
       "Access-Control-Max-Age": String(maxAgeSeconds),
     });
@@ -227,6 +229,51 @@ export function createCouncilHttpApp(
         limitations: ["编排服务未启用。"],
       },
     );
+  });
+
+  app.get("/api/v1/settings/agents", async (_request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型设置服务未启用。");
+    }
+    sendSuccess(response, { agents: await orchestration.listAgentSettings() });
+  });
+
+  app.put("/api/v1/settings/agents/:agentId", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型设置服务未启用。");
+    }
+    const params = parse(agentSettingParamsSchema, request.params);
+    const body: unknown = request.body;
+    const input = parse(updateAgentSettingBodySchema, body);
+    try {
+      sendSuccess(
+        response,
+        await orchestration.updateAgentSetting(params.agentId, input),
+        "Agent 设置已保存。",
+      );
+    } catch (error) {
+      throw new HttpError(
+        400,
+        error instanceof Error ? error.message : "Agent 设置无效。",
+      );
+    }
+  });
+
+  app.post("/api/v1/settings/agents/:agentId/actions/test", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型设置服务未启用。");
+    }
+    const params = parse(agentSettingParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    try {
+      sendSuccess(
+        response,
+        await orchestration.testAgentSetting(params.agentId),
+        "连接测试通过。",
+      );
+    } catch {
+      throw new HttpError(502, "连接测试失败，请检查模型、额度、API 地址或凭据。");
+    }
   });
 
   app.get("/api/v1/topics", (request, response) => {

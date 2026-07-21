@@ -14,6 +14,11 @@ import type {
   OrchestrationSnapshot,
 } from "../types/orchestration";
 import type {
+  AgentConnectionTest,
+  AgentSetting,
+  UpdateAgentSettingInput,
+} from "../types/agent-settings";
+import type {
   OrchestrationListener,
   OrchestrationRepository,
 } from "./orchestration-repository";
@@ -45,6 +50,49 @@ const CAPABILITIES: OrchestrationCapabilities = {
   },
 };
 
+const MOCK_AGENT_SETTINGS: AgentSetting[] = [
+  {
+    id: "claude",
+    label: "Claude Code",
+    kind: "claude-cli",
+    model: "claude-opus-4-8",
+    enabled: true,
+    requiresApiKey: false,
+    hasApiKey: false,
+    updatedAt: new Date(0).toISOString(),
+  },
+  {
+    id: "codex",
+    label: "Codex CLI",
+    kind: "codex-cli",
+    model: "",
+    enabled: true,
+    requiresApiKey: false,
+    hasApiKey: false,
+    updatedAt: new Date(0).toISOString(),
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    kind: "openai-compatible",
+    model: "",
+    enabled: false,
+    requiresApiKey: true,
+    hasApiKey: false,
+    updatedAt: new Date(0).toISOString(),
+  },
+  {
+    id: "kimi",
+    label: "Kimi",
+    kind: "openai-compatible",
+    model: "",
+    enabled: false,
+    requiresApiKey: true,
+    hasApiKey: false,
+    updatedAt: new Date(0).toISOString(),
+  },
+];
+
 function cloneSnapshot(snapshot: OrchestrationSnapshot): OrchestrationSnapshot {
   return structuredClone(snapshot);
 }
@@ -56,6 +104,7 @@ function waitForMock(): Promise<void> {
 export class MockOrchestrationRepository implements OrchestrationRepository {
   readonly #listeners = new Set<OrchestrationListener>();
   readonly #runs: OrchestrationRun[] = [];
+  readonly #agentSettings = structuredClone(MOCK_AGENT_SETTINGS);
   #snapshot: OrchestrationSnapshot = {
     capabilities: structuredClone(CAPABILITIES),
     activeTopicId: "topic-idempotency",
@@ -168,6 +217,30 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     delete run.failure;
     this.#advance(run);
     return this.#publish();
+  }
+
+  async listAgentSettings(): Promise<AgentSetting[]> {
+    await waitForMock();
+    return structuredClone(this.#agentSettings);
+  }
+
+  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
+    await waitForMock();
+    const setting = this.#agentSettings.find((candidate) => candidate.id === input.agentId);
+    if (!setting) {
+      throw new Error("Agent 设置不存在");
+    }
+    setting.model = input.model;
+    setting.baseUrl = input.baseUrl;
+    setting.enabled = input.enabled;
+    setting.hasApiKey = input.clearApiKey ? false : Boolean(input.apiKey) || setting.hasApiKey;
+    setting.updatedAt = new Date().toISOString();
+    return structuredClone(setting);
+  }
+
+  async testAgentSetting(_agentId: string): Promise<AgentConnectionTest> {
+    await waitForMock();
+    return { ok: true, latencyMs: MOCK_DELAY_MS };
   }
 
   subscribe(listener: OrchestrationListener): () => void {

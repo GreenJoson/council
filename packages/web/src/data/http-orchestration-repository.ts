@@ -12,6 +12,11 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
+import type {
+  AgentConnectionTest,
+  AgentSetting,
+  UpdateAgentSettingInput,
+} from "../types/agent-settings";
 import { createApiUrl, jsonRequest, requestApiData, type Fetcher } from "./http-client";
 import type { EventStream, EventStreamFactory } from "./http-repository";
 import { parseCouncilChangedRevision } from "./http-repository";
@@ -21,6 +26,11 @@ import {
   parseOrchestrationRun,
   parseOrchestrationRunPage,
 } from "./orchestration-api";
+import {
+  parseAgentConnectionTest,
+  parseAgentSetting,
+  parseAgentSettings,
+} from "./agent-settings-api";
 import type {
   OrchestrationListener,
   OrchestrationRepository,
@@ -239,6 +249,44 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
 
   async recoverRun(runId: string): Promise<OrchestrationSnapshot> {
     return this.#runAction(runId, "recover");
+  }
+
+  async listAgentSettings(): Promise<AgentSetting[]> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/settings/agents"),
+      parseAgentSettings,
+    );
+  }
+
+  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/settings/agents/${encodeURIComponent(input.agentId)}`,
+      ),
+      parseAgentSetting,
+      jsonRequest({
+        model: input.model,
+        ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+        enabled: input.enabled,
+        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        ...(input.clearApiKey ? { clearApiKey: true } : {}),
+      }, "PUT"),
+    );
+  }
+
+  async testAgentSetting(agentId: string): Promise<AgentConnectionTest> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/settings/agents/${encodeURIComponent(agentId)}/actions/test`,
+      ),
+      parseAgentConnectionTest,
+      jsonRequest({}),
+    );
   }
 
   subscribe(listener: OrchestrationListener): () => void {

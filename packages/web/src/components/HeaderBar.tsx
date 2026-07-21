@@ -17,6 +17,7 @@ import {
   PanelRight,
   Plus,
   Search,
+  Settings2,
   Sparkles,
   Sun,
 } from "lucide-react";
@@ -63,6 +64,7 @@ export interface HeaderBarProps {
   onRetrySync: () => void;
   onOpenTopics: () => void;
   onOpenInspector: () => void;
+  onOpenSettings: () => void;
   desktopSettings?: DesktopSettings;
   onChooseProject?: () => Promise<void>;
   onChooseLogLibrary?: () => Promise<void>;
@@ -80,6 +82,7 @@ export function HeaderBar({
   onRetrySync,
   onOpenTopics,
   onOpenInspector,
+  onOpenSettings,
   desktopSettings,
   onChooseProject,
   onChooseLogLibrary,
@@ -262,6 +265,15 @@ export function HeaderBar({
           onClick={onCycleTheme}
         >
           <ThemePreferenceIcon preference={themePreference} />
+        </button>
+        <button
+          className="icon-button desktop-action"
+          type="button"
+          aria-label="打开模型与 Provider 设置"
+          title="模型与 Provider 设置"
+          onClick={onOpenSettings}
+        >
+          <Settings2 size={18} />
         </button>
         <button
           className="icon-button inspector-mobile-button"

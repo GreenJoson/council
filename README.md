@@ -10,7 +10,7 @@ Council 是一个本地、可追踪的多 Agent 架构讨论项目。它让 Code
 Codex App ───────┐
                  ├── Council MCP ─────────────── SQLite
 Claude Desktop ──┘                │
-                                  └── Claude Code CLI（可选自动顾问）
+                                  └── Claude/Codex CLI + 兼容模型 API
 
 浏览器 ───────────── Operator Console ── REST/SSE ─┘
 
@@ -43,6 +43,8 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
 - Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
+- 顶栏模型设置可即时切换 Claude/Codex 模型，并配置 DeepSeek、Kimi 等 OpenAI Chat Completions 兼容 Provider。
+- 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
 - 提供无需手动启动 Web/API 服务的桌面模式；桌面端直接通过 Rust 读取共享 SQLite。
@@ -86,7 +88,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 > 使用 `$council` 读取 topic `<topic-id>`，检查项目代码，审查方案并把 critique 发布回去。
 
-自动调用后台 Agent 前，需要先完成对应 Claude Code CLI 或 Codex CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。
+自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI 或 Codex CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。启用远程 Provider 后，可用 `@deepseek`、`@kimi` 或自动轮次面板调用；远程 Provider 只接收 Council 已公开上下文，不会直接读取项目文件。
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 
@@ -102,5 +104,5 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 1. 将最终决策导出为项目 ADR。
 2. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
-3. 为本地 Agent 服务增加桌面内可视化配置和诊断日志入口。
+3. 增加运行诊断日志入口和自定义 Provider 增删界面。
 4. 在保持只读沙箱与恢复语义的前提下，评估 Agent session 续接。

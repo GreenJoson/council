@@ -43,6 +43,17 @@ export interface ClaudeAvailability {
   error?: string;
 }
 
+export class ClaudeRuntimeError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly diagnosticCode: string,
+  ) {
+    super(message);
+    this.name = "ClaudeRuntimeError";
+  }
+}
+
 interface ClaudeJsonResult {
   result?: unknown;
   session_id?: unknown;
@@ -85,9 +96,37 @@ function parseJsonObject(text: string): ClaudeJsonResult | undefined {
   return undefined;
 }
 
-function loginError(): Error {
-  return new Error(
+function loginError(): ClaudeRuntimeError {
+  return new ClaudeRuntimeError(
     "Claude Code CLI 未登录。请先完成一次 claude auth login；Claude Desktop 手动接力模式不受影响。",
+    false,
+    "authentication_failed",
+  );
+}
+
+function classifyFailure(content: string): ClaudeRuntimeError {
+  if (/not logged in|authentication|unauthorized/i.test(content)) {
+    return loginError();
+  }
+  if (/out of usage credits|usage limit|quota|insufficient credit/i.test(content)) {
+    return new ClaudeRuntimeError(
+      "Claude 模型额度不足，请补充额度或在 Council 设置中切换模型。",
+      false,
+      "quota_exhausted",
+    );
+  }
+  if (/model.*(?:not found|unavailable|not supported|access)|invalid model/i.test(content)) {
+    return new ClaudeRuntimeError(
+      "Claude 模型不可用，请在 Council 设置中选择当前账号可用的模型。",
+      false,
+      "model_unavailable",
+    );
+  }
+  const retryable = /overloaded|rate limit|temporar|try again|service unavailable/i.test(content);
+  return new ClaudeRuntimeError(
+    "Claude Code 返回失败结果，请检查模型权限和本地日志。",
+    retryable,
+    retryable ? "transient_failure" : "request_failed",
   );
 }
 
@@ -102,10 +141,7 @@ function parseClaudeOutput(stdout: string): ClaudeResponse {
   }
   const content = typeof parsed.result === "string" ? parsed.result.trim() : "";
   if (parsed.is_error === true) {
-    if (/not logged in/i.test(content)) {
-      throw loginError();
-    }
-    throw new Error("Claude Code 返回失败结果，请检查模型权限和本地 MCP 日志。");
+    throw classifyFailure(content);
   }
   if (!content) {
     throw new Error("Claude Code 返回失败结果，请检查认证、模型和权限配置。");
@@ -220,10 +256,14 @@ export class ClaudeRuntime {
     if (result.exitCode !== 0) {
       const parsed = parseJsonObject(result.stdout);
       const content = typeof parsed?.result === "string" ? parsed.result : "";
-      if (parsed?.is_error === true && /not logged in/i.test(content)) {
-        throw loginError();
+      if (parsed?.is_error === true) {
+        throw classifyFailure(content);
       }
-      throw new Error("Claude Code 调用失败，请检查登录状态、模型权限和本地 MCP 日志。");
+      throw new ClaudeRuntimeError(
+        "Claude Code 调用失败，请检查登录状态、模型权限和本地日志。",
+        true,
+        `process_exit_${String(result.exitCode)}`,
+      );
     }
     return parseClaudeOutput(result.stdout);
   }

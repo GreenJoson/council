@@ -8,7 +8,7 @@
 | `package-lock.json` | 锁定 | 固化依赖解析结果 |
 | `tsconfig.json` | 配置 | 启用严格 TypeScript 编译 |
 | `.env.example` | 配置 | 列出全部可配置运行参数 |
-| `src/` | 核心 | MCP、HTTP、数据库与 Claude 适配器源码 |
+| `src/` | 核心 | MCP、HTTP、数据库、模型设置与本机/远程 Agent 适配器源码 |
 | `test/` | 验证 | 数据库、适配器、MCP 协议和 HTTP/SSE 集成测试 |
 
 ## Claude 运行边界
@@ -55,6 +55,9 @@ loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin�
 | `POST` | `/api/v1/topics/:topicId/messages` | 新建 `CouncilMessage` |
 | `POST` | `/api/v1/topics/:topicId/decisions` | 新建 `Decision` |
 | `GET` | `/api/v1/orchestration/capabilities` | Agent 可用性与默认公开策略 |
+| `GET` | `/api/v1/settings/agents` | 不含密钥的模型与 Provider 设置 |
+| `PUT` | `/api/v1/settings/agents/:agentId` | 更新模型、地址、启用状态和 Keychain 凭据 |
+| `POST` | `/api/v1/settings/agents/:agentId/actions/test` | 有界连接测试 |
 | `GET/POST` | `/api/v1/topics/:topicId/runs` | 编排运行分页 / 创建运行（`201`） |
 | `GET` | `/api/v1/runs/:runId` | 单个运行 |
 | `POST` | `/api/v1/runs/:runId/actions/start` | 启动后台执行（`202`） |
@@ -85,3 +88,8 @@ revision 通知仍是全库级，客户端刷新时再按项目过滤。
 会失败而不是漏恢复。V1 Claude 适配器只裁较早公开历史，永远保留可信头与当前 instruction，
 且不恢复 session。Store 读取 Agent 上下文前还会按 `COUNCIL_DEFAULT_MESSAGE_LIMIT`
 限制最新公开消息数，避免超大议题在 prompt 字符裁剪前放大内存。
+
+模型设置保存在共享 SQLite 的 `agent_settings` 表，Claude/Codex 适配器在每次调用时读取当前
+模型，因此切换无需重启服务。API Key 不写 SQLite，macOS 通过系统 Keychain 保存；设置 API
+只返回 `hasApiKey`。DeepSeek 与 Kimi 共用 OpenAI Chat Completions 兼容运行时，输出、网络和
+超时均有界，上游错误正文不会进入 HTTP 响应或日志。

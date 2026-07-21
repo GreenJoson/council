@@ -1,6 +1,6 @@
 /**
- * @input  依赖：HTTP/Claude/Codex 配置、SQLiteCouncilStore、Agent 注册与 ExecutionManager
- * @output 导出：浏览器不可伪造身份和策略的编排产品服务
+ * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型设置、Agent 注册与 ExecutionManager
+ * @output 导出：浏览器不可伪造身份和策略的编排产品服务及安全模型设置入口
  * @pos    REST 契约使用的编排聚合根与生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,13 +18,25 @@ import {
   type PaginatedRuns,
   type PublicAuthor,
 } from "council-orchestrator";
+import {
+  AgentSettingsService,
+  type PublicAgentSetting,
+  type UpdateAgentSettingInput,
+} from "../agent-settings-service.js";
+import { AgentSettingsStore } from "../agent-settings-store.js";
 import { ClaudeRuntime } from "../claude-runtime.js";
 import { CodexRuntime } from "../codex-runtime.js";
 import { CouncilNotFoundError } from "../errors.js";
+import {
+  MacOsKeychainSecretStore,
+  UnavailableSecretStore,
+} from "../keychain-secret-store.js";
+import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
 import { RunExecutionManager } from "./execution-manager.js";
+import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
 
 export interface RegisteredAgentAdapter {
   adapter: AgentAdapter;
@@ -77,6 +89,7 @@ export class CouncilOrchestrationService {
   constructor(
     private readonly config: CouncilHttpConfig,
     registrations: readonly RegisteredAgentAdapter[],
+    readonly agentSettings?: AgentSettingsService,
   ) {
     this.#store = new SQLiteCouncilStore(
       config.databasePath,
@@ -220,6 +233,33 @@ export class CouncilOrchestrationService {
     return await this.manager.recover(runId);
   }
 
+  async listAgentSettings(): Promise<PublicAgentSetting[]> {
+    if (!this.agentSettings) {
+      return [];
+    }
+    return await this.agentSettings.list();
+  }
+
+  async updateAgentSetting(
+    id: string,
+    input: UpdateAgentSettingInput,
+  ): Promise<PublicAgentSetting> {
+    if (!this.agentSettings) {
+      throw new OrchestrationConfigError("模型设置服务未启用。");
+    }
+    const setting = await this.agentSettings.update(id, input);
+    this.#availabilityCheckedAt = 0;
+    await this.#ensureFreshAvailability(true);
+    return setting;
+  }
+
+  async testAgentSetting(id: string): Promise<{ ok: true; latencyMs: number }> {
+    if (!this.agentSettings) {
+      throw new OrchestrationConfigError("模型设置服务未启用。");
+    }
+    return await this.agentSettings.test(id);
+  }
+
   async initialize(): Promise<void> {
     await this.#ensureFreshAvailability(true);
     await this.manager.recoverOnStartup();
@@ -275,6 +315,7 @@ export class CouncilOrchestrationService {
 
   close(): void {
     this.#store.close();
+    this.agentSettings?.close();
   }
 }
 
@@ -282,16 +323,109 @@ export function createProductionOrchestrationService(
   httpConfig: CouncilHttpConfig,
   councilConfig: CouncilConfig,
 ): CouncilOrchestrationService {
+  const settingsStore = new AgentSettingsStore(
+    httpConfig.databasePath,
+    httpConfig.sqliteBusyTimeoutMs,
+    [
+      {
+        id: "claude",
+        label: "Claude Code",
+        kind: "claude-cli",
+        model: councilConfig.claudeModel ?? "",
+        enabled: true,
+        requiresApiKey: false,
+      },
+      {
+        id: "codex",
+        label: "Codex CLI",
+        kind: "codex-cli",
+        model: councilConfig.codexModel ?? "",
+        enabled: true,
+        requiresApiKey: false,
+      },
+      {
+        id: "deepseek",
+        label: "DeepSeek",
+        kind: "openai-compatible",
+        model: "",
+        enabled: false,
+        requiresApiKey: true,
+      },
+      {
+        id: "kimi",
+        label: "Kimi",
+        kind: "openai-compatible",
+        model: "",
+        enabled: false,
+        requiresApiKey: true,
+      },
+    ],
+  );
+  const secretStore = councilConfig.keychainCommand
+    ? new MacOsKeychainSecretStore(councilConfig.keychainCommand)
+    : new UnavailableSecretStore();
+  const agentSettings = new AgentSettingsService(settingsStore, secretStore);
   const claudeRuntime = new ClaudeRuntime(councilConfig);
   const claude = new ClaudeAgentAdapter(claudeRuntime, {
     maxContextChars: councilConfig.maxContextChars,
-    ...(councilConfig.claudeModel ? { model: councilConfig.claudeModel } : {}),
+    getModel: () => agentSettings.get("claude")?.model || undefined,
   });
   const codexRuntime = new CodexRuntime(councilConfig);
   const codex = new CodexAgentAdapter(codexRuntime, {
     maxContextChars: councilConfig.maxContextChars,
-    ...(councilConfig.codexModel ? { model: councilConfig.codexModel } : {}),
+    getModel: () => agentSettings.get("codex")?.model || undefined,
   });
+  const remoteRuntime = new OpenAICompatibleRuntime(
+    councilConfig.maxOutputChars,
+    httpConfig.orchestrationDefaultAgentTimeoutMs,
+  );
+  const deepseek = new OpenAICompatibleAgentAdapter(
+    "deepseek",
+    remoteRuntime,
+    agentSettings,
+    councilConfig.maxContextChars,
+  );
+  const kimi = new OpenAICompatibleAgentAdapter(
+    "kimi",
+    remoteRuntime,
+    agentSettings,
+    councilConfig.maxContextChars,
+  );
+
+  agentSettings.registerTester("claude", async () => {
+    await claudeRuntime.generate({
+      prompt: "只回复 OK",
+      cwd: process.cwd(),
+      ...(agentSettings.get("claude")?.model
+        ? { model: agentSettings.get("claude")?.model }
+        : {}),
+    });
+  });
+  agentSettings.registerTester("codex", async () => {
+    await codexRuntime.generate({
+      prompt: "只回复 OK",
+      cwd: process.cwd(),
+      ...(agentSettings.get("codex")?.model
+        ? { model: agentSettings.get("codex")?.model }
+        : {}),
+    });
+  });
+  for (const id of ["deepseek", "kimi"] as const) {
+    agentSettings.registerTester(id, async () => {
+      const setting = agentSettings.get(id);
+      const apiKey = await agentSettings.getApiKey(id);
+      if (!setting?.baseUrl || !setting.model || !apiKey) {
+        throw new Error("远程 Provider 配置不完整。");
+      }
+      await remoteRuntime.generate({
+        baseUrl: setting.baseUrl,
+        model: setting.model,
+        apiKey,
+        prompt: "只回复 OK",
+      });
+    });
+  }
+
   return new CouncilOrchestrationService(httpConfig, [
     {
       adapter: claude,
@@ -299,7 +433,9 @@ export function createProductionOrchestrationService(
       label: "Claude Code",
       checkAvailability: async () => {
         const availability = await claudeRuntime.checkAvailability();
-        return availability.available && availability.authenticated;
+        return await agentSettings.isReady("claude")
+          && availability.available
+          && availability.authenticated;
       },
     },
     {
@@ -310,8 +446,24 @@ export function createProductionOrchestrationService(
         "Codex CLI 当前不可用或未登录；请安装 codex 并运行 codex login 后重试。",
       checkAvailability: async () => {
         const availability = await codexRuntime.checkAvailability();
-        return availability.available && availability.authenticated;
+        return await agentSettings.isReady("codex")
+          && availability.available
+          && availability.authenticated;
       },
     },
-  ]);
+    {
+      adapter: deepseek,
+      publicAuthor: "other",
+      label: "DeepSeek",
+      limitationWhenUnavailable: "请在设置中配置 DeepSeek 的模型、API 地址和 API Key。",
+      checkAvailability: async () => await agentSettings.isReady("deepseek"),
+    },
+    {
+      adapter: kimi,
+      publicAuthor: "other",
+      label: "Kimi",
+      limitationWhenUnavailable: "请在设置中配置 Kimi 的模型、API 地址和 API Key。",
+      checkAvailability: async () => await agentSettings.isReady("kimi"),
+    },
+  ], agentSettings);
 }
