@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 prompt、Codex CLI 配置、JSONL 传输与可选 AbortSignal
- * @output 导出：纯 CodexRuntime、结构化安全错误和可用性检查
- * @pos    分离过程事件与最终正文上限、强制只读沙箱的 Codex 运行边界
+ * @input  依赖：公开 prompt、Codex CLI JSONL 增量传输与可选 AbortSignal
+ * @output 导出：纯 CodexRuntime、公开消息增量、结构化安全错误和可用性检查
+ * @pos    分离公开消息/过程事件与最终正文上限、强制只读沙箱的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -17,6 +17,10 @@ import {
   type BoundedProcessMessages,
   type ProcessResult,
 } from "./process-utils.js";
+import {
+  JsonLineDecoder,
+  type RuntimeTextListener,
+} from "./runtime-stream.js";
 import type { CodexResponse, CouncilConfig } from "./types.js";
 
 type CodexRuntimeConfig = Pick<
@@ -35,6 +39,7 @@ export interface CodexRuntimeInput {
   sessionId?: string;
   model?: string;
   signal?: AbortSignal;
+  onTextEvent?: RuntimeTextListener;
 }
 
 export interface CodexAvailability {
@@ -58,6 +63,7 @@ export class CodexRuntimeError extends Error {
 }
 
 const ABORT_MESSAGE = "Codex 调用已取消。";
+const STREAM_TOTAL_OUTPUT_MULTIPLIER = 128;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
   aborted: ABORT_MESSAGE,
@@ -79,6 +85,7 @@ interface CodexEvent {
   type?: unknown;
   thread_id?: unknown;
   item?: CodexEventItem;
+  delta?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,6 +137,37 @@ function extractLastAgentMessage(events: CodexEvent[]): string {
     }
   }
   return latest;
+}
+
+function observeCodexEvent(value: unknown, listener: RuntimeTextListener): void {
+  if (!isRecord(value)) {
+    return;
+  }
+  if (
+    value.type === "item.started"
+    && isRecord(value.item)
+    && value.item.type === "agent_message"
+  ) {
+    listener({ operation: "reset" });
+    return;
+  }
+  if (
+    (value.type === "item.agent_message.delta" || value.type === "agent_message_delta")
+    && typeof value.delta === "string"
+    && value.delta
+  ) {
+    listener({ operation: "append", content: value.delta });
+    return;
+  }
+  if (
+    value.type === "item.completed"
+    && isRecord(value.item)
+    && value.item.type === "agent_message"
+    && typeof value.item.text === "string"
+    && value.item.text.trim()
+  ) {
+    listener({ operation: "replace", content: value.item.text });
+  }
 }
 
 function loginError(): CodexRuntimeError {
@@ -211,6 +249,8 @@ export class CodexRuntime {
     input: string,
     cwd?: string,
     signal?: AbortSignal,
+    onStdoutChunk?: (chunk: string) => void,
+    maxTotalOutputChars?: number,
   ): Promise<ProcessResult> {
     return await runBoundedProcess({
       command: this.config.codexCommand,
@@ -222,6 +262,8 @@ export class CodexRuntime {
       killGraceMs: this.config.codexKillGraceMs,
       maxOutputChars: this.config.maxOutputChars,
       stdoutOverflow: "truncate",
+      ...(onStdoutChunk ? { onStdoutChunk } : {}),
+      ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
       messages: PROCESS_MESSAGES,
     });
   }
@@ -282,7 +324,18 @@ export class CodexRuntime {
         ...(model ? ["--model", model] : []),
         "-",
       );
-      const result = await this.#run(args, input.prompt, input.cwd, input.signal);
+      const decoder = input.onTextEvent
+        ? new JsonLineDecoder((value) => observeCodexEvent(value, input.onTextEvent!))
+        : undefined;
+      const result = await this.#run(
+        args,
+        input.prompt,
+        input.cwd,
+        input.signal,
+        decoder ? (chunk) => decoder.push(chunk) : undefined,
+        this.config.maxOutputChars * STREAM_TOTAL_OUTPUT_MULTIPLIER,
+      );
+      decoder?.flush();
       if (input.signal?.aborted) {
         throw makeAbortError(ABORT_MESSAGE);
       }

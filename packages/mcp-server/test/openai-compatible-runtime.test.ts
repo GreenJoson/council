@@ -1,6 +1,6 @@
 /**
  * @input  依赖：本地 HTTP 测试服务与 OpenAICompatibleRuntime
- * @output 验证：兼容请求、响应提取、认证分类与输出上限
+ * @output 验证：兼容流式请求、文本增量、JSON 回退、认证分类与输出上限
  * @pos    DeepSeek/Kimi 统一远程运行时的协议回归测试
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -29,21 +29,59 @@ async function withServer(
   }
 }
 
-test("兼容运行时发送标准 Chat Completions 并提取正文", async () => {
+test("兼容运行时发送流式 Chat Completions 并转发公开文本增量", async () => {
   await withServer((request, response) => {
     assert.equal(request.url, "/v1/chat/completions");
     assert.equal(request.headers.authorization, "Bearer test-key");
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ choices: [{ message: { content: "  OK  " } }] }));
+    let requestBody = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => {
+      requestBody += chunk;
+    });
+    request.on("end", () => {
+      const parsed: unknown = JSON.parse(requestBody);
+      assert(parsed && typeof parsed === "object" && "stream" in parsed);
+      assert.equal((parsed as { stream: unknown }).stream, true);
+      response.setHeader("content-type", "text/event-stream");
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "  O" } }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "K  " } }] })}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
   }, async (baseUrl) => {
     const runtime = new OpenAICompatibleRuntime(1_000, 5_000);
+    const events: Array<{ operation: string; content?: string }> = [];
     const content = await runtime.generate({
       baseUrl,
       model: "test-model",
       apiKey: "test-key",
       prompt: "test prompt",
+      onTextEvent: (event) => events.push(event),
     });
     assert.equal(content, "OK");
+    assert.deepEqual(events, [
+      { operation: "reset" },
+      { operation: "append", content: "  O" },
+      { operation: "append", content: "K  " },
+    ]);
+  });
+});
+
+test("兼容运行时兼容忽略 stream 参数后返回的普通 JSON", async () => {
+  await withServer((_request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ choices: [{ message: { content: "  fallback  " } }] }));
+  }, async (baseUrl) => {
+    const runtime = new OpenAICompatibleRuntime(1_000, 5_000);
+    const events: Array<{ operation: string; content?: string }> = [];
+    const content = await runtime.generate({
+      baseUrl,
+      model: "test-model",
+      apiKey: "test-key",
+      prompt: "test prompt",
+      onTextEvent: (event) => events.push(event),
+    });
+    assert.equal(content, "fallback");
+    assert.deepEqual(events, [{ operation: "replace", content: "fallback" }]);
   });
 });
 
@@ -73,7 +111,10 @@ test("兼容运行时将认证失败分类为不可重试且不公开响应正�
 
 test("兼容运行时拒绝超过上限的远程响应", async () => {
   await withServer((_request, response) => {
-    response.end(JSON.stringify({ choices: [{ message: { content: "x".repeat(2_000) } }] }));
+    response.setHeader("content-type", "text/event-stream");
+    response.end(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "x".repeat(2_000) } }] })}\n\n`,
+    );
   }, async (baseUrl) => {
     const runtime = new OpenAICompatibleRuntime(100, 5_000);
     await assert.rejects(

@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 Council 上下文、纯 ClaudeRuntime 与 Agent AbortSignal
- * @output 导出：不写数据库、不恢复 session、仅公开脱敏失败原因的 ClaudeAgentAdapter
- * @pos    编排 AgentAdapter 与 Claude Code 纯生成运行时之间的安全桥梁
+ * @input  依赖：公开 Council 上下文、纯 ClaudeRuntime、临时草稿流与 Agent AbortSignal
+ * @output 导出：不写数据库、不恢复 session、转发公开文本增量并脱敏失败的适配器
+ * @pos    编排 AgentAdapter 与 Claude Code 纯生成运行时之间的安全流式桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -17,11 +17,16 @@ import { ClaudeRuntime, ClaudeRuntimeError } from "../claude-runtime.js";
 import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
+import type {
+  AgentProgressMeta,
+  AgentProgressPublisher,
+} from "./agent-progress-hub.js";
 
 export interface ClaudeAgentAdapterOptions {
   maxContextChars: number;
   model?: string;
   getModel?: () => string | undefined;
+  progress?: AgentProgressPublisher;
 }
 
 function formatTrustedPrefix(input: AgentInvocation): string {
@@ -116,6 +121,12 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       throw new AgentInvocationError(message, false, message);
     }
     const prompt = buildPrompt(input, this.options.maxContextChars);
+    const progressMeta: AgentProgressMeta = {
+      runId: input.runId,
+      topicId: input.topicId,
+      adapterId: this.adapterId,
+    };
+    this.options.progress?.reset(progressMeta);
     try {
       const model = this.options.getModel?.() ?? this.options.model;
       const response = await this.runtime.generate({
@@ -123,6 +134,15 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         cwd,
         ...(model ? { model } : {}),
         signal: options.signal,
+        onTextEvent: (event) => {
+          if (event.operation === "reset") {
+            this.options.progress?.reset(progressMeta);
+          } else if (event.operation === "append") {
+            this.options.progress?.append(progressMeta, event.content);
+          } else {
+            this.options.progress?.replace(progressMeta, event.content);
+          }
+        },
       });
       return { content: response.content };
     } catch (error) {
@@ -130,6 +150,8 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         throw options.signal.reason;
       }
       throw safeInvocationError(error);
+    } finally {
+      this.options.progress?.complete(progressMeta);
     }
   }
 }

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Claude CLI、AbortController 与纯 ClaudeRuntime
- * @output 导出：生成、恢复、取消、超时、回合耗尽和安全错误边界测试
+ * @output 导出：stream-json 增量、生成、恢复、取消、超时、回合耗尽和安全错误边界测试
  * @pos    无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -87,12 +87,34 @@ if (mode === "tree-hang") {
     }
     const resumeIndex = args.indexOf("--resume");
     const modelIndex = args.indexOf("--model");
+    const finalResult = [
+      input,
+      resumeIndex >= 0 ? args[resumeIndex + 1] : "none",
+      modelIndex >= 0 ? args[modelIndex + 1] : "none"
+    ].join(";");
+    if (args.includes("stream-json")) {
+      const streamEvents = [
+        { type: "stream_event", event: { type: "message_start" } },
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "公开" }
+          }
+        },
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "草稿" }
+          }
+        }
+      ];
+      process.stdout.write(streamEvents.map(event => JSON.stringify(event)).join("\\n") + "\\n");
+    }
     process.stdout.write(JSON.stringify({
-      result: [
-        input,
-        resumeIndex >= 0 ? args[resumeIndex + 1] : "none",
-        modelIndex >= 0 ? args[modelIndex + 1] : "none"
-      ].join(";"),
+      type: "result",
+      result: finalResult,
       session_id: "runtime_session",
       model: "runtime_model",
       is_error: false
@@ -188,6 +210,30 @@ test("ClaudeRuntime 纯生成并显式恢复 session 与模型", async () => {
       model: "configured-model",
     });
     assert.equal(resumed.content, "public rebuttal;session_previous;configured-model");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 只转发 stream-json 的公开 text_delta 并以最终结果收口", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-stream-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const events: Array<{ operation: string; content?: string }> = [];
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success"));
+    const response = await runtime.generate({
+      prompt: "public prompt",
+      cwd: directory,
+      onTextEvent: (event) => events.push(event),
+    });
+    assert.equal(response.content, "public prompt;none;none");
+    assert.deepEqual(events, [
+      { operation: "reset" },
+      { operation: "append", content: "公开" },
+      { operation: "append", content: "草稿" },
+      { operation: "replace", content: "public prompt;none;none" },
+    ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

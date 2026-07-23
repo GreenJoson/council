@@ -1,8 +1,8 @@
 /**
  * @input  依赖：当前议题、参与者、同步/发布状态、消息回调、MarkdownContent 与自动轮次快照
- *         （透传给 Composer 支撑 @claude/@codex 召唤自动补全与冲突判断）
+ *         （驱动时间线 Agent 回复动态，并透传给 Composer 支撑 @agent 召唤）
  * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/元数据双 tab、
- *         卡片阶梯导航、引用回复发起）
+ *         卡片阶梯导航、活动 Agent 状态、引用回复发起）
  * @pos    Operator Console 的主要阅读、元数据核查和回复区域；过长议题问题默认收起
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,6 +13,10 @@ import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
 import { AgentAvatar, StatusBadge } from "./presentation";
+import {
+  AgentReplyActivity,
+  selectAgentReplyActivity,
+} from "./AgentReplyActivity";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
@@ -31,6 +35,7 @@ export interface DiscussionPanelProps {
 type DiscussionTab = "discussion" | "metadata";
 
 const QUOTE_LINE_LIMIT = 88;
+const TIMELINE_FOLLOW_THRESHOLD = 240;
 
 function messageElementId(messageId: string): string {
   return `message-card-${encodeURIComponent(messageId)}`;
@@ -59,6 +64,7 @@ export function DiscussionPanel({
   const [isIdCopied, setIsIdCopied] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState(topic.messages[0]?.id);
   const timelineRef = useRef<HTMLElement>(null);
+  const shouldFollowTimelineRef = useRef(true);
   const quoteNonceRef = useRef(0);
   const copyResetTimeoutRef = useRef<number | undefined>(undefined);
 
@@ -66,6 +72,7 @@ export function DiscussionPanel({
   useEffect(() => {
     setActiveTab("discussion");
     setActiveMessageId(topic.messages[0]?.id);
+    shouldFollowTimelineRef.current = false;
   }, [topic.id]);
 
   useEffect(() => {
@@ -81,10 +88,13 @@ export function DiscussionPanel({
     const updateActiveMessage = () => {
       animationFrame = undefined;
       const timelineRect = timeline.getBoundingClientRect();
+      const distanceFromEnd =
+        timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+      shouldFollowTimelineRef.current = distanceFromEnd <= TIMELINE_FOLLOW_THRESHOLD;
       const readingLine = timelineRect.top + Math.min(120, timelineRect.height * 0.24);
       let currentId = topic.messages[0]?.id;
 
-      if (timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 2) {
+      if (distanceFromEnd <= 2) {
         currentId = topic.messages.at(-1)?.id;
       } else {
         for (const message of topic.messages) {
@@ -113,6 +123,43 @@ export function DiscussionPanel({
       }
     };
   }, [activeTab, topic.id, topic.messages]);
+
+  const agentReplyActivity = selectAgentReplyActivity(orchestration, topic.id);
+  const agentReplyActivityKey = agentReplyActivity
+    ? `${agentReplyActivity.runId}:${agentReplyActivity.adapterId}:${agentReplyActivity.phase}`
+    : null;
+  const agentReplyContentLength = agentReplyActivity?.content.length ?? 0;
+
+  useEffect(() => {
+    if (!agentReplyActivityKey || !shouldFollowTimelineRef.current) {
+      return;
+    }
+    const animationFrame = requestAnimationFrame(() => {
+      const timeline = timelineRef.current;
+      if (!timeline) {
+        return;
+      }
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      timeline.scrollTo({
+        top: timeline.scrollHeight,
+        behavior: prefersReducedMotion ? "auto" : "smooth",
+      });
+    });
+    return () => cancelAnimationFrame(animationFrame);
+  }, [agentReplyActivityKey]);
+
+  useEffect(() => {
+    if (agentReplyContentLength === 0 || !shouldFollowTimelineRef.current) {
+      return;
+    }
+    const animationFrame = requestAnimationFrame(() => {
+      const timeline = timelineRef.current;
+      if (timeline) {
+        timeline.scrollTo({ top: timeline.scrollHeight, behavior: "auto" });
+      }
+    });
+    return () => cancelAnimationFrame(animationFrame);
+  }, [agentReplyContentLength]);
 
   useEffect(() => {
     return () => {
@@ -251,6 +298,9 @@ export function DiscussionPanel({
                   </div>
                 </div>
               )}
+              {agentReplyActivity ? (
+                <AgentReplyActivity activity={agentReplyActivity} />
+              ) : null}
             </section>
           </div>
 

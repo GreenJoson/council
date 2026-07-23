@@ -1,7 +1,7 @@
 /**
- * @input  依赖：CouncilDatabase revision、Express SSE 连接与轮询配置
- * @output 导出：跨进程 council.changed 事件流
- * @pos    SQLite 共享写入到浏览器实时刷新之间的桥梁
+ * @input  依赖：CouncilDatabase revision、Agent 草稿中心、Express SSE 连接与轮询配置
+ * @output 导出：跨进程 council.changed 与进程内 agent.output 事件流
+ * @pos    SQLite 共享写入和临时 Agent 增量到浏览器实时刷新的统一桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -9,6 +9,10 @@
 import type { Request, Response } from "express";
 import { CouncilDatabase } from "../database.js";
 import { logger } from "../logger.js";
+import type {
+  AgentProgressEvent,
+  AgentProgressHub,
+} from "../orchestration/agent-progress-hub.js";
 import { HttpError } from "./responses.js";
 import { lastEventIdSchema } from "./schemas.js";
 
@@ -23,12 +27,19 @@ function writeChanged(response: Response, revision: number): void {
   response.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
+function writeAgentOutput(response: Response, event: AgentProgressEvent): void {
+  response.write("event: agent.output\n");
+  response.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
 export class RevisionEventStream {
   readonly #database: CouncilDatabase;
   readonly #clients = new Set<Response>();
   readonly #pollTimer: NodeJS.Timeout;
   readonly #heartbeatTimer: NodeJS.Timeout;
   readonly #retryMs: number;
+  readonly #progressHub?: AgentProgressHub;
+  readonly #unsubscribeProgress?: () => void;
   #revision: number;
   #closed = false;
 
@@ -37,12 +48,19 @@ export class RevisionEventStream {
     pollMs: number,
     retryMs: number,
     heartbeatMs: number,
+    progressHub?: AgentProgressHub,
   ) {
     this.#database = database;
     this.#retryMs = retryMs;
+    this.#progressHub = progressHub;
     this.#revision = database.getRevision();
     this.#pollTimer = setInterval(() => this.#poll(), pollMs);
     this.#heartbeatTimer = setInterval(() => this.#heartbeat(), heartbeatMs);
+    this.#unsubscribeProgress = progressHub?.subscribe((event) => {
+      for (const client of this.#clients) {
+        writeAgentOutput(client, event);
+      }
+    });
     this.#pollTimer.unref();
     this.#heartbeatTimer.unref();
   }
@@ -69,6 +87,9 @@ export class RevisionEventStream {
     if (lastEventId === undefined || lastEventId !== currentRevision) {
       // ID 超前通常表示数据库已重置；发送当前值可让客户端回落并重新校准。
       writeChanged(response, currentRevision);
+    }
+    for (const event of this.#progressHub?.snapshots() ?? []) {
+      writeAgentOutput(response, event);
     }
     this.#clients.add(response);
 
@@ -116,6 +137,7 @@ export class RevisionEventStream {
     this.#closed = true;
     clearInterval(this.#pollTimer);
     clearInterval(this.#heartbeatTimer);
+    this.#unsubscribeProgress?.();
     for (const client of this.#clients) {
       client.end();
     }

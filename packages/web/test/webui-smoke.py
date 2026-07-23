@@ -1,7 +1,7 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、过长议题折叠、大屏流体讨论列、媒体缩略/大图浏览、
-         卡片底部折叠、移动端布局和控制台错误的浏览器验收
+@output 导出：桌面交互、Agent 回复动态、过长议题折叠、大屏流体讨论列、
+         媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -129,7 +129,8 @@ def verify_last_card_tail_access(page) -> None:
         """
         () => {
           const timeline = document.querySelector('.message-timeline');
-          const card = document.querySelector('.message-card:last-of-type');
+          const cards = document.querySelectorAll('.message-card');
+          const card = cards.item(cards.length - 1);
           if (!timeline || !card) {
             throw new Error('最后卡片滚动目标缺失');
           }
@@ -167,6 +168,20 @@ def verify_message_jump_rail(page) -> None:
     first_step.click()
     page.wait_for_timeout(700)
     assert first_step.get_attribute("aria-current") == "true"
+
+
+def verify_agent_reply_activity(page) -> None:
+    activity = page.get_by_role("status", name="Claude Code 正在回复", exact=True)
+    activity.wait_for()
+    assert activity.locator(".agent-reply-dots i").count() == 3
+    assert activity.locator(
+        "xpath=ancestor::section[contains(@class, 'message-timeline')]"
+    ).count() == 1
+    assert page.locator(".message-jump-step").count() == page.locator(".message-card").count()
+    preview = activity.locator(".agent-reply-preview")
+    preview.wait_for()
+    page.get_by_text("实时草稿 · 尚未发布", exact=True).wait_for()
+    page.get_by_text("正在审查状态机边界", exact=False).wait_for()
 
 
 def verify_media_preview_and_lightbox(page) -> None:
@@ -249,6 +264,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("button", name="创建并启动", exact=True).click()
     page.get_by_text("自动轮次已创建并启动", exact=True).wait_for()
     page.get_by_text("等待 Agent", exact=True).wait_for()
+    verify_agent_reply_activity(page)
 
     if SCREENSHOT_PATH:
         screenshot = Path(SCREENSHOT_PATH)
@@ -261,8 +277,10 @@ def verify_desktop(browser) -> list[str]:
 
     page.locator(".topic-row", has_text="订单状态机重构").click()
     page.get_by_role("heading", name="订单状态机重构", exact=True).wait_for()
+    assert page.locator(".agent-reply-activity").count() == 0
     page.locator(".topic-row", has_text="支付回调幂等方案").click()
     page.get_by_text("等待 Agent", exact=True).wait_for()
+    verify_agent_reply_activity(page)
 
     page.get_by_placeholder("写下公开结论、证据或回应…").fill(
         """补充验证：重复回调和乱序回调必须分别覆盖。

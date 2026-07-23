@@ -13,8 +13,8 @@
 
 ## Claude 运行边界
 
-`ClaudeRuntime` 只接收已经整理为可公开共享的 prompt、项目目录、可选 model/session
-与 `AbortSignal`，只负责调用 Claude Code CLI 并返回内容和会话标识。它不导入、读取或
+`ClaudeRuntime` 只接收已经整理为可公开共享的 prompt、项目目录、可选 model/session、
+公开文本增量监听与 `AbortSignal`，只负责调用 Claude Code CLI 并返回内容和会话标识。它不导入、读取或
 写入 `CouncilDatabase`；未来编排器可以直接复用这条纯生成边界。
 
 兼容层 `ClaudeClient.ask` 继续负责从数据库读取公开讨论和已存 session，调用运行时，
@@ -64,7 +64,7 @@ loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin�
 | `POST` | `/api/v1/runs/:runId/actions/cancel` | 同步持久化取消（`200`） |
 | `POST` | `/api/v1/runs/:runId/actions/recover` | 显式后台恢复（`202`） |
 | `POST` | `/api/v1/runs/:runId/approvals` | 首次应用 `202`，幂等重放 `200` |
-| `GET` | `/api/v1/events` | `council.changed` SSE，载荷 `{revision}` |
+| `GET` | `/api/v1/events` | `council.changed` revision 与临时 `agent.output` 草稿 SSE |
 
 REST 成功统一为 `{code: 0, message, data, timestamp}`；错误使用对应 HTTP 状态码，
 响应为 `{code, message, data?, timestamp}`。字段全部使用 canonical camelCase。
@@ -77,6 +77,11 @@ claim/renew/release 不推进任何 revision，避免心跳制造 SSE 风暴。
 
 SQLite trigger 维护全库单调 revision，HTTP 进程按配置轮询。因此另一个 MCP 进程
 写入同一数据库时也会产生事件，不依赖进程内 emitter。
+
+`agent.output` 是进程内临时事件，使用独立 sequence 和
+`snapshot/reset/append/replace/complete` 操作；重连会发送活动草稿快照。草稿只包含公开回复
+文本，不转发 thinking、工具参数或 CLI stderr，不写 SQLite，也不占用 revision 的
+`Last-Event-ID`。
 
 事件重连等待由 `COUNCIL_HTTP_EVENT_RETRY_MS` 独立控制。`Last-Event-ID` 等于当前
 revision 时不会重复通知；落后或超前时发送当前 revision，让客户端全量校准。HTTP
@@ -91,5 +96,5 @@ revision 通知仍是全库级，客户端刷新时再按项目过滤。
 
 模型设置保存在共享 SQLite 的 `agent_settings` 表，Claude/Codex 适配器在每次调用时读取当前
 模型，因此切换无需重启服务。API Key 不写 SQLite，macOS 通过系统 Keychain 保存；设置 API
-只返回 `hasApiKey`。DeepSeek 与 Kimi 共用 OpenAI Chat Completions 兼容运行时，输出、网络和
-超时均有界，上游错误正文不会进入 HTTP 响应或日志。
+只返回 `hasApiKey`。DeepSeek 与 Kimi 共用流式 OpenAI Chat Completions 兼容运行时，公开
+`delta.content` 与最终输出均有界；上游错误正文不会进入 HTTP 响应或日志。

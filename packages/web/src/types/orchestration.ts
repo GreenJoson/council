@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 自动轮次公开协议
- * @output 导出：Capabilities、Run、计划输入和独立快照类型
+ * @output 导出：Capabilities、Run、Agent 临时草稿、计划输入和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -81,6 +81,14 @@ export interface OrchestrationRun {
   updatedAt: string;
 }
 
+export interface OrchestrationAgentOutput {
+  runId: string;
+  topicId: string;
+  adapterId: string;
+  sequence: number;
+  content: string;
+}
+
 export interface CreateOrchestrationRunInput {
   topicId: string;
   plan: Array<{
@@ -101,6 +109,7 @@ export interface OrchestrationSnapshot {
   capabilities?: OrchestrationCapabilities;
   activeTopicId?: string;
   runs: OrchestrationRun[];
+  agentOutputs?: OrchestrationAgentOutput[];
   sync: {
     status: "connected" | "syncing" | "offline";
     label: string;

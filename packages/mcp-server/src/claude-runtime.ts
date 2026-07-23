@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 prompt、Claude Code CLI 配置、共享进程工具与可选 AbortSignal
- * @output 导出：纯 ClaudeRuntime 生成接口、可用性检查与脱敏失败分类
- * @pos    无数据库副作用的 Claude Code 子进程运行边界
+ * @input  依赖：公开 prompt、Claude Code CLI stream-json、共享进程工具与可选 AbortSignal
+ * @output 导出：纯 ClaudeRuntime 增量生成接口、可用性检查与脱敏失败分类
+ * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -14,6 +14,10 @@ import {
   type BoundedProcessMessages,
   type ProcessResult,
 } from "./process-utils.js";
+import {
+  JsonLineDecoder,
+  type RuntimeTextListener,
+} from "./runtime-stream.js";
 import type { ClaudeResponse, CouncilConfig } from "./types.js";
 
 type ClaudeRuntimeConfig = Pick<
@@ -33,6 +37,7 @@ export interface ClaudeRuntimeInput {
   sessionId?: string;
   model?: string;
   signal?: AbortSignal;
+  onTextEvent?: RuntimeTextListener;
 }
 
 export interface ClaudeAvailability {
@@ -65,6 +70,8 @@ interface ClaudeJsonResult {
 }
 
 const ABORT_MESSAGE = "Claude Code 调用已取消。";
+const STREAM_RETAINED_OUTPUT_MULTIPLIER = 3;
+const STREAM_TOTAL_OUTPUT_MULTIPLIER = 64;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
   aborted: ABORT_MESSAGE,
@@ -94,6 +101,52 @@ function parseJsonObject(text: string): ClaudeJsonResult | undefined {
     }
   }
   return undefined;
+}
+
+function textFromClaudeContent(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return value
+    .map((item) => (
+      isRecord(item) && item.type === "text" && typeof item.text === "string"
+        ? item.text
+        : ""
+    ))
+    .join("");
+}
+
+function observeClaudeStreamEvent(value: unknown, listener: RuntimeTextListener): void {
+  if (!isRecord(value)) {
+    return;
+  }
+  if (value.type === "stream_event" && isRecord(value.event)) {
+    const event = value.event;
+    if (event.type === "message_start") {
+      listener({ operation: "reset" });
+      return;
+    }
+    if (
+      event.type === "content_block_delta"
+      && isRecord(event.delta)
+      && event.delta.type === "text_delta"
+      && typeof event.delta.text === "string"
+      && event.delta.text
+    ) {
+      listener({ operation: "append", content: event.delta.text });
+    }
+    return;
+  }
+  if (value.type === "assistant" && isRecord(value.message)) {
+    const content = textFromClaudeContent(value.message.content);
+    if (content) {
+      listener({ operation: "replace", content });
+    }
+    return;
+  }
+  if (value.type === "result" && typeof value.result === "string" && value.result.trim()) {
+    listener({ operation: "replace", content: value.result });
+  }
 }
 
 function loginError(): ClaudeRuntimeError {
@@ -199,6 +252,9 @@ export class ClaudeRuntime {
     input: string,
     cwd?: string,
     signal?: AbortSignal,
+    onStdoutChunk?: (chunk: string) => void,
+    maxTotalOutputChars?: number,
+    retainedOutputChars = this.config.maxOutputChars,
   ): Promise<ProcessResult> {
     return await runBoundedProcess({
       command: this.config.claudeCommand,
@@ -208,7 +264,10 @@ export class ClaudeRuntime {
       ...(signal ? { signal } : {}),
       timeoutMs: this.config.claudeTimeoutMs,
       killGraceMs: this.config.claudeKillGraceMs,
-      maxOutputChars: this.config.maxOutputChars,
+      maxOutputChars: retainedOutputChars,
+      stdoutOverflow: onStdoutChunk ? "truncate" : "stop",
+      ...(onStdoutChunk ? { onStdoutChunk } : {}),
+      ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
       messages: PROCESS_MESSAGES,
     });
   }
@@ -248,7 +307,8 @@ export class ClaudeRuntime {
     const args = [
       "--print",
       "--output-format",
-      "json",
+      "stream-json",
+      "--include-partial-messages",
       "--permission-mode",
       this.config.claudePermissionMode,
       "--max-turns",
@@ -256,7 +316,19 @@ export class ClaudeRuntime {
       ...(model ? ["--model", model] : []),
       ...(sessionId ? ["--resume", sessionId] : []),
     ];
-    const result = await this.#run(args, input.prompt, input.cwd, input.signal);
+    const decoder = input.onTextEvent
+      ? new JsonLineDecoder((value) => observeClaudeStreamEvent(value, input.onTextEvent!))
+      : undefined;
+    const result = await this.#run(
+      args,
+      input.prompt,
+      input.cwd,
+      input.signal,
+      decoder ? (chunk) => decoder.push(chunk) : () => undefined,
+      this.config.maxOutputChars * STREAM_TOTAL_OUTPUT_MULTIPLIER,
+      this.config.maxOutputChars * STREAM_RETAINED_OUTPUT_MULTIPLIER,
+    );
+    decoder?.flush();
     if (input.signal?.aborted) {
       throw makeAbortError(ABORT_MESSAGE);
     }
@@ -272,6 +344,14 @@ export class ClaudeRuntime {
         `process_exit_${String(result.exitCode)}`,
       );
     }
-    return parseClaudeOutput(result.stdout);
+    const response = parseClaudeOutput(result.stdout);
+    if (response.content.length > this.config.maxOutputChars) {
+      throw new ClaudeRuntimeError(
+        PROCESS_MESSAGES.outputLimit,
+        false,
+        "final_output_limit",
+      );
+    }
+    return response;
   }
 }

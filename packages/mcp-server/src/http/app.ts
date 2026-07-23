@@ -174,6 +174,7 @@ export function createCouncilHttpApp(
     config.eventPollMs,
     config.eventRetryMs,
     config.eventHeartbeatMs,
+    orchestration?.progressHub,
   );
 
   app.disable("x-powered-by");

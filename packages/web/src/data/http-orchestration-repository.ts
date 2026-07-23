@@ -1,7 +1,7 @@
 /**
- * @input  依赖：Council orchestration REST/SSE、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 独立自动轮次仓储
- * @pos    仅在 orchestration revision 变化时校准当前议题运行列表
+ * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
+ * @output 导出：HttpOrchestrationRepository 独立自动轮次与临时草稿仓储
+ * @pos    revision 变化时校准运行列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -11,6 +11,7 @@ import type {
   CreateOrchestrationRunInput,
   OrchestrationRun,
   OrchestrationSnapshot,
+  OrchestrationAgentOutput,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -25,6 +26,7 @@ import {
   parseOrchestrationApprovalResult,
   parseOrchestrationRun,
   parseOrchestrationRunPage,
+  parseAgentOutputEvent,
 } from "./orchestration-api";
 import {
   parseAgentConnectionTest,
@@ -80,6 +82,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
   #retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   #retryResolver: ((continueRetry: boolean) => void) | undefined;
   #recoveryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  readonly #agentOutputsByRun = new Map<string, OrchestrationAgentOutput>();
 
   constructor(options: HttpOrchestrationRepositoryOptions) {
     createApiUrl(options.baseUrl, "/api/v1/orchestration/capabilities");
@@ -168,10 +171,12 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       }
       this.#observedTotalRevision = status.revision;
       this.#appliedOrchestrationRevision = status.orchestration;
+      this.#pruneInactiveAgentOutputs(topicId, runs);
       this.#snapshot = {
         ...this.#snapshot,
         activeTopicId: topicId,
         runs,
+        agentOutputs: this.#outputsForTopic(topicId),
         sync: { status: "connected", label: "自动轮次已同步" },
       };
       return this.#publishSnapshot();
@@ -300,6 +305,8 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         this.#eventStream?.close();
         this.#eventStream = undefined;
         this.#eventGeneration += 1;
+        this.#agentOutputsByRun.clear();
+        this.#snapshot = { ...this.#snapshot, agentOutputs: [] };
         this.#queuedTotalRevision = undefined;
         this.#failedTotalRevision = undefined;
         this.#cancelRetry();
@@ -421,6 +428,76 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       }
       this.#queueRefresh(revision);
     });
+    stream.addEventListener("agent.output", (event) => {
+      if (generation !== this.#eventGeneration || this.#eventStream !== stream) {
+        return;
+      }
+      const output = parseAgentOutputEvent(event);
+      if (!output) {
+        return;
+      }
+      const previous = this.#agentOutputsByRun.get(output.runId);
+      const startsNewInvocation =
+        output.operation === "reset" || output.operation === "snapshot";
+      if (
+        previous
+        && !startsNewInvocation
+        && output.sequence <= previous.sequence
+      ) {
+        return;
+      }
+      if (output.operation === "complete") {
+        if (previous) {
+          this.#agentOutputsByRun.set(output.runId, {
+            ...previous,
+            sequence: output.sequence,
+          });
+        }
+      } else {
+        const baseContent = previous?.content ?? "";
+        const content = output.operation === "append"
+          ? baseContent + (output.content ?? "")
+          : output.operation === "reset"
+            ? ""
+            : output.content ?? "";
+        this.#agentOutputsByRun.set(output.runId, {
+          runId: output.runId,
+          topicId: output.topicId,
+          adapterId: output.adapterId,
+          sequence: output.sequence,
+          content,
+        });
+      }
+      if (this.#snapshot.activeTopicId === output.topicId) {
+        this.#snapshot = {
+          ...this.#snapshot,
+          agentOutputs: this.#outputsForTopic(output.topicId),
+        };
+        this.#publishSnapshot();
+      }
+    });
+  }
+
+  #outputsForTopic(topicId: string): OrchestrationAgentOutput[] {
+    return [...this.#agentOutputsByRun.values()]
+      .filter((output) => output.topicId === topicId)
+      .map((output) => ({ ...output }));
+  }
+
+  #pruneInactiveAgentOutputs(
+    topicId: string,
+    runs: readonly OrchestrationRun[],
+  ): void {
+    const activeRunIds = new Set(
+      runs
+        .filter((run) => run.status === "running" || run.status === "waiting_agent")
+        .map((run) => run.id),
+    );
+    for (const output of this.#agentOutputsByRun.values()) {
+      if (output.topicId === topicId && !activeRunIds.has(output.runId)) {
+        this.#agentOutputsByRun.delete(output.runId);
+      }
+    }
   }
 
   #queueRefresh(totalRevision: number): void {
@@ -498,9 +575,13 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
             return false;
           }
           this.#appliedOrchestrationRevision = status.orchestration;
+          if (topicId) {
+            this.#pruneInactiveAgentOutputs(topicId, runs);
+          }
           this.#snapshot = {
             ...this.#snapshot,
             runs,
+            agentOutputs: topicId ? this.#outputsForTopic(topicId) : [],
             sync: { status: "connected", label: "自动轮次已实时校准" },
           };
           this.#publishSnapshot();

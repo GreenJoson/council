@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Codex CLI、AbortController 与纯 CodexRuntime
- * @output 导出：只读沙箱、JSONL 截断、正文限长、取消、超时和错误分类测试
+ * @output 导出：只读沙箱、JSONL 公开消息增量、截断、正文限长、取消、超时和错误分类测试
  * @pos    Codex 无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -88,6 +88,8 @@ if (mode === "hang") {
     const events = [
       { type: "thread.started", thread_id: "codex_runtime_session" },
       { type: "turn.started" },
+      { type: "item.started", item: { id: "item_0", type: "agent_message" } },
+      { type: "agent_message_delta", delta: "公开草稿" },
       { type: "item.completed", item: { id: "item_0", type: "agent_message", text: finalText } },
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
     ];
@@ -168,6 +170,29 @@ test("CodexRuntime 纯生成强制只读沙箱并提取 thread session", async (
       `public prompt;read-only;${directory};skip-git;none;none`,
     );
     assert.equal(first.sessionId, "codex_runtime_session");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntime 从 JSONL 观察公开 agent_message 增量与完成项", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-stream-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  try {
+    const events: Array<{ operation: string; content?: string }> = [];
+    const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "success"));
+    const response = await runtime.generate({
+      prompt: "public prompt",
+      cwd: directory,
+      onTextEvent: (event) => events.push(event),
+    });
+    assert.match(response.content, /^public prompt;read-only;/);
+    assert.deepEqual(events, [
+      { operation: "reset" },
+      { operation: "append", content: "公开草稿" },
+      { operation: "replace", content: response.content },
+    ]);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

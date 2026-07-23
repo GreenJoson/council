@@ -1,7 +1,7 @@
 /**
- * @input  依赖：SSE 客户端、两个 CouncilDatabase 连接与共享 SQLite 文件
- * @output 导出：跨连接 revision 触发 council.changed 的集成测试
- * @pos    自动显示另一 MCP 进程回帖能力的关键验收
+ * @input  依赖：SSE 客户端、两个 CouncilDatabase 连接、共享 SQLite 与 AgentProgressHub
+ * @output 导出：跨连接 revision 和进程内 Agent 草稿事件的集成测试
+ * @pos    自动刷新正式回帖与实时显示 Agent 输出的关键验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -13,6 +13,15 @@ import { startHttpHarness, TEST_ALLOWED_ORIGIN } from "./http-harness.js";
 
 interface ChangedEvent {
   revision: number;
+}
+
+interface AgentOutputEvent {
+  runId: string;
+  topicId: string;
+  adapterId: string;
+  sequence: number;
+  operation: "snapshot" | "reset" | "append" | "replace" | "complete";
+  content?: string;
 }
 
 class SseReader {
@@ -56,6 +65,26 @@ class SseReader {
         throw new Error("SSE revision 必须是数字。");
       }
       return { revision };
+    }
+  }
+
+  async nextAgentOutput(): Promise<AgentOutputEvent> {
+    while (true) {
+      const lines = (await this.nextBlock()).split("\n");
+      if (!lines.includes("event: agent.output")) {
+        continue;
+      }
+      const dataLine = lines.find((line) => line.startsWith("data: "));
+      assert(dataLine);
+      const value: unknown = JSON.parse(dataLine.slice("data: ".length));
+      assert(value && typeof value === "object");
+      const event = value as Partial<AgentOutputEvent>;
+      assert.equal(typeof event.runId, "string");
+      assert.equal(typeof event.topicId, "string");
+      assert.equal(typeof event.adapterId, "string");
+      assert.equal(typeof event.sequence, "number");
+      assert.equal(typeof event.operation, "string");
+      return event as AgentOutputEvent;
     }
   }
 }
@@ -171,6 +200,66 @@ test("SSE 按 Last-Event-ID 去重、追赶并从数据库重置中恢复", asyn
     assert(invalid && typeof invalid === "object" && "message" in invalid);
     assert.equal((invalid as { message: unknown }).message, "Last-Event-ID 无效。");
   } finally {
+    await harness.close();
+  }
+});
+
+test("SSE 按序转发 Agent 草稿增量并为重连发送当前快照", async () => {
+  const harness = await startHttpHarness({ eventPollMs: 10 }, []);
+  const controller = new AbortController();
+  try {
+    assert(harness.orchestration);
+    const response = await fetch(`${harness.baseUrl}/api/v1/events`, {
+      headers: { Origin: TEST_ALLOWED_ORIGIN },
+      signal: controller.signal,
+    });
+    assert(response.body);
+    const reader = new SseReader(response.body);
+    await reader.nextBlock();
+    await reader.nextChanged();
+
+    const meta = {
+      runId: "run-stream",
+      topicId: "topic-stream",
+      adapterId: "claude",
+    };
+    harness.orchestration.progressHub.reset(meta);
+    harness.orchestration.progressHub.append(meta, "实时");
+
+    assert.deepEqual(await reader.nextAgentOutput(), {
+      ...meta,
+      sequence: 1,
+      operation: "reset",
+      content: "",
+    });
+    assert.deepEqual(await reader.nextAgentOutput(), {
+      ...meta,
+      sequence: 2,
+      operation: "append",
+      content: "实时",
+    });
+
+    const reconnectController = new AbortController();
+    try {
+      const reconnect = await fetch(`${harness.baseUrl}/api/v1/events`, {
+        headers: { Origin: TEST_ALLOWED_ORIGIN },
+        signal: reconnectController.signal,
+      });
+      assert(reconnect.body);
+      const reconnectReader = new SseReader(reconnect.body);
+      await reconnectReader.nextBlock();
+      await reconnectReader.nextChanged();
+      assert.deepEqual(await reconnectReader.nextAgentOutput(), {
+        ...meta,
+        sequence: 2,
+        operation: "snapshot",
+        content: "实时",
+      });
+    } finally {
+      reconnectController.abort();
+    }
+  } finally {
+    controller.abort();
     await harness.close();
   }
 });

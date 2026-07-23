@@ -1,0 +1,246 @@
+/**
+ * @input  依赖：theme.css 的颜色、讨论列、圆角、阴影和动画 token
+ * @output 导出：讨论时间线内 Agent 正在回复动态卡视觉
+ * @pos    让真实编排状态在消息流中可见，不混入正式消息卡与阶梯导航
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+.agent-reply-activity {
+  position: relative;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  width: min(
+    calc(100% - var(--discussion-column-gutter)),
+    clamp(
+      var(--discussion-column-min),
+      var(--discussion-column-fluid),
+      var(--discussion-column-max)
+    )
+  );
+  max-width: none;
+  margin: 2px auto 14px;
+  animation: agent-reply-enter var(--transition-medium) both;
+}
+
+.agent-reply-avatar {
+  position: relative;
+  z-index: 1;
+  padding-top: 3px;
+}
+
+.agent-reply-presence {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--color-canvas);
+  border-radius: 50%;
+  background: currentColor;
+  animation: agent-reply-presence var(--agent-activity-cycle) ease-in-out infinite;
+}
+
+.agent-reply-surface {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding: 15px 17px 14px;
+  border: 1px solid color-mix(in srgb, currentColor 42%, var(--color-border-strong));
+  border-radius: var(--radius-medium);
+  background:
+    linear-gradient(
+      110deg,
+      var(--color-surface) 10%,
+      color-mix(in srgb, currentColor 7%, var(--color-surface-raised)) 50%,
+      var(--color-surface) 90%
+    );
+  box-shadow: var(--shadow-small);
+}
+
+.agent-reply-surface::after {
+  position: absolute;
+  inset: 0 auto 0 -44%;
+  width: 38%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, currentColor 10%, transparent),
+    transparent
+  );
+  content: "";
+  pointer-events: none;
+  animation: agent-reply-sheen calc(var(--agent-activity-cycle) * 2) ease-in-out infinite;
+}
+
+.agent-reply-copy {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+}
+
+.agent-reply-copy strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.agent-reply-dots {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 12px;
+}
+
+.agent-reply-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: agent-reply-dot var(--agent-activity-cycle) ease-in-out infinite;
+}
+
+.agent-reply-dots i:nth-child(2) {
+  animation-delay: calc(var(--agent-activity-cycle) * 0.14);
+}
+
+.agent-reply-dots i:nth-child(3) {
+  animation-delay: calc(var(--agent-activity-cycle) * 0.28);
+}
+
+.agent-reply-surface p {
+  position: relative;
+  z-index: 1;
+  margin: 5px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agent-reply-draft-label {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin-top: 9px;
+  color: currentColor;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agent-reply-preview {
+  position: relative;
+  z-index: 1;
+  max-height: min(32vh, 320px);
+  margin: 6px 0 0;
+  overflow: auto;
+  color: var(--color-text-secondary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-reply-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  vertical-align: -0.14em;
+  animation: agent-reply-caret var(--agent-activity-cycle) steps(2, jump-none) infinite;
+}
+
+.agent-reply-claude {
+  color: var(--color-agent-claude);
+}
+
+.agent-reply-codex {
+  color: var(--color-agent-codex);
+}
+
+.agent-reply-user {
+  color: var(--color-agent-user);
+}
+
+.agent-reply-chair {
+  color: var(--color-agent-chair);
+}
+
+.agent-reply-other {
+  color: var(--color-agent-other);
+}
+
+@keyframes agent-reply-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes agent-reply-dot {
+  0%,
+  55%,
+  100% {
+    opacity: 0.38;
+    transform: translateY(0);
+  }
+
+  28% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes agent-reply-presence {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 28%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+@keyframes agent-reply-sheen {
+  0%,
+  38% {
+    transform: translateX(0);
+  }
+
+  76%,
+  100% {
+    transform: translateX(380%);
+  }
+}
+
+@keyframes agent-reply-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .agent-reply-activity {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 6px;
+    width: 100%;
+  }
+
+  .agent-reply-surface {
+    padding: 13px;
+  }
+}

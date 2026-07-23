@@ -1,6 +1,6 @@
 /**
- * @input  依赖：子进程命令、stdin、定时、输出上限与 stdout 溢出策略
- * @output 导出：有界运行、首尾截断、进程树终止与 CLI 选项规范化工具
+ * @input  依赖：子进程命令、stdin、定时、输出上限、stdout 观察器与溢出策略
+ * @output 导出：有界运行、增量 stdout 观察、首尾截断、进程树终止与 CLI 选项规范化工具
  * @pos    Claude 与 Codex 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -44,6 +44,10 @@ export interface BoundedProcessOptions {
    * CLI 的 JSONL 事件流可远大于最终正文时使用 truncate，最终正文仍须在上层单独限长。
    */
   stdoutOverflow?: "stop" | "truncate";
+  /** truncate 模式下允许排空的总字符上限；防止无穷事件流只靠超时收敛。 */
+  maxTotalOutputChars?: number;
+  /** 只观察公开传输分片；观察器异常不得中断或改变 CLI 最终结果。 */
+  onStdoutChunk?: (chunk: string) => void;
   messages: BoundedProcessMessages;
 }
 
@@ -252,6 +256,7 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
     shell: false,
   });
   let stdout = "";
+  let stdoutCharsReceived = 0;
   let stderr = "";
   let stop: ((reason: StopReason) => void) | undefined;
   const stopped = new Promise<ProcessOutcome>((resolve) => {
@@ -275,7 +280,20 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
+    try {
+      options.onStdoutChunk?.(chunk);
+    } catch {
+      // 实时预览属于非关键旁路；解析或消费者异常不能杀死正在执行的 Agent。
+    }
     if (options.stdoutOverflow === "truncate") {
+      stdoutCharsReceived += chunk.length;
+      if (
+        options.maxTotalOutputChars !== undefined
+        && stdoutCharsReceived > options.maxTotalOutputChars
+      ) {
+        stop?.("output");
+        return;
+      }
       stdout = appendTruncatedOutput(stdout, chunk, options.maxOutputChars);
       return;
     }

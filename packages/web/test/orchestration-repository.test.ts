@@ -87,6 +87,10 @@ interface OrchestrationFixture {
   requests: Array<{ url: URL; init?: RequestInit }>;
   emitContentChanged(stream: FakeEventStream, revision: number): void;
   emitOrchestrationChanged(stream: FakeEventStream, revision: number): void;
+  emitAgentOutput(
+    stream: FakeEventStream,
+    event: Record<string, unknown>,
+  ): void;
   rejectStatus: (value: boolean) => void;
   rejectActions: (value: boolean) => void;
 }
@@ -182,6 +186,9 @@ function createOrchestrationFixture(): OrchestrationFixture {
       revisions.orchestration = revision;
       stream.emit("council.changed", { revision });
     },
+    emitAgentOutput(stream: FakeEventStream, event: Record<string, unknown>): void {
+      stream.emit("agent.output", event);
+    },
     rejectStatus(value: boolean): void {
       shouldRejectStatus = value;
     },
@@ -200,6 +207,77 @@ const OPTIONS = {
 } as const;
 
 describe("HttpOrchestrationRepository", () => {
+  it("直接合并当前议题的 agent.output，忽略乱序分片并在正式状态校准前保留完成草稿", async () => {
+    const fixture = createOrchestrationFixture();
+    const stream = new FakeEventStream();
+    const snapshots: OrchestrationSnapshot[] = [];
+    const repository = new HttpOrchestrationRepository({
+      ...OPTIONS,
+      fetcher: fixture.fetcher,
+      eventStreamFactory: () => stream,
+    });
+    const unsubscribe = repository.subscribe((snapshot) => snapshots.push(snapshot));
+    await repository.loadCapabilities();
+    await repository.selectTopic("topic-one");
+
+    const base = {
+      runId: "run-one",
+      topicId: "topic-one",
+      adapterId: "claude-code",
+    };
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      sequence: 1,
+      operation: "reset",
+    });
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      sequence: 2,
+      operation: "append",
+      content: "公开",
+    });
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      sequence: 3,
+      operation: "append",
+      content: "草稿",
+    });
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      sequence: 2,
+      operation: "replace",
+      content: "过期",
+    });
+    expect(snapshots.at(-1)?.agentOutputs?.[0]?.content).toBe("公开草稿");
+
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      sequence: 4,
+      operation: "complete",
+    });
+    expect(snapshots.at(-1)?.agentOutputs?.[0]?.content).toBe("公开草稿");
+
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      adapterId: "codex",
+      sequence: 1,
+      operation: "reset",
+    });
+    fixture.emitAgentOutput(stream, {
+      ...base,
+      adapterId: "codex",
+      sequence: 2,
+      operation: "append",
+      content: "下一轮",
+    });
+    expect(snapshots.at(-1)?.agentOutputs?.[0]).toMatchObject({
+      adapterId: "codex",
+      sequence: 2,
+      content: "下一轮",
+    });
+    unsubscribe();
+  });
+
   it("只在 orchestration revision 变化时重读当前议题运行列表", async () => {
     const fixture = createOrchestrationFixture();
     const stream = new FakeEventStream();

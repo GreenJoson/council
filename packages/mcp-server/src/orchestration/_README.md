@@ -4,9 +4,10 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，把公开上下文转为无 session 回复，并仅公开脱敏诊断 |
-| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，把公开上下文转为无 session 回复，并记录脱敏诊断、安全原因与恢复分类 |
-| `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，并仅公开运行时定义的脱敏原因 |
+| `agent-progress-hub.ts` | 临时流 | 在内存中维护每个 Run 的有界公开草稿、单调 sequence 和 SSE 重连快照，不写 SQLite |
+| `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，把公开上下文转为无 session 回复并转发文本增量，仅公开脱敏诊断 |
+| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，把公开上下文转为无 session 回复并转发公开 JSONL 消息，记录安全恢复分类 |
+| `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，转发公开 `delta.content` 并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、检查 Agent 可用性并组装生产依赖 |
 
@@ -31,4 +32,10 @@ prompt、项目路径或 CLI stderr。
 
 Claude/Codex 每次调用从 `AgentSettingsService` 读取当前模型。远程 Provider 只有在模型、
 HTTPS/loopback Base URL、Keychain API Key 与启用状态同时有效时才进入 capabilities；两个
-远程 Agent 共用有界 Chat Completions 运行时，并以各自 adapter ID 支持 `@deepseek`、`@kimi`。
+远程 Agent 共用有界流式 Chat Completions 运行时，并以各自 adapter ID 支持
+`@deepseek`、`@kimi`。
+
+所有适配器把临时输出写入同一个 `AgentProgressHub`：键由
+`runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经
+`SQLiteCouncilStore.commitRound` 原子发布，因此浏览器断线、草稿丢失或进程退出不会制造
+半条正式消息。

@@ -1,13 +1,14 @@
 /**
- * @input  依赖：Council orchestration REST API 的未知 JSON data
- * @output 导出：Capabilities、Run、分页的严格运行时解析函数
- * @pos    自动轮次仓储唯一协议校验入口
+ * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
+ * @output 导出：Capabilities、Run、分页与 Agent 增量事件的严格运行时解析函数
+ * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import type {
   OrchestrationAdapter,
+  OrchestrationAgentOutput,
   OrchestrationCapabilities,
   OrchestrationDefaultPolicy,
   OrchestrationFailure,
@@ -17,6 +18,18 @@ import type {
   OrchestrationRun,
   OrchestrationStatus,
 } from "../types/orchestration";
+
+export type AgentOutputOperation =
+  | "snapshot"
+  | "reset"
+  | "append"
+  | "replace"
+  | "complete";
+
+export interface ApiAgentOutputEvent extends Omit<OrchestrationAgentOutput, "content"> {
+  operation: AgentOutputOperation;
+  content?: string;
+}
 
 export interface ApiOrchestrationRunPage {
   total: number;
@@ -40,6 +53,9 @@ const MESSAGE_KINDS: readonly OrchestrationMessageKind[] = [
 ];
 const PUBLIC_AUTHORS: readonly OrchestrationPublicAuthor[] = [
   "human", "claude", "codex", "chair", "other",
+];
+const AGENT_OUTPUT_OPERATIONS: readonly AgentOutputOperation[] = [
+  "snapshot", "reset", "append", "replace", "complete",
 ];
 
 function recordValue(value: unknown, path: string): Record<string, unknown> {
@@ -221,4 +237,37 @@ export function parseOrchestrationApprovalResult(
     run: parseOrchestrationRun(record.run),
     applied: booleanValue(record, "applied"),
   };
+}
+
+export function parseAgentOutputEvent(event: Event): ApiAgentOutputEvent | undefined {
+  const data = (event as unknown as { data?: unknown }).data;
+  if (typeof data !== "string") {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(data);
+    const record = recordValue(value, "agent.output");
+    const operation = enumValue(record, "operation", AGENT_OUTPUT_OPERATIONS);
+    const content = record.content;
+    if (
+      operation !== "complete"
+      && operation !== "reset"
+      && typeof content !== "string"
+    ) {
+      return undefined;
+    }
+    if (content !== undefined && typeof content !== "string") {
+      return undefined;
+    }
+    return {
+      runId: stringValue(record, "runId"),
+      topicId: stringValue(record, "topicId"),
+      adapterId: stringValue(record, "adapterId"),
+      sequence: integerValue(record, "sequence", 1),
+      operation,
+      ...(typeof content === "string" ? { content } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }

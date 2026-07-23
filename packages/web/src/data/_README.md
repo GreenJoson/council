@@ -9,7 +9,7 @@
 | `orchestration-repository.ts` | 边界 | 定义独立自动轮次读取、创建、动作和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 的未知 JSON 数据 |
-| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、审批结果和运行分页 |
+| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、审批结果、运行分页与 `agent.output` 草稿事件 |
 | `agent-settings-api.ts` | 协议 | 严格解析不含密钥的 Agent 设置与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
@@ -17,7 +17,7 @@
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
 | `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected），decidedAt 取 ApiDecision.updatedAt 兜底供架构档案 ADR 编号排序使用 |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，并提供不改状态的只读议题详情加载 |
-| `http-orchestration-repository.ts` | 真实 | 校准运行列表并读写模型设置、执行连接测试 |
+| `http-orchestration-repository.ts` | 真实 | 校准运行列表，按 run/sequence 合并同议题临时草稿，并读写模型设置、执行连接测试 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、决策接受（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟自动轮次创建、启动、批准、取消和恢复 |
@@ -34,7 +34,15 @@
 
 `loadTopicDetail(topicId)` 是三个实现共有的只读旁路：mock 直接深拷贝内部数据，http 与 native 复用既有的详情请求和 `mapApiTopicDetail` 映射，但都不写回 `#topics`/`#activeTopicId`/`#snapshot`，也不调用 `#publishSnapshot`/`#publish`，因此不会改变当前选中议题，也不会触发订阅者收到新快照；native 实现中该方法不做设置世代校验，因为它本身无状态、不缓存任何跨调用结果。
 
-SSE 只传总 revision；两个仓储收到事件后各自读取 `/api/v1/status` 分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在 `revisions.orchestration` 变化时读取当前议题 Runs，避免互相放大请求。事件前已经启动的读取不会消费该事件；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的 drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应 recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。
+SSE 的 `council.changed` 传总 revision；两个仓储收到事件后各自读取 `/api/v1/status`
+分流。内容仓储仅在 `revisions.content` 变化时读取 Topic，编排仓储仅在
+`revisions.orchestration` 变化时读取当前议题 Runs。`agent.output` 不触发 REST 重读，
+而是按 run/adapter/sequence 在内存合并 `snapshot/reset/append/replace/complete`；快照只向
+当前议题投影，切换回来仍可恢复同一活动 Run，正式状态刷新后清理临时草稿。事件前已经启动的
+读取不会消费该 revision；刷新按 `VITE_COUNCIL_EVENT_REFRESH_*` 做有界串行重试。快速退避和
+低频恢复 timer 都绑定 listener 生命周期，最后一个 listener 退出会清理 timer 并唤醒等待中的
+drain；立即重订时，旧事件世代不能消费新世代的排队 revision。内容与编排分别通过对应
+recovery 配置持续校准；EventSource 再次 open 也会立即重试失败版本。
 
 `NativeCouncilRepository` 复用相同 parser 和 mapper，Rust 返回未经信任的裸领域对象仍必须先校验。Tauri 本进程写入通过 `council://changed` 立即刷新；其他 Codex/Claude MCP 进程写入通过配置化 status 轮询发现。项目或日志库变化会递增设置世代并废弃旧的在途加载，防止旧项目结果覆盖新项目。最后一个 listener 退出时同时撤销事件监听并清理轮询。
 

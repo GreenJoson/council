@@ -43,6 +43,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
 - Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
+- Agent 进入准备或调用阶段时，讨论时间线末尾会显示具体 Agent 的动态回复状态与实时草稿；Claude 和兼容远程模型转发公开文本增量，Codex 转发公开 JSONL 消息并平滑展示较大输出块。草稿按议题隔离、不落 SQLite，运行结束、失败或取消后由正式消息接替。
 - 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
 - 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
 - 消息图片和 Mermaid 图以固定缩略尺寸展示，点击后进入支持缩放与滚动的全视口大图浏览；长卡片在正文底部展开或收起。

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
  * @output 导出：MockOrchestrationRepository 交互式原型实现
- * @pos    mock 模式下独立模拟创建、启动、批准、取消和恢复
+ * @pos    mock 模式下独立模拟创建、启动、增量草稿、批准、取消和恢复
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -170,7 +170,26 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     run.activeAgentId = run.plan[0]?.adapterId;
     run.currentAttempt = 1;
     this.#advance(run);
-    return this.#publish();
+    this.#snapshot.agentOutputs = [{
+      runId: run.id,
+      topicId: run.topicId,
+      adapterId: run.activeAgentId ?? "claude-code",
+      sequence: 1,
+      content: "正在审查状态机边界",
+    }];
+    const snapshot = this.#publish();
+    globalThis.setTimeout(() => {
+      const output = this.#snapshot.agentOutputs?.find(
+        (candidate) => candidate.runId === run.id,
+      );
+      if (!output || run.status !== "waiting_agent") {
+        return;
+      }
+      output.sequence += 1;
+      output.content += "，并整理可回滚的最小修复方案。";
+      this.#publish();
+    }, MOCK_DELAY_MS);
+    return snapshot;
   }
 
   async approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot> {
@@ -199,6 +218,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     run.status = "cancelled";
     delete run.activeAgentId;
     delete run.pendingGateId;
+    this.#snapshot.agentOutputs = (this.#snapshot.agentOutputs ?? [])
+      .filter((output) => output.runId !== run.id);
     this.#advance(run);
     return this.#publish();
   }

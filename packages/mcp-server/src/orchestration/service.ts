@@ -1,7 +1,8 @@
 /**
- * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型设置、Agent 注册与 ExecutionManager
- * @output 导出：浏览器不可伪造身份和策略的编排产品服务及安全模型设置入口
- * @pos    REST 契约使用的编排聚合根与生产依赖工厂
+ * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型设置、Agent 注册、
+ *         增量草稿中心与 ExecutionManager
+ * @output 导出：编排产品服务、安全模型设置入口及临时 Agent 草稿流
+ * @pos    REST/SSE 契约使用的编排聚合根与生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -24,6 +25,7 @@ import {
   type UpdateAgentSettingInput,
 } from "../agent-settings-service.js";
 import { AgentSettingsStore } from "../agent-settings-store.js";
+import { MAX_MESSAGE_CHARS } from "../constants.js";
 import { ClaudeRuntime } from "../claude-runtime.js";
 import { CodexRuntime } from "../codex-runtime.js";
 import { CouncilNotFoundError } from "../errors.js";
@@ -36,6 +38,7 @@ import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
 import { RunExecutionManager } from "./execution-manager.js";
+import { AgentProgressHub } from "./agent-progress-hub.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
 
 export interface RegisteredAgentAdapter {
@@ -90,6 +93,7 @@ export class CouncilOrchestrationService {
     private readonly config: CouncilHttpConfig,
     registrations: readonly RegisteredAgentAdapter[],
     readonly agentSettings?: AgentSettingsService,
+    readonly progressHub = new AgentProgressHub(MAX_MESSAGE_CHARS),
   ) {
     this.#store = new SQLiteCouncilStore(
       config.databasePath,
@@ -323,6 +327,7 @@ export function createProductionOrchestrationService(
   httpConfig: CouncilHttpConfig,
   councilConfig: CouncilConfig,
 ): CouncilOrchestrationService {
+  const progressHub = new AgentProgressHub(MAX_MESSAGE_CHARS);
   const settingsStore = new AgentSettingsStore(
     httpConfig.databasePath,
     httpConfig.sqliteBusyTimeoutMs,
@@ -369,11 +374,13 @@ export function createProductionOrchestrationService(
   const claude = new ClaudeAgentAdapter(claudeRuntime, {
     maxContextChars: councilConfig.maxContextChars,
     getModel: () => agentSettings.get("claude")?.model || undefined,
+    progress: progressHub,
   });
   const codexRuntime = new CodexRuntime(councilConfig);
   const codex = new CodexAgentAdapter(codexRuntime, {
     maxContextChars: councilConfig.maxContextChars,
     getModel: () => agentSettings.get("codex")?.model || undefined,
+    progress: progressHub,
   });
   const remoteRuntime = new OpenAICompatibleRuntime(
     councilConfig.maxOutputChars,
@@ -384,12 +391,14 @@ export function createProductionOrchestrationService(
     remoteRuntime,
     agentSettings,
     councilConfig.maxContextChars,
+    progressHub,
   );
   const kimi = new OpenAICompatibleAgentAdapter(
     "kimi",
     remoteRuntime,
     agentSettings,
     councilConfig.maxContextChars,
+    progressHub,
   );
 
   agentSettings.registerTester("claude", async () => {
@@ -465,5 +474,5 @@ export function createProductionOrchestrationService(
       limitationWhenUnavailable: "请在设置中配置 Kimi 的模型、API 地址和 API Key。",
       checkAvailability: async () => await agentSettings.isReady("kimi"),
     },
-  ], agentSettings);
+  ], agentSettings, progressHub);
 }

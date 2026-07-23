@@ -8,4 +8,4 @@
 | `config.ts` | 配置 | 用 Zod 校验 HTTP、lease、sweeper、Agent 清理与关闭预算 |
 | `schemas.ts` | 边界 | 严格校验 path、query、body 与 Agent 设置，拒绝浏览器伪造作者和策略 |
 | `responses.ts` | 契约 | 输出统一 JSON envelope 与安全错误 |
-| `revision-stream.ts` | 实时 | 轮询 SQLite revision 并广播 `council.changed` SSE |
+| `revision-stream.ts` | 实时 | 轮询 SQLite revision 广播 `council.changed`，并转发进程内 `agent.output` 草稿 SSE 与重连快照 |

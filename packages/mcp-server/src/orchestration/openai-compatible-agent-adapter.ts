@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 Council 上下文、AgentSettingsService、远程兼容运行时与 AbortSignal
- * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、脱敏失败 AgentAdapter
- * @pos    编排核心与远程模型 API 之间的安全桥梁
+ * @input  依赖：公开 Council 上下文、AgentSettingsService、远程兼容运行时、草稿流与 AbortSignal
+ * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、流式、脱敏失败 AgentAdapter
+ * @pos    编排核心、远程模型 API 与临时草稿流之间的安全桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -20,6 +20,10 @@ import {
   OpenAICompatibleRuntimeError,
 } from "../openai-compatible-runtime.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
+import type {
+  AgentProgressMeta,
+  AgentProgressPublisher,
+} from "./agent-progress-hub.js";
 
 function buildPrompt(input: AgentInvocation, maximum: number): string {
   const trustedPrefix = [
@@ -63,6 +67,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
     private readonly runtime: OpenAICompatibleRuntime,
     private readonly settings: AgentSettingsService,
     private readonly maxContextChars: number,
+    private readonly progress?: AgentProgressPublisher,
   ) {}
 
   async invoke(
@@ -81,6 +86,12 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
       const message = "远程 Agent 配置不完整。";
       throw new AgentInvocationError(message, false, message);
     }
+    const progressMeta: AgentProgressMeta = {
+      runId: input.runId,
+      topicId: input.topicId,
+      adapterId: this.adapterId,
+    };
+    this.progress?.reset(progressMeta);
     try {
       const content = await this.runtime.generate({
         baseUrl: setting.baseUrl,
@@ -88,6 +99,15 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         apiKey,
         prompt: buildPrompt(input, this.maxContextChars),
         signal: options.signal,
+        onTextEvent: (event) => {
+          if (event.operation === "reset") {
+            this.progress?.reset(progressMeta);
+          } else if (event.operation === "append") {
+            this.progress?.append(progressMeta, event.content);
+          } else {
+            this.progress?.replace(progressMeta, event.content);
+          }
+        },
       });
       return {
         content: `> Provider: **${setting.label}** · \`${setting.model}\`\n\n${content}`,
@@ -114,6 +134,8 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         retryable,
         publicMessage,
       );
+    } finally {
+      this.progress?.complete(progressMeta);
     }
   }
 }
