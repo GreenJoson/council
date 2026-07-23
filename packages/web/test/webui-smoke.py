@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、移动端布局和控制台错误的浏览器验收
+@output 导出：桌面交互、大屏流体讨论列、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -21,6 +21,45 @@ def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
         errors.append(message.text)
 
 
+def measure_discussion_layout(page) -> dict[str, float | bool]:
+    return page.evaluate(
+        """
+        () => {
+          const card = document.querySelector('.message-card');
+          const surface = document.querySelector('.message-surface');
+          const paragraph = document.querySelector('.message-surface p');
+          const composer = document.querySelector('.composer');
+          if (!card || !surface || !paragraph || !composer) {
+            throw new Error('讨论列测量目标缺失');
+          }
+          return {
+            cardWidth: card.getBoundingClientRect().width,
+            surfaceWidth: surface.getBoundingClientRect().width,
+            paragraphWidth: paragraph.getBoundingClientRect().width,
+            composerWidth: composer.getBoundingClientRect().width,
+            hasHorizontalOverflow:
+              document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        }
+        """
+    )
+
+
+def verify_fluid_discussion_width(page) -> None:
+    regular = measure_discussion_layout(page)
+    page.set_viewport_size({"width": 2048, "height": 1080})
+    page.wait_for_timeout(100)
+    wide = measure_discussion_layout(page)
+
+    assert wide["cardWidth"] > regular["cardWidth"] + 180
+    assert abs(wide["cardWidth"] - wide["composerWidth"]) < 1
+    assert wide["paragraphWidth"] < wide["surfaceWidth"] - 120
+    assert not wide["hasHorizontalOverflow"]
+
+    page.set_viewport_size({"width": 1536, "height": 1024})
+    page.wait_for_timeout(100)
+
+
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
     page = browser.new_page(viewport={"width": 1536, "height": 1024})
@@ -29,6 +68,7 @@ def verify_desktop(browser) -> list[str]:
     page.wait_for_load_state("networkidle")
 
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
+    verify_fluid_discussion_width(page)
 
     page.get_by_placeholder(
         "例如：先给出可回滚的最小架构方案，并列出失败条件。"

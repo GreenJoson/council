@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css 语义变量和 React 组件类名
- * @output 导出：全局、顶栏、三栏/两栏工作区布局（含 workspace-grid-full 全宽面板修饰类）和基础交互样式
+ * @output 导出：全局、顶栏、三栏/两栏工作区布局、讨论列尺寸容器和基础交互样式
  * @pos    Operator Console 的桌面端空间骨架
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -519,6 +519,7 @@ button.sync-offline:hover {
 }
 
 .discussion-panel {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -1,0 +1,321 @@
+/**
+ * @input  依赖：theme.css、app.css、components.css 与架构档案组件语义类名
+ * @output 导出：项目概览、演进时间线、不变量和架构图集样式
+ * @pos    Operator Console 架构档案视图的独立视觉层
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+/* ============================== */
+/* 架构档案：项目概览 / 演进时间线 / 不变量 / 图集四个区块 */
+/* ============================== */
+
+.architecture-view-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 18px;
+  padding: 20px 24px 28px;
+  overflow-y: auto;
+}
+
+.architecture-error-banner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 24px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-danger-soft) 60%, var(--color-surface));
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.architecture-error-banner span {
+  flex: 1;
+}
+
+.architecture-overview,
+.architecture-timeline,
+.architecture-constraints,
+.architecture-diagrams {
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.architecture-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.architecture-section-header h2 {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.architecture-section-header h2 svg {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.architecture-section-empty {
+  margin: 0;
+  padding: 14px 4px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 区块 1：项目概览 */
+.architecture-overview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.architecture-overview-project {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.architecture-overview-project svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-primary);
+}
+
+.architecture-overview-project h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.architecture-overview-path {
+  margin: 2px 0 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.architecture-overview-loading {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.architecture-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.architecture-stat {
+  padding: 10px 12px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-hover);
+}
+
+.architecture-stat dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.architecture-stat dt svg {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.architecture-stat dd {
+  margin: 4px 0 0;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+/* 区块 2：架构演进时间线 */
+.architecture-timeline-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.architecture-timeline-entry {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.architecture-timeline-entry:hover {
+  border-color: var(--color-primary);
+  background: var(--color-surface-hover);
+}
+
+.architecture-timeline-marker {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+
+.architecture-timeline-item.status-accepted .architecture-timeline-marker {
+  color: var(--color-positive);
+}
+
+.architecture-timeline-item.status-superseded .architecture-timeline-marker {
+  color: var(--color-text-muted);
+}
+
+.architecture-timeline-item.status-proposed .architecture-timeline-marker {
+  color: var(--color-warning);
+}
+
+.architecture-timeline-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.architecture-timeline-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.architecture-timeline-adr {
+  flex: none;
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.architecture-timeline-item.status-proposed .architecture-timeline-adr {
+  color: var(--color-warning);
+}
+
+.architecture-timeline-title {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.architecture-timeline-meta {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.architecture-superseded-badge {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+button.architecture-superseded-badge:hover {
+  border-color: var(--color-primary);
+  color: var(--color-focus);
+}
+
+/* 区块 3：架构不变量 */
+.architecture-constraint-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.architecture-constraint-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-hover);
+}
+
+.architecture-constraint-item svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.architecture-constraint-label {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.architecture-constraint-sources {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* 区块 4：架构图 / 业务解析图集 */
+.architecture-diagram-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.architecture-diagram-card {
+  margin: 0;
+  padding: 0;
+}
+
+.architecture-diagram-card .mermaid-diagram-frame,
+.architecture-diagram-card .mermaid-loading,
+.architecture-diagram-card .mermaid-fallback {
+  margin: 0 0 8px;
+}
+
+.architecture-diagram-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}

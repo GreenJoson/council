@@ -43,6 +43,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
 - Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
+- 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
 - 顶栏模型路由台可即时切换 Claude/Codex 模型；DeepSeek、Kimi 等兼容 Provider 按需添加，右侧一次只编辑一项，候选数量不会撑高设置窗口。
 - 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。

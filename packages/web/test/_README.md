@@ -16,5 +16,5 @@
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
 | `mention-parser.test.ts` | 查询测试 | 验证本机 publicAuthor 与远程 adapter ID 召唤解析、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
-| `webui-smoke.py` | 浏览器测试 | 验证自动轮次、桌面交互、移动端抽屉、无横向滚动和控制台错误 |
+| `webui-smoke.py` | 浏览器测试 | 验证自动轮次、大屏讨论列随窗口增长、正文行长、移动端抽屉、无横向滚动和控制台错误 |
 | `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、按需 Provider 设置、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |

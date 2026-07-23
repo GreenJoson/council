@@ -4,8 +4,10 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `theme.css` | 正本 | 集中定义深/浅双主题颜色（`data-theme` 切换）、Agent、字体、阴影和层级变量 |
-| `app.css` | 布局 | 定义品牌 logo、顶栏项目菜单（含路径展示，顶栏本身不带投影，只用 1px 底边框分隔，与内容区同底色）、桌面首次设置、三栏骨架（含 workspace-grid-full 全宽面板修饰类）和错误恢复 |
-| `components.css` | 组件 | 定义议题、消息、编辑器、自动轮次、检查器、决策归档、Markdown、Lightbox、Mermaid 与架构档案视觉 |
+| `theme.css` | 正本 | 集中定义深/浅双主题颜色（`data-theme` 切换）、Agent、字体、流体讨论列、阴影和层级变量 |
+| `app.css` | 布局 | 定义品牌 logo、顶栏项目菜单、桌面首次设置、三栏骨架、中央讨论列尺寸容器和错误恢复 |
+| `components.css` | 组件 | 定义议题、随窗口扩展的消息/编辑器列、自动轮次、检查器、决策归档、Markdown、Lightbox 与 Mermaid 容器视觉 |
+| `architecture.css` | 架构档案 | 独立定义项目概览、演进时间线、不变量和架构图集视觉 |
+| `mentions.css` | Agent 召唤 | 独立定义自动补全菜单、召唤状态提示和消息流召唤芯片 |
 | `agent-settings.css` | 设置 | 独立定义固定高度模型路由台、紧凑 Provider 目录、单项编辑工作台和移动视觉 |
-| `responsive.css` | 适配 | 定义桌面设置卡、平板、手机离线入口和低动态偏好规则 |
+| `responsive.css` | 适配 | 定义桌面设置卡、平板/手机讨论列回退、离线入口和低动态偏好规则 |
