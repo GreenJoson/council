@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Claude CLI、AbortController 与纯 ClaudeRuntime
- * @output 导出：生成、恢复、取消、超时和安全错误边界测试
+ * @output 导出：生成、恢复、取消、超时、回合耗尽和安全错误边界测试
  * @pos    无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -77,6 +77,11 @@ if (mode === "tree-hang") {
     }
     if (mode === "quota-error") {
       process.stdout.write(JSON.stringify({ result: "You're out of usage credits. private detail", is_error: true }));
+      process.exitCode = 1;
+      return;
+    }
+    if (mode === "max-turns-error") {
+      process.stdout.write(JSON.stringify({ result: "Reached max turns (8). private detail", is_error: true }));
       process.exitCode = 1;
       return;
     }
@@ -534,6 +539,28 @@ test("ClaudeRuntime 将模型额度耗尽分类为不可重试且不泄露原文
         assert.equal(error.diagnosticCode, "quota_exhausted");
         assert.equal(error.retryable, false);
         assert.doesNotMatch(error.message, /private detail/);
+        return true;
+      },
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 将工具回合耗尽分类为不可重试且给出安全指引", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-max-turns-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "max-turns-error"));
+    await assert.rejects(
+      runtime.generate({ prompt: "public prompt", cwd: directory }),
+      (error: unknown) => {
+        assert.ok(error instanceof ClaudeRuntimeError);
+        assert.equal(error.diagnosticCode, "max_turns_exhausted");
+        assert.equal(error.retryable, false);
+        assert.match(error.message, /工具回合上限/);
+        assert.doesNotMatch(error.message, /private detail|Reached max turns/);
         return true;
       },
     );

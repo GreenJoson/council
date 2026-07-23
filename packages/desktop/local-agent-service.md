@@ -59,6 +59,8 @@ React UI ── Tauri IPC ── Rust council-core ── SQLite
 
 日志库路径、项目路径和 API Key 不进入构建资源。模型与 Provider 的非敏感配置保存在共享 SQLite，密钥保存在系统 Keychain。
 
+Claude 的默认工具回合预算为 24。这个预算足以覆盖常见的仓库检索和文件读取，同时仍受单次调用总超时约束；达到上限时会被识别为明确、不可重试的回合耗尽，而不是模糊的 `request_failed`。
+
 旧版 `settings.json` 中的 `orchestrationAutostart` 仍作为开发者覆盖保留；普通用户不需要新增或修改该字段。若未设置覆盖，桌面始终使用安装包内置 sidecar。
 
 ## 浏览器开发模式
@@ -82,3 +84,5 @@ npm run dev
 5. 退出并重新打开 Council，桌面会重新拉起干净的 sidecar。
 
 sidecar 启动失败不会阻断议题、消息和决策的本地阅读；只有 `@agent` 与自动轮次会保持离线。
+
+Agent 失败时，运行快照只接收适配器显式标记过的脱敏原因，例如未登录、额度不足、模型不可用或工具回合耗尽。未知错误继续显示通用提示；原始上游输出、命令行内容和堆栈不会进入议题记录。`agent-service.log` 会记录诊断码与同一份脱敏原因，便于本地排查。

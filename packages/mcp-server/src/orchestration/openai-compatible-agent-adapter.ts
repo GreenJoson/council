@@ -1,6 +1,6 @@
 /**
  * @input  依赖：公开 Council 上下文、AgentSettingsService、远程兼容运行时与 AbortSignal
- * @output 导出：DeepSeek/Kimi 等 OpenAI 兼容 Provider 的只读 AgentAdapter
+ * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、脱敏失败 AgentAdapter
  * @pos    编排核心与远程模型 API 之间的安全桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -50,10 +50,10 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
     transcript,
     truncationMarker: "[较早公开记录已截断，只保留最新上下文]\n",
     maxChars: maximum,
-    trustedOverflowError: () => new AgentInvocationError(
-      "远程 Agent 的可信议题与本轮指令超过上下文上限。",
-      false,
-    ),
+    trustedOverflowError: () => {
+      const message = "远程 Agent 的可信议题与本轮指令超过上下文上限。";
+      return new AgentInvocationError(message, false, message);
+    },
   });
 }
 
@@ -78,7 +78,8 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
       || !setting.baseUrl
       || !apiKey
     ) {
-      throw new AgentInvocationError("远程 Agent 配置不完整。", false);
+      const message = "远程 Agent 配置不完整。";
+      throw new AgentInvocationError(message, false, message);
     }
     try {
       const content = await this.runtime.generate({
@@ -101,13 +102,17 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
       const diagnosticCode = error instanceof OpenAICompatibleRuntimeError
         ? error.diagnosticCode
         : "unknown_error";
+      const publicMessage = error instanceof OpenAICompatibleRuntimeError
+        ? error.message
+        : undefined;
       logger.error(
         "remote-agent",
-        `远程 Agent 调用失败：adapter=${this.adapterId} code=${diagnosticCode} retryable=${String(retryable)}`,
+        `远程 Agent 调用失败：adapter=${this.adapterId} code=${diagnosticCode} retryable=${String(retryable)} reason=${publicMessage ?? "unclassified"}`,
       );
       throw new AgentInvocationError(
         retryable ? "远程 Agent 调用暂时失败。" : "远程 Agent 调用失败。",
         retryable,
+        publicMessage,
       );
     }
   }

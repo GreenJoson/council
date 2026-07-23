@@ -12,7 +12,7 @@
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
 | `process-utils.ts` | 安全基础 | 提供有界子进程运行、stdout 停止/首尾截断策略、进程树终止与 CLI 选项规范化 |
-| `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code 子进程，不接触数据库 |
+| `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code 子进程，并将回合耗尽等失败分类为脱敏诊断 |
 | `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；过程 JSONL 有界截断，最终正文独立限长并输出安全诊断码 |
 | `openai-compatible-runtime.ts` | 核心 | 有界调用 OpenAI Chat Completions 兼容 Provider，并分类脱敏错误 |
 | `claude-client.ts` | 适配 | 组装公开上下文、恢复 session，并在成功后写入共享数据库 |
@@ -24,4 +24,4 @@
 | `types.ts` | 类型 | 定义共享领域模型 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |
 | `http/` | 协议 | 提供 WebUI 使用的 REST、安全基线与跨进程 SSE |
-| `orchestration/` | 编排 | 接入本机/远程纯 Agent、后台 lease 执行、周期恢复与浏览器安全策略 |
+| `orchestration/` | 编排 | 接入本机/远程纯 Agent、显式传递安全失败原因、后台 lease 执行、周期恢复与浏览器安全策略 |

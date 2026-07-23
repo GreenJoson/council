@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilStore、AgentAdapter、状态类型与可判定错误
- * @output 导出：可分离 begin/drive 的 CouncilOrchestrator 与重启分类
+ * @output 导出：可分离 begin/drive、显式安全失败消息的 CouncilOrchestrator 与重启分类
  * @pos    人工门、lease、超时、重试、取消和失败恢复的唯一领域实现
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -430,11 +430,12 @@ function invocationFailure(error: unknown): RunFailure {
     return { code: "agent_timeout", message: error.message, retryable: true };
   }
   if (error instanceof AgentInvocationError) {
+    const publicMessage = error.publicMessage?.trim();
     return {
       code: "agent_failed",
-      message: error.retryable
+      message: publicMessage || (error.retryable
         ? "Agent 调用暂时失败，详细原因仅保留在适配器本地日志。"
-        : "Agent 调用失败且不可重试，详细原因仅保留在适配器本地日志。",
+        : "Agent 调用失败且不可重试，详细原因仅保留在适配器本地日志。"),
       retryable: error.retryable,
     };
   }
@@ -804,10 +805,12 @@ export class CouncilOrchestrator {
         );
         content = result.content.trim();
         if (!content) {
-          throw new AgentInvocationError("Agent 返回了空的公开回复。", false);
+          const message = "Agent 返回了空的公开回复。";
+          throw new AgentInvocationError(message, false, message);
         }
         if (content.length > MAX_MESSAGE_CHARS) {
-          throw new AgentInvocationError("Agent 返回的公开回复超过长度上限。", false);
+          const message = "Agent 返回的公开回复超过长度上限。";
+          throw new AgentInvocationError(message, false, message);
         }
       } catch (error) {
         if (error instanceof LeaseLostError) {

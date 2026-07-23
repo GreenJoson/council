@@ -1,6 +1,6 @@
 /**
  * @input  依赖：公开 Council 上下文、CodexRuntime 与 Agent AbortSignal
- * @output 导出：无 session、带脱敏诊断与恢复分类的 CodexAgentAdapter
+ * @output 导出：无 session、带脱敏诊断、安全失败原因与恢复分类的 CodexAgentAdapter
  * @pos    编排 AgentAdapter 与 Codex 只读沙箱运行时之间的安全桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -60,10 +60,10 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
     transcript: formatPublicTranscript(input),
     truncationMarker: "[较早公开记录已截断，只保留最新上下文]\n",
     maxChars: maximum,
-    trustedOverflowError: () => new AgentInvocationError(
-      "Codex Agent 的可信议题与本轮指令超过上下文上限。",
-      false,
-    ),
+    trustedOverflowError: () => {
+      const message = "Codex Agent 的可信议题与本轮指令超过上下文上限。";
+      return new AgentInvocationError(message, false, message);
+    },
   });
 }
 
@@ -79,15 +79,19 @@ function safeInvocationError(error: unknown): AgentInvocationError {
     : error instanceof Error
       ? error.name
       : "unknown_error";
+  const publicMessage = error instanceof CodexRuntimeError
+    ? error.message
+    : undefined;
   logger.error(
     "codex-agent",
-    `Codex 调用失败：code=${diagnosticCode} retryable=${String(retryable)}`,
+    `Codex 调用失败：code=${diagnosticCode} retryable=${String(retryable)} reason=${publicMessage ?? "unclassified"}`,
   );
   return new AgentInvocationError(
     retryable
       ? "Codex Agent 调用暂时失败，内部原因未公开。"
       : "Codex Agent 调用失败，内部原因未公开。",
     retryable,
+    publicMessage,
   );
 }
 
@@ -112,7 +116,8 @@ export class CodexAgentAdapter implements AgentAdapter {
   ): Promise<AgentResult> {
     const cwd = normalizeProjectPath(input.context.projectPath);
     if (!cwd) {
-      throw new AgentInvocationError("Codex Agent 需要议题提供绝对项目目录。", false);
+      const message = "Codex Agent 需要议题提供绝对项目目录。";
+      throw new AgentInvocationError(message, false, message);
     }
     const prompt = buildPrompt(input, this.options.maxContextChars);
     try {

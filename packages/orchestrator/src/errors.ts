@@ -46,6 +46,8 @@ export class AgentInvocationError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
+    /** 仅允许适配器填入经过脱敏、可直接展示给用户的原因；原始上游输出禁止进入此字段。 */
+    readonly publicMessage?: string,
   ) {
     super(message);
   }

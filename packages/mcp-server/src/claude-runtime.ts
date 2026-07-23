@@ -1,6 +1,6 @@
 /**
  * @input  依赖：公开 prompt、Claude Code CLI 配置、共享进程工具与可选 AbortSignal
- * @output 导出：纯 ClaudeRuntime 生成接口和可用性检查
+ * @output 导出：纯 ClaudeRuntime 生成接口、可用性检查与脱敏失败分类
  * @pos    无数据库副作用的 Claude Code 子进程运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -120,6 +120,13 @@ function classifyFailure(content: string): ClaudeRuntimeError {
       "Claude 模型不可用，请在 Council 设置中选择当前账号可用的模型。",
       false,
       "model_unavailable",
+    );
+  }
+  if (/max(?:imum)?(?: number of)? turns|turn limit|reached[^\n]*turn/i.test(content)) {
+    return new ClaudeRuntimeError(
+      "Claude 已达到本轮工具回合上限。请缩小议题范围，或提高 Council 的 Claude 回合上限。",
+      false,
+      "max_turns_exhausted",
     );
   }
   const retryable = /overloaded|rate limit|temporar|try again|service unavailable/i.test(content);

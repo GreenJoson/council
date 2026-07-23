@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `package.json` | 核心 | 锁定 MCP/HTTP 依赖与构建、测试、双入口命令 |
+| `package.json` | 核心 | 锁定 MCP/HTTP 依赖、已修复的传递依赖覆盖与构建、测试、双入口命令 |
 | `package-lock.json` | 锁定 | 固化依赖解析结果 |
 | `tsconfig.json` | 配置 | 启用严格 TypeScript 编译 |
 | `.env.example` | 配置 | 列出全部可配置运行参数 |

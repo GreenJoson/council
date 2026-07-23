@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.4.1`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本把 Agent Service 和 Node 运行时一并打进安装包，用户无需再手动执行服务启动命令；模型路由台采用固定高度列表与单项编辑器，远程 Provider 按需添加，设置继续由共享 SQLite 和系统 Keychain 管理。
+当前桌面发行版本为 `0.4.2`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本将 Claude 默认工具回合预算提升到 24，并让运行卡片显示适配器明确提供的脱敏失败原因；未知错误仍保持通用提示，原始上游输出不会进入议题记录。

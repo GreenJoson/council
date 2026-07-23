@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilOrchestrator、Fake Store、Fake Agent 与 Node 测试器
- * @output 导出：轮次、begin/drive、lease、超时、人工门和恢复测试
+ * @output 导出：轮次、begin/drive、lease、超时、人工门、失败消息边界和恢复测试
  * @pos    自动编排状态机、续租与重启安全边界的主验证套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -107,8 +107,31 @@ test("Agent 可重试失败在尝试上限后进入 failed", async () => {
 
   assert.equal(failed.status, "failed");
   assert.equal(failed.failure?.code, "agent_failed");
+  assert.doesNotMatch(failed.failure?.message ?? "", /测试 Agent 暂时失败/);
   assert.equal(failing.invocations.length, 2);
   assert.equal(store.messages.length, 0);
+});
+
+test("Agent 只有显式声明的安全原因可以进入运行快照", async () => {
+  const store = new FakeCouncilStore();
+  const failing = new FakeAgentAdapter("alpha", async () => {
+    throw new AgentInvocationError(
+      "内部诊断不得公开。",
+      false,
+      "Agent 已达到本轮工具回合上限，请缩小议题范围。",
+    );
+  });
+  const orchestrator = new CouncilOrchestrator(store, [failing]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure?.message, "Agent 已达到本轮工具回合上限，请缩小议题范围。");
+  assert.doesNotMatch(failed.failure?.message ?? "", /内部诊断/);
 });
 
 test("超时后 Adapter 永不 settle 会按 agent_cleanup_timeout 非重试失败", async () => {

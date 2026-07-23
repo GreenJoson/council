@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 ClaudeRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、项目目录和 V1 无 session 测试
+ * @output 导出：可信 prompt、历史裁剪、项目目录、V1 无 session 与安全失败原因测试
  * @pos    Claude Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -118,6 +118,8 @@ test("Claude 配额失败保持不可重试分类", async () => {
   });
   await assert.rejects(
     adapter.invoke(invocation(path.resolve(".")), { signal: new AbortController().signal }),
-    (error: unknown) => error instanceof AgentInvocationError && error.retryable === false,
+    (error: unknown) => error instanceof AgentInvocationError
+      && error.retryable === false
+      && error.publicMessage === "额度不足",
   );
 });

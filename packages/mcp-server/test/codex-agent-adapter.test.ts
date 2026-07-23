@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 CodexRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、V1 无 session 与失败重试分类测试
+ * @output 导出：可信 prompt、历史裁剪、V1 无 session、失败重试与安全原因测试
  * @pos    Codex Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -133,7 +133,8 @@ test("临时 Codex 运行时失败允许用户恢复", async () => {
     (error: unknown) =>
       error instanceof AgentInvocationError &&
       error.retryable &&
-      /暂时失败/.test(error.message),
+      /暂时失败/.test(error.message) &&
+      error.publicMessage === "脱敏临时失败",
   );
 });
 
@@ -152,6 +153,7 @@ test("Codex 登录等确定性失败不消耗恢复重试", async () => {
     (error: unknown) =>
       error instanceof AgentInvocationError &&
       !error.retryable &&
-      /调用失败/.test(error.message),
+      /调用失败/.test(error.message) &&
+      error.publicMessage === "脱敏登录失败",
   );
 });

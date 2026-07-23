@@ -47,6 +47,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
+- Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
 - 桌面端使用独立的多 Agent 圆桌图标，并生成各平台所需的打包尺寸。
