@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilMessage、参与者资料、引用回复回调、MarkdownContent 与
  *         data/mention-parser 的 extractLeadingMentionChip
- * @output 导出：MessageCard 讨论时间线卡片（顶部/底部双入口展开与收起）
+ * @output 导出：MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
  *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
  *         高亮芯片，其余正文照常交给 MarkdownContent
@@ -9,8 +9,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { ChevronDown, ChevronUp, Reply } from "lucide-react";
-import { useRef, useState } from "react";
+import { Reply } from "lucide-react";
 import { extractLeadingMentionChip } from "../data/mention-parser";
 import type { CouncilMessage, Participant } from "../types/council";
 import { MarkdownContent } from "./MarkdownContent";
@@ -33,16 +32,6 @@ export function MessageCard({
   onQuote,
 }: MessageCardProps) {
   const mentionChip = extractLeadingMentionChip(message.content);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const [isContentExpanded, setIsContentExpanded] = useState(false);
-  const [canCollapseContent, setCanCollapseContent] = useState(false);
-
-  function handleExpandedChange(nextExpanded: boolean): void {
-    setIsContentExpanded(nextExpanded);
-    if (!nextExpanded) {
-      requestAnimationFrame(() => surfaceRef.current?.scrollIntoView({ block: "start" }));
-    }
-  }
 
   return (
     <article
@@ -54,19 +43,7 @@ export function MessageCard({
       <div className="timeline-avatar">
         <AgentAvatar agent={message.author} />
       </div>
-      <div className="message-surface" ref={surfaceRef}>
-        {canCollapseContent ? (
-          <button
-            className="message-collapse-toggle"
-            type="button"
-            aria-label={isContentExpanded ? "收起消息" : "展开消息"}
-            aria-expanded={isContentExpanded}
-            title={isContentExpanded ? "收起消息" : "展开消息"}
-            onClick={() => handleExpandedChange(!isContentExpanded)}
-          >
-            {isContentExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
-          </button>
-        ) : null}
+      <div className="message-surface">
         <header className="message-header">
           <div>
             <strong>{participant?.name ?? message.author}</strong>
@@ -93,13 +70,7 @@ export function MessageCard({
             @{mentionChip.token}
           </span>
         ) : null}
-        <MarkdownContent
-          content={mentionChip ? mentionChip.remainder : message.content}
-          collapsible
-          expanded={isContentExpanded}
-          onExpandedChange={handleExpandedChange}
-          onCollapseAvailabilityChange={setCanCollapseContent}
-        />
+        <MarkdownContent content={mentionChip ? mentionChip.remainder : message.content} collapsible />
       </div>
     </article>
   );

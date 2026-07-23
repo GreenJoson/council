@@ -334,38 +334,6 @@
   box-shadow: var(--shadow-small);
 }
 
-.message-collapse-toggle {
-  position: sticky;
-  top: 8px;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 22px;
-  margin: -28px auto 6px;
-  padding: 0;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 0 0 var(--radius-small) var(--radius-small);
-  background: var(--color-surface-raised);
-  color: var(--color-text-muted);
-  box-shadow: var(--shadow-small);
-  transition:
-    border-color var(--transition-fast),
-    color var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-.message-collapse-toggle:hover {
-  border-color: var(--color-primary);
-  color: var(--color-focus);
-  transform: translateY(1px);
-}
-
-.message-collapse-toggle:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
 /* 一张消息卡对应一个阶梯节点；轨道覆盖在讨论区左侧留白，不压缩消息正文。 */
 .message-jump-rail {
   position: absolute;

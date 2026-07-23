@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.4.4`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本把图片与 Mermaid 图固定为有界缩略预览，大图通过 body Portal 完整适配视口并支持缩放/滚动；长消息卡顶部和底部均可展开收起，讨论区左侧按卡片数量提供一一对应的阶梯跳转节点。
+当前桌面发行版本为 `0.4.5`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本把图片与 Mermaid 图固定为有界缩略预览，大图通过 body Portal 完整适配视口并支持缩放/滚动；长消息卡只保留正文底部的文字展开/收起入口；讨论区左侧按卡片数量提供一一对应的阶梯跳转节点。

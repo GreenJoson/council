@@ -73,17 +73,16 @@ def verify_fluid_discussion_width(page) -> None:
     page.wait_for_timeout(100)
 
 
-def verify_card_collapse_controls(page) -> None:
+def verify_card_bottom_collapse_control(page) -> None:
     first_card = page.locator(".message-card").first
-    top_toggle = first_card.get_by_role("button", name="展开消息", exact=True)
-    top_toggle.wait_for()
-    assert top_toggle.get_attribute("aria-expanded") == "false"
+    expand_toggle = first_card.get_by_role("button", name="展开全文", exact=True)
+    expand_toggle.wait_for()
+    assert expand_toggle.get_attribute("aria-expanded") == "false"
 
-    top_toggle.click()
-    collapse_toggle = first_card.get_by_role("button", name="收起消息", exact=True)
+    expand_toggle.click()
+    collapse_toggle = first_card.get_by_role("button", name="收起", exact=True)
     collapse_toggle.wait_for()
     assert collapse_toggle.get_attribute("aria-expanded") == "true"
-    assert first_card.get_by_role("button", name="收起", exact=True).is_visible()
 
     image_preview = first_card.locator(".markdown-image")
     image_preview.scroll_into_view_if_needed()
@@ -92,7 +91,7 @@ def verify_card_collapse_controls(page) -> None:
     assert image_box["height"] <= 280
 
     collapse_toggle.click()
-    first_card.get_by_role("button", name="展开消息", exact=True).wait_for()
+    first_card.get_by_role("button", name="展开全文", exact=True).wait_for()
 
 
 def verify_message_jump_rail(page) -> None:
@@ -118,7 +117,7 @@ def verify_media_preview_and_lightbox(page) -> None:
     diagram = page.get_by_role("button", name="放大查看架构图", exact=True)
     diagram.wait_for()
     diagram_card = diagram.locator("xpath=ancestor::article[contains(@class, 'message-card')]")
-    expand_toggle = diagram_card.get_by_role("button", name="展开消息", exact=True)
+    expand_toggle = diagram_card.get_by_role("button", name="展开全文", exact=True)
     if expand_toggle.count() > 0:
         expand_toggle.click()
 
@@ -181,7 +180,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
     verify_fluid_discussion_width(page)
     verify_message_jump_rail(page)
-    verify_card_collapse_controls(page)
+    verify_card_bottom_collapse_control(page)
     verify_media_preview_and_lightbox(page)
 
     page.get_by_placeholder(
