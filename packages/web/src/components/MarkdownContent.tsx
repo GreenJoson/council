@@ -2,7 +2,7 @@
  * @input  依赖：react-markdown、remark-gfm、rehype-raw、rehype-sanitize、MermaidDiagram、
  *         Lightbox 与 theme.css 语义类名
  * @output 导出：MarkdownContent 统一 Markdown 渲染组件（GFM、内嵌 HTML 安全渲染、
- *         ```mermaid 围栏内联渲染成图、图片/图表 Lightbox、长内容折叠）
+ *         ```mermaid 围栏内联渲染成缩略图、图片/图表大图浏览、可控长内容折叠）
  * @pos    讨论消息、议题问题与决策文本的唯一 Markdown 渲染入口；安全白名单集中维护于此；
  *         mermaid 走独立渲染路径（不经 rehype-raw 的 HTML 注入），架构档案图集复用同一份
  *         MermaidDiagram/Lightbox 保证渲染与主题联动逻辑一致
@@ -11,7 +11,7 @@
  */
 
 import { ImageOff } from "lucide-react";
-import { isValidElement, useEffect, useRef, useState, type ReactNode } from "react";
+import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -60,13 +60,25 @@ export interface MarkdownContentProps {
   content: string;
   /** 超过折叠阈值时默认收起并显示"展开全文"；默认 false（如决策详情，需要完整展示） */
   collapsible?: boolean;
+  /** 传入时由父组件统一控制顶部/底部两个展开入口 */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  /** 把实际测量出的可折叠状态交给消息卡，用于显示顶部控制 */
+  onCollapseAvailabilityChange?: (available: boolean) => void;
 }
 
-export function MarkdownContent({ content, collapsible = false }: MarkdownContentProps) {
+export function MarkdownContent({
+  content,
+  collapsible = false,
+  expanded,
+  onExpandedChange,
+  onCollapseAvailabilityChange,
+}: MarkdownContentProps) {
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [needsCollapse, setNeedsCollapse] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isExpanded = expanded ?? internalExpanded;
 
   // 用 ResizeObserver 测量未裁剪内容的真实高度：measureRef 自身不被裁剪（裁剪发生在其父级
   // .markdown-collapse-frame），所以 offsetHeight 始终反映内容真实高度，窗口宽度变化触发的
@@ -90,9 +102,23 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
     return () => observer.disconnect();
   }, [collapsible, content]);
 
+  useEffect(() => {
+    onCollapseAvailabilityChange?.(collapsible && needsCollapse);
+  }, [collapsible, needsCollapse, onCollapseAvailabilityChange]);
+
+  function toggleExpanded(): void {
+    const nextExpanded = !isExpanded;
+    if (expanded === undefined) {
+      setInternalExpanded(nextExpanded);
+    }
+    onExpandedChange?.(nextExpanded);
+  }
+
   const isClamped = collapsible && needsCollapse && !isExpanded;
 
-  const components: Components = {
+  // 组件映射必须保持引用稳定：Mermaid 从加载态变为 SVG 后会改变正文高度并触发折叠测量，
+  // 若每次渲染都创建新映射，ReactMarkdown 会重挂载 Mermaid，造成加载/测量循环和点击失效。
+  const components = useMemo<Components>(() => ({
     h1: ({ node: _node, ...props }) => (
       <h1 className="markdown-heading markdown-heading-1" {...props} />
     ),
@@ -156,7 +182,7 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
         />
       );
     },
-  };
+  }), []);
 
   return (
     <div className="markdown-collapsible-wrap">
@@ -177,7 +203,8 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
         <button
           className="markdown-toggle"
           type="button"
-          onClick={() => setIsExpanded((current) => !current)}
+          aria-expanded={isExpanded}
+          onClick={toggleExpanded}
         >
           {isExpanded ? "收起" : "展开全文"}
         </button>

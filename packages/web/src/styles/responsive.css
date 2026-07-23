@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Operator Console 桌面布局与语义组件，含项目架构档案与决策记录归档
- * @output 导出：平板、手机、流体讨论列和低动态偏好的适配规则
+ * @output 导出：平板、手机、流体讨论列、消息阶梯导航和低动态偏好的适配规则
  * @pos    保证 375px 至 1440px 无横向滚动和可访问交互
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -119,6 +119,10 @@
 
   .message-timeline {
     padding-inline: 18px;
+  }
+
+  .message-jump-rail {
+    display: none;
   }
 
   .composer {

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：mermaid 源码文本；动态 import("mermaid")（首屏不加载，仅遇到图时才拉取）；
  *         document.documentElement 的 data-theme 属性（浅/深主题联动）
- * @output 导出：MermaidDiagram —— 把 mermaid 源码渲染成 SVG，支持点击放大回调、
+ * @output 导出：MermaidDiagram —— 把 mermaid 源码渲染成有界缩略图，支持点击放大回调、
  *         主题切换即时重渲染，渲染失败时降级为原始代码块 + 错误提示，绝不白屏
  * @pos    MarkdownContent 内联 mermaid 围栏的渲染路径；架构档案图集复用同一份组件，
  *         保证消息流、决策详情与架构档案三处的图表渲染/主题联动逻辑完全一致
@@ -9,7 +9,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Maximize2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import type { MermaidConfig } from "mermaid";
 
@@ -113,7 +113,9 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
     return (
       // mermaid 渲染输出已经过其自身 securityLevel="strict" 的清洗，且渲染源仅来自受信的
       // fenced code 文本（不经 rehype-raw 的 HTML 注入路径），此处注入是安全的。
-      <div className="mermaid-diagram-frame" dangerouslySetInnerHTML={{ __html: svg }} />
+      <div className="mermaid-diagram-frame">
+        <div className="mermaid-diagram-preview" dangerouslySetInnerHTML={{ __html: svg }} />
+      </div>
     );
   }
 
@@ -123,8 +125,16 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
       className="mermaid-diagram-frame mermaid-diagram-frame-clickable"
       onClick={() => onOpen(svg)}
       aria-label="放大查看架构图"
-      // 同上：mermaid 自身已清洗过的 SVG，安全注入
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    >
+      {/* 同上：mermaid 自身已清洗过的 SVG，安全注入 */}
+      <span
+        className="mermaid-diagram-preview"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      <span className="mermaid-diagram-zoom-hint" aria-hidden="true">
+        <Maximize2 size={14} />
+        点击放大
+      </span>
+    </button>
   );
 }

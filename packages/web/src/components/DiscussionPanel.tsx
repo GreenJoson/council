@@ -1,7 +1,7 @@
 /**
  * @input  依赖：当前议题、参与者、同步/发布状态、消息回调、MarkdownContent 与自动轮次快照
  *         （透传给 Composer 支撑 @claude/@codex 召唤自动补全与冲突判断）
- * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、引用回复发起）
+ * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、卡片阶梯导航、引用回复发起）
  * @pos    Operator Console 的主要阅读、元数据核查和回复区域；议题问题按 Markdown 渲染
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,6 +15,7 @@ import { AgentAvatar, StatusBadge } from "./presentation";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
+import { MessageJumpRail } from "./MessageJumpRail";
 
 export interface DiscussionPanelProps {
   topic: TopicDetail;
@@ -29,6 +30,10 @@ export interface DiscussionPanelProps {
 type DiscussionTab = "discussion" | "metadata";
 
 const QUOTE_LINE_LIMIT = 88;
+
+function messageElementId(messageId: string): string {
+  return `message-card-${encodeURIComponent(messageId)}`;
+}
 
 /** 把消息首行截断为合理长度后组装成 Markdown 引用，供 Composer 续写 */
 function buildQuoteText(message: CouncilMessage, participants: Map<string, Participant>): string {
@@ -51,13 +56,62 @@ export function DiscussionPanel({
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
   const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
   const [isIdCopied, setIsIdCopied] = useState(false);
+  const [activeMessageId, setActiveMessageId] = useState(topic.messages[0]?.id);
+  const timelineRef = useRef<HTMLElement>(null);
   const quoteNonceRef = useRef(0);
   const copyResetTimeoutRef = useRef<number | undefined>(undefined);
 
   // 切换议题时回到"讨论" tab，避免带着上一个议题的元数据视图
   useEffect(() => {
     setActiveTab("discussion");
+    setActiveMessageId(topic.messages[0]?.id);
   }, [topic.id]);
+
+  useEffect(() => {
+    if (activeTab !== "discussion") {
+      return;
+    }
+    const timeline = timelineRef.current;
+    if (!timeline || topic.messages.length === 0) {
+      return;
+    }
+
+    let animationFrame: number | undefined;
+    const updateActiveMessage = () => {
+      animationFrame = undefined;
+      const timelineRect = timeline.getBoundingClientRect();
+      const readingLine = timelineRect.top + Math.min(120, timelineRect.height * 0.24);
+      let currentId = topic.messages[0]?.id;
+
+      if (timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight <= 2) {
+        currentId = topic.messages.at(-1)?.id;
+      } else {
+        for (const message of topic.messages) {
+          const card = document.getElementById(messageElementId(message.id));
+          if (card && card.getBoundingClientRect().top <= readingLine) {
+            currentId = message.id;
+          }
+        }
+      }
+      setActiveMessageId(currentId);
+    };
+    const scheduleUpdate = () => {
+      if (animationFrame === undefined) {
+        animationFrame = requestAnimationFrame(updateActiveMessage);
+      }
+    };
+
+    scheduleUpdate();
+    timeline.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      timeline.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      if (animationFrame !== undefined) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
+  }, [activeTab, topic.id, topic.messages]);
 
   useEffect(() => {
     return () => {
@@ -76,6 +130,19 @@ export function DiscussionPanel({
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
     setQuoteSeed({ text: buildQuoteText(message, participants), nonce: quoteNonceRef.current });
+  }
+
+  function handleMessageJump(messageId: string): void {
+    const target = document.getElementById(messageElementId(messageId));
+    if (!target) {
+      return;
+    }
+    setActiveMessageId(messageId);
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    target.scrollIntoView({
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+      block: "start",
+    });
   }
 
   async function handleCopyId(): Promise<void> {
@@ -144,38 +211,47 @@ export function DiscussionPanel({
 
       {activeTab === "discussion" ? (
         <>
-          <section
-            className="message-timeline"
-            id="discussion-tabpanel"
-            role="tabpanel"
-            aria-labelledby="discussion-tab"
-            aria-label="共享讨论时间线"
-          >
-            {hiddenMessageCount > 0 ? (
-              <p className="history-notice">
-                当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
-              </p>
-            ) : null}
-            {topic.messages.length > 0 ? (
-              topic.messages.map((message, index) => (
-                <MessageCard
-                  message={message}
-                  participant={participants.get(message.author)}
-                  index={index}
-                  onQuote={handleQuote}
-                  key={message.id}
-                />
-              ))
-            ) : (
-              <div className="empty-discussion">
-                <AgentAvatar agent="chair" />
-                <div>
-                  <h2>议题已经准备好</h2>
-                  <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
+          <div className="discussion-scroll-shell">
+            <MessageJumpRail
+              messages={topic.messages}
+              activeMessageId={activeMessageId}
+              onSelect={handleMessageJump}
+            />
+            <section
+              className="message-timeline"
+              id="discussion-tabpanel"
+              role="tabpanel"
+              aria-labelledby="discussion-tab"
+              aria-label="共享讨论时间线"
+              ref={timelineRef}
+            >
+              {hiddenMessageCount > 0 ? (
+                <p className="history-notice">
+                  当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
+                </p>
+              ) : null}
+              {topic.messages.length > 0 ? (
+                topic.messages.map((message, index) => (
+                  <MessageCard
+                    message={message}
+                    participant={participants.get(message.author)}
+                    index={index}
+                    elementId={messageElementId(message.id)}
+                    onQuote={handleQuote}
+                    key={message.id}
+                  />
+                ))
+              ) : (
+                <div className="empty-discussion">
+                  <AgentAvatar agent="chair" />
+                  <div>
+                    <h2>议题已经准备好</h2>
+                    <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
+                  </div>
                 </div>
-              </div>
-            )}
-          </section>
+              )}
+            </section>
+          </div>
 
           <Composer
             isPublishing={isPublishing}

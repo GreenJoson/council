@@ -9,11 +9,12 @@
 | `AgentSettingEditor.tsx` | 设置 | 右侧一次只编辑一个本机 Agent 或远程 Provider，处理 Keychain 凭据、启停、保存、测试与移除确认 |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `TopicSidebar.tsx` | 导航 | 导出 WorkspaceView 视图路由类型；展示轻量议题列表、状态筛选 chips 和议题/架构档案/决策记录三个真实可切换的导航项 |
-| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/元数据双 tab（元数据含议题 ID 复制、完整问题、所有者/参与者、消息统计）、历史总数、同步状态、引用回复发起和回复编辑器；议题问题经 MarkdownContent 渲染（不折叠）；把自动轮次快照与忙碌态透传给 Composer，支撑 @claude/@codex 召唤自动补全与冲突判断 |
-| `MessageCard.tsx` | 核心 | 展示公开 proposal、critique、rebuttal 和 synthesis（正文经 MarkdownContent 渲染并可折叠，含内嵌 mermaid 围栏自动渲染成图），并提供"引用回复"发起 Markdown 引用；正文以 @claude/@codex 召唤标记开头时（Composer 发布的指令性 note），用 `data/mention-parser` 的 `extractLeadingMentionChip` 把标记抠出渲染成高亮芯片，其余正文照常交给 MarkdownContent |
-| `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格横向滚动、代码块/图片样式、```mermaid 围栏内联渲染成图（走 MermaidDiagram，不经 rehype-raw）、图片/图表 Lightbox 与长内容折叠 |
-| `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成 SVG；按 data-theme 用 MutationObserver 联动 default/dark 主题；securityLevel 显式声明为 strict；渲染失败降级为原始代码块 + 错误提示；MarkdownContent 与架构档案图集共用 |
-| `Lightbox.tsx` | 基础 | 全屏放大浏览（遮罩/Esc/关闭按钮三种退出方式），支持图片与 mermaid SVG 两种内容；MarkdownContent 与架构档案图集共用同一份实现 |
+| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/元数据双 tab（元数据含议题 ID 复制、完整问题、所有者/参与者、消息统计）、一卡一节点的阶梯导航、历史总数、同步状态、引用回复发起和回复编辑器；议题问题经 MarkdownContent 渲染（不折叠）；把自动轮次快照与忙碌态透传给 Composer，支撑 @claude/@codex 召唤自动补全与冲突判断 |
+| `MessageJumpRail.tsx` | 导航 | 按当前议题实际消息卡数量渲染一一对应的阶梯节点；点击平滑跳转到对应卡片，当前阅读卡跟随滚动高亮 |
+| `MessageCard.tsx` | 核心 | 展示公开 proposal、critique、rebuttal 和 synthesis（正文经 MarkdownContent 渲染并可折叠，含内嵌 mermaid 围栏自动渲染成图）；长内容在卡片顶部提供可停留的展开/收起入口，底部入口保留；并提供"引用回复"发起 Markdown 引用与召唤芯片 |
+| `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览和可控长内容折叠；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
+| `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成固定上限缩略 SVG；按 data-theme 联动主题，securityLevel 显式声明为 strict；点击放大，失败降级为原始代码块 + 错误提示 |
+| `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
 | `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、引用回复和动态 `@adapter-id` 召唤；本机保持 `@claude`/`@codex`，共享 other 作者槽位的远程 Provider 使用 `@deepseek`/`@kimi` 防止歧义；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
 | `InspectorPanel.tsx` | 决策 | 组织自动轮次、真实约束、证据、备选方案和可空拟议决策（summary/rationale 经 MarkdownContent 渲染，proposed/accepted/superseded 三态徽章走 presentation.tsx 的 DecisionStatusBadge） |
 | `AutoRoundsPanel.tsx` | 编排 | 展示 Agent 能力、互斥操作、恢复预算及 Run 生命周期控制 |

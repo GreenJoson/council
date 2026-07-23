@@ -1,0 +1,352 @@
+/**
+ * @input  依赖：theme.css 媒体尺寸/颜色 token 与 MarkdownContent、MermaidDiagram、Lightbox 语义类名
+ * @output 导出：图片/架构图有界缩略预览、全视口大图缩放浏览与 Mermaid 状态样式
+ * @pos    Operator Console 所有 Markdown 媒体的唯一视觉层
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+/* ============================================================
+ * 正文媒体缩略预览
+ * ============================================================ */
+.markdown-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, var(--media-preview-max-width));
+  max-height: var(--image-preview-max-height);
+  margin: 4px 0 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+.markdown-image:hover {
+  border-color: var(--color-primary);
+}
+
+.markdown-image-fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 12px;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-small);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* ============================================================
+ * Mermaid 架构图：消息、决策详情与架构档案共用
+ * ============================================================ */
+.mermaid-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-small);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.mermaid-loading-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: mermaid-loading-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes mermaid-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.mermaid-fallback {
+  margin: 4px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-danger-soft) 60%, var(--color-surface));
+}
+
+.mermaid-fallback-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-danger);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mermaid-fallback-source {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+  overflow-x: auto;
+}
+
+.mermaid-fallback-source code {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.mermaid-diagram-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(100%, var(--media-preview-max-width));
+  max-height: var(--diagram-preview-max-height);
+  margin: 4px 0 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.mermaid-diagram-preview {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-height: calc(var(--diagram-preview-max-height) - 28px);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mermaid-diagram-preview svg {
+  display: block;
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: calc(var(--diagram-preview-max-height) - 28px) !important;
+  margin: auto;
+}
+
+.mermaid-diagram-frame-clickable {
+  cursor: zoom-in;
+}
+
+.mermaid-diagram-frame-clickable:hover {
+  border-color: var(--color-primary);
+}
+
+.mermaid-diagram-zoom-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  box-shadow: var(--shadow-small);
+}
+
+/* ============================================================
+ * 全视口大图浏览：框架尺寸不受图片固有尺寸影响
+ * ============================================================ */
+.markdown-lightbox-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: grid;
+  place-items: center;
+  padding: 3vh 3vw;
+  background: color-mix(in srgb, var(--color-overlay) 84%, transparent);
+  backdrop-filter: blur(4px);
+  animation: toast-in var(--transition-medium) both;
+}
+
+.markdown-lightbox-frame {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: var(--lightbox-width);
+  height: var(--lightbox-height);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-raised);
+  overflow: hidden;
+  box-shadow: var(--shadow-large);
+}
+
+.markdown-lightbox-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-surface-raised);
+}
+
+.markdown-lightbox-title {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-lightbox-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.markdown-lightbox-controls button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.markdown-lightbox-controls button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+  color: var(--color-focus);
+}
+
+.markdown-lightbox-controls button:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.markdown-lightbox-controls > span {
+  min-width: 48px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.markdown-lightbox-close {
+  margin-left: 4px;
+}
+
+.markdown-lightbox-canvas {
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-canvas-deep);
+  overflow: auto;
+}
+
+.markdown-lightbox-stage {
+  display: grid;
+  place-items: center;
+  width: var(--lightbox-zoom);
+  height: var(--lightbox-zoom);
+  min-width: var(--lightbox-zoom);
+  min-height: var(--lightbox-zoom);
+  margin: auto;
+  padding: 20px;
+}
+
+.markdown-lightbox-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(var(--lightbox-width) - 80px);
+  max-height: calc(var(--lightbox-height) - 100px);
+  border-radius: var(--radius-small);
+  object-fit: contain;
+  transform: scale(var(--lightbox-scale));
+  transform-origin: center;
+}
+
+.markdown-lightbox-diagram {
+  display: grid;
+  place-items: center;
+  width: calc(var(--lightbox-width) - 80px);
+  height: calc(var(--lightbox-height) - 100px);
+  padding: 18px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  transform: scale(var(--lightbox-scale));
+  transform-origin: center;
+}
+
+.markdown-lightbox-diagram svg {
+  display: block;
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 100% !important;
+}
+
+.markdown-lightbox-fallback {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-width: 260px;
+  min-height: 180px;
+  padding: 32px;
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 720px) {
+  .markdown-lightbox-scrim {
+    padding: 8px;
+  }
+
+  .markdown-lightbox-frame {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+  }
+
+  .markdown-lightbox-title {
+    display: none;
+  }
+
+  .markdown-lightbox-toolbar {
+    justify-content: flex-end;
+  }
+
+  .markdown-lightbox-stage {
+    padding: 10px;
+  }
+
+  .markdown-lightbox-image {
+    max-width: calc(94vw - 36px);
+    max-height: calc(90vh - 76px);
+  }
+
+  .markdown-lightbox-diagram {
+    width: calc(94vw - 36px);
+    height: calc(90vh - 76px);
+  }
+
+  .mermaid-diagram-zoom-hint {
+    padding: 4px 6px;
+  }
+}
