@@ -1,7 +1,7 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、大屏流体讨论列、媒体缩略/大图浏览、卡片双入口折叠、
-         移动端布局和控制台错误的浏览器验收
+@output 导出：桌面交互、过长议题折叠、大屏流体讨论列、媒体缩略/大图浏览、
+         卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -94,6 +94,28 @@ def verify_card_bottom_collapse_control(page) -> None:
     first_card.get_by_role("button", name="展开全文", exact=True).wait_for()
 
 
+def verify_topic_question_collapse_control(page) -> None:
+    topic_question = page.locator(".topic-question")
+    collapse_frame = topic_question.locator(".markdown-collapse-frame")
+    expand_toggle = topic_question.get_by_role("button", name="展开议题", exact=True)
+    expand_toggle.wait_for()
+
+    collapsed_box = measure_element(collapse_frame)
+    assert collapsed_box["height"] <= 250
+    assert expand_toggle.get_attribute("aria-expanded") == "false"
+
+    expand_toggle.click()
+    collapse_toggle = topic_question.get_by_role("button", name="收起议题", exact=True)
+    collapse_toggle.wait_for()
+    expanded_box = measure_element(collapse_frame)
+    assert expanded_box["height"] > collapsed_box["height"] + 120
+    assert collapse_toggle.get_attribute("aria-expanded") == "true"
+
+    collapse_toggle.click()
+    expand_toggle.wait_for()
+    assert measure_element(collapse_frame)["height"] <= 250
+
+
 def verify_message_jump_rail(page) -> None:
     cards = page.locator(".message-card")
     steps = page.locator(".message-jump-step")
@@ -178,6 +200,7 @@ def verify_desktop(browser) -> list[str]:
     page.wait_for_load_state("networkidle")
 
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
+    assert page.get_by_role("button", name="展开议题", exact=True).count() == 0
     verify_fluid_discussion_width(page)
     verify_message_jump_rail(page)
     verify_card_bottom_collapse_control(page)
@@ -218,12 +241,37 @@ def verify_desktop(browser) -> list[str]:
 
     page.get_by_role("button", name="新建议题", exact=True).click()
     page.get_by_label("议题标题").fill("本地事件同步策略")
-    page.get_by_label("待解决的问题").fill("如何在多个客户端之间同步新消息？")
+    page.get_by_label("待解决的问题").fill(
+        """如何在多个客户端之间同步新消息，并确保异常恢复后仍然保持一致？
+
+## 背景
+
+当前桌面端、命令行和自动 Agent 都可能向同一个议题写入消息。新的同步方案必须让用户无需手动刷新，也不能因为读取竞态覆盖已经到达的新内容。
+
+## 预期行为
+
+- 新消息写入后，所有打开的客户端都能及时看到。
+- 网络或进程短暂中断后，恢复连接能够补齐错过的变更。
+- 切换项目时，旧项目的延迟响应不能覆盖当前项目。
+- 同一条消息不会因为重试而重复出现。
+
+## 失败条件
+
+- 依赖固定轮询作为唯一同步机制。
+- 在不同客户端之间复制完整私有会话。
+- 服务恢复后必须重新启动桌面应用。
+- 快速切换议题时出现内容串线。
+
+## 验证
+
+需要覆盖连续写入、断线恢复、切换项目、重复事件和过期响应五类浏览器用例。"""
+    )
     page.locator("dialog label", has_text="约束条件").locator("textarea").fill(
         "不依赖公网服务"
     )
     page.get_by_role("button", name="创建议题", exact=True).click()
     page.get_by_role("heading", name="本地事件同步策略", exact=True).wait_for()
+    verify_topic_question_collapse_control(page)
 
     page.close()
     return errors

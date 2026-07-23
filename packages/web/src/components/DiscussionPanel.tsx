@@ -1,8 +1,9 @@
 /**
  * @input  依赖：当前议题、参与者、同步/发布状态、消息回调、MarkdownContent 与自动轮次快照
  *         （透传给 Composer 支撑 @claude/@codex 召唤自动补全与冲突判断）
- * @output 导出：DiscussionPanel 中央讨论工作区（讨论/元数据双 tab、卡片阶梯导航、引用回复发起）
- * @pos    Operator Console 的主要阅读、元数据核查和回复区域；议题问题按 Markdown 渲染
+ * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/元数据双 tab、
+ *         卡片阶梯导航、引用回复发起）
+ * @pos    Operator Console 的主要阅读、元数据核查和回复区域；过长议题问题默认收起
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -180,7 +181,7 @@ export function DiscussionPanel({
           </div>
         </div>
         <div className="topic-question">
-          <MarkdownContent content={topic.question} />
+          <MarkdownContent content={topic.question} collapsible collapseVariant="topic" />
         </div>
         <div className="topic-tabs" role="tablist" aria-label="议题视图">
           <button

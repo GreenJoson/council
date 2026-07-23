@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council Operator Console 视觉方向
- * @output 导出：颜色（深/浅双主题）、字体、阴影、讨论列与媒体预览尺寸和层级语义变量
+ * @output 导出：颜色（深/浅双主题）、字体、阴影、讨论列、议题折叠高度、媒体预览尺寸和层级语义变量
  * @pos    WebUI 唯一视觉常量来源，组件禁止硬编码颜色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -27,6 +27,7 @@
   --discussion-column-fluid: 86cqi;
   --discussion-column-max: 1280px;
   --discussion-column-gutter: 48px;
+  --topic-question-collapse-height: 248px;
   --media-preview-max-width: 640px;
   --image-preview-max-height: 280px;
   --diagram-preview-max-height: 340px;

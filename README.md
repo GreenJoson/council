@@ -44,6 +44,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
 - Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
 - 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
+- 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
 - 消息图片和 Mermaid 图以固定缩略尺寸展示，点击后进入支持缩放与滚动的全视口大图浏览；长卡片在正文底部展开或收起。
 - 讨论区左侧按消息卡数量显示一一对应的阶梯节点，可直接跳转到任意卡片并跟随滚动高亮当前位置。
 - 顶栏模型路由台可即时切换 Claude/Codex 模型；DeepSeek、Kimi 等兼容 Provider 按需添加，右侧一次只编辑一项，候选数量不会撑高设置窗口。

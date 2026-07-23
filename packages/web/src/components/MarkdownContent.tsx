@@ -10,7 +10,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { ImageOff } from "lucide-react";
+import { ChevronDown, ChevronUp, ImageOff } from "lucide-react";
 import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -20,8 +20,18 @@ import remarkGfm from "remark-gfm";
 import { Lightbox, type LightboxContent } from "./Lightbox";
 import { MermaidDiagram } from "./MermaidDiagram";
 
-/** 折叠阈值：需与 components.css 里 .markdown-collapse-frame.is-clamped 的 max-height 保持一致 */
-const COLLAPSE_THRESHOLD_PX = 420;
+/** CSS token 缺失时的安全回退；正常路径从 --markdown-collapse-height 读取当前上下文阈值 */
+const FALLBACK_COLLAPSE_THRESHOLD_PX = 420;
+
+type MarkdownCollapseVariant = "content" | "topic";
+
+const COLLAPSE_LABELS: Record<
+  MarkdownCollapseVariant,
+  { expand: string; collapse: string }
+> = {
+  content: { expand: "展开全文", collapse: "收起" },
+  topic: { expand: "展开议题", collapse: "收起议题" },
+};
 
 /**
  * 安全白名单：以默认 schema（对齐 GitHub 的清洗规则，已包含 table/thead/tbody/tr/td/th、
@@ -60,13 +70,25 @@ export interface MarkdownContentProps {
   content: string;
   /** 超过折叠阈值时默认收起并显示"展开全文"；默认 false（如决策详情，需要完整展示） */
   collapsible?: boolean;
+  /** 议题摘要使用更紧凑的高度阈值和专属文案；正文默认使用 content */
+  collapseVariant?: MarkdownCollapseVariant;
 }
 
-export function MarkdownContent({ content, collapsible = false }: MarkdownContentProps) {
+export function MarkdownContent({
+  content,
+  collapsible = false,
+  collapseVariant = "content",
+}: MarkdownContentProps) {
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [needsCollapse, setNeedsCollapse] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // 切换议题或替换正文后恢复默认收起，避免沿用上一条内容的展开状态。
+  useEffect(() => {
+    setIsExpanded(false);
+  }, [collapseVariant, content]);
 
   // 用 ResizeObserver 测量未裁剪内容的真实高度：measureRef 自身不被裁剪（裁剪发生在其父级
   // .markdown-collapse-frame），所以 offsetHeight 始终反映内容真实高度，窗口宽度变化触发的
@@ -77,10 +99,20 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
       return;
     }
     const el = measureRef.current;
-    if (!el) {
+    const wrap = wrapRef.current;
+    if (!el || !wrap) {
       return;
     }
-    const evaluate = () => setNeedsCollapse(el.offsetHeight > COLLAPSE_THRESHOLD_PX);
+    const evaluate = () => {
+      const configuredHeight = Number.parseFloat(
+        window.getComputedStyle(wrap).getPropertyValue("--markdown-collapse-height"),
+      );
+      const threshold =
+        Number.isFinite(configuredHeight) && configuredHeight > 0
+          ? configuredHeight
+          : FALLBACK_COLLAPSE_THRESHOLD_PX;
+      setNeedsCollapse(el.offsetHeight > threshold);
+    };
     evaluate();
     if (typeof ResizeObserver === "undefined") {
       return;
@@ -88,7 +120,7 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
     const observer = new ResizeObserver(evaluate);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [collapsible, content]);
+  }, [collapsible, collapseVariant, content]);
 
   const isClamped = collapsible && needsCollapse && !isExpanded;
 
@@ -160,8 +192,13 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
     },
   }), []);
 
+  const collapseLabels = COLLAPSE_LABELS[collapseVariant];
+
   return (
-    <div className="markdown-collapsible-wrap">
+    <div
+      className={`markdown-collapsible-wrap markdown-collapse-${collapseVariant}`}
+      ref={wrapRef}
+    >
       <div className={`markdown-collapse-frame ${isClamped ? "is-clamped" : ""}`}>
         <div className="markdown-content" ref={measureRef}>
           <ReactMarkdown
@@ -182,7 +219,14 @@ export function MarkdownContent({ content, collapsible = false }: MarkdownConten
           aria-expanded={isExpanded}
           onClick={() => setIsExpanded((current) => !current)}
         >
-          {isExpanded ? "收起" : "展开全文"}
+          {collapseVariant === "topic" ? (
+            isExpanded ? (
+              <ChevronUp size={14} aria-hidden="true" />
+            ) : (
+              <ChevronDown size={14} aria-hidden="true" />
+            )
+          ) : null}
+          {isExpanded ? collapseLabels.collapse : collapseLabels.expand}
         </button>
       ) : null}
 

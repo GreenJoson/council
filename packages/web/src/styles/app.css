@@ -571,6 +571,28 @@ button.sync-offline:hover {
   font-size: 13px;
 }
 
+.topic-question .markdown-collapse-topic {
+  --markdown-collapse-height: var(--topic-question-collapse-height);
+}
+
+.topic-question .markdown-collapse-frame.is-clamped {
+  max-height: var(--topic-question-collapse-height);
+}
+
+.topic-question .markdown-toggle {
+  min-height: 28px;
+  margin-top: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
+  box-shadow: var(--shadow-small);
+}
+
+.topic-question .markdown-toggle:hover {
+  border-color: var(--color-primary);
+}
+
 .topic-tabs {
   display: flex;
   align-items: center;
