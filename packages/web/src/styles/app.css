@@ -639,8 +639,10 @@ button.sync-offline:hover {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 26px 24px 20px;
-  scroll-behavior: smooth;
+  padding: 26px 24px calc(20px + var(--discussion-tail-clearance));
+  overflow-anchor: none;
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: var(--discussion-tail-clearance);
 }
 
 .panel-scrim {

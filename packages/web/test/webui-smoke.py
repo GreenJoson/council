@@ -101,7 +101,7 @@ def verify_topic_question_collapse_control(page) -> None:
     expand_toggle.wait_for()
 
     collapsed_box = measure_element(collapse_frame)
-    assert collapsed_box["height"] <= 250
+    assert collapsed_box["height"] <= 154
     assert expand_toggle.get_attribute("aria-expanded") == "false"
 
     expand_toggle.click()
@@ -113,7 +113,44 @@ def verify_topic_question_collapse_control(page) -> None:
 
     collapse_toggle.click()
     expand_toggle.wait_for()
-    assert measure_element(collapse_frame)["height"] <= 250
+    assert measure_element(collapse_frame)["height"] <= 154
+
+
+def verify_last_card_tail_access(page) -> None:
+    timeline = page.locator(".message-timeline")
+    last_card = page.locator(".message-card").last
+    expand_toggle = last_card.get_by_role("button", name="展开全文", exact=True)
+    expand_toggle.wait_for()
+
+    timeline.evaluate("(element) => { element.scrollTop = element.scrollHeight; }")
+    page.wait_for_timeout(700)
+
+    collapsed_gap = page.evaluate(
+        """
+        () => {
+          const timeline = document.querySelector('.message-timeline');
+          const card = document.querySelector('.message-card:last-of-type');
+          if (!timeline || !card) {
+            throw new Error('最后卡片滚动目标缺失');
+          }
+          return {
+            bottomDistance:
+              timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight,
+            visibleTail:
+              timeline.getBoundingClientRect().bottom - card.getBoundingClientRect().bottom,
+          };
+        }
+        """
+    )
+    assert collapsed_gap["bottomDistance"] <= 2
+    assert collapsed_gap["visibleTail"] >= 100
+
+    expand_toggle.click()
+    collapse_toggle = last_card.get_by_role("button", name="收起", exact=True)
+    timeline.evaluate("(element) => { element.scrollTop = element.scrollHeight; }")
+    page.wait_for_timeout(700)
+    collapse_toggle.wait_for()
+    collapse_toggle.click()
 
 
 def verify_message_jump_rail(page) -> None:
@@ -228,13 +265,42 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_text("等待 Agent", exact=True).wait_for()
 
     page.get_by_placeholder("写下公开结论、证据或回应…").fill(
-        "补充验证：重复回调和乱序回调必须分别覆盖。"
+        """补充验证：重复回调和乱序回调必须分别覆盖。
+
+## 并发与重放
+
+- 相同回调并发到达时只能有一个请求进入业务处理。
+- 已完成事件再次到达时直接返回稳定结果。
+- 处理中事件重复到达时不得启动第二份副作用。
+- 唯一索引冲突必须转换为可重试读取。
+
+## 状态边界
+
+- 旧状态事件不得覆盖已经确认的新状态。
+- 失败重试不能绕过合法状态迁移。
+- 人工恢复必须留下独立审计记录。
+- 终态之后不再接受反向迁移。
+
+## 观测与恢复
+
+- 每次处理记录稳定请求标识和耗时。
+- 超时、冲突与重复命中分别计数。
+- 恢复任务使用相同幂等键重新进入流程。
+- 缓存丢失后仍能从持久化结果恢复。
+
+## 验收
+
+- 覆盖并发、乱序、重复、超时和恢复五类测试。
+- 连续刷新期间最后一张卡片必须可以滚动到完整可见。
+- 展开长回复后仍能滚到正文底部并执行收起。
+- 等待页面刷新后滚动位置不能自动反弹。"""
     )
     page.get_by_role("button", name="Critique", exact=True).click()
     page.get_by_role("button", name="发布 Critique", exact=True).click()
     page.get_by_text("回复已发布并同步", exact=True).wait_for()
     page.get_by_text("补充验证：重复回调和乱序回调必须分别覆盖。", exact=True).wait_for()
     assert page.locator(".message-jump-step").count() == page.locator(".message-card").count()
+    verify_last_card_tail_access(page)
 
     page.get_by_role("button", name="标记为 Accepted", exact=True).click()
     page.get_by_text("决策已记录为 Accepted", exact=True).wait_for()

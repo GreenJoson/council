@@ -9,7 +9,7 @@
 | `AgentSettingEditor.tsx` | 设置 | 右侧一次只编辑一个本机 Agent 或远程 Provider，处理 Keychain 凭据、启停、保存、测试与移除确认 |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `TopicSidebar.tsx` | 导航 | 导出 WorkspaceView 视图路由类型；展示轻量议题列表、状态筛选 chips 和议题/架构档案/决策记录三个真实可切换的导航项 |
-| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/元数据双 tab（元数据含议题 ID 复制、完整问题、所有者/参与者、消息统计）、一卡一节点的阶梯导航、历史总数、同步状态、引用回复发起和回复编辑器；过长议题问题经 MarkdownContent 默认收起，短问题不显示控件；把自动轮次快照与忙碌态透传给 Composer，支撑 @claude/@codex 召唤自动补全与冲突判断 |
+| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/元数据双 tab（元数据含议题 ID 复制、完整问题、所有者/参与者、消息统计）、一卡一节点的阶梯导航、带尾部阅读空间的独立时间线、历史总数、同步状态、引用回复发起和回复编辑器；过长议题问题经 MarkdownContent 默认收起，短问题不显示控件；把自动轮次快照与忙碌态透传给 Composer，支撑 @claude/@codex 召唤自动补全与冲突判断 |
 | `MessageJumpRail.tsx` | 导航 | 按当前议题实际消息卡数量渲染一一对应的阶梯节点；点击平滑跳转到对应卡片，当前阅读卡跟随滚动高亮 |
 | `MessageCard.tsx` | 核心 | 展示公开 proposal、critique、rebuttal 和 synthesis（正文经 MarkdownContent 渲染并在底部提供唯一的展开/收起入口，含内嵌 mermaid 围栏自动渲染成图）；并提供"引用回复"发起 Markdown 引用与召唤芯片 |
 | `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览，以及正文/议题两种语义化底部折叠；折叠高度从主题 token 读取，内容切换后恢复默认收起；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
