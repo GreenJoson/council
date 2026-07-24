@@ -18,7 +18,7 @@
 | `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
 | `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、引用回复和动态 `@adapter-id` 召唤；本机保持 `@claude`/`@codex`，共享 other 作者槽位的远程 Provider 使用 `@deepseek`/`@kimi` 防止歧义；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
 | `InspectorPanel.tsx` | 决策 | 组织自动轮次、真实约束、证据、备选方案和可空拟议决策（summary/rationale 经 MarkdownContent 渲染，proposed/accepted/superseded 三态徽章走 presentation.tsx 的 DecisionStatusBadge） |
-| `AutoRoundsPanel.tsx` | 编排 | 展示 Agent 能力、互斥操作、恢复预算及 Run 生命周期控制 |
+| `AutoRoundsPanel.tsx` | 编排 | 展示 Agent 能力、单一当前调用卡、折叠历史、按需完成复核、互斥操作与恢复预算 |
 | `CreateTopicDialog.tsx` | 创建 | 收集议题问题和约束，桌面端可选择目标项目（当前/最近/浏览），失败时保留输入以便重试 |
 | `ArchitectureView.tsx` | 视图 | 项目架构档案：从讨论决策聚合生成的架构沉淀页（项目概览/演进时间线/不变量/图集四区块，拆分在 `architecture/` 子目录），经 `useTopicDetails` 一次性加载全部议题详情，内容区块见 `architecture/_README.md` |
 | `DecisionRecordsView.tsx` | 视图 | 左列表（仅 decided 议题）右详情的 ADR 归档（summary/rationale/原始问题经 MarkdownContent 渲染、不折叠，proposed/accepted/superseded 三态徽章走 DecisionStatusBadge）；详情经 `useTopicDetails` hook 按需懒加载并以 Map 缓存，含加载骨架、失败重试、过期响应防护，以及架构档案跳转过来的 focusRequest 定位 |

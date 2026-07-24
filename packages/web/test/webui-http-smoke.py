@@ -106,12 +106,12 @@ with sync_playwright() as playwright:
     page.get_by_placeholder(
         "例如：先给出可回滚的最小架构方案，并列出失败条件。"
     ).fill("真实编排 E2E：请给出可回滚的最小方案。")
-    page.get_by_role("button", name="创建并启动", exact=True).click()
-    page.get_by_text("自动轮次已创建并启动", exact=True).wait_for()
+    page.get_by_role("button", name="启动 Agent", exact=True).click()
+    page.get_by_text("Agent 调用已启动", exact=True).wait_for()
     agent_message = "自动 Claude 回帖：先固定状态机不变量，再验证可回滚的最小方案。"
     page.get_by_text(agent_message, exact=True).wait_for(timeout=15_000)
     page.get_by_text("等待确认", exact=True).wait_for()
-    page.get_by_role("button", name="批准继续", exact=True).click()
+    page.get_by_role("button", name="确认并完成", exact=True).click()
     page.get_by_text("确认已提交，自动轮次继续", exact=True).wait_for()
     page.get_by_text("已完成", exact=True).wait_for()
 

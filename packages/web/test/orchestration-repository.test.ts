@@ -328,6 +328,7 @@ describe("HttpOrchestrationRepository", () => {
     await repository.selectTopic("topic-one");
     await repository.createRun({
       topicId: "topic-one",
+      confirmationBeforeCompletion: true,
       plan: [
         {
           adapterId: "claude-code",
@@ -349,6 +350,7 @@ describe("HttpOrchestrationRepository", () => {
       .filter((request) => request.init?.method === "POST")
       .map((request) => JSON.parse(String(request.init?.body)) as Record<string, unknown>);
     expect(postBodies[0]).toEqual({
+      confirmationBeforeCompletion: true,
       plan: [
         {
           adapterId: "claude-code",

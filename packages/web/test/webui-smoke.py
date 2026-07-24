@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、Agent 回复动态、过长议题折叠、大屏流体讨论列、
+@output 导出：桌面交互、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -170,6 +170,33 @@ def verify_message_jump_rail(page) -> None:
     assert first_step.get_attribute("aria-current") == "true"
 
 
+def start_mock_agent_run(page, instruction: str) -> None:
+    page.get_by_placeholder(
+        "例如：先给出可回滚的最小架构方案，并列出失败条件。"
+    ).fill(instruction)
+    page.get_by_role("button", name="启动 Agent", exact=True).click()
+    page.get_by_text("Agent 调用已启动", exact=True).wait_for()
+    page.get_by_text("等待 Agent", exact=True).wait_for()
+
+
+def verify_compact_run_history(page) -> None:
+    review_checkbox = page.get_by_role("checkbox")
+    assert not review_checkbox.is_checked()
+
+    for instruction in ("检查第一次调用。", "检查第二次调用。"):
+        start_mock_agent_run(page, instruction)
+        page.locator(".run-card").get_by_role("button", name="取消", exact=True).click()
+        page.locator(".run-card").get_by_text("已取消", exact=True).wait_for()
+
+    start_mock_agent_run(page, "保持第三次调用为当前状态。")
+    assert page.locator(".run-card").count() == 1
+    history = page.locator(".run-history")
+    assert history.count() == 1
+    assert "2" in history.locator("summary").inner_text()
+    history.locator("summary").click()
+    assert page.locator(".run-history-row").count() == 2
+
+
 def verify_agent_reply_activity(page) -> None:
     activity = page.get_by_role("status", name="Claude Code 正在回复", exact=True)
     activity.wait_for()
@@ -258,12 +285,7 @@ def verify_desktop(browser) -> list[str]:
     verify_card_bottom_collapse_control(page)
     verify_media_preview_and_lightbox(page)
 
-    page.get_by_placeholder(
-        "例如：先给出可回滚的最小架构方案，并列出失败条件。"
-    ).fill("先审查状态机边界，再给出最小修复。")
-    page.get_by_role("button", name="创建并启动", exact=True).click()
-    page.get_by_text("自动轮次已创建并启动", exact=True).wait_for()
-    page.get_by_text("等待 Agent", exact=True).wait_for()
+    verify_compact_run_history(page)
     verify_agent_reply_activity(page)
 
     if SCREENSHOT_PATH:

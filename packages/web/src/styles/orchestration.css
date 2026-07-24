@@ -1,0 +1,150 @@
+/**
+ * @input  依赖：theme.css、components.css 与 AutoRoundsPanel 的调用历史语义类名
+ * @output 导出：单次完成复核和紧凑历史调用的增量视觉
+ * @pos    Agent 调用控制台新增交互的独立样式层
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+.auto-round-form .completion-review-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-canvas-deep) 58%, transparent);
+  cursor: pointer;
+}
+
+.completion-review-option input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--color-primary);
+}
+
+.completion-review-option span,
+.completion-review-option strong,
+.completion-review-option small {
+  display: block;
+}
+
+.completion-review-option span {
+  min-width: 0;
+}
+
+.completion-review-option strong {
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.completion-review-option small {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.run-history {
+  overflow: hidden;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface-raised) 52%, transparent);
+}
+
+.run-history summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 9px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.run-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-history summary > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.run-history summary svg {
+  transition: transform var(--transition-fast);
+}
+
+.run-history[open] summary > span:last-child svg {
+  transform: rotate(180deg);
+}
+
+.run-history-list {
+  border-top: 1px solid var(--color-divider);
+}
+
+.run-history-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 5px 8px;
+}
+
+.run-history-row + .run-history-row {
+  border-top: 1px solid var(--color-divider);
+}
+
+.run-history-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+}
+
+.run-history-row.run-status-completed .run-history-status-dot {
+  background: var(--color-positive);
+}
+
+.run-history-row.run-status-failed .run-history-status-dot,
+.run-history-row.run-status-cancelled .run-history-status-dot {
+  background: var(--color-danger);
+}
+
+.run-history-row.run-status-waiting_user .run-history-status-dot {
+  background: var(--color-warning);
+}
+
+.run-history-main {
+  display: block;
+  min-width: 0;
+  flex: 1;
+}
+
+.run-history-main strong,
+.run-history-main small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-history-main strong {
+  color: var(--color-text-secondary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.run-history-main small {
+  margin-top: 1px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 7px;
+}

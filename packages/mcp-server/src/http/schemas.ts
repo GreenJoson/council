@@ -143,6 +143,7 @@ export const listRunsQuerySchema = z
 
 export const createRunBodySchema = z
   .object({
+    confirmationBeforeCompletion: z.boolean().optional(),
     plan: z
       .array(
         z

@@ -58,6 +58,10 @@ export interface PublicRoundInput {
   instruction: string;
 }
 
+export interface CreateRunOptions {
+  confirmationBeforeCompletion?: boolean;
+}
+
 export interface PublicApprovalInput {
   expectedGateId: string;
   expectedVersion: number;
@@ -162,7 +166,11 @@ export class CouncilOrchestrationService {
     };
   }
 
-  async createRun(topicId: string, plan: readonly PublicRoundInput[]): Promise<OrchestrationRun> {
+  async createRun(
+    topicId: string,
+    plan: readonly PublicRoundInput[],
+    options: CreateRunOptions = {},
+  ): Promise<OrchestrationRun> {
     const hasUnavailableTarget = plan.some((round) => {
       const capability = this.#capabilities.find((item) => item.id === round.adapterId);
       return capability !== undefined && !capability.available;
@@ -194,7 +202,9 @@ export class CouncilOrchestrationService {
         maxManualRecoveries: this.config.orchestrationDefaultMaxRecoveries,
         confirmation: {
           beforeRounds: [],
-          beforeCompletion: this.config.orchestrationConfirmCompletion,
+          beforeCompletion:
+            options.confirmationBeforeCompletion
+            ?? this.config.orchestrationConfirmCompletion,
         },
       },
     });

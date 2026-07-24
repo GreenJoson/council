@@ -22,5 +22,5 @@
 | `openai-compatible-runtime.test.ts` | 协议测试 | 验证远程流式 Chat Completions、公开增量、JSON 回退、错误脱敏与有界响应 |
 | `openai-compatible-agent-adapter.test.ts` | 安全测试 | 验证远程运行时脱敏原因可公开且未知异常继续隔离 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |
-| `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、上下文限制转发、断线、取消、审批、恢复与 sweeper |
+| `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、单次完成复核覆盖、上下文限制转发、断线、取消、审批、恢复与 sweeper |
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |

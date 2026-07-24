@@ -422,6 +422,7 @@ export default function App() {
     try {
       const created = await orchestrationRepository.createRun({
         topicId: activeTopicId,
+        confirmationBeforeCompletion: false,
         plan: [{
           adapterId: mention.adapterId,
           messageKind: mention.responseKind,
@@ -431,7 +432,7 @@ export default function App() {
       setOrchestrationBusyAction(`start:${created.id}`);
       const snapshot = await orchestrationRepository.startRun(created.id);
       setOrchestration(snapshot);
-      setToastMessage("消息已发布，自动轮次已启动");
+      setToastMessage("消息已发布，Agent 正在回复");
     } catch (error: unknown) {
       setRunsErrorMessage(`消息已发布，但自动回应启动失败：${getErrorMessage(error)}`);
     } finally {
@@ -486,18 +487,20 @@ export default function App() {
     adapterId: string,
     messageKind: OrchestrationMessageKind,
     instruction: string,
+    confirmationBeforeCompletion: boolean,
   ): Promise<boolean> {
     setOrchestrationBusyAction("create");
     setRunsErrorMessage(null);
     try {
       const created = await orchestrationRepository.createRun({
         topicId: activeTopicId,
+        confirmationBeforeCompletion,
         plan: [{ adapterId, messageKind, instruction }],
       });
       setOrchestrationBusyAction(`start:${created.id}`);
       const snapshot = await orchestrationRepository.startRun(created.id);
       setOrchestration(snapshot);
-      setToastMessage("自动轮次已创建并启动");
+      setToastMessage("Agent 调用已启动");
       return true;
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));

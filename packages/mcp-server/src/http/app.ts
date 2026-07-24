@@ -374,7 +374,9 @@ export function createCouncilHttpApp(
     const params = parse(topicParamsSchema, request.params);
     const body: unknown = request.body;
     const input = parse(createRunBodySchema, body);
-    const run = await orchestration.createRun(params.topicId, input.plan);
+    const run = await orchestration.createRun(params.topicId, input.plan, {
+      confirmationBeforeCompletion: input.confirmationBeforeCompletion,
+    });
     sendSuccess(response, run, "编排运行已创建。", 201);
   });
 

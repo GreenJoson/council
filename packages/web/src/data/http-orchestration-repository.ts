@@ -204,7 +204,10 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         this.#baseUrl,
         `/api/v1/topics/${encodeURIComponent(input.topicId)}/runs`,
       ),
-      { plan: input.plan },
+      {
+        plan: input.plan,
+        confirmationBeforeCompletion: input.confirmationBeforeCompletion,
+      },
     );
     if (this.#canRefreshMutation(selectionGeneration, activeTopicId, run.topicId)) {
       await this.selectTopic(run.topicId);

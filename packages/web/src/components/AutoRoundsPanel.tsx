@@ -1,7 +1,7 @@
 /**
  * @input  依赖：自动轮次快照、当前议题和受控运行操作
- * @output 导出：AutoRoundsPanel 紧凑编排控制卡片
- * @pos    Inspector 内创建、观察、批准、恢复和取消自动轮次的操作台
+ * @output 导出：AutoRoundsPanel 单一当前调用卡、折叠历史与按需复核操作台
+ * @pos    Inspector 内创建、观察、批准、恢复和取消 Agent 调用的紧凑控制台
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -9,7 +9,9 @@
 import {
   Bot,
   CheckCircle2,
+  ChevronDown,
   CircleStop,
+  History,
   LoaderCircle,
   Play,
   RotateCcw,
@@ -60,7 +62,7 @@ export function getCreateRunBlockedReason(
     return "已有编排操作正在处理，请稍候。";
   }
   if (runs.some((run) => CREATE_BLOCKING_STATUSES.has(run.status))) {
-    return "当前已有待启动或进行中的 Run，请先处理后再新建。";
+    return "当前已有 Agent 调用正在处理，请先等待、确认或取消。";
   }
   return undefined;
 }
@@ -68,6 +70,30 @@ export function getCreateRunBlockedReason(
 export function isRecoveryBudgetExhausted(run: OrchestrationRun): boolean {
   return run.status === "failed"
     && run.manualRecoveriesUsed >= run.policy.maxManualRecoveries;
+}
+
+const PRIMARY_RUN_STATUSES: ReadonlySet<OrchestrationRun["status"]> = new Set([
+  "idle",
+  "running",
+  "waiting_agent",
+  "waiting_user",
+]);
+
+export interface RunDisplayPartition {
+  primaryRun?: OrchestrationRun;
+  historyRuns: OrchestrationRun[];
+}
+
+export function partitionRunsForDisplay(
+  runs: readonly OrchestrationRun[],
+): RunDisplayPartition {
+  const primaryRun = runs.find((run) => PRIMARY_RUN_STATUSES.has(run.status)) ?? runs[0];
+  return {
+    primaryRun,
+    historyRuns: primaryRun
+      ? runs.filter((run) => run.id !== primaryRun.id)
+      : [],
+  };
 }
 
 export interface AutoRoundsPanelProps {
@@ -78,6 +104,7 @@ export interface AutoRoundsPanelProps {
     adapterId: string,
     messageKind: OrchestrationMessageKind,
     instruction: string,
+    confirmationBeforeCompletion: boolean,
   ) => Promise<boolean>;
   onStart: (runId: string) => Promise<void>;
   onApprove: (run: OrchestrationRun) => Promise<void>;
@@ -103,6 +130,11 @@ export function AutoRoundsPanel({
   const [adapterId, setAdapterId] = useState("");
   const [messageKind, setMessageKind] = useState<OrchestrationMessageKind>("proposal");
   const [instruction, setInstruction] = useState("");
+  const defaultConfirmation =
+    snapshot?.capabilities?.defaultPolicy.confirmation.beforeCompletion
+    ?? false;
+  const [confirmationBeforeCompletion, setConfirmationBeforeCompletion] =
+    useState(defaultConfirmation);
 
   useEffect(() => {
     if (!availableAdapters.some((adapter) => adapter.id === adapterId)) {
@@ -110,7 +142,12 @@ export function AutoRoundsPanel({
     }
   }, [adapterId, availableAdapters]);
 
+  useEffect(() => {
+    setConfirmationBeforeCompletion(defaultConfirmation);
+  }, [defaultConfirmation]);
+
   const runs = snapshot?.activeTopicId === topicId ? snapshot.runs : [];
+  const { primaryRun, historyRuns } = partitionRunsForDisplay(runs);
   const createBlockedReason = getCreateRunBlockedReason(runs, busyAction);
   const isCreateBlocked = createBlockedReason !== undefined;
 
@@ -120,7 +157,12 @@ export function AutoRoundsPanel({
     if (isCreateBlocked || !adapterId || !normalizedInstruction) {
       return;
     }
-    const succeeded = await onCreateAndStart(adapterId, messageKind, normalizedInstruction);
+    const succeeded = await onCreateAndStart(
+      adapterId,
+      messageKind,
+      normalizedInstruction,
+      confirmationBeforeCompletion,
+    );
     if (succeeded) {
       setInstruction("");
     }
@@ -131,7 +173,7 @@ export function AutoRoundsPanel({
       <header className="auto-rounds-heading">
         <div>
           <span className="auto-rounds-kicker"><Zap size={12} /> Orchestration</span>
-          <h3 id="auto-rounds-title">自动轮次</h3>
+          <h3 id="auto-rounds-title">Agent 调用</h3>
         </div>
         <span className={`mini-sync mini-sync-${snapshot?.sync.status ?? "syncing"}`}>
           {snapshot?.sync.status === "offline" ? "离线" : "LIVE"}
@@ -199,6 +241,18 @@ export function AutoRoundsPanel({
             onChange={(event) => setInstruction(event.target.value)}
           />
         </label>
+        <label className="completion-review-option">
+          <input
+            type="checkbox"
+            checked={confirmationBeforeCompletion}
+            disabled={isCreateBlocked}
+            onChange={(event) => setConfirmationBeforeCompletion(event.target.checked)}
+          />
+          <span>
+            <strong>完成前需要我确认</strong>
+            <small>关闭时，Agent 回复完成后自动归档。</small>
+          </span>
+        </label>
         {createBlockedReason ? (
           <p className="auto-round-blocked">{createBlockedReason}</p>
         ) : null}
@@ -210,27 +264,44 @@ export function AutoRoundsPanel({
           {busyAction === "create"
             ? <LoaderCircle className="spinning" size={15} />
             : <Play size={15} />}
-          {busyAction === "create" ? "创建并启动中…" : "创建并启动"}
+          {busyAction === "create" ? "正在启动 Agent…" : "启动 Agent"}
         </button>
       </form>
 
       <div className="run-stack" aria-live="polite">
-        {runs.length === 0 ? (
+        {!primaryRun ? (
           <div className="auto-rounds-empty">
             <Bot size={17} />
-            <span>当前议题还没有自动轮次。</span>
+            <span>当前议题还没有 Agent 调用。</span>
           </div>
-        ) : runs.map((run) => (
+        ) : (
           <RunCard
-            key={run.id}
-            run={run}
+            run={primaryRun}
             busyAction={busyAction}
             onStart={onStart}
             onApprove={onApprove}
             onCancel={onCancel}
             onRecover={onRecover}
           />
-        ))}
+        )}
+        {historyRuns.length > 0 ? (
+          <details className="run-history">
+            <summary>
+              <span><History size={13} /> 历史调用</span>
+              <span>{historyRuns.length} <ChevronDown size={13} /></span>
+            </summary>
+            <div className="run-history-list">
+              {historyRuns.map((run) => (
+                <RunHistoryRow
+                  key={run.id}
+                  run={run}
+                  busyAction={busyAction}
+                  onRecover={onRecover}
+                />
+              ))}
+            </div>
+          </details>
+        ) : null}
       </div>
     </section>
   );
@@ -251,6 +322,11 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
   const recoveryBudgetExhausted = isRecoveryBudgetExhausted(run);
   const totalRounds = run.plan.length;
   const displayedRound = Math.min(run.nextRoundIndex + 1, totalRounds);
+  const displayedAgent =
+    run.activeAgentId
+    ?? run.plan[Math.min(run.nextRoundIndex, Math.max(totalRounds - 1, 0))]?.adapterId
+    ?? "—";
+  const isCompletionGate = run.pendingGateId === "before_completion";
 
   return (
     <article className={`run-card run-status-${run.status}`}>
@@ -264,10 +340,15 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
       <dl className="run-metrics">
         <div><dt>轮次</dt><dd>{displayedRound}/{totalRounds}</dd></div>
         <div><dt>尝试</dt><dd>{run.currentAttempt}</dd></div>
-        <div><dt>Agent</dt><dd>{run.activeAgentId ?? run.plan[run.nextRoundIndex]?.adapterId ?? "—"}</dd></div>
+        <div><dt>Agent</dt><dd>{displayedAgent}</dd></div>
       </dl>
       {run.pendingGateId ? (
-        <p className="run-gate"><ShieldAlert size={13} /> {run.pendingGateId}</p>
+        <p className="run-gate">
+          <ShieldAlert size={13} />
+          {isCompletionGate
+            ? "回复已生成，等待你确认归档"
+            : "下一轮开始前等待你确认"}
+        </p>
       ) : null}
       {run.failure ? (
         <p className="run-failure"><ShieldAlert size={13} /> {run.failure.message}</p>
@@ -283,7 +364,7 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
         ) : null}
         {run.status === "waiting_user" ? (
           <RunButton disabled={isBusy} icon={<CheckCircle2 size={13} />} onClick={() => onApprove(run)}>
-            批准继续
+            {isCompletionGate ? "确认并完成" : "批准继续"}
           </RunButton>
         ) : null}
         {run.status === "failed" && !recoveryBudgetExhausted ? (
@@ -302,6 +383,35 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
           </RunButton>
         ) : null}
       </div>
+    </article>
+  );
+}
+
+interface RunHistoryRowProps {
+  run: OrchestrationRun;
+  busyAction: string | null;
+  onRecover: (runId: string) => Promise<void>;
+}
+
+function RunHistoryRow({ run, busyAction, onRecover }: RunHistoryRowProps) {
+  const recoveryBudgetExhausted = isRecoveryBudgetExhausted(run);
+  const agentId = run.activeAgentId ?? run.plan[0]?.adapterId ?? "—";
+  return (
+    <article className={`run-history-row run-status-${run.status}`}>
+      <span className="run-history-status-dot" aria-hidden="true" />
+      <span className="run-history-main">
+        <strong>{STATUS_LABELS[run.status]}</strong>
+        <small>{run.id.slice(0, 14)} · {agentId}</small>
+      </span>
+      {run.status === "failed" && !recoveryBudgetExhausted ? (
+        <RunButton
+          disabled={busyAction !== null}
+          icon={<RotateCcw size={12} />}
+          onClick={() => onRecover(run.id)}
+        >
+          恢复
+        </RunButton>
+      ) : null}
     </article>
   );
 }

@@ -41,6 +41,7 @@ export interface InspectorPanelProps {
     adapterId: string,
     messageKind: OrchestrationMessageKind,
     instruction: string,
+    confirmationBeforeCompletion: boolean,
   ) => Promise<boolean>;
   onStartRun: (runId: string) => Promise<void>;
   onApproveRun: (run: OrchestrationRun) => Promise<void>;

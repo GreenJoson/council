@@ -58,7 +58,7 @@ loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin�
 | `GET` | `/api/v1/settings/agents` | 不含密钥的模型与 Provider 设置 |
 | `PUT` | `/api/v1/settings/agents/:agentId` | 更新模型、地址、启用状态和 Keychain 凭据 |
 | `POST` | `/api/v1/settings/agents/:agentId/actions/test` | 有界连接测试 |
-| `GET/POST` | `/api/v1/topics/:topicId/runs` | 编排运行分页 / 创建运行（`201`） |
+| `GET/POST` | `/api/v1/topics/:topicId/runs` | 编排运行分页 / 创建运行（`201`，可选单次完成复核） |
 | `GET` | `/api/v1/runs/:runId` | 单个运行 |
 | `POST` | `/api/v1/runs/:runId/actions/start` | 启动后台执行（`202`） |
 | `POST` | `/api/v1/runs/:runId/actions/cancel` | 同步持久化取消（`200`） |
@@ -69,7 +69,8 @@ loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin�
 REST 成功统一为 `{code: 0, message, data, timestamp}`；错误使用对应 HTTP 状态码，
 响应为 `{code, message, data?, timestamp}`。字段全部使用 canonical camelCase。
 普通 Web 写入固定派生为 `human`，请求体不能提交 `createdBy`、`author`、`approvedBy`、
-`publicAuthor` 或 `allowedAgents`。Agent 消息只经过受 lease/CAS 保护的编排提交或 MCP 边界。
+`publicAuthor` 或 `allowedAgents`。创建运行只额外允许布尔值
+`confirmationBeforeCompletion` 覆盖本次完成门；Agent 消息仍只经过受 lease/CAS 保护的编排提交或 MCP 边界。
 
 `status.revision` 保持兼容的全局总版本，同时增加 `revisions.content` 与
 `revisions.orchestration`。内容表只推进 content，总运行表只推进 orchestration；lease

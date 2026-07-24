@@ -91,6 +91,7 @@ export interface OrchestrationAgentOutput {
 
 export interface CreateOrchestrationRunInput {
   topicId: string;
+  confirmationBeforeCompletion?: boolean;
   plan: Array<{
     adapterId: string;
     messageKind: OrchestrationMessageKind;

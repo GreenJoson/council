@@ -9,7 +9,7 @@
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，把公开上下文转为无 session 回复并转发公开 JSONL 消息，记录安全恢复分类 |
 | `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，转发公开 `delta.content` 并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
-| `service.ts` | 聚合 | 固定浏览器身份/策略、检查 Agent 可用性并组装生产依赖 |
+| `service.ts` | 聚合 | 固定浏览器身份/策略、允许单次覆盖完成复核、检查 Agent 可用性并组装生产依赖 |
 
 生产工厂注册 `claude`、`codex`、`deepseek` 与 `kimi` 四个后台适配器。适配器不调用兼容层客户端，
 因此不会提前写消息；回复只能由 `SQLiteCouncilStore.commitRound` 在 lease 和
@@ -34,6 +34,10 @@ Claude/Codex 每次调用从 `AgentSettingsService` 读取当前模型。远程 
 HTTPS/loopback Base URL、Keychain API Key 与启用状态同时有效时才进入 capabilities；两个
 远程 Agent 共用有界流式 Chat Completions 运行时，并以各自 adapter ID 支持
 `@deepseek`、`@kimi`。
+
+桌面默认在正式回复原子落库后自动完成运行。Composer 的 `@Agent` 调用也会显式关闭完成门；
+只有手动调用请求显式设置 `confirmationBeforeCompletion=true` 时才进入 `before_completion`
+人工复核，其他执行策略仍由服务端固定。
 
 所有适配器把临时输出写入同一个 `AgentProgressHub`：键由
 `runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经

@@ -6,6 +6,6 @@
 |---|---|---|
 | `app.ts` | 核心 | 组装内容/编排/模型设置 REST 路由、安全中间件与脱敏异常处理 |
 | `config.ts` | 配置 | 用 Zod 校验 HTTP、lease、sweeper、Agent 清理与关闭预算 |
-| `schemas.ts` | 边界 | 严格校验 path、query、body 与 Agent 设置，拒绝浏览器伪造作者和策略 |
+| `schemas.ts` | 边界 | 严格校验 path、query、body、单次完成复核布尔值与 Agent 设置，拒绝浏览器伪造作者和其余策略 |
 | `responses.ts` | 契约 | 输出统一 JSON envelope 与安全错误 |
 | `revision-stream.ts` | 实时 | 轮询 SQLite revision 广播 `council.changed`，并转发进程内 `agent.output` 草稿 SSE 与重连快照 |

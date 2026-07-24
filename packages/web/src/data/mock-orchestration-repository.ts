@@ -46,7 +46,7 @@ const CAPABILITIES: OrchestrationCapabilities = {
     agentTimeoutMs: 180_000,
     maxAttemptsPerRound: 1,
     maxManualRecoveries: 1,
-    confirmation: { beforeRounds: [], beforeCompletion: true },
+    confirmation: { beforeRounds: [], beforeCompletion: false },
   },
 };
 
@@ -144,7 +144,15 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         }
         return { ...round, publicAuthor: adapter.publicAuthor };
       }),
-      policy: structuredClone(CAPABILITIES.defaultPolicy),
+      policy: {
+        ...structuredClone(CAPABILITIES.defaultPolicy),
+        confirmation: {
+          ...CAPABILITIES.defaultPolicy.confirmation,
+          beforeCompletion:
+            input.confirmationBeforeCompletion
+            ?? CAPABILITIES.defaultPolicy.confirmation.beforeCompletion,
+        },
+      },
       nextRoundIndex: 0,
       currentAttempt: 0,
       manualRecoveriesUsed: 0,

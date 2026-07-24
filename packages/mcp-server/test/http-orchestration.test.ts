@@ -87,11 +87,13 @@ async function createRunThroughHttp(
   baseUrl: string,
   topicId: string,
   adapterId = "fake",
+  confirmationBeforeCompletion?: boolean,
 ): Promise<OrchestrationRun> {
   const response = await fetch(`${baseUrl}/api/v1/topics/${topicId}/runs`, {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({
+      confirmationBeforeCompletion,
       plan: [{ adapterId, messageKind: "proposal", instruction: "给出可验证方案" }],
     }),
   });
@@ -492,7 +494,7 @@ test("另一服务实例取消会失效 lease，并在一个心跳内中止当�
 test("approval 首次 202、重放 200/applied=false，且重放可补调度 running", async () => {
   const agent = new FakeAgent("fake", async () => ({ content: "等待完成确认的回复。" }));
   const harness = await startHttpHarness(
-    { orchestrationConfirmCompletion: true, orchestrationSweepIntervalMs: 1_000 },
+    { orchestrationConfirmCompletion: false, orchestrationSweepIntervalMs: 1_000 },
     [{ adapter: agent, publicAuthor: "claude" }],
   );
   try {
@@ -503,7 +505,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
       constraints: [],
       createdBy: "human",
     });
-    const run = await createRunThroughHttp(harness.baseUrl, topic.id);
+    const run = await createRunThroughHttp(harness.baseUrl, topic.id, "fake", true);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
       method: "POST", headers: JSON_HEADERS, body: "{}",
     });
@@ -546,7 +548,12 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
       constraints: [],
       createdBy: "human",
     });
-    const replayRun = await createRunThroughHttp(harness.baseUrl, replayTopic.id);
+    const replayRun = await createRunThroughHttp(
+      harness.baseUrl,
+      replayTopic.id,
+      "fake",
+      true,
+    );
     await fetch(`${harness.baseUrl}/api/v1/runs/${replayRun.id}/actions/start`, {
       method: "POST", headers: JSON_HEADERS, body: "{}",
     });

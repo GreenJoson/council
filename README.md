@@ -42,7 +42,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 明确隔离私有聊天历史，只共享主动发布的公开结论与证据。
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
-- Operator Console 与桌面应用可创建、启动、批准、取消和恢复 Claude/Codex 自动轮次。
+- Operator Console 与桌面应用可创建、启动、取消和恢复 Claude/Codex 调用；右栏只展示当前调用，旧调用折叠为紧凑历史。
 - Agent 进入准备或调用阶段时，讨论时间线末尾会显示具体 Agent 的动态回复状态与实时草稿；Claude 和兼容远程模型转发公开文本增量，Codex 转发公开 JSONL 消息并平滑展示较大输出块。草稿按议题隔离、不落 SQLite，运行结束、失败或取消后由正式消息接替。
 - 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
 - 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
@@ -52,6 +52,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
+- Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
 - Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
