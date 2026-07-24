@@ -1,6 +1,6 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和原始 rusqlite 连接
-//! @output 导出：TypeScript schema、分页、revision 与跨连接兼容性集成测试
-//! @pos Rust 内容核心可安全接管现有 council.sqlite3 的回归证据
+//! @output 导出：Node schema、分页、revision 与版本拒绝兼容性集成测试
+//! @pos Rust 内容核心只消费 Node 已迁移 council.sqlite3 的回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
@@ -9,10 +9,15 @@ use council_core::{
     MessageKind, PostMessageInput, RecordDecisionInput, TopicStatus,
 };
 use rusqlite::{Connection, params};
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
+use std::path::Path;
 use tempfile::tempdir;
+
+fn prepare_node_schema(database_path: &Path) {
+    Connection::open(database_path)
+        .expect("fixture database")
+        .execute_batch(include_str!("fixtures/node-schema-v1.sql"))
+        .expect("node schema fixture");
+}
 
 fn topic_input(title: &str, project_path: &str, created_by: Author) -> CreateTopicInput {
     CreateTopicInput {
@@ -28,6 +33,7 @@ fn topic_input(title: &str, project_path: &str, created_by: Author) -> CreateTop
 fn preserves_content_pagination_decision_and_revision_semantics() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("council.sqlite3");
+    prepare_node_schema(&database_path);
     let mut store = CouncilStore::open(&database_path, 5_000).expect("store should open");
     assert_eq!(
         store.get_revisions().expect("initial revisions"),
@@ -115,6 +121,7 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
 fn shares_writes_across_connections_and_enforces_domain_conflicts() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("council.sqlite3");
+    prepare_node_schema(&database_path);
     let mut first_store = CouncilStore::open(&database_path, 5_000).expect("first store");
     let mut second_store = CouncilStore::open(&database_path, 5_000).expect("second store");
     let first_topic = first_store
@@ -189,57 +196,13 @@ fn shares_writes_across_connections_and_enforces_domain_conflicts() {
 }
 
 #[test]
-fn reopens_existing_fields_without_rewriting_orchestration_revision() {
+fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("council.sqlite3");
     let topic_id = "topic_existing_typescript_fixture";
     let raw = Connection::open(&database_path).expect("raw connection");
-    raw.execute_batch(
-        "CREATE TABLE topics (
-           id TEXT PRIMARY KEY,
-           title TEXT NOT NULL,
-           question TEXT NOT NULL,
-           constraints_json TEXT NOT NULL,
-           project_path TEXT,
-           status TEXT NOT NULL CHECK (status IN ('open', 'decided', 'closed')),
-           created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-           created_at TEXT NOT NULL,
-           updated_at TEXT NOT NULL
-         );
-         CREATE TABLE messages (
-           id TEXT PRIMARY KEY,
-           topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-           author TEXT NOT NULL CHECK (author IN ('human', 'claude', 'codex', 'chair', 'other')),
-           kind TEXT NOT NULL CHECK (kind IN ('brief', 'proposal', 'critique', 'rebuttal', 'synthesis', 'note')),
-           content TEXT NOT NULL,
-           parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
-           created_at TEXT NOT NULL
-         );
-         CREATE TABLE decisions (
-           id TEXT PRIMARY KEY,
-           topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-           title TEXT NOT NULL,
-           decision TEXT NOT NULL,
-           rationale TEXT NOT NULL,
-           alternatives_json TEXT NOT NULL,
-           status TEXT NOT NULL CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
-           created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-           created_at TEXT NOT NULL,
-           updated_at TEXT NOT NULL
-         );
-         CREATE TABLE agent_sessions (
-           topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-           agent TEXT NOT NULL,
-           session_id TEXT NOT NULL,
-           updated_at TEXT NOT NULL,
-           PRIMARY KEY (topic_id, agent)
-         );
-         CREATE TABLE council_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
-         INSERT INTO council_meta (key, value) VALUES ('revision', 48);
-         INSERT INTO council_meta (key, value) VALUES ('content_revision', 7);
-         INSERT INTO council_meta (key, value) VALUES ('orchestration_revision', 41);",
-    )
-    .expect("create TypeScript-compatible schema fixture");
+    raw.execute_batch(include_str!("fixtures/node-schema-v1.sql"))
+        .expect("create Node-compatible schema fixture");
     raw.execute(
         "INSERT INTO topics (
            id, title, question, constraints_json, project_path, status,
@@ -256,6 +219,21 @@ fn reopens_existing_fields_without_rewriting_orchestration_revision() {
         ],
     )
     .expect("insert TypeScript-compatible topic fixture");
+    raw.execute(
+        "UPDATE council_meta SET value = 48 WHERE key = 'revision'",
+        [],
+    )
+    .expect("set total revision");
+    raw.execute(
+        "UPDATE council_meta SET value = 7 WHERE key = 'content_revision'",
+        [],
+    )
+    .expect("set content revision");
+    raw.execute(
+        "UPDATE council_meta SET value = 41 WHERE key = 'orchestration_revision'",
+        [],
+    )
+    .expect("set orchestration revision");
     let raw_created_by: String = raw
         .query_row(
             "SELECT created_by FROM topics WHERE id = ?1",
@@ -290,50 +268,29 @@ fn reopens_existing_fields_without_rewriting_orchestration_revision() {
 }
 
 #[test]
-fn migration_lock_keeps_revision_triggers_continuous_for_concurrent_writes() {
+fn rejects_unmigrated_and_future_schema_versions() {
     let directory = tempdir().expect("temp directory");
-    let database_path = directory.path().join("council.sqlite3");
-    CouncilStore::open(&database_path, 5_000).expect("initialize schema");
-    let blocker = Connection::open(&database_path).expect("blocker connection");
-    blocker
-        .busy_timeout(Duration::from_secs(5))
-        .expect("blocker timeout");
-    blocker
-        .execute_batch("BEGIN IMMEDIATE")
-        .expect("begin blocker transaction");
-    let topic_id = "topic_migration_lock_test".to_string();
-    let worker_path = database_path.clone();
-    let worker_topic_id = topic_id.clone();
-    let (started_tx, started_rx) = mpsc::channel();
-    let worker = thread::spawn(move || {
-        started_tx.send(()).expect("signal worker start");
-        let mut store = CouncilStore::open(worker_path, 5_000).expect("concurrent migration");
-        store
-            .post_message(PostMessageInput {
-                topic_id: worker_topic_id,
-                author: Author::Human,
-                kind: MessageKind::Note,
-                content: "迁移完成后的并发写入。".into(),
-                parent_message_id: None,
-            })
-            .expect("worker message");
-        store.get_revisions().expect("worker revisions")
-    });
-    started_rx.recv().expect("worker started");
-    thread::sleep(Duration::from_millis(20));
-    let now = "2026-01-01T00:00:00.000Z";
-    blocker
-        .execute(
-            "INSERT INTO topics (id, title, question, constraints_json, project_path, status, \
-             created_by, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, '[]', NULL, 'open', 'human', ?4, ?5)",
-            params![topic_id, "迁移并发", "revision 是否完整？", now, now],
-        )
-        .expect("insert while migration waits");
-    blocker.execute_batch("COMMIT").expect("release blocker");
+    let unmigrated = directory.path().join("unmigrated.sqlite3");
+    Connection::open(&unmigrated)
+        .expect("unmigrated database")
+        .execute_batch("CREATE TABLE placeholder (id INTEGER PRIMARY KEY);")
+        .expect("unmigrated fixture");
+    assert!(matches!(
+        CouncilStore::open(&unmigrated, 5_000),
+        Err(CouncilError::InvalidData(_))
+    ));
 
-    let revisions = worker.join().expect("worker should finish");
-    assert_eq!(revisions.total, 3);
-    assert_eq!(revisions.content, 3);
-    assert_eq!(revisions.orchestration, 0);
+    let future = directory.path().join("future.sqlite3");
+    prepare_node_schema(&future);
+    Connection::open(&future)
+        .expect("future database")
+        .execute_batch(
+            "UPDATE schema_migrations SET version = 2;
+             PRAGMA user_version = 2;",
+        )
+        .expect("future schema fixture");
+    assert!(matches!(
+        CouncilStore::open(&future, 5_000),
+        Err(CouncilError::InvalidData(_))
+    ));
 }

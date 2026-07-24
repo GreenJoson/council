@@ -1,7 +1,7 @@
 /**
- * @input  依赖：Tauri 运行时、原生对话框、本机 SettingsStore 与本地 Agent 服务探测/托管
- * @output 导出：Council 桌面命令（内容、设置、编排服务接入）和 run 启动函数
- * @pos    React 界面进入 Rust 桌面能力的唯一 IPC 边界
+ * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与只读 schema Rust Store
+ * @output 导出：迁移 ready + 身份门后的桌面内容、设置和编排服务命令
+ * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -84,14 +84,25 @@ struct RecordDecisionCommand {
 
 impl DesktopState {
     fn ensure_store(&mut self) -> Result<&mut CouncilStore, String> {
-        let database_path = self
-            .settings
-            .snapshot()
+        let snapshot = self.settings.snapshot();
+        let database_path = snapshot
             .log_library
             .ok_or_else(|| "请先设置 Council 日志库".to_string())?
             .join(DATABASE_FILE_NAME);
+        let endpoint = validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
+        let ready = orchestration::probe_http_service(&endpoint).ok_or_else(|| {
+            "本地 Agent Service 尚未完成数据库迁移，请等待 ready 后重试。".to_string()
+        })?;
+        if let Some(store) = self.store.as_ref()
+            && store.database_instance_id() != ready.database_instance_id
+        {
+            return Err(
+                "本地 Agent Service 与桌面内容 Store 的数据库实例身份不一致，已停止访问。"
+                    .to_string(),
+            );
+        }
         if self.database_path.as_ref() != Some(&database_path) || self.store.is_none() {
-            let store = open_database(database_path.clone())?;
+            let store = open_database_for_service(database_path.clone(), &ready)?;
             self.database_path = Some(database_path);
             self.store = Some(store);
         }
@@ -125,6 +136,19 @@ fn open_database(database_path: PathBuf) -> Result<CouncilStore, String> {
     Ok(store)
 }
 
+fn open_database_for_service(
+    database_path: PathBuf,
+    ready: &orchestration::ReadyService,
+) -> Result<CouncilStore, String> {
+    let store = open_database(database_path)?;
+    if store.database_instance_id() != ready.database_instance_id {
+        return Err(
+            "本地 Agent Service 与桌面内容 Store 的数据库实例身份不一致，已停止打开。".to_string(),
+        );
+    }
+    Ok(store)
+}
+
 fn emit_content_changed(app: &tauri::AppHandle, revisions: CouncilRevisions) {
     let _ = app.emit(
         "council://changed",
@@ -153,7 +177,6 @@ fn configure_log_library(
 ) -> Result<DesktopSettings, String> {
     validation::directory(&path, "日志库")?;
     let database_path = path.join(DATABASE_FILE_NAME);
-    let store = open_database(database_path.clone())?;
     let mut inner = state
         .inner
         .lock()
@@ -162,13 +185,18 @@ fn configure_log_library(
         .settings
         .configure_log_library(path)
         .map_err(|error| error.to_string())?;
-    inner.database_path = Some(database_path);
-    inner.store = Some(store);
+    inner.database_path = None;
+    inner.store = None;
     if let Some(mut child) = inner.service_child.take() {
         orchestration::terminate_service(&mut child);
     }
     // 日志库决定 sidecar 的 SQLite 路径；切换后必须重启，避免 UI 与 Agent 写入不同库。
-    let _ = start_managed_service(&mut inner, &app);
+    start_managed_service(&mut inner, &app)?;
+    let endpoint = validation::loopback_http_base_url(&settings.orchestration_base_url)?;
+    let ready = orchestration::wait_for_http_service(&endpoint)?;
+    let store = open_database_for_service(database_path.clone(), &ready)?;
+    inner.database_path = Some(database_path);
+    inner.store = Some(store);
     Ok(settings)
 }
 
@@ -344,18 +372,29 @@ async fn check_orchestration_service(
     state: tauri::State<'_, AppState>,
 ) -> Result<OrchestrationHealth, String> {
     // 先取配置并立即释放锁，网络探测期间不得持有桌面状态锁。
-    let base_url = state
-        .inner
-        .lock()
-        .map_err(|_| "桌面状态锁已损坏".to_string())?
-        .settings
-        .snapshot()
-        .orchestration_base_url;
+    let (base_url, expected_database_instance_id) = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "桌面状态锁已损坏".to_string())?;
+        (
+            inner.settings.snapshot().orchestration_base_url,
+            inner
+                .store
+                .as_ref()
+                .map(|store| store.database_instance_id().to_string()),
+        )
+    };
     let endpoint = validation::loopback_http_base_url(&base_url)?;
-    let reachable =
+    let ready =
         tauri::async_runtime::spawn_blocking(move || orchestration::probe_http_service(&endpoint))
             .await
             .map_err(|_| "本地 Agent 服务健康探测任务异常退出".to_string())?;
+    let reachable = ready.is_some_and(|service| {
+        expected_database_instance_id
+            .as_deref()
+            .is_none_or(|expected| expected == service.database_instance_id)
+    });
     Ok(OrchestrationHealth {
         base_url,
         reachable,
@@ -380,7 +419,14 @@ fn start_managed_service(
     }
     let snapshot = inner.settings.snapshot();
     let endpoint = validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
-    if orchestration::probe_http_service(&endpoint) {
+    if let Some(ready) = orchestration::probe_http_service(&endpoint) {
+        if inner
+            .store
+            .as_ref()
+            .is_some_and(|store| store.database_instance_id() != ready.database_instance_id)
+        {
+            return Err("当前端口上的 Agent Service 使用了另一数据库实例，拒绝复用。".to_string());
+        }
         return Ok(OrchestrationStartResult {
             status: "alreadyRunning",
         });
@@ -446,9 +492,23 @@ pub fn run() {
                 service_child: None,
             };
             if desktop_state.settings.snapshot().log_library.is_some() {
-                // 已完成首次配置的用户打开 App 即拉起服务；失败不阻断内容阅读，
-                // 前端健康轮询仍会显示离线并允许后续重试。
-                let _ = start_managed_service(&mut desktop_state, app.handle());
+                // Node sidecar 是唯一 schema 迁移器；只有 ready 后 Rust 才能打开数据库。
+                if start_managed_service(&mut desktop_state, app.handle()).is_ok() {
+                    let snapshot = desktop_state.settings.snapshot();
+                    if let Ok(endpoint) =
+                        validation::loopback_http_base_url(&snapshot.orchestration_base_url)
+                        && let Some(log_library) = snapshot.log_library
+                    {
+                        let database_path = log_library.join(DATABASE_FILE_NAME);
+                        if let Ok(ready) = orchestration::wait_for_http_service(&endpoint)
+                            && let Ok(store) =
+                                open_database_for_service(database_path.clone(), &ready)
+                        {
+                            desktop_state.database_path = Some(database_path);
+                            desktop_state.store = Some(store);
+                        }
+                    }
+                }
             }
             app.manage(AppState {
                 inner: Mutex::new(desktop_state),
@@ -480,22 +540,22 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{DATABASE_FILE_NAME, DesktopState, SettingsStore};
+    use super::{DesktopState, SettingsStore, open_database, open_database_for_service};
+    use crate::orchestration::ReadyService;
+    use rusqlite::Connection;
     use std::fs;
 
     #[test]
-    fn reuses_store_until_log_library_changes() {
+    fn refuses_rust_store_before_sidecar_reports_ready() {
         let root = tempfile::tempdir().expect("create temp root");
         let config = root.path().join("config");
-        let first_library = root.path().join("first-logs");
-        let second_library = root.path().join("second-logs");
-        fs::create_dir_all(&first_library).expect("create first log library");
-        fs::create_dir_all(&second_library).expect("create second log library");
+        let log_library = root.path().join("logs");
+        fs::create_dir_all(&log_library).expect("create log library");
 
         let mut settings = SettingsStore::open(&config).expect("open settings");
         settings
-            .configure_log_library(first_library.clone())
-            .expect("configure first library");
+            .configure_log_library(log_library)
+            .expect("configure log library");
         let mut state = DesktopState {
             settings,
             database_path: None,
@@ -503,22 +563,45 @@ mod tests {
             service_child: None,
         };
 
-        let first_store = state.ensure_store().expect("open first store") as *const _;
-        let reused_store = state.ensure_store().expect("reuse first store") as *const _;
-        assert_eq!(first_store, reused_store);
-        assert_eq!(
-            state.database_path.as_deref(),
-            Some(first_library.join(DATABASE_FILE_NAME).as_path())
-        );
+        let error = match state.ensure_store() {
+            Ok(_) => panic!("sidecar is not ready"),
+            Err(error) => error,
+        };
+        assert!(error.contains("尚未完成数据库迁移"));
+        assert!(state.database_path.is_none());
+        assert!(state.store.is_none());
+    }
 
-        state
-            .settings
-            .configure_log_library(second_library.clone())
-            .expect("configure second library");
-        state.ensure_store().expect("open second store");
-        assert_eq!(
-            state.database_path.as_deref(),
-            Some(second_library.join(DATABASE_FILE_NAME).as_path())
-        );
+    #[test]
+    fn rejects_ready_service_for_different_database_identity() {
+        let root = tempfile::tempdir().expect("create temp root");
+        let database_a = root.path().join("a.sqlite3");
+        let database_b = root.path().join("b.sqlite3");
+        for (path, instance_id) in [
+            (&database_a, "00000000-0000-4000-8000-00000000000a"),
+            (&database_b, "00000000-0000-4000-8000-00000000000b"),
+        ] {
+            let connection = Connection::open(path).expect("open fixture database");
+            connection
+                .execute_batch(include_str!(
+                    "../../../../crates/council-core/tests/fixtures/node-schema-v1.sql"
+                ))
+                .expect("create fixture schema");
+            connection
+                .execute(
+                    "UPDATE council_identity SET instance_id = ?1 WHERE singleton = 1",
+                    [instance_id],
+                )
+                .expect("set fixture identity");
+        }
+        let service_store = open_database(database_a).expect("open service database");
+        let ready = ReadyService {
+            database_instance_id: service_store.database_instance_id().to_string(),
+        };
+        let error = match open_database_for_service(database_b, &ready) {
+            Ok(_) => panic!("different database identity must fail closed"),
+            Err(error) => error,
+        };
+        assert!(error.contains("实例身份不一致"));
     }
 }

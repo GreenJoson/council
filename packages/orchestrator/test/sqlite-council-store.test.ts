@@ -17,6 +17,7 @@ import {
   LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
   LeaseConflictError,
   LeaseLostError,
+  ORCHESTRATION_SCHEMA_SQL,
   SQLiteCouncilStore,
   StoreConflictError,
 } from "../src/index.js";
@@ -70,6 +71,7 @@ function createBaseDatabase(databasePath: string): void {
           UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
         END;
     `);
+    database.exec(ORCHESTRATION_SCHEMA_SQL);
     const now = new Date().toISOString();
     database
       .prepare(`

@@ -97,11 +97,16 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   try {
     const topic = database.createTopic({
       title: "测试议题",
@@ -159,11 +164,16 @@ test("ClaudeClient 取消生成时不写 session 或消息", async () => {
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   try {
     const topic = database.createTopic({
       title: "取消测试",
@@ -211,11 +221,16 @@ test("ClaudeClient 拒绝数据库中绕过入口校验的相对项目路径", a
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   try {
     const topic = database.createTopic({
       title: "路径校验测试",
@@ -257,11 +272,16 @@ test("ClaudeClient 可信议题超限时不调用 Runtime 且数据库零写入"
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 120,
     maxOutputChars: 40_000,
     defaultMessageLimit: 20,
   };
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   const runtime = new FakeRuntime({ content: "不应返回", sessionId: "session_forbidden" });
   try {
     const topic = database.createTopic({
@@ -306,11 +326,16 @@ test("ClaudeClient 超长公开输出不推进 session 且不写消息", async (
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 40_000,
     defaultMessageLimit: 20,
   };
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   const runtime = new FakeRuntime({
     content: "x".repeat(30_001),
     sessionId: "session_must_not_advance",

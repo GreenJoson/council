@@ -1,7 +1,7 @@
 /**
- * @input  依赖：SQLite 数据文件、领域类型与安全错误语义
- * @output 导出：CouncilDatabase 持久化与单调 revision 服务
- * @pos    双桌面客户端共享状态和变更检测的唯一数据访问层
+ * @input  依赖：已由 Node 迁移器准备的 SQLite、领域类型与安全错误语义
+ * @output 导出：CouncilDatabase schema/实例身份验证、持久化与单调 revision 服务
+ * @pos    双桌面客户端共享状态和变更检测的数据访问层，不拥有生产 DDL
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -9,6 +9,12 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { CouncilConflictError, CouncilNotFoundError } from "./errors.js";
+import {
+  assertCouncilSchema,
+  migrateCouncilSchema,
+  readCouncilDatabaseInstanceId,
+  type CouncilMigrationOptions,
+} from "./schema-migrator.js";
 import type {
   Author,
   CouncilMessage,
@@ -130,6 +136,15 @@ function decisionFromRow(row: DecisionRow): Decision {
 export class CouncilDatabase {
   readonly #database: DatabaseSync;
 
+  static async open(
+    databasePath: string,
+    busyTimeoutMs: number,
+    migrationOptions: CouncilMigrationOptions,
+  ): Promise<CouncilDatabase> {
+    await migrateCouncilSchema(databasePath, busyTimeoutMs, migrationOptions);
+    return new CouncilDatabase(databasePath, busyTimeoutMs);
+  }
+
   constructor(databasePath: string, busyTimeoutMs: number) {
     if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs <= 0) {
       throw new Error("SQLite busy timeout 必须是正整数。");
@@ -140,139 +155,9 @@ export class CouncilDatabase {
       this.#database.exec("PRAGMA journal_mode = WAL;");
       this.#database.exec("PRAGMA synchronous = NORMAL;");
       this.#database.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
-      this.#migrate();
+      assertCouncilSchema(this.#database);
     } catch (error) {
       this.#database.close();
-      throw error;
-    }
-  }
-
-  #migrate(): void {
-    this.#database.exec("BEGIN IMMEDIATE;");
-    try {
-      this.#database.exec(`
-      CREATE TABLE IF NOT EXISTS topics (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        question TEXT NOT NULL,
-        constraints_json TEXT NOT NULL,
-        project_path TEXT,
-        status TEXT NOT NULL CHECK (status IN ('open', 'decided', 'closed')),
-        created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-        author TEXT NOT NULL CHECK (author IN ('human', 'claude', 'codex', 'chair', 'other')),
-        kind TEXT NOT NULL CHECK (kind IN ('brief', 'proposal', 'critique', 'rebuttal', 'synthesis', 'note')),
-        content TEXT NOT NULL,
-        parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS decisions (
-        id TEXT PRIMARY KEY,
-        topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-        title TEXT NOT NULL,
-        decision TEXT NOT NULL,
-        rationale TEXT NOT NULL,
-        alternatives_json TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
-        created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS agent_sessions (
-        topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-        agent TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (topic_id, agent)
-      );
-
-      CREATE TABLE IF NOT EXISTS council_meta (
-        key TEXT PRIMARY KEY,
-        value INTEGER NOT NULL
-      );
-
-      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('revision', 0);
-      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('content_revision', 0);
-      INSERT OR IGNORE INTO council_meta (key, value) VALUES ('orchestration_revision', 0);
-
-      DROP TRIGGER IF EXISTS trg_topics_revision_insert;
-      DROP TRIGGER IF EXISTS trg_topics_revision_update;
-      DROP TRIGGER IF EXISTS trg_topics_revision_delete;
-      DROP TRIGGER IF EXISTS trg_messages_revision_insert;
-      DROP TRIGGER IF EXISTS trg_messages_revision_update;
-      DROP TRIGGER IF EXISTS trg_messages_revision_delete;
-      DROP TRIGGER IF EXISTS trg_decisions_revision_insert;
-      DROP TRIGGER IF EXISTS trg_decisions_revision_update;
-      DROP TRIGGER IF EXISTS trg_decisions_revision_delete;
-
-      CREATE TRIGGER trg_topics_revision_insert
-        AFTER INSERT ON topics BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_topics_revision_update
-        AFTER UPDATE ON topics BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_topics_revision_delete
-        AFTER DELETE ON topics BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_messages_revision_insert
-        AFTER INSERT ON messages BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_messages_revision_update
-        AFTER UPDATE ON messages BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_messages_revision_delete
-        AFTER DELETE ON messages BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_decisions_revision_insert
-        AFTER INSERT ON decisions BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_decisions_revision_update
-        AFTER UPDATE ON decisions BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-      CREATE TRIGGER trg_decisions_revision_delete
-        AFTER DELETE ON decisions BEGIN
-          UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-          UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-        END;
-
-      CREATE INDEX IF NOT EXISTS idx_topics_project_updated
-        ON topics(project_path, updated_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_messages_topic_created
-        ON messages(topic_id, created_at ASC);
-      CREATE INDEX IF NOT EXISTS idx_decisions_topic_created
-        ON decisions(topic_id, created_at ASC);
-      `);
-      this.#database.exec("COMMIT;");
-    } catch (error) {
-      try {
-        this.#database.exec("ROLLBACK;");
-      } catch {
-        // 原始迁移错误优先；构造器会关闭连接。
-      }
       throw error;
     }
   }
@@ -287,6 +172,10 @@ export class CouncilDatabase {
       this.#database.exec("ROLLBACK;");
       throw error;
     }
+  }
+
+  getDatabaseInstanceId(): string {
+    return readCouncilDatabaseInstanceId(this.#database);
   }
 
   createTopic(input: {

@@ -44,7 +44,7 @@ import {
   encodeRunSnapshot,
   validateRunSnapshot,
 } from "./run-codec.js";
-import { migrateOrchestrationSchema } from "./schema.js";
+import { assertOrchestrationSchema } from "./schema.js";
 
 interface RunRow {
   id: unknown;
@@ -222,7 +222,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       database.exec("PRAGMA foreign_keys = ON;");
       database.exec("PRAGMA journal_mode = WAL;");
       database.exec("PRAGMA synchronous = NORMAL;");
-      migrateOrchestrationSchema(database);
+      assertOrchestrationSchema(database);
     } catch (error) {
       database.close();
       throw error;

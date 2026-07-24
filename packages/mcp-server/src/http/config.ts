@@ -1,6 +1,6 @@
 /**
- * @input  依赖：COUNCIL_DATA_DIR 与 COUNCIL_HTTP_* 环境变量
- * @output 导出：经过 Zod 校验的 CouncilHttpConfig
+ * @input  依赖：COUNCIL_DATA_DIR、schema 迁移与 COUNCIL_HTTP_* 环境变量
+ * @output 导出：经过 Zod 校验且含迁移重试策略的 CouncilHttpConfig
  * @pos    本地 HTTP 服务的唯一配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -26,6 +26,7 @@ const envSchema = z
   .object({
     COUNCIL_DATA_DIR: z.string().trim().min(1),
     COUNCIL_SQLITE_BUSY_TIMEOUT_MS: positiveInteger,
+    COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS: positiveInteger,
     COUNCIL_DEFAULT_MESSAGE_LIMIT: positiveInteger.max(MAX_LIST_LIMIT),
     COUNCIL_HTTP_HOST: z.string().trim().min(1).max(253),
     COUNCIL_HTTP_PORT: positiveInteger.max(65_535),
@@ -131,6 +132,8 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
   return {
     databasePath: path.join(dataDir, "council.sqlite3"),
     sqliteBusyTimeoutMs: parsed.data.COUNCIL_SQLITE_BUSY_TIMEOUT_MS,
+    schemaMigrationMaxAttempts:
+      parsed.data.COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS,
     defaultMessageLimit: parsed.data.COUNCIL_DEFAULT_MESSAGE_LIMIT,
     host: parsed.data.COUNCIL_HTTP_HOST,
     port: parsed.data.COUNCIL_HTTP_PORT,

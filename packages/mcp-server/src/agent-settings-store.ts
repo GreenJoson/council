@@ -1,7 +1,7 @@
 /**
- * @input  依赖：SQLite 数据文件、内置 Agent 初始配置与用户设置更新
+ * @input  依赖：已迁移 SQLite、内置 Agent 初始配置与用户设置更新
  * @output 导出：不含密钥的 AgentSetting 持久化仓储
- * @pos    模型、Provider 地址和启用状态的本地单一真源；API Key 不进入 SQLite
+ * @pos    模型、Provider 地址和启用状态的数据访问层；不拥有 DDL，API Key 不进入 SQLite
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -56,18 +56,16 @@ export class AgentSettingsStore {
     try {
       this.#database.exec("PRAGMA foreign_keys = ON;");
       this.#database.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
-      this.#database.exec(`
-        CREATE TABLE IF NOT EXISTS agent_settings (
-          id TEXT PRIMARY KEY,
-          label TEXT NOT NULL,
-          kind TEXT NOT NULL CHECK (kind IN ('claude-cli', 'codex-cli', 'openai-compatible')),
-          model TEXT NOT NULL,
-          base_url TEXT,
-          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
-          requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1)),
-          updated_at TEXT NOT NULL
-        );
-      `);
+      const schema = this.#database
+        .prepare(`
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table' AND name = 'agent_settings'
+        `)
+        .get() as unknown as { name?: unknown } | undefined;
+      if (schema?.name !== "agent_settings") {
+        throw new Error("Council SQLite 尚未由 Node 迁移器创建 agent_settings。");
+      }
       const insert = this.#database.prepare(`
         INSERT OR IGNORE INTO agent_settings (
           id, label, kind, model, base_url, enabled, requires_api_key, updated_at

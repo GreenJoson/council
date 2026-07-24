@@ -15,7 +15,8 @@ Claude Desktop ──┘                │
 浏览器 ───────────── Operator Console ── REST/SSE ─┘
 
 Council.app ───────── React UI ── Tauri IPC ── Rust council-core ── SQLite
-        └──────────── 内置 Agent Service sidecar ── ExecutionManager ── Claude/Codex CLI
+        └──────────── 内置 Agent Service sidecar ── Node schema migrator ── SQLite
+                                              └──── ExecutionManager ── Claude/Codex CLI
 
 Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
                                       │
@@ -31,6 +32,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - `crates/council-core/`：与现有 TypeScript schema 同构的 Rust SQLite 内容核心。
 - `packages/orchestrator/`：与具体模型解耦的受控轮次状态机和适配器接口。
 - 运行数据：由 `COUNCIL_DATA_DIR` 指定，始终放在源码目录之外，不提交 Git。
+- SQLite schema 只允许 Node Agent Service 迁移；Rust 与各 Store 只验证并消费已迁移结构。
 
 ## 当前能力
 
@@ -55,6 +57,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
 - Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
+- Node 迁移器在服务就绪前执行连续版本镜像校验、WAL checkpoint、官方在线备份、只读备份验证、canonical schema 校验和排他事务迁移；桌面 Rust 层只有收到 `ready` 且数据库实例 UUID 与 Store 一致后才打开数据库。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
 - 桌面端使用独立的多 Agent 圆桌图标，并生成各平台所需的打包尺寸。
 
@@ -98,6 +101,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI 或 Codex CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。启用远程 Provider 后，可用 `@deepseek`、`@kimi` 或自动轮次面板调用；远程 Provider 只接收 Council 已公开上下文，不会直接读取项目文件。
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
+SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全](docs/schema-migration-safety.md)。
 
 ## WebUI 设计探索
 

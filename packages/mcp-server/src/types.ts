@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：议题、消息、决策与配置类型
+ * @output 导出：议题、消息、决策与含 schema 迁移策略的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,7 @@ export interface CouncilConfig {
   codexKillGraceMs: number;
   keychainCommand?: string;
   sqliteBusyTimeoutMs: number;
+  schemaMigrationMaxAttempts: number;
   maxContextChars: number;
   maxOutputChars: number;
   defaultMessageLimit: number;
@@ -44,6 +45,7 @@ export interface CouncilConfig {
 export interface CouncilHttpConfig {
   databasePath: string;
   sqliteBusyTimeoutMs: number;
+  schemaMigrationMaxAttempts: number;
   defaultMessageLimit: number;
   host: string;
   port: number;

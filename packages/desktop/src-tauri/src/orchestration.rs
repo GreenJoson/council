@@ -1,6 +1,6 @@
 /**
  * @input  依赖：loopback 端点、日志库、内置 sidecar/默认配置与 std 网络/进程原语
- * @output 导出：Agent 服务启动配置构造、健康探测、进程拉起与随应用退出的终止函数
+ * @output 导出：Agent 服务启动配置、ready + 数据库身份探测/等待、进程拉起与退出终止函数
  * @pos    桌面壳与内置 Agent Service 之间唯一的进程、配置和连通性边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -22,6 +22,8 @@ use std::time::Duration;
 const PROBE_CONNECT_TIMEOUT_MS: u64 = 1_000;
 const PROBE_IO_TIMEOUT_MS: u64 = 2_000;
 const PROBE_PATH: &str = "/api/v1/status";
+const READY_MAX_ATTEMPTS_KEY: &str = "COUNCIL_DESKTOP_READY_MAX_ATTEMPTS";
+const READY_POLL_MS_KEY: &str = "COUNCIL_DESKTOP_READY_POLL_MS";
 const SIDECAR_BINARY_NAME: &str = "council-agent-service";
 const SERVICE_LOG_FILE_NAME: &str = "agent-service.log";
 const LOGIN_SHELL_PATH_MARKER: &str = "__COUNCIL_PATH__";
@@ -29,6 +31,11 @@ const LOGIN_SHELL_POLL_COUNT: u32 = 50;
 /// SIGTERM 后的有界等待：20 次 × 100ms = 2 秒，超时升级 SIGKILL。
 const TERMINATE_POLL_COUNT: u32 = 20;
 const TERMINATE_POLL_INTERVAL_MS: u64 = 100;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadyService {
+    pub database_instance_id: String,
+}
 
 /// Tauri 在开发输出和发行包里都会把 externalBin 放在主程序旁边，并移除 target triple 后缀。
 pub fn bundled_service_binary() -> Result<PathBuf, String> {
@@ -143,12 +150,11 @@ pub fn service_log_path(log_directory: &Path) -> PathBuf {
     log_directory.join(SERVICE_LOG_FILE_NAME)
 }
 
-/// 探测本地 Agent 服务是否可达：TCP 连通 + 最小 HTTP GET。
-/// 只要对端回出合法 HTTP 状态行（包括 4xx/5xx）即视为服务在监听；
-/// Rust 侧探测不带 Origin 头，因此不受服务端 CORS 白名单影响。
-pub fn probe_http_service(endpoint: &LoopbackEndpoint) -> bool {
+/// 只有 status 返回 HTTP 200、统一 code=0、data.ready=true 且带数据库实例身份才视为可用；
+/// 端口监听但 schema 迁移失败或服务未 ready 时绝不允许 Rust Store 打开。
+pub fn probe_http_service(endpoint: &LoopbackEndpoint) -> Option<ReadyService> {
     let Ok(addresses) = (endpoint.host.as_str(), endpoint.port).to_socket_addrs() else {
-        return false;
+        return None;
     };
     for address in addresses {
         let Ok(mut stream) =
@@ -166,20 +172,67 @@ pub fn probe_http_service(endpoint: &LoopbackEndpoint) -> bool {
         if stream.write_all(request.as_bytes()).is_err() {
             continue;
         }
-        let mut buffer = [0_u8; 16];
-        let mut read_total = 0_usize;
-        while read_total < buffer.len() {
-            match stream.read(&mut buffer[read_total..]) {
-                Ok(0) => break,
-                Ok(count) => read_total += count,
-                Err(_) => break,
-            }
+        let mut response = Vec::new();
+        if stream.take(8_192).read_to_end(&mut response).is_err() {
+            continue;
         }
-        if buffer[..read_total].starts_with(b"HTTP/") {
-            return true;
+        let Ok(response) = String::from_utf8(response) else {
+            continue;
+        };
+        let Some((headers, body)) = response.split_once("\r\n\r\n") else {
+            continue;
+        };
+        if !headers.lines().next().is_some_and(|line| {
+            line.starts_with("HTTP/1.1 200 ") || line.starts_with("HTTP/1.0 200 ")
+        }) {
+            continue;
+        }
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(body) else {
+            continue;
+        };
+        if payload.get("code").and_then(serde_json::Value::as_i64) == Some(0)
+            && payload
+                .pointer("/data/ready")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        {
+            let Some(database_instance_id) = payload
+                .pointer("/data/databaseInstanceId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 128)
+            else {
+                continue;
+            };
+            return Some(ReadyService {
+                database_instance_id: database_instance_id.to_string(),
+            });
         }
     }
-    false
+    None
+}
+
+fn positive_default(name: &str) -> Result<u64, String> {
+    let defaults = service_defaults()?;
+    let value = defaults
+        .get(name)
+        .ok_or_else(|| format!("内置 Agent Service 缺少 {name}。"))?;
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|parsed| *parsed > 0)
+        .ok_or_else(|| format!("内置 Agent Service 的 {name} 必须是正整数。"))
+}
+
+pub fn wait_for_http_service(endpoint: &LoopbackEndpoint) -> Result<ReadyService, String> {
+    let max_attempts = positive_default(READY_MAX_ATTEMPTS_KEY)?;
+    let poll_ms = positive_default(READY_POLL_MS_KEY)?;
+    for _ in 0..max_attempts {
+        if let Some(ready) = probe_http_service(endpoint) {
+            return Ok(ready);
+        }
+        std::thread::sleep(Duration::from_millis(poll_ms));
+    }
+    Err("本地 Agent Service 未在配置时限内完成数据库迁移并进入 ready。".to_string())
 }
 
 /// 按 autostart 配置拉起本地 Agent 服务子进程。
@@ -285,10 +338,13 @@ mod tests {
             let mut request = [0_u8; 512];
             let _ = stream.read(&mut request);
             let _ = stream.write_all(
-                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{}",
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{\"code\":0,\"data\":{\"ready\":true,\"databaseInstanceId\":\"00000000-0000-4000-8000-000000000001\"}}",
             );
         });
-        assert!(probe_http_service(&endpoint(port)));
+        assert_eq!(
+            probe_http_service(&endpoint(port)).map(|ready| ready.database_instance_id),
+            Some("00000000-0000-4000-8000-000000000001".to_string())
+        );
         server.join().expect("join probe server");
     }
 
@@ -298,7 +354,23 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral listener");
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
-        assert!(!probe_http_service(&endpoint(port)));
+        assert!(probe_http_service(&endpoint(port)).is_none());
+    }
+
+    #[test]
+    fn rejects_listening_http_service_without_ready_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind probe listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept probe");
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n{\"code\":503,\"data\":{\"ready\":false}}",
+            );
+        });
+        assert!(probe_http_service(&endpoint(port)).is_none());
+        server.join().expect("join probe server");
     }
 
     #[test]

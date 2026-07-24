@@ -76,11 +76,12 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
-  const bundle = createCouncilServer(config);
+  const bundle = await createCouncilServer(config);
   const client = new Client({ name: "council-test-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
@@ -156,11 +157,12 @@ test("MCP 取消 council_ask_claude 会终止进程且不写共享数据库", as
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
-  const bundle = createCouncilServer(config);
+  const bundle = await createCouncilServer(config);
   const client = new Client({ name: "council-abort-client", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   let pid: number | undefined;

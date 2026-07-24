@@ -1,6 +1,6 @@
 /**
  * @input  依赖：隔离数据目录、COUNCIL_CLAUDE_* 环境变量与 loadConfig
- * @output 导出：Claude 权限、参数和定时器安全配置测试
+ * @output 导出：Claude 权限、迁移必填项、参数和定时器安全配置测试
  * @pos    后台运行时启动前的配置边界单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,7 @@ function createEnv(dataDir: string): NodeJS.ProcessEnv {
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",
     COUNCIL_CLAUDE_MAX_TURNS: "3",
     COUNCIL_SQLITE_BUSY_TIMEOUT_MS: "5000",
+    COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS: "3",
     COUNCIL_MAX_CONTEXT_CHARS: "20000",
     COUNCIL_MAX_OUTPUT_CHARS: "10000",
     COUNCIL_DEFAULT_MESSAGE_LIMIT: "20",
@@ -41,6 +42,20 @@ test("Claude 配置只允许 plan 权限模式", () => {
           COUNCIL_CLAUDE_PERMISSION_MODE: "acceptEdits",
         }),
       /必须为 plan/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("MCP 配置缺少 schema 迁移重试项时 fail fast", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-config-migration-required-"));
+  try {
+    const env = createEnv(directory);
+    delete env.COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS;
+    assert.throws(
+      () => loadConfig(env),
+      /COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS/,
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -1,6 +1,6 @@
-//! @input 依赖：现有 Council SQLite schema、rusqlite 和内容领域类型
-//! @output 导出：CouncilStore 兼容迁移、查询、写入和 revision API
-//! @pos council.sqlite3 内容表与 Rust 桌面调用方之间的唯一持久化边界
+//! @input 依赖：已由 Node 迁移器准备的 Council SQLite、rusqlite 和内容领域类型
+//! @output 导出：CouncilStore schema/实例身份验证、查询、写入和 revision API
+//! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费持久化边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
@@ -18,122 +18,225 @@ use crate::types::{
     TopicStatus,
 };
 
-const MIGRATION_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS topics (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  question TEXT NOT NULL,
-  constraints_json TEXT NOT NULL,
-  project_path TEXT,
-  status TEXT NOT NULL CHECK (status IN ('open', 'decided', 'closed')),
-  created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
+const SUPPORTED_SCHEMA_VERSION: i64 = 1;
+const REQUIRED_TABLES: &[&str] = &[
+    "topics",
+    "messages",
+    "decisions",
+    "council_meta",
+    "council_identity",
+    "schema_migrations",
+];
+const REQUIRED_INDEXES: &[&str] = &[
+    "idx_topics_project_updated",
+    "idx_messages_topic_created",
+    "idx_decisions_topic_created",
+];
+const REQUIRED_TRIGGERS: &[&str] = &[
+    "trg_topics_revision_insert",
+    "trg_topics_revision_update",
+    "trg_topics_revision_delete",
+    "trg_messages_revision_insert",
+    "trg_messages_revision_update",
+    "trg_messages_revision_delete",
+    "trg_decisions_revision_insert",
+    "trg_decisions_revision_update",
+    "trg_decisions_revision_delete",
+];
+const TOPIC_COLUMNS: &[&str] = &[
+    "id",
+    "title",
+    "question",
+    "constraints_json",
+    "project_path",
+    "status",
+    "created_by",
+    "created_at",
+    "updated_at",
+];
+const MESSAGE_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "author",
+    "kind",
+    "content",
+    "parent_message_id",
+    "created_at",
+];
+const DECISION_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "title",
+    "decision",
+    "rationale",
+    "alternatives_json",
+    "status",
+    "created_by",
+    "created_at",
+    "updated_at",
+];
 
-CREATE TABLE IF NOT EXISTS messages (
-  id TEXT PRIMARY KEY,
-  topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-  author TEXT NOT NULL CHECK (author IN ('human', 'claude', 'codex', 'chair', 'other')),
-  kind TEXT NOT NULL CHECK (kind IN ('brief', 'proposal', 'critique', 'rebuttal', 'synthesis', 'note')),
-  content TEXT NOT NULL,
-  parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
-  created_at TEXT NOT NULL
-);
+fn assert_schema_objects(
+    connection: &Connection,
+    object_type: &str,
+    names: &[&str],
+) -> CouncilResult<()> {
+    for name in names {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2
+             )",
+            params![object_type, name],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(CouncilError::InvalidData(format!(
+                "Council SQLite 缺少已迁移 {object_type}：{name}。"
+            )));
+        }
+    }
+    Ok(())
+}
 
-CREATE TABLE IF NOT EXISTS decisions (
-  id TEXT PRIMARY KEY,
-  topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  decision TEXT NOT NULL,
-  rationale TEXT NOT NULL,
-  alternatives_json TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
-  created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
+fn assert_table_columns(
+    connection: &Connection,
+    table: &str,
+    expected: &[&str],
+) -> CouncilResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let actual = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual != expected {
+        return Err(CouncilError::InvalidData(format!(
+            "Council SQLite 表字段不兼容：{table}。"
+        )));
+    }
+    Ok(())
+}
 
-CREATE TABLE IF NOT EXISTS agent_sessions (
-  topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-  agent TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (topic_id, agent)
-);
+fn assert_foreign_key(
+    connection: &Connection,
+    table: &str,
+    from: &str,
+    target_table: &str,
+    target_column: &str,
+) -> CouncilResult<()> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list(?1)
+         WHERE \"from\" = ?2 AND \"table\" = ?3 AND \"to\" = ?4 AND on_delete = 'CASCADE'",
+        params![table, from, target_table, target_column],
+        |row| row.get(0),
+    )?;
+    if count != 1 {
+        return Err(CouncilError::InvalidData(format!(
+            "Council SQLite 外键定义不兼容：{table}.{from}。"
+        )));
+    }
+    Ok(())
+}
 
-CREATE TABLE IF NOT EXISTS council_meta (
-  key TEXT PRIMARY KEY,
-  value INTEGER NOT NULL
-);
+fn assert_index_columns(
+    connection: &Connection,
+    index: &str,
+    expected: &[&str],
+) -> CouncilResult<()> {
+    let mut statement =
+        connection.prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")?;
+    let actual = statement
+        .query_map([index], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if actual != expected {
+        return Err(CouncilError::InvalidData(format!(
+            "Council SQLite 索引定义不兼容：{index}。"
+        )));
+    }
+    Ok(())
+}
 
-INSERT OR IGNORE INTO council_meta (key, value) VALUES ('revision', 0);
-INSERT OR IGNORE INTO council_meta (key, value) VALUES ('content_revision', 0);
-INSERT OR IGNORE INTO council_meta (key, value) VALUES ('orchestration_revision', 0);
+fn read_database_instance_id(connection: &Connection) -> CouncilResult<String> {
+    let mut statement =
+        connection.prepare("SELECT instance_id FROM council_identity WHERE singleton = 1")?;
+    let identities = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if identities.len() != 1 || uuid::Uuid::parse_str(&identities[0]).is_err() {
+        return Err(CouncilError::InvalidData(
+            "Council SQLite 数据库实例身份无效。".into(),
+        ));
+    }
+    Ok(identities[0].clone())
+}
 
-DROP TRIGGER IF EXISTS trg_topics_revision_insert;
-DROP TRIGGER IF EXISTS trg_topics_revision_update;
-DROP TRIGGER IF EXISTS trg_topics_revision_delete;
-DROP TRIGGER IF EXISTS trg_messages_revision_insert;
-DROP TRIGGER IF EXISTS trg_messages_revision_update;
-DROP TRIGGER IF EXISTS trg_messages_revision_delete;
-DROP TRIGGER IF EXISTS trg_decisions_revision_insert;
-DROP TRIGGER IF EXISTS trg_decisions_revision_update;
-DROP TRIGGER IF EXISTS trg_decisions_revision_delete;
-
-CREATE TRIGGER trg_topics_revision_insert
-  AFTER INSERT ON topics BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_topics_revision_update
-  AFTER UPDATE ON topics BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_topics_revision_delete
-  AFTER DELETE ON topics BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_messages_revision_insert
-  AFTER INSERT ON messages BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_messages_revision_update
-  AFTER UPDATE ON messages BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_messages_revision_delete
-  AFTER DELETE ON messages BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_decisions_revision_insert
-  AFTER INSERT ON decisions BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_decisions_revision_update
-  AFTER UPDATE ON decisions BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-CREATE TRIGGER trg_decisions_revision_delete
-  AFTER DELETE ON decisions BEGIN
-    UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
-    UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
-  END;
-
-CREATE INDEX IF NOT EXISTS idx_topics_project_updated
-  ON topics(project_path, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_topic_created
-  ON messages(topic_id, created_at ASC);
-CREATE INDEX IF NOT EXISTS idx_decisions_topic_created
-  ON decisions(topic_id, created_at ASC);
-"#;
+fn validate_schema(connection: &Connection) -> CouncilResult<()> {
+    let user_version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let mut ledger_statement = connection
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .map_err(|_| {
+            CouncilError::InvalidData(
+                "Council SQLite 尚未由 Node 迁移器准备 schema_migrations。".into(),
+            )
+        })?;
+    let ledger_versions = ledger_statement
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (index, version) in ledger_versions.iter().enumerate() {
+        if *version != (index as i64) + 1 {
+            return Err(CouncilError::InvalidData(
+                "Council schema_migrations 账本不连续。".into(),
+            ));
+        }
+    }
+    let ledger_version = ledger_versions.last().copied().unwrap_or(0);
+    if user_version != ledger_version {
+        return Err(CouncilError::InvalidData(
+            "Council schema_migrations 与 user_version 不一致。".into(),
+        ));
+    }
+    if user_version != SUPPORTED_SCHEMA_VERSION {
+        return Err(CouncilError::InvalidData(format!(
+            "Council SQLite schema 版本 {user_version} 不受当前桌面核心支持。"
+        )));
+    }
+    assert_schema_objects(connection, "table", REQUIRED_TABLES)?;
+    assert_schema_objects(connection, "index", REQUIRED_INDEXES)?;
+    assert_schema_objects(connection, "trigger", REQUIRED_TRIGGERS)?;
+    assert_table_columns(connection, "topics", TOPIC_COLUMNS)?;
+    assert_table_columns(connection, "messages", MESSAGE_COLUMNS)?;
+    assert_table_columns(connection, "decisions", DECISION_COLUMNS)?;
+    assert_table_columns(
+        connection,
+        "council_identity",
+        &["singleton", "instance_id"],
+    )?;
+    assert_foreign_key(connection, "messages", "topic_id", "topics", "id")?;
+    assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
+    assert_index_columns(
+        connection,
+        "idx_topics_project_updated",
+        &["project_path", "updated_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_messages_topic_created",
+        &["topic_id", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_decisions_topic_created",
+        &["topic_id", "created_at"],
+    )?;
+    let foreign_key_error_count: i64 =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })?;
+    if foreign_key_error_count != 0 {
+        return Err(CouncilError::InvalidData(
+            "Council SQLite 外键检查失败。".into(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug)]
 struct TopicRow {
@@ -175,6 +278,7 @@ struct DecisionRow {
 
 pub struct CouncilStore {
     connection: Connection,
+    database_instance_id: String,
 }
 
 impl CouncilStore {
@@ -184,17 +288,26 @@ impl CouncilStore {
                 "SQLite busy timeout 必须是正整数。".into(),
             ));
         }
-        let mut connection = Connection::open(path)?;
+        let connection = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
         connection.busy_timeout(Duration::from_millis(busy_timeout_ms))?;
         connection.execute_batch(
             "PRAGMA foreign_keys = ON;\
              PRAGMA journal_mode = WAL;\
              PRAGMA synchronous = NORMAL;",
         )?;
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute_batch(MIGRATION_SQL)?;
-        transaction.commit()?;
-        Ok(Self { connection })
+        validate_schema(&connection)?;
+        let database_instance_id = read_database_instance_id(&connection)?;
+        Ok(Self {
+            connection,
+            database_instance_id,
+        })
+    }
+
+    pub fn database_instance_id(&self) -> &str {
+        &self.database_instance_id
     }
 
     pub fn list_topics(
@@ -593,6 +706,7 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::CouncilStore;
@@ -600,8 +714,12 @@ mod tests {
     #[test]
     fn configures_sqlite_connection_pragmas() {
         let directory = tempdir().expect("temp directory");
-        let store = CouncilStore::open(directory.path().join("council.sqlite3"), 4_321)
-            .expect("store should open");
+        let database_path = directory.path().join("council.sqlite3");
+        Connection::open(&database_path)
+            .expect("fixture database")
+            .execute_batch(include_str!("../tests/fixtures/node-schema-v1.sql"))
+            .expect("node schema fixture");
+        let store = CouncilStore::open(database_path, 4_321).expect("store should open");
 
         let foreign_keys: i64 = store
             .connection

@@ -59,6 +59,7 @@ export async function startHttpHarness(
   const databasePath = path.join(directory, "council.sqlite3");
   const config: CouncilHttpConfig = {
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     defaultMessageLimit: 20,
     host: "localhost",
     port: 4_000,
@@ -86,7 +87,11 @@ export async function startHttpHarness(
     ...overrides,
     databasePath,
   };
-  const database = new CouncilDatabase(databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   const orchestration = registrations
     ? new CouncilOrchestrationService(config, registrations)
     : undefined;

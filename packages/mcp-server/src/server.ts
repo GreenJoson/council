@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、ClaudeClient、MCP SDK 与 Zod
- * @output 导出：createCouncilServer 工厂和全部 council_* 工具
+ * @output 导出：迁移完成后创建 server 的异步工厂和全部 council_* 工具
  * @pos    本地架构委员会对 Codex App 与 Claude Desktop 的协议入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -214,8 +214,12 @@ export interface CouncilServerBundle {
   claudeClient: ClaudeClient;
 }
 
-export function createCouncilServer(config: CouncilConfig): CouncilServerBundle {
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+export async function createCouncilServer(config: CouncilConfig): Promise<CouncilServerBundle> {
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   const claudeClient = new ClaudeClient(config, database);
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 

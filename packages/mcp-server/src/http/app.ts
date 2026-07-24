@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：版本化 REST API 与 SSE 应用工厂
- * @pos    WebUI 访问 Council canonical 数据的 HTTP 协议入口
+ * @output 导出：含 schema version/ready/数据库身份状态的版本化 REST API 与 SSE 应用工厂
+ * @pos    WebUI 与桌面壳确认迁移完成并访问 canonical 数据的 HTTP 协议入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -34,6 +34,7 @@ import {
 import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import type { CouncilOrchestrationService } from "../orchestration/service.js";
+import { COUNCIL_SCHEMA_VERSION } from "../schema-migrator.js";
 import type { CouncilHttpConfig } from "../types.js";
 import { HttpError, sendError, sendSuccess, validationIssues } from "./responses.js";
 import { RevisionEventStream } from "./revision-stream.js";
@@ -203,6 +204,9 @@ export function createCouncilHttpApp(
   app.get("/api/v1/status", (_request, response) => {
     const revisions = database.getRevisions();
     sendSuccess(response, {
+      ready: true,
+      schemaVersion: COUNCIL_SCHEMA_VERSION,
+      databaseInstanceId: database.getDatabaseInstanceId(),
       ...database.getCounts(),
       revision: revisions.total,
       revisions: {

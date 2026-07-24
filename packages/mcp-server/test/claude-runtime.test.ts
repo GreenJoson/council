@@ -144,6 +144,7 @@ function createConfig(
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     sqliteBusyTimeoutMs: 5_000,
+    schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,

@@ -9,6 +9,11 @@
 export * from "./constants.js";
 export * from "./errors.js";
 export * from "./orchestrator.js";
+export {
+  ORCHESTRATION_SCHEMA_SQL,
+  ORCHESTRATION_SCHEMA_VERSION,
+  assertOrchestrationSchema,
+} from "./sqlite/schema.js";
 export * from "./sqlite/sqlite-council-store.js";
 export type * from "./ports.js";
 export type * from "./types.js";

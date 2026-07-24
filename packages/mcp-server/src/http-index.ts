@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * @input  依赖：COUNCIL_HTTP_* 配置、SQLite 数据库与本地 HTTP 客户端
- * @output 导出：运行中的 Council REST 与 SSE 服务
- * @pos    独立于 stdio MCP 生命周期的 WebUI 后端入口
+ * @input  依赖：COUNCIL_HTTP_* 配置、Node schema 迁移器与本地 HTTP 客户端
+ * @output 导出：迁移成功后运行的 Council REST 与 SSE 服务
+ * @pos    独立于 stdio MCP 生命周期、对外暴露 ready 状态的 WebUI 后端入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -18,7 +18,11 @@ import { createProductionOrchestrationService } from "./orchestration/service.js
 async function main(): Promise<void> {
   const config = loadHttpConfig();
   const councilConfig = loadConfig();
-  const database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+  const database = await CouncilDatabase.open(
+    config.databasePath,
+    config.sqliteBusyTimeoutMs,
+    { maxAttempts: config.schemaMigrationMaxAttempts },
+  );
   let orchestration;
   try {
     orchestration = createProductionOrchestrationService(

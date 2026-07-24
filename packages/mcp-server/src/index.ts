@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * @input  依赖：COUNCIL_* 环境变量和 stdio MCP 客户端
- * @output 导出：运行中的 council MCP 服务
+ * @input  依赖：COUNCIL_* 环境变量、Node schema 迁移器和 stdio MCP 客户端
+ * @output 导出：迁移成功后运行的 council MCP 服务
  * @pos    Codex App 与 Claude Desktop 共用的本地进程入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,7 +14,7 @@ import { createCouncilServer } from "./server.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const bundle = createCouncilServer(config);
+  const bundle = await createCouncilServer(config);
   const transport = new StdioServerTransport();
 
   const shutdown = async (signal: string): Promise<void> => {

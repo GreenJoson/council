@@ -7,9 +7,9 @@
 | `package.json` | 核心 | 锁定 MCP/HTTP 依赖、已修复的传递依赖覆盖与构建、测试、双入口命令 |
 | `package-lock.json` | 锁定 | 固化依赖解析结果 |
 | `tsconfig.json` | 配置 | 启用严格 TypeScript 编译 |
-| `.env.example` | 配置 | 列出全部可配置运行参数 |
-| `src/` | 核心 | MCP、HTTP、数据库、模型设置与本机/远程 Agent 适配器源码 |
-| `test/` | 验证 | 数据库、适配器、MCP 协议和 HTTP/SSE 集成测试 |
+| `.env.example` | 配置 | 列出全部可配置运行参数，包括迁移重试上限 |
+| `src/` | 核心 | MCP、HTTP、Node 单一 schema 迁移器、数据库、模型设置与本机/远程 Agent 适配器源码 |
+| `test/` | 验证 | schema 迁移、数据库、适配器、MCP 协议和 HTTP/SSE 集成测试 |
 
 ## Claude 运行边界
 

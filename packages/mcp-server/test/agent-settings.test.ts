@@ -14,11 +14,14 @@ import { test } from "node:test";
 import { AgentSettingsService } from "../src/agent-settings-service.js";
 import { AgentSettingsStore, type AgentSettingSeed } from "../src/agent-settings-store.js";
 import type { SecretStore } from "../src/keychain-secret-store.js";
+import { migrateCouncilSchema } from "../src/schema-migrator.js";
 
-function createTemporaryDatabasePath() {
+async function createTemporaryDatabasePath() {
   const directory = mkdtempSync(path.join(tmpdir(), "council-agent-settings-"));
+  const databasePath = path.join(directory, "council.sqlite3");
+  await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
   return {
-    databasePath: path.join(directory, "council.sqlite3"),
+    databasePath,
     cleanup: () => rmSync(directory, { recursive: true, force: true }),
   };
 }
@@ -69,7 +72,7 @@ const SEEDS: AgentSettingSeed[] = [
 ];
 
 test("Agent 设置持久化模型但 API Key 只进入 SecretStore", async () => {
-  const fixture = createTemporaryDatabasePath();
+  const fixture = await createTemporaryDatabasePath();
   const secrets = new MemorySecretStore();
   const store = new AgentSettingsStore(fixture.databasePath, 5_000, SEEDS);
   const service = new AgentSettingsService(store, secrets);
@@ -99,7 +102,7 @@ test("Agent 设置持久化模型但 API Key 只进入 SecretStore", async () =>
 });
 
 test("Agent 设置拒绝非 HTTPS 远程地址并支持显式清除 Key", async () => {
-  const fixture = createTemporaryDatabasePath();
+  const fixture = await createTemporaryDatabasePath();
   const secrets = new MemorySecretStore();
   const service = new AgentSettingsService(
     new AgentSettingsStore(fixture.databasePath, 5_000, SEEDS),
@@ -142,7 +145,7 @@ test("Agent 设置拒绝非 HTTPS 远程地址并支持显式清除 Key", async 
 });
 
 test("连接测试只调用注册测试器且返回耗时", async () => {
-  const fixture = createTemporaryDatabasePath();
+  const fixture = await createTemporaryDatabasePath();
   const service = new AgentSettingsService(
     new AgentSettingsStore(fixture.databasePath, 5_000, SEEDS),
     new MemorySecretStore(),
@@ -161,7 +164,7 @@ test("连接测试只调用注册测试器且返回耗时", async () => {
 });
 
 test("Keychain 写入失败时不提前持久化非敏感设置", async () => {
-  const fixture = createTemporaryDatabasePath();
+  const fixture = await createTemporaryDatabasePath();
   const store = new AgentSettingsStore(fixture.databasePath, 5_000, SEEDS);
   const service = new AgentSettingsService(store, new RejectingSecretStore());
   try {

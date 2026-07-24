@@ -26,4 +26,5 @@ thiserror = "=2.0.19"
 libc = "=0.2.186"
 
 [dev-dependencies]
+rusqlite = { version = "=0.39.0", features = ["bundled"] }
 tempfile = "=3.27.0"

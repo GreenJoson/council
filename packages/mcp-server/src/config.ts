@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：经过校验的 CouncilConfig（含 Claude 与 Codex 后台运行时配置）
+ * @output 导出：经过校验的 CouncilConfig（含 schema 迁移重试与 Agent 运行时配置）
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -184,6 +184,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     ),
     ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),
+    schemaMigrationMaxAttempts: parsePositiveInteger(
+      "COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS",
+      env,
+    ),
     maxContextChars: parsePositiveInteger("COUNCIL_MAX_CONTEXT_CHARS", env),
     maxOutputChars: parsePositiveInteger("COUNCIL_MAX_OUTPUT_CHARS", env),
     defaultMessageLimit,

@@ -33,6 +33,14 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(statusResponse.headers.get("x-powered-by"), null);
     assert.equal(statusResponse.headers.get("x-content-type-options"), "nosniff");
     assert.equal(statusResponse.headers.get("x-frame-options"), "SAMEORIGIN");
+    const status = await readEnvelope<{
+      ready: boolean;
+      schemaVersion: number;
+      databaseInstanceId: string;
+    }>(statusResponse);
+    assert.equal(status.data?.ready, true);
+    assert.equal(status.data?.schemaVersion, 1);
+    assert.match(status.data?.databaseInstanceId ?? "", /^[0-9a-f-]{36}$/u);
 
     const createResponse = await fetch(`${harness.baseUrl}/api/v1/topics`, {
       method: "POST",
