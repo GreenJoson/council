@@ -6,9 +6,11 @@
 |---|---|---|
 | `index.ts` | 入口 | 加载配置，等待 schema 迁移完成后连接 stdio MCP |
 | `http-index.ts` | 入口 | 迁移 schema 后独立启动本地 REST 与 SSE 服务 |
-| `server.ts` | 核心 | 异步准备数据库并注册议题、消息、决策和可传递请求取消的 Claude 工具 |
-| `schema-migrator.ts` | 迁移边界 | 独占生产 DDL，镜像版本、生成并验证在线备份、事务迁移和失败关闭 |
-| `database.ts` | 核心 | 验证已迁移 schema，并提供事务、查询和单调 revision 数据访问 |
+| `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题、消息、proposed 决策和可传递请求取消的 Claude 工具 |
+| `actor-identity.ts` | 身份正本 | 定义动态 Actor、别名、冻结快照与内置身份种子；品牌资源不进入领域层 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1/v2 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 v1 digest、生成并验证在线备份、事务迁移和失败关闭 |
+| `database.ts` | 核心 | 验证已迁移 schema，区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
@@ -21,7 +23,7 @@
 | `agent-settings-store.ts` | 数据 | 验证既有设置表，并保存不含密钥的 Agent 模型、地址与启用状态 |
 | `agent-settings-service.ts` | 应用 | 校验设置、组合密钥状态并执行连接测试 |
 | `keychain-secret-store.ts` | 安全边界 | 将远程 Provider API Key 隔离到 macOS Keychain |
-| `config.ts` | 配置 | 集中且 fail-fast 校验迁移重试、运行参数、只规划权限/只读沙箱、保留参数和定时器上限；Codex 默认容纳长上下文任务 |
+| `config.ts` | 配置 | 集中校验通用运行参数；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，HTTP 不受该必填项影响 |
 | `constants.ts` | 常量 | 定义协议枚举和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |

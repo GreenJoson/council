@@ -47,19 +47,25 @@ failed --显式恢复且未超预算--> running
   或大量终态记录导致恢复遗漏；调用方应周期扫描，以在旧 lease 到期后自动接管。
 - 取消会中止本进程内的 Agent 等待；`cancelRun()` 与带版本检查的原子提交保证取消之后不会再写入该轮回复。
 - Agent 生成失败与 Store 提交失败分开分类；`commitRound()` 失败进入 `store_failed`，不会自动再次调用 Agent。
-- 人工确认门只能由 `human` 批准；核心和 Store 都会校验 approvalId、gate 与 expectedVersion。
+- 人工确认门只能由 `human` Actor 批准；核心和 Store 都会校验 approvalId、gate 与 expectedVersion。
 
 ## 身份边界
 
-`RoundPlan.adapterId` 决定调用哪个运行时适配器，`RoundPlan.publicAuthor` 决定写入 Council 的规范公开作者。公开作者只允许 `human`、`claude`、`codex`、`chair`、`other`，因此本地可执行文件名、模型变体或自定义适配器 ID 不会污染共享消息协议。
+`RoundPlan.adapterId` 决定调用哪个运行时适配器，`RoundPlan.actorId` 决定以哪个已注册且处于
+`active` 状态的 Actor 写入 Council。运行时适配器名、模型名和持久化身份彼此独立；
+DeepSeek、Kimi 等供应商拥有各自 Actor，不再共享 `other` 作者槽位。
 
-`approvedBy` 是审计字段，不是身份认证本身。HTTP/MCP 边界必须从可信调用者派生固定的 `human`，不能直接信任浏览器提交的作者字符串。`SQLiteCouncilStore` 按构造参数只读取最新 N 条公开消息，避免超大议题在 Agent 提示裁剪之前放大内存。
+`approvedByActorId` 是审计字段，不是身份认证本身。HTTP/MCP 边界必须从可信调用者派生
+固定的 `human` Actor，不能直接信任浏览器提交的身份字符串。新运行快照使用 schema v2
+并冻结 `actorId`；旧 v1 快照只在读取时通过历史映射兼容，其中 `other` 映射到不可用于
+新写入的 `legacy-unknown`。`SQLiteCouncilStore` 按构造参数只读取最新 N 条公开消息，
+避免超大议题在 Agent 提示裁剪之前放大内存。
 
 ## 接入点
 
 现有 `ClaudeClient` 不能直接充当 `AgentAdapter`，因为它自带写消息行为。适配器必须使用无数据库副作用的纯 ClaudeRuntime，把“调用模型”和“原子写回”分开。`SQLiteCouncilStore` 会追加运行、批准和 lease 表，以批准唯一约束实现幂等，以 topic 部分唯一索引限制单个活动运行，并仅通过运行表触发器推进 `council_meta.revision`。lease 表没有 revision trigger，避免心跳制造 SSE 风暴。
 
-`start()`、`approve()`、`recover()` 是短任务和测试可用的同步便捷入口，调用者必须显式提供 `ownerId`、`ttlMs`、`renewIntervalMs`，方法内部会续租。生产 HTTP 应优先使用拆分后的控制面方法和长期 ExecutionManager。旧 V1 快照缺少 cleanup 字段时，codec 只用 `LEGACY_AGENT_CLEANUP_TIMEOUT_MS` 协议迁移常量回填；它不是新运行的配置来源。
+`start()`、`approve()`、`recover()` 是短任务和测试可用的同步便捷入口，调用者必须显式提供 `ownerId`、`ttlMs`、`renewIntervalMs`，方法内部会续租。生产 HTTP 应优先使用拆分后的控制面方法和长期 ExecutionManager。旧 v1 快照缺少 cleanup 字段时，codec 只用 `LEGACY_AGENT_CLEANUP_TIMEOUT_MS` 协议迁移常量回填；它不是新运行的配置来源。
 
 Codex 当前没有经过验证的可靠后台适配器。本包只保留通用接口，不伪造 Codex CLI 能力；在真实适配器出现前，Codex 轮次应停在人工门或由前台会话手动接力。
 

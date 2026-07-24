@@ -44,6 +44,10 @@ npm run dev:http
 父进程注入的环境变量优先。生产构建后可运行 `npm run start:http`。HTTP 服务只接受
 loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin。
 
+stdio MCP 入口还要求 `COUNCIL_CALLER_ACTOR_ALIAS`。Codex 与 Claude 必须分别绑定各自
+Actor；工具 schema 不接受作者覆盖。HTTP 入口不读取该配置，浏览器写入仍由服务端固定为
+`human`。MCP 决策工具只创建 `proposed`，`accepted` 必须由桌面/HTTP 用户入口确认。
+
 ## REST 与事件契约
 
 | 方法 | 路径 | `data` |
@@ -68,8 +72,8 @@ loopback `COUNCIL_HTTP_HOST`，CORS 只接受显式白名单中的 exact origin�
 
 REST 成功统一为 `{code: 0, message, data, timestamp}`；错误使用对应 HTTP 状态码，
 响应为 `{code, message, data?, timestamp}`。字段全部使用 canonical camelCase。
-普通 Web 写入固定派生为 `human`，请求体不能提交 `createdBy`、`author`、`approvedBy`、
-`publicAuthor` 或 `allowedAgents`。创建运行只额外允许布尔值
+普通 Web 写入固定派生为 `human` Actor，请求体不能提交 `createdByActorId`、
+`actorId`、`approvedByActorId` 或 `allowedAgents`。创建运行只额外允许布尔值
 `confirmationBeforeCompletion` 覆盖本次完成门；Agent 消息仍只经过受 lease/CAS 保护的编排提交或 MCP 边界。
 
 `status.revision` 保持兼容的全局总版本，同时增加 `revisions.content` 与

@@ -7,14 +7,13 @@
  */
 
 import type {
-  AUTHORS,
   DECISION_STATUSES,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
 } from "./constants.js";
+import type { ActorId, ActorSnapshot } from "./actor-identity.js";
 
 export type TopicStatus = (typeof TOPIC_STATUSES)[number];
-export type Author = (typeof AUTHORS)[number];
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export type DecisionStatus = (typeof DECISION_STATUSES)[number];
 
@@ -40,6 +39,10 @@ export interface CouncilConfig {
   maxContextChars: number;
   maxOutputChars: number;
   defaultMessageLimit: number;
+}
+
+export interface McpCouncilConfig extends CouncilConfig {
+  callerActorAlias: string;
 }
 
 export interface CouncilHttpConfig {
@@ -79,7 +82,8 @@ export interface Topic {
   constraints: string[];
   projectPath?: string;
   status: TopicStatus;
-  createdBy: Author;
+  createdByActorId: ActorId;
+  createdBySnapshot: ActorSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -87,7 +91,8 @@ export interface Topic {
 export interface CouncilMessage {
   id: string;
   topicId: string;
-  author: Author;
+  actorId: ActorId;
+  actorSnapshot: ActorSnapshot;
   kind: MessageKind;
   content: string;
   parentMessageId?: string;
@@ -102,7 +107,8 @@ export interface Decision {
   rationale: string;
   alternatives: string[];
   status: DecisionStatus;
-  createdBy: Author;
+  createdByActorId: ActorId;
+  createdBySnapshot: ActorSnapshot;
   createdAt: string;
   updatedAt: string;
 }

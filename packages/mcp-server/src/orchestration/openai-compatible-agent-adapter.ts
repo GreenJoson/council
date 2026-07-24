@@ -44,7 +44,7 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
   ].join("\n");
   const transcript = input.context.messages
     .map((message) => [
-      `### ${message.author} / ${message.kind} / ${message.createdAt}`,
+      `### ${message.actorId} / ${message.kind} / ${message.createdAt}`,
       message.content,
     ].join("\n"))
     .join("\n\n") || "暂无公开消息。";

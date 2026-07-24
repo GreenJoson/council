@@ -20,6 +20,8 @@ const REQUIRED_COUNCIL_TABLES = [
   "topics",
   "messages",
   "council_meta",
+  "actor_identities",
+  "actor_aliases",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -44,7 +46,7 @@ const REQUIRED_ORCHESTRATION_TRIGGERS = [
   "trg_orchestration_runs_revision_delete",
 ] as const;
 
-export const ORCHESTRATION_SCHEMA_VERSION = 1;
+export const ORCHESTRATION_SCHEMA_VERSION = 2;
 
 export const ORCHESTRATION_SCHEMA_SQL = `
   INSERT OR IGNORE INTO council_meta (key, value) VALUES ('revision', 0);
@@ -61,7 +63,7 @@ export const ORCHESTRATION_SCHEMA_SQL = `
     status TEXT NOT NULL CHECK (
       status IN ('idle', 'running', 'waiting_agent', 'waiting_user', 'completed', 'failed', 'cancelled')
     ),
-    snapshot_schema_version INTEGER NOT NULL DEFAULT 1 CHECK (snapshot_schema_version = 1),
+    snapshot_schema_version INTEGER NOT NULL CHECK (snapshot_schema_version IN (1, 2)),
     snapshot_json TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version > 0),
     created_at TEXT NOT NULL,
@@ -73,9 +75,8 @@ export const ORCHESTRATION_SCHEMA_SQL = `
     approval_id TEXT NOT NULL,
     gate_id TEXT NOT NULL,
     expected_version INTEGER NOT NULL CHECK (expected_version > 0),
-    approved_by TEXT NOT NULL CHECK (
-      approved_by IN ('human', 'claude', 'codex', 'chair', 'other')
-    ),
+    approved_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+    approved_by_legacy TEXT,
     applied_run_version INTEGER NOT NULL CHECK (applied_run_version > expected_version),
     created_at TEXT NOT NULL,
     PRIMARY KEY (run_id, approval_id)
@@ -128,7 +129,10 @@ interface SchemaObjectRow {
 }
 
 function normalizeSchemaSql(sql: string): string {
-  return sql.replace(/\s+/gu, " ").trim();
+  return sql
+    .replace(/"([A-Za-z_][A-Za-z0-9_]*)"/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function orchestrationSchemaObjects(database: DatabaseSync): Map<string, string> {
@@ -172,6 +176,11 @@ function canonicalOrchestrationSchemaObjects(): ReadonlyMap<string, string> {
     database.exec(`
       CREATE TABLE topics (id TEXT PRIMARY KEY);
       CREATE TABLE council_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE actor_identities (id TEXT PRIMARY KEY);
+      CREATE TABLE actor_aliases (
+        alias TEXT PRIMARY KEY COLLATE NOCASE,
+        actor_id TEXT NOT NULL REFERENCES actor_identities(id)
+      );
     `);
     database.exec(ORCHESTRATION_SCHEMA_SQL);
     canonicalObjects = orchestrationSchemaObjects(database);

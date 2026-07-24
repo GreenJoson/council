@@ -32,6 +32,17 @@ const HTTP_OPTIONS = {
   eventRecoveryDelayMs: 50,
 } as const;
 
+function actorSnapshot(actorId: string, displayName: string, shortName: string, role: string) {
+  return {
+    schemaVersion: 1,
+    actorId,
+    slug: actorId,
+    displayName,
+    shortName,
+    role,
+  };
+}
+
 function createTopic(id: string, title: string) {
   return {
     id,
@@ -39,7 +50,8 @@ function createTopic(id: string, title: string) {
     question: `${title}的问题`,
     constraints: [],
     status: "open",
-    createdBy: "human",
+    createdByActorId: "human",
+    createdBySnapshot: actorSnapshot("human", "User", "U", "决策者"),
     createdAt: "2026-01-01T08:00:00.000Z",
     updatedAt: "2026-01-01T09:00:00.000Z",
   };
@@ -93,7 +105,8 @@ function createApiFixture(): ApiFixture {
       rationale: "边界明确。",
       alternatives: ["固定 TTL"],
       status: "proposed",
-      createdBy: "claude",
+      createdByActorId: "claude",
+      createdBySnapshot: actorSnapshot("claude", "Claude", "CL", "方案顾问"),
       createdAt: "2026-01-01T09:00:00.000Z",
       updatedAt: "2026-01-01T09:00:00.000Z",
     },
@@ -134,7 +147,8 @@ function createApiFixture(): ApiFixture {
       const message = {
         id: `message-${String(messages.length + 1)}`,
         topicId: "topic-one",
-        author: "human",
+        actorId: "human",
+        actorSnapshot: actorSnapshot("human", "User", "U", "决策者"),
         kind: body.kind,
         content: body.content,
         createdAt: "2026-01-01T10:00:00.000Z",
@@ -148,7 +162,8 @@ function createApiFixture(): ApiFixture {
         id: "decision-accepted",
         topicId: "topic-one",
         ...body,
-        createdBy: "human",
+        createdByActorId: "human",
+        createdBySnapshot: actorSnapshot("human", "User", "U", "决策者"),
         createdAt: "2026-01-01T10:00:00.000Z",
         updatedAt: "2026-01-01T10:00:00.000Z",
       };
@@ -296,11 +311,11 @@ describe("HttpCouncilRepository", () => {
 
     const afterPost = await repository.publishMessage({
       topicId: "topic-one",
-      author: "user",
+      author: "human",
       kind: "critique",
       content: "补充失败路径。",
     });
-    expect(afterPost.topics[0]?.messages.at(-1)?.author).toBe("user");
+    expect(afterPost.topics[0]?.messages.at(-1)?.author).toBe("human");
 
     const afterDecision = await repository.acceptDecision("topic-one");
     expect(afterDecision.topics[0]?.decision?.status).toBe("accepted");

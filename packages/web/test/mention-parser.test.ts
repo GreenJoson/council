@@ -17,16 +17,16 @@ import {
 import type { OrchestrationAdapter } from "../src/types/orchestration";
 
 const ADAPTERS: OrchestrationAdapter[] = [
-  { id: "claude-code", publicAuthor: "claude", label: "Claude Code", available: true },
+  { id: "claude-code", actorId: "claude", label: "Claude Code", available: true },
   {
     id: "codex-shared",
-    publicAuthor: "codex",
+    actorId: "codex",
     label: "Codex",
     available: false,
     limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
   },
-  { id: "deepseek", publicAuthor: "other", label: "DeepSeek", available: true },
-  { id: "kimi", publicAuthor: "other", label: "Kimi", available: true },
+  { id: "deepseek", actorId: "deepseek", label: "DeepSeek", available: true },
+  { id: "kimi", actorId: "kimi", label: "Kimi", available: true },
 ];
 
 describe("parseMention", () => {
@@ -57,7 +57,7 @@ describe("parseMention", () => {
     });
   });
 
-  it("共享 other 作者槽位的远程 Provider 使用唯一 adapter ID 召唤", () => {
+  it("远程 Provider 使用自己的独立 Actor 标识召唤", () => {
     expect(parseMention("@deepseek 复核并发风险", ADAPTERS)).toEqual({
       adapterId: "deepseek",
       instruction: "复核并发风险",

@@ -47,12 +47,9 @@ const KNOWN_MENTION_TOKENS: ReadonlySet<string> = new Set([
 ]);
 const LEADING_MENTION_PATTERN = /^@([A-Za-z][\w-]*)(\s|$)/;
 
-/**
- * 本机 Agent 保持用户熟悉的作者名；共享 `other` 作者槽位的远程 Provider 使用唯一 adapter ID，
- * 防止 DeepSeek、Kimi 等多个 Provider 全部退化成冲突的 `@other`。
- */
+/** 每个 Provider 使用自己解析后的稳定 Actor 标识，禁止退化成共享占位名。 */
 export function getMentionToken(adapter: OrchestrationAdapter): string {
-  return adapter.publicAuthor === "other" ? adapter.id : adapter.publicAuthor;
+  return adapter.actorId;
 }
 
 /**
@@ -129,7 +126,7 @@ function findFirstMentionMatch(text: string): MentionMatch | null {
  * 规则（单测固化于 test/mention-parser.test.ts）：
  * - 无 @ → null。
  * - 命中的 token 大小写不敏感地匹配某个 adapter 的稳定召唤标识才算召唤成功；
- *   本机 Agent 使用 publicAuthor，`other` 远程 Provider 使用 adapter.id。
+ *   本机与远程 Provider 都使用独立 actorId。
  *   匹配不到任何 adapter（未知名，或当前不在 adapters 列表里，
  *   例如编排离线时列表只剩占位 adapter）→ null。是否"可用"（adapter.available）
  *   不在这里判断，调用方按需读取解析结果对应的 adapter.available 再决定是否阻止发布。

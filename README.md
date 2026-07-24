@@ -39,6 +39,8 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 创建、查询和分页列出架构议题。
 - 发布带类型的方案、批评、反驳、综合与备注。
 - 记录可追踪的架构决策及其状态。
+- 以动态 Actor Identity、大小写不敏感 alias 和冻结快照记录公开身份；Claude、Codex、
+  DeepSeek、Kimi 各自独立，历史 `other` 只进入待审计兼容身份。
 - 让多个 MCP 客户端共享同一份本地 SQLite 数据。
 - 可选通过兼容 MCP 工具调用 Claude Code CLI，并保留该直调工具的顾问 session。
 - 明确隔离私有聊天历史，只共享主动发布的公开结论与证据。
@@ -102,6 +104,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全](docs/schema-migration-safety.md)。
+动态身份、旧作者映射和 v2 回滚边界见 [Actor Identity v2 迁移](docs/actor-identity-migration.md)。
 
 ## WebUI 设计探索
 

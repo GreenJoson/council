@@ -1,14 +1,37 @@
 /**
- * @input  依赖：Agent、消息、议题状态与决策状态类型
+ * @input  依赖：Agent、冻结 Actor 快照、消息、议题状态与决策状态类型
  * @output 导出：BrandLogo、AgentAvatar、StatusBadge、DecisionStatusBadge、messageKindLabels、
- *         topicStatusLabels 与 decisionStatusLabels 展示标签
+ *         participantFromActorSnapshot、topicStatusLabels 与 decisionStatusLabels 展示标签
  * @pos    Operator Console 跨区域复用的基础展示组件；DecisionStatusBadge 供检查器、
  *         决策记录与架构档案三处共用同一套 proposed/accepted/superseded 文案与配色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import type { AgentId, DecisionStatus, MessageKind, TopicStatus } from "../types/council";
+import type {
+  AgentId,
+  ActorSnapshot,
+  DecisionStatus,
+  MessageKind,
+  Participant,
+  TopicStatus,
+} from "../types/council";
+
+export function participantFromActorSnapshot(
+  snapshot: ActorSnapshot | undefined,
+  fallback?: Participant,
+): Participant | undefined {
+  if (!snapshot) {
+    return fallback;
+  }
+  return {
+    id: snapshot.actorId,
+    slug: snapshot.slug,
+    name: snapshot.displayName,
+    shortName: snapshot.shortName,
+    role: snapshot.role,
+  };
+}
 
 export interface BrandLogoProps {
   size?: number;
@@ -57,35 +80,52 @@ export const topicStatusLabels: Record<TopicStatus, string> = {
   decided: "已决策",
 };
 
-const agentNames: Record<AgentId, string> = {
+const agentNames: Readonly<Record<string, string>> = {
   claude: "Claude",
   codex: "Codex",
-  user: "User",
-  chair: "Council",
-  other: "Other",
+  human: "User",
+  council: "Council",
+  deepseek: "DeepSeek",
+  kimi: "Kimi",
+  "legacy-unknown": "Legacy unknown",
 };
 
-const agentShortNames: Record<AgentId, string> = {
+const agentShortNames: Readonly<Record<string, string>> = {
   claude: "CL",
   codex: "CX",
-  user: "U",
-  chair: "CO",
-  other: "OT",
+  human: "U",
+  council: "CO",
+  deepseek: "DS",
+  kimi: "KI",
+  "legacy-unknown": "?",
 };
 
 export interface AgentAvatarProps {
   agent: AgentId;
+  participant?: Participant;
   size?: "small" | "medium";
 }
 
-export function AgentAvatar({ agent, size = "medium" }: AgentAvatarProps) {
+function fallbackShortName(agent: string): string {
+  return agent
+    .split(/[^A-Za-z0-9]+/u)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("")
+    || "?";
+}
+
+export function AgentAvatar({ agent, participant, size = "medium" }: AgentAvatarProps) {
+  const name = participant?.name ?? agentNames[agent] ?? agent;
+  const shortName = participant?.shortName ?? agentShortNames[agent] ?? fallbackShortName(agent);
   return (
     <span
       className={`agent-avatar agent-${agent} agent-avatar-${size}`}
-      title={agentNames[agent]}
-      aria-label={agentNames[agent]}
+      title={name}
+      aria-label={name}
     >
-      {agentShortNames[agent]}
+      {shortName}
     </span>
   );
 }

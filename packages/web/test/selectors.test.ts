@@ -129,8 +129,8 @@ function buildTopicFixture(overrides: Partial<TopicDetail> & Pick<TopicDetail, "
     updatedLabel: "刚刚",
     question: "",
     createdLabel: "刚刚",
-    owner: "user",
-    participants: ["user"],
+    owner: "human",
+    participants: ["human"],
     messages: [],
     constraints: [],
     evidence: [],
@@ -281,7 +281,7 @@ describe("collectArchitectureDiagrams", () => {
       messages: [
         {
           id: "m1",
-          author: "chair",
+          author: "council",
           kind: "synthesis",
           title: "综合结论",
           content: "```mermaid\nflowchart TD\n  X --> Y\n```",
@@ -308,7 +308,7 @@ describe("collectArchitectureDiagrams", () => {
     expect(diagrams[1]).toMatchObject({
       code: "flowchart TD\n  X --> Y",
       topicId: "with-synthesis",
-      origin: { kind: "message", author: "chair", timeLabel: "18:47" },
+      origin: { kind: "message", author: "council", timeLabel: "18:47" },
     });
   });
 

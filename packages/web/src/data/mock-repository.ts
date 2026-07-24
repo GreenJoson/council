@@ -1,13 +1,13 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
- * @output 导出：MockCouncilRepository 同构可交互数据实现
+ * @output 导出：写入时冻结 Mock Actor 快照的同构可交互数据实现
  * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受（同时写入 decidedAt 供架构档案
  *         ADR 编号排序）与只读议题详情加载
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { createMockWorkspace } from "./mock-data";
+import { createMockWorkspace, mockActorSnapshot } from "./mock-data";
 import type { CouncilRepository, WorkspaceListener } from "./repository";
 import type {
   CreateTopicInput,
@@ -60,8 +60,9 @@ export class MockCouncilRepository implements CouncilRepository {
       updatedLabel: "刚刚",
       question: input.question,
       createdLabel: "刚刚",
-      owner: "user",
-      participants: ["user", "claude", "codex"],
+      owner: "human",
+      ownerSnapshot: mockActorSnapshot("human"),
+      participants: ["human", "claude", "codex"],
       messages: [],
       constraints: input.constraints.map((label) => ({
         id: crypto.randomUUID(),
@@ -75,7 +76,8 @@ export class MockCouncilRepository implements CouncilRepository {
         summary: "议题已创建，等待参与者提交方案和批评。",
         rationale: "用户尚未接受任何方案。",
         status: "proposed",
-        proposedBy: "chair",
+        proposedBy: "council",
+        proposedBySnapshot: mockActorSnapshot("council"),
       },
     };
     this.#snapshot.topics.unshift(topic);
@@ -94,6 +96,7 @@ export class MockCouncilRepository implements CouncilRepository {
     topic.messages.push({
       id: crypto.randomUUID(),
       author: input.author,
+      actorSnapshot: mockActorSnapshot(input.author),
       kind: input.kind,
       title: input.kind === "critique" ? "新的审查意见" : "新的公开回复",
       content: input.content,

@@ -58,7 +58,7 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
     plan: [
       {
         adapterId: "claude-code",
-        publicAuthor: "claude",
+        actorId: "claude",
         messageKind: "proposal",
         instruction: "审查一致性边界",
       },
@@ -126,7 +126,7 @@ function createOrchestrationFixture(): OrchestrationFixture {
         adapters: [
           {
             id: "claude-code",
-            publicAuthor: "claude",
+            actorId: "claude",
             label: "Claude Code",
             available: true,
           },

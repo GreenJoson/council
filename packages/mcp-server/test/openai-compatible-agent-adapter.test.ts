@@ -46,7 +46,7 @@ function invocation(): AgentInvocation {
     roundNumber: 1,
     attempt: 1,
     adapterId: "remote-test",
-    publicAuthor: "other",
+    actorId: "deepseek",
     instruction: "给出可验证结论。",
     messageKind: "proposal",
     context: {

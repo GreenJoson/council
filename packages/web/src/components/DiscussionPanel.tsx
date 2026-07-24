@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前议题、参与者、同步/发布状态、消息回调、MarkdownContent 与自动轮次快照
+ * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传给 Composer 支撑 @agent 召唤）
  * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/元数据双 tab、
  *         卡片阶梯导航、活动 Agent 状态、引用回复发起）
@@ -12,7 +12,7 @@ import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
-import { AgentAvatar, StatusBadge } from "./presentation";
+import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "./presentation";
 import {
   AgentReplyActivity,
   selectAgentReplyActivity,
@@ -43,7 +43,10 @@ function messageElementId(messageId: string): string {
 
 /** 把消息首行截断为合理长度后组装成 Markdown 引用，供 Composer 续写 */
 function buildQuoteText(message: CouncilMessage, participants: Map<string, Participant>): string {
-  const authorName = participants.get(message.author)?.name ?? message.author;
+  const authorName =
+    message.actorSnapshot.displayName ||
+    participants.get(message.author)?.name ||
+    message.author;
   const firstLine = message.content.split("\n")[0]?.trim() ?? "";
   const truncated =
     firstLine.length > QUOTE_LINE_LIMIT ? `${firstLine.slice(0, QUOTE_LINE_LIMIT)}…` : firstLine;
@@ -173,7 +176,10 @@ export function DiscussionPanel({
     0,
     (topic.messageTotal ?? topic.messages.length) - topic.messages.length,
   );
-  const owner = participants.get(topic.owner);
+  const owner = participantFromActorSnapshot(
+    topic.ownerSnapshot,
+    participants.get(topic.owner),
+  );
 
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
@@ -223,7 +229,12 @@ export function DiscussionPanel({
           </div>
           <div className="topic-participants" aria-label="议题参与者">
             {topic.participants.map((agent) => (
-              <AgentAvatar agent={agent} key={agent} size="small" />
+              <AgentAvatar
+                agent={agent}
+                participant={participants.get(agent)}
+                key={agent}
+                size="small"
+              />
             ))}
           </div>
         </div>
@@ -291,7 +302,7 @@ export function DiscussionPanel({
                 ))
               ) : (
                 <div className="empty-discussion">
-                  <AgentAvatar agent="chair" />
+                  <AgentAvatar agent="council" />
                   <div>
                     <h2>议题已经准备好</h2>
                     <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
@@ -359,7 +370,7 @@ export function DiscussionPanel({
             <span className="metadata-label">所有者</span>
             <div className="metadata-people-row">
               <span className="metadata-person">
-                <AgentAvatar agent={topic.owner} size="small" />
+                <AgentAvatar agent={topic.owner} participant={owner} size="small" />
                 <span>{owner?.name ?? topic.owner}</span>
               </span>
             </div>
@@ -370,7 +381,11 @@ export function DiscussionPanel({
             <div className="metadata-people-row">
               {topic.participants.map((agent) => (
                 <span className="metadata-person" key={agent}>
-                  <AgentAvatar agent={agent} size="small" />
+                  <AgentAvatar
+                    agent={agent}
+                    participant={participants.get(agent)}
+                    size="small"
+                  />
                   <span>{participants.get(agent)?.name ?? agent}</span>
                 </span>
               ))}

@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与只读 schema Rust Store
- * @output 导出：迁移 ready + 身份门后的桌面内容、设置和编排服务命令
+ * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与动态 Actor Rust Store
+ * @output 导出：迁移 ready + 身份门后的 Actor alias 内容、设置和编排服务命令
  * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,9 +10,8 @@ mod settings;
 mod validation;
 
 use council_core::{
-    Author, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, Decision,
-    DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic,
-    TopicDetail,
+    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, Decision, DecisionStatus,
+    MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -256,7 +255,7 @@ fn create_topic(
             question,
             constraints,
             project_path,
-            created_by: Author::Human,
+            created_by_alias: "human".into(),
         })?;
         let revisions = store.get_revisions()?;
         Ok((topic, revisions))
@@ -278,7 +277,7 @@ fn post_message(
     let (message, revisions) = with_store(&state, |store| {
         let message = store.post_message(PostMessageInput {
             topic_id,
-            author: Author::Human,
+            actor_alias: "human".into(),
             kind,
             content,
             parent_message_id: None,
@@ -314,7 +313,7 @@ fn record_decision(
             rationale: input.rationale,
             alternatives: input.alternatives,
             status: input.status,
-            created_by: Author::Human,
+            created_by_alias: "human".into(),
         })?;
         let revisions = store.get_revisions()?;
         Ok((recorded, revisions))
@@ -584,7 +583,7 @@ mod tests {
             let connection = Connection::open(path).expect("open fixture database");
             connection
                 .execute_batch(include_str!(
-                    "../../../../crates/council-core/tests/fixtures/node-schema-v1.sql"
+                    "../../../../crates/council-core/tests/fixtures/node-schema-v2.sql"
                 ))
                 .expect("create fixture schema");
             connection

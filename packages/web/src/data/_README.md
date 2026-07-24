@@ -8,14 +8,14 @@
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
 | `orchestration-repository.ts` | 边界 | 定义独立 Agent 调用读取、带单次完成复核策略的创建、动作和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
-| `api-types.ts` | 协议 | 严格解析 canonical API 的未知 JSON 数据 |
-| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、审批结果、运行分页与 `agent.output` 草稿事件 |
+| `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
+| `orchestration-api.ts` | 协议 | 严格解析含动态 Actor ID 的 Capabilities、Run、审批结果、运行分页与 `agent.output` 草稿事件 |
 | `agent-settings-api.ts` | 协议 | 严格解析不含密钥的 Agent 设置与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
 | `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
-| `workspace-mapper.ts` | 映射 | 将 canonical Topic 摘要和当前 TopicDetail 转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected），decidedAt 取 ApiDecision.updatedAt 兜底供架构档案 ADR 编号排序使用 |
+| `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected） |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，并提供不改状态的只读议题详情加载 |
 | `http-orchestration-repository.ts` | 真实 | 校准运行列表，按 run/sequence 合并同议题临时草稿，并读写模型设置、执行连接测试 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
@@ -26,9 +26,9 @@
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
-| `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；本机按 publicAuthor、远程 other 按唯一 adapter ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
+| `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
 
-`HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送作者身份，服务端固定为 human；Agent 产出只通过 orchestration 协议进入共享时间线。
+`HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。
 
 初始加载和实时刷新只读取 Topic 分页摘要及当前议题按配置页大小限制的最新消息，侧栏其他议题保持轻量 canonical `open/decided` 状态；显式选题成功后才替换详情。`messageTotal` 用于显示未加载历史数量。
 

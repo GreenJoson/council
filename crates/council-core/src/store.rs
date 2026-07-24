@@ -1,6 +1,6 @@
-//! @input 依赖：已由 Node 迁移器准备的 Council SQLite、rusqlite 和内容领域类型
-//! @output 导出：CouncilStore schema/实例身份验证、查询、写入和 revision API
-//! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费持久化边界
+//! @input 依赖：已由 Node 迁移器准备的动态 Actor Council SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、schema、查询写入和 revision API
+//! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
@@ -13,24 +13,30 @@ use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
 use crate::types::{
-    Author, CouncilMessage, CouncilRevisions, CreateTopicInput, Decision, DecisionStatus,
+    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, Decision, DecisionStatus,
     MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 1;
+const SUPPORTED_SCHEMA_VERSION: i64 = 2;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
     "decisions",
+    "agent_sessions",
     "council_meta",
     "council_identity",
+    "actor_identities",
+    "actor_aliases",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
     "idx_topics_project_updated",
     "idx_messages_topic_created",
     "idx_decisions_topic_created",
+    "idx_actor_identities_status_slug",
+    "idx_actor_aliases_actor",
+    "idx_agent_sessions_current",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_topics_revision_insert",
@@ -50,14 +56,18 @@ const TOPIC_COLUMNS: &[&str] = &[
     "constraints_json",
     "project_path",
     "status",
-    "created_by",
+    "created_by_actor_id",
+    "created_by_snapshot_json",
+    "created_by_legacy",
     "created_at",
     "updated_at",
 ];
 const MESSAGE_COLUMNS: &[&str] = &[
     "id",
     "topic_id",
-    "author",
+    "author_actor_id",
+    "author_snapshot_json",
+    "author_legacy",
     "kind",
     "content",
     "parent_message_id",
@@ -71,8 +81,19 @@ const DECISION_COLUMNS: &[&str] = &[
     "rationale",
     "alternatives_json",
     "status",
-    "created_by",
+    "created_by_actor_id",
+    "created_by_snapshot_json",
+    "created_by_legacy",
     "created_at",
+    "updated_at",
+];
+const SESSION_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "actor_id",
+    "session_id",
+    "legacy_agent",
+    "is_current",
     "updated_at",
 ];
 
@@ -204,6 +225,27 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_table_columns(connection, "topics", TOPIC_COLUMNS)?;
     assert_table_columns(connection, "messages", MESSAGE_COLUMNS)?;
     assert_table_columns(connection, "decisions", DECISION_COLUMNS)?;
+    assert_table_columns(connection, "agent_sessions", SESSION_COLUMNS)?;
+    assert_table_columns(
+        connection,
+        "actor_identities",
+        &[
+            "id",
+            "slug",
+            "display_name",
+            "short_name",
+            "role",
+            "actor_type",
+            "status",
+            "created_at",
+            "updated_at",
+        ],
+    )?;
+    assert_table_columns(
+        connection,
+        "actor_aliases",
+        &["alias", "actor_id", "alias_kind", "created_at"],
+    )?;
     assert_table_columns(
         connection,
         "council_identity",
@@ -226,6 +268,17 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "idx_decisions_topic_created",
         &["topic_id", "created_at"],
     )?;
+    assert_index_columns(
+        connection,
+        "idx_actor_identities_status_slug",
+        &["status", "slug"],
+    )?;
+    assert_index_columns(connection, "idx_actor_aliases_actor", &["actor_id"])?;
+    assert_index_columns(
+        connection,
+        "idx_agent_sessions_current",
+        &["topic_id", "actor_id"],
+    )?;
     let foreign_key_error_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
@@ -246,7 +299,8 @@ struct TopicRow {
     constraints_json: String,
     project_path: Option<String>,
     status: String,
-    created_by: String,
+    created_by_actor_id: String,
+    created_by_snapshot_json: String,
     created_at: String,
     updated_at: String,
 }
@@ -255,7 +309,8 @@ struct TopicRow {
 struct MessageRow {
     id: String,
     topic_id: String,
-    author: String,
+    author_actor_id: String,
+    author_snapshot_json: String,
     kind: String,
     content: String,
     parent_message_id: Option<String>,
@@ -271,9 +326,16 @@ struct DecisionRow {
     rationale: String,
     alternatives_json: String,
     status: String,
-    created_by: String,
+    created_by_actor_id: String,
+    created_by_snapshot_json: String,
     created_at: String,
     updated_at: String,
+}
+
+struct ResolvedActor {
+    id: String,
+    snapshot: ActorSnapshot,
+    snapshot_json: String,
 }
 
 pub struct CouncilStore {
@@ -310,6 +372,45 @@ impl CouncilStore {
         &self.database_instance_id
     }
 
+    fn resolve_active_actor(&self, alias: &str) -> CouncilResult<ResolvedActor> {
+        let normalized = alias.trim();
+        if normalized.is_empty() {
+            return Err(CouncilError::InvalidData("Actor alias 不能为空。".into()));
+        }
+        let row = self
+            .connection
+            .query_row(
+                "SELECT identities.id, identities.slug, identities.display_name,
+                        identities.short_name, identities.role
+                 FROM actor_aliases AS aliases
+                 INNER JOIN actor_identities AS identities ON identities.id = aliases.actor_id
+                 WHERE aliases.alias = ?1 COLLATE NOCASE AND identities.status = 'active'",
+                params![normalized],
+                |row| {
+                    Ok(ActorSnapshot {
+                        schema_version: 1,
+                        actor_id: row.get(0)?,
+                        slug: row.get(1)?,
+                        display_name: row.get(2)?,
+                        short_name: row.get(3)?,
+                        role: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| {
+                CouncilError::InvalidData(format!(
+                    "Actor alias {normalized} 未注册或不可用于新写入。"
+                ))
+            })?;
+        let snapshot_json = serde_json::to_string(&row)?;
+        Ok(ResolvedActor {
+            id: row.actor_id.clone(),
+            snapshot: row,
+            snapshot_json,
+        })
+    }
+
     pub fn list_topics(
         &self,
         project_path: Option<&str>,
@@ -321,14 +422,15 @@ impl CouncilStore {
             (
                 "SELECT COUNT(*) FROM topics WHERE project_path = ?1",
                 "SELECT id, title, question, constraints_json, project_path, status, \
-                 created_by, created_at, updated_at FROM topics WHERE project_path = ?1 \
+                 created_by_actor_id, created_by_snapshot_json, created_at, updated_at \
+                 FROM topics WHERE project_path = ?1 \
                  ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3",
             )
         } else {
             (
                 "SELECT COUNT(*) FROM topics",
                 "SELECT id, title, question, constraints_json, project_path, status, \
-                 created_by, created_at, updated_at FROM topics \
+                 created_by_actor_id, created_by_snapshot_json, created_at, updated_at FROM topics \
                  ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
             )
         };
@@ -382,7 +484,8 @@ impl CouncilStore {
             |row| row.get(0),
         )?;
         let mut message_statement = self.connection.prepare(
-            "SELECT id, topic_id, author, kind, content, parent_message_id, created_at FROM (\
+            "SELECT id, topic_id, author_actor_id, author_snapshot_json, kind, content, \
+             parent_message_id, created_at FROM (\
                SELECT rowid AS internal_rowid, * FROM messages WHERE topic_id = ?1 \
                ORDER BY created_at DESC, rowid DESC LIMIT ?2 OFFSET ?3\
              ) ORDER BY created_at ASC, internal_rowid ASC",
@@ -399,7 +502,8 @@ impl CouncilStore {
             .collect::<CouncilResult<Vec<_>>>()?;
         let mut decision_statement = self.connection.prepare(
             "SELECT id, topic_id, title, decision, rationale, alternatives_json, status, \
-             created_by, created_at, updated_at FROM decisions WHERE topic_id = ?1 \
+             created_by_actor_id, created_by_snapshot_json, created_at, updated_at \
+             FROM decisions WHERE topic_id = ?1 \
              ORDER BY created_at ASC, rowid ASC",
         )?;
         let decision_rows = decision_statement
@@ -427,19 +531,24 @@ impl CouncilStore {
     }
 
     pub fn create_topic(&mut self, input: CreateTopicInput) -> CouncilResult<Topic> {
+        let actor = self.resolve_active_actor(&input.created_by_alias)?;
         let id = format!("topic_{}", Uuid::new_v4());
         let now = now_iso();
         let constraints_json = serde_json::to_string(&input.constraints)?;
         self.connection.execute(
-            "INSERT INTO topics (id, title, question, constraints_json, project_path, status, \
-             created_by, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, ?7, ?8)",
+            "INSERT INTO topics (
+               id, title, question, constraints_json, project_path, status,
+               created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+               created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, ?7, NULL, ?8, ?9)",
             params![
                 id,
                 input.title,
                 input.question,
                 constraints_json,
                 input.project_path,
-                input.created_by.as_db(),
+                actor.id,
+                actor.snapshot_json,
                 now,
                 now,
             ],
@@ -449,6 +558,7 @@ impl CouncilStore {
 
     pub fn post_message(&mut self, input: PostMessageInput) -> CouncilResult<CouncilMessage> {
         self.require_topic(&input.topic_id)?;
+        let actor = self.resolve_active_actor(&input.actor_alias)?;
         let id = format!("message_{}", Uuid::new_v4());
         let now = now_iso();
         let transaction = self
@@ -474,12 +584,15 @@ impl CouncilStore {
             }
         }
         transaction.execute(
-            "INSERT INTO messages (id, topic_id, author, kind, content, parent_message_id, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO messages (
+               id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+               kind, content, parent_message_id, created_at
+             ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8)",
             params![
                 id,
                 input.topic_id,
-                input.author.as_db(),
+                actor.id,
+                actor.snapshot_json,
                 input.kind.as_db(),
                 input.content,
                 input.parent_message_id,
@@ -494,7 +607,8 @@ impl CouncilStore {
         Ok(CouncilMessage {
             id,
             topic_id: input.topic_id,
-            author: input.author,
+            actor_id: actor.id,
+            actor_snapshot: actor.snapshot,
             kind: input.kind,
             content: input.content,
             parent_message_id: input.parent_message_id,
@@ -504,7 +618,8 @@ impl CouncilStore {
 
     pub fn record_decision(&mut self, input: RecordDecisionInput) -> CouncilResult<Decision> {
         self.require_topic(&input.topic_id)?;
-        if input.status == DecisionStatus::Accepted && input.created_by != Author::Human {
+        let actor = self.resolve_active_actor(&input.created_by_alias)?;
+        if input.status == DecisionStatus::Accepted && actor.id != "human" {
             return Err(CouncilError::Conflict(
                 "Accepted 决策必须由用户确认。".into(),
             ));
@@ -522,8 +637,9 @@ impl CouncilStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "INSERT INTO decisions (id, topic_id, title, decision, rationale, alternatives_json, \
-             status, created_by, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+             created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
             params![
                 id,
                 input.topic_id,
@@ -532,7 +648,8 @@ impl CouncilStore {
                 input.rationale,
                 alternatives_json,
                 input.status.as_db(),
-                input.created_by.as_db(),
+                actor.id,
+                actor.snapshot_json,
                 now,
                 now,
             ],
@@ -550,7 +667,8 @@ impl CouncilStore {
             rationale: input.rationale,
             alternatives: input.alternatives,
             status: input.status,
-            created_by: input.created_by,
+            created_by_actor_id: actor.id,
+            created_by_snapshot: actor.snapshot,
             created_at: now.clone(),
             updated_at: now,
         })
@@ -584,8 +702,9 @@ impl CouncilStore {
         let row = self
             .connection
             .query_row(
-                "SELECT id, title, question, constraints_json, project_path, status, created_by, \
-                 created_at, updated_at FROM topics WHERE id = ?1",
+                "SELECT id, title, question, constraints_json, project_path, status,
+                 created_by_actor_id, created_by_snapshot_json, created_at, updated_at
+                 FROM topics WHERE id = ?1",
                 params![id],
                 read_topic_row,
             )
@@ -607,9 +726,10 @@ fn read_topic_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TopicRow> {
         constraints_json: row.get(3)?,
         project_path: row.get(4)?,
         status: row.get(5)?,
-        created_by: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        created_by_actor_id: row.get(6)?,
+        created_by_snapshot_json: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -617,11 +737,12 @@ fn read_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
     Ok(MessageRow {
         id: row.get(0)?,
         topic_id: row.get(1)?,
-        author: row.get(2)?,
-        kind: row.get(3)?,
-        content: row.get(4)?,
-        parent_message_id: row.get(5)?,
-        created_at: row.get(6)?,
+        author_actor_id: row.get(2)?,
+        author_snapshot_json: row.get(3)?,
+        kind: row.get(4)?,
+        content: row.get(5)?,
+        parent_message_id: row.get(6)?,
+        created_at: row.get(7)?,
     })
 }
 
@@ -634,13 +755,16 @@ fn read_decision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DecisionRow> {
         rationale: row.get(4)?,
         alternatives_json: row.get(5)?,
         status: row.get(6)?,
-        created_by: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        created_by_actor_id: row.get(7)?,
+        created_by_snapshot_json: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
 fn topic_from_row(row: TopicRow) -> CouncilResult<Topic> {
+    let created_by_snapshot =
+        parse_actor_snapshot(&row.created_by_snapshot_json, &row.created_by_actor_id)?;
     Ok(Topic {
         id: row.id,
         title: row.title,
@@ -650,21 +774,20 @@ fn topic_from_row(row: TopicRow) -> CouncilResult<Topic> {
         status: TopicStatus::from_db(&row.status).ok_or_else(|| {
             CouncilError::InvalidData(format!("未知 Topic status：{}", row.status))
         })?,
-        created_by: Author::from_db(&row.created_by).ok_or_else(|| {
-            CouncilError::InvalidData(format!("未知 Topic author：{}", row.created_by))
-        })?,
+        created_by_actor_id: row.created_by_actor_id,
+        created_by_snapshot,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
 }
 
 fn message_from_row(row: MessageRow) -> CouncilResult<CouncilMessage> {
+    let actor_snapshot = parse_actor_snapshot(&row.author_snapshot_json, &row.author_actor_id)?;
     Ok(CouncilMessage {
         id: row.id,
         topic_id: row.topic_id,
-        author: Author::from_db(&row.author).ok_or_else(|| {
-            CouncilError::InvalidData(format!("未知 Message author：{}", row.author))
-        })?,
+        actor_id: row.author_actor_id,
+        actor_snapshot,
         kind: MessageKind::from_db(&row.kind)
             .ok_or_else(|| CouncilError::InvalidData(format!("未知 Message kind：{}", row.kind)))?,
         content: row.content,
@@ -674,6 +797,8 @@ fn message_from_row(row: MessageRow) -> CouncilResult<CouncilMessage> {
 }
 
 fn decision_from_row(row: DecisionRow) -> CouncilResult<Decision> {
+    let created_by_snapshot =
+        parse_actor_snapshot(&row.created_by_snapshot_json, &row.created_by_actor_id)?;
     Ok(Decision {
         id: row.id,
         topic_id: row.topic_id,
@@ -684,9 +809,8 @@ fn decision_from_row(row: DecisionRow) -> CouncilResult<Decision> {
         status: DecisionStatus::from_db(&row.status).ok_or_else(|| {
             CouncilError::InvalidData(format!("未知 Decision status：{}", row.status))
         })?,
-        created_by: Author::from_db(&row.created_by).ok_or_else(|| {
-            CouncilError::InvalidData(format!("未知 Decision author：{}", row.created_by))
-        })?,
+        created_by_actor_id: row.created_by_actor_id,
+        created_by_snapshot,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
@@ -694,6 +818,24 @@ fn decision_from_row(row: DecisionRow) -> CouncilResult<Decision> {
 
 fn parse_string_array(value: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
+}
+
+fn parse_actor_snapshot(value: &str, expected_actor_id: &str) -> CouncilResult<ActorSnapshot> {
+    let snapshot: ActorSnapshot = serde_json::from_str(value)
+        .map_err(|_| CouncilError::InvalidData("Actor snapshot 无效。".into()))?;
+    if snapshot.schema_version != 1
+        || snapshot.actor_id.is_empty()
+        || snapshot.slug.is_empty()
+        || snapshot.display_name.is_empty()
+        || snapshot.short_name.is_empty()
+        || snapshot.role.is_empty()
+        || snapshot.actor_id != expected_actor_id
+    {
+        return Err(CouncilError::InvalidData(
+            "Actor snapshot 字段无效。".into(),
+        ));
+    }
+    Ok(snapshot)
 }
 
 fn non_negative(value: i64, label: &str) -> CouncilResult<u64> {
@@ -717,7 +859,7 @@ mod tests {
         let database_path = directory.path().join("council.sqlite3");
         Connection::open(&database_path)
             .expect("fixture database")
-            .execute_batch(include_str!("../tests/fixtures/node-schema-v1.sql"))
+            .execute_batch(include_str!("../tests/fixtures/node-schema-v2.sql"))
             .expect("node schema fixture");
         let store = CouncilStore::open(database_path, 4_321).expect("store should open");
 

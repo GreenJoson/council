@@ -192,7 +192,7 @@ export class FakeCouncilStore implements CouncilStore {
       if (
         existing.expectedGateId !== input.expectedGateId ||
         existing.expectedVersion !== input.expectedVersion ||
-        existing.approvedBy !== input.approvedBy
+        existing.approvedByActorId !== input.approvedByActorId
       ) {
         throw new StoreConflictError("同一个 approvalId 不能表示不同的批准操作。");
       }
@@ -248,7 +248,7 @@ export class FakeCouncilStore implements CouncilStore {
     const message: CouncilPublicMessage = {
       id: `message_${String(this.#messageSequence)}`,
       topicId: input.message.topicId,
-      author: input.message.author,
+      actorId: input.message.actorId,
       kind: input.message.kind,
       content: input.message.content,
       createdAt: new Date().toISOString(),

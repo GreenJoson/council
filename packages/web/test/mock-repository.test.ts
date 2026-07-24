@@ -34,7 +34,7 @@ describe("MockCouncilRepository", () => {
 
     const afterPost = await repository.publishMessage({
       topicId: topicId ?? "",
-      author: "user",
+      author: "human",
       kind: "rebuttal",
       content: "补充失败恢复必须经过状态机校验。",
     });

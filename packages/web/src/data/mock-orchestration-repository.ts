@@ -29,13 +29,13 @@ const CAPABILITIES: OrchestrationCapabilities = {
   adapters: [
     {
       id: "claude-code",
-      publicAuthor: "claude",
+      actorId: "claude",
       label: "Claude Code",
       available: true,
     },
     {
       id: "codex-shared",
-      publicAuthor: "codex",
+      actorId: "codex",
       label: "Codex",
       available: false,
       limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
@@ -142,7 +142,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         if (!adapter?.available) {
           throw new Error("所选 Agent 当前不能由 Web 主动调用");
         }
-        return { ...round, publicAuthor: adapter.publicAuthor };
+        return { ...round, actorId: adapter.actorId };
       }),
       policy: {
         ...structuredClone(CAPABILITIES.defaultPolicy),

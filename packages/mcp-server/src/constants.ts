@@ -10,7 +10,6 @@ export const SERVER_NAME = "council-mcp-server";
 export const SERVER_VERSION = "0.1.0";
 
 export const TOPIC_STATUSES = ["open", "decided", "closed"] as const;
-export const AUTHORS = ["human", "claude", "codex", "chair", "other"] as const;
 export const MESSAGE_KINDS = [
   "brief",
   "proposal",

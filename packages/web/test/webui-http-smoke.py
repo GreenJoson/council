@@ -120,7 +120,7 @@ with sync_playwright() as playwright:
     assert runs["runs"][0]["status"] == "completed"
     generated_detail = api_request("GET", f"/api/v1/topics/{topic_id}")
     assert any(
-        message["author"] == "claude" and message["content"] == agent_message
+        message["actorId"] == "claude" and message["content"] == agent_message
         for message in generated_detail["messages"]
     )
 

@@ -30,7 +30,7 @@ export function MessageJumpRail({
     <nav className="message-jump-rail" aria-label="消息卡片快速导航">
       <ol className="message-jump-list">
         {messages.map((message, index) => {
-          const author = message.author === "user" ? "User" : message.author;
+          const author = message.author === "human" ? "User" : message.author;
           const label =
             `第 ${index + 1} 条 · ${author} · ${messageKindLabels[message.kind]} · ${message.title}`;
           return (

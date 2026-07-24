@@ -41,7 +41,7 @@ function invocation(projectPath: string): AgentInvocation {
     roundNumber: 2,
     attempt: 1,
     adapterId: "codex",
-    publicAuthor: "codex",
+    actorId: "codex",
     instruction: "CURRENT_INSTRUCTION：评估方案并给出可验证结论。",
     messageKind: "critique",
     context: {
@@ -54,7 +54,7 @@ function invocation(projectPath: string): AgentInvocation {
         {
           id: "message_old",
           topicId: "topic_codex_adapter_test",
-          author: "human",
+          actorId: "human",
           kind: "brief",
           content: `OLD_UNTRUSTED_${"x".repeat(1_500)}`,
           createdAt: "2026-01-01T00:00:00.000Z",
@@ -62,7 +62,7 @@ function invocation(projectPath: string): AgentInvocation {
         {
           id: "message_latest",
           topicId: "topic_codex_adapter_test",
-          author: "claude",
+          actorId: "claude",
           kind: "critique",
           content: "LATEST_PUBLIC_CONTEXT",
           createdAt: "2026-01-01T00:01:00.000Z",

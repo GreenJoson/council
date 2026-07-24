@@ -288,7 +288,7 @@ export function Composer({
                     applyMentionCandidate(candidate);
                   }}
                 >
-                  <span className={`agent-avatar agent-${candidate.publicAuthor} agent-avatar-small`}>
+                  <span className={`agent-avatar agent-${candidate.actorId} agent-avatar-small`}>
                     {candidate.label.slice(0, 2).toUpperCase()}
                   </span>
                   <span className="mention-option-body">

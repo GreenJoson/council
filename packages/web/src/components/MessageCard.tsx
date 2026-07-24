@@ -1,5 +1,5 @@
 /**
- * @input  依赖：CouncilMessage、参与者资料、引用回复回调、MarkdownContent 与
+ * @input  依赖：带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent 与
  *         data/mention-parser 的 extractLeadingMentionChip
  * @output 导出：MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
@@ -32,6 +32,13 @@ export function MessageCard({
   onQuote,
 }: MessageCardProps) {
   const mentionChip = extractLeadingMentionChip(message.content);
+  const frozenParticipant: Participant = {
+    id: message.actorSnapshot.actorId,
+    slug: message.actorSnapshot.slug,
+    name: message.actorSnapshot.displayName,
+    shortName: message.actorSnapshot.shortName,
+    role: message.actorSnapshot.role,
+  };
 
   return (
     <article
@@ -41,12 +48,12 @@ export function MessageCard({
       style={{ "--message-index": index } as React.CSSProperties}
     >
       <div className="timeline-avatar">
-        <AgentAvatar agent={message.author} />
+        <AgentAvatar agent={message.author} participant={frozenParticipant} />
       </div>
       <div className="message-surface">
         <header className="message-header">
           <div>
-            <strong>{participant?.name ?? message.author}</strong>
+            <strong>{message.actorSnapshot.displayName || participant?.name || message.author}</strong>
             <span>{message.createdLabel}</span>
           </div>
           <div className="message-actions">

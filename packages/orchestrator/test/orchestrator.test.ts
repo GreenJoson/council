@@ -63,9 +63,9 @@ test("按计划完成多 Agent 多消息类型轮次", async () => {
   }));
   const orchestrator = new CouncilOrchestrator(store, [alpha, beta]);
   const created = await orchestrator.createRun(input([
-    { adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "给出独立方案" },
-    { adapterId: "beta", publicAuthor: "codex", messageKind: "critique", instruction: "进行对抗性审查" },
-    { adapterId: "alpha", publicAuthor: "claude", messageKind: "rebuttal", instruction: "回应具体批评" },
+    { adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "给出独立方案" },
+    { adapterId: "beta", actorId: "codex", messageKind: "critique", instruction: "进行对抗性审查" },
+    { adapterId: "alpha", actorId: "claude", messageKind: "rebuttal", instruction: "回应具体批评" },
   ]));
 
   assert.equal(created.status, "idle");
@@ -79,7 +79,7 @@ test("按计划完成多 Agent 多消息类型轮次", async () => {
     "critique",
     "rebuttal",
   ]);
-  assert.deepEqual(store.messages.map((message) => message.author), [
+  assert.deepEqual(store.messages.map((message) => message.actorId), [
     "claude",
     "codex",
     "claude",
@@ -95,7 +95,7 @@ test("Agent 可重试失败在尝试上限后进入 failed", async () => {
   });
   const orchestrator = new CouncilOrchestrator(store, [failing]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -123,7 +123,7 @@ test("Agent 只有显式声明的安全原因可以进入运行快照", async ()
   });
   const orchestrator = new CouncilOrchestrator(store, [failing]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 
@@ -145,7 +145,7 @@ test("超时后 Adapter 永不 settle 会按 agent_cleanup_timeout 非重试失�
   });
   const orchestrator = new CouncilOrchestrator(store, [hanging]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -182,7 +182,7 @@ test("超时取消先等待 Adapter 清理完成，再允许下一次调用", as
   });
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -203,7 +203,7 @@ test("Adapter 取消清理超过上限后非重试失败且捕获迟到 Promise"
   const agent = new FakeAgentAdapter("alpha", async () => await new Promise(() => undefined));
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -227,7 +227,7 @@ test("Agent 超长公开回复在核心边界失败且不提交消息", async ()
   }));
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 
@@ -249,7 +249,7 @@ test("等待 Agent 时取消会阻止迟到消息提交", async () => {
   });
   const orchestrator = new CouncilOrchestrator(store, [waiting]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 
@@ -269,9 +269,9 @@ test("达到最大轮数后确定性停止且不执行剩余计划", async () =>
   const beta = new FakeAgentAdapter("beta", async () => ({ content: "beta" }));
   const orchestrator = new CouncilOrchestrator(store, [alpha, beta]);
   const created = await orchestrator.createRun(input([
-    { adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "第一轮" },
-    { adapterId: "beta", publicAuthor: "codex", messageKind: "critique", instruction: "第二轮" },
-    { adapterId: "alpha", publicAuthor: "chair", messageKind: "synthesis", instruction: "第三轮" },
+    { adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "第一轮" },
+    { adapterId: "beta", actorId: "codex", messageKind: "critique", instruction: "第二轮" },
+    { adapterId: "alpha", actorId: "chair", messageKind: "synthesis", instruction: "第三轮" },
   ], {
     ...BASE_POLICY,
     maxRounds: 2,
@@ -293,8 +293,8 @@ test("轮前和完成前人工门必须分别确认", async () => {
   }));
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input([
-    { adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "第一轮" },
-    { adapterId: "alpha", publicAuthor: "chair", messageKind: "synthesis", instruction: "第二轮" },
+    { adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "第一轮" },
+    { adapterId: "alpha", actorId: "chair", messageKind: "synthesis", instruction: "第二轮" },
   ], {
     ...BASE_POLICY,
     allowedAgents: ["alpha"],
@@ -314,7 +314,7 @@ test("轮前和完成前人工门必须分别确认", async () => {
     expectedGateId: beforeSecond.pendingGateId ?? "",
     expectedVersion: beforeSecond.version,
     approvalId: "approval_round_2",
-    approvedBy: "human",
+    approvedByActorId: "human",
   }, LEASE_REQUEST);
   assert.equal(beforeCompletion.status, "waiting_user");
   assert.equal(beforeCompletion.pendingGateId, "before_completion");
@@ -325,7 +325,7 @@ test("轮前和完成前人工门必须分别确认", async () => {
     expectedGateId: beforeCompletion.pendingGateId ?? "",
     expectedVersion: beforeCompletion.version,
     approvalId: "approval_completion",
-    approvedBy: "human",
+    approvedByActorId: "human",
   }, LEASE_REQUEST);
   assert.equal(completed.status, "completed");
   assert.equal(completed.stopReason, "plan_completed");
@@ -338,7 +338,7 @@ test("显式失败恢复受独立预算限制", async () => {
   });
   const orchestrator = new CouncilOrchestrator(store, [failing]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -367,13 +367,13 @@ test("相同 approvalId 重放不会跨过下一道人工门", async () => {
   const created = await orchestrator.createRun(input([
     {
       adapterId: "alpha",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "第一轮",
     },
     {
       adapterId: "alpha",
-      publicAuthor: "chair",
+      actorId: "chair",
       messageKind: "synthesis",
       instruction: "第二轮",
     },
@@ -392,7 +392,7 @@ test("相同 approvalId 重放不会跨过下一道人工门", async () => {
     expectedGateId: firstGate.pendingGateId ?? "",
     expectedVersion: firstGate.version,
     approvalId: "approval_first_gate",
-    approvedBy: "human",
+    approvedByActorId: "human",
   };
   const secondGate = await orchestrator.approve(firstApproval, LEASE_REQUEST);
   assert.equal(secondGate.pendingGateId, "before_round:2");
@@ -418,7 +418,7 @@ test("相同 approvalId 重放不会跨过下一道人工门", async () => {
       expectedGateId: "before_round:2",
       expectedVersion: firstGate.version,
       approvalId: "approval_stale_version",
-      approvedBy: "human",
+      approvedByActorId: "human",
     }, LEASE_REQUEST),
     StoreConflictError,
   );
@@ -432,7 +432,7 @@ test("拒绝超过 Node.js 安全计时器上限的超时配置", async () => {
     orchestrator.createRun(input(
       [{
         adapterId: "alpha",
-        publicAuthor: "claude",
+        actorId: "claude",
         messageKind: "proposal",
         instruction: "提出方案",
       }],
@@ -455,7 +455,7 @@ test("commitRound 失败归类为 store_failed 且不重新调用 Agent", async 
   const created = await orchestrator.createRun(input(
     [{
       adapterId: "alpha",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "提出方案",
     }],
@@ -481,7 +481,7 @@ test("缺少 Store lease 时 running 和 waiting_agent 均禁止恢复", async (
   const runningCreated = await runningOrchestrator.createRun(input(
     [{
       adapterId: "alpha",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "提出方案",
     }],
@@ -507,7 +507,7 @@ test("缺少 Store lease 时 running 和 waiting_agent 均禁止恢复", async (
   const waitingCreated = await activeOrchestrator.createRun(input(
     [{
       adapterId: "alpha",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "提出方案",
     }],
@@ -540,7 +540,7 @@ test("公共入口拒绝 gate、index、attempt 和 activeAgent 不一致的持�
     const created = await orchestrator.createRun(input(
       [{
         adapterId: "alpha",
-        publicAuthor: "claude",
+        actorId: "claude",
         messageKind: "proposal",
         instruction: "提出方案",
       }],
@@ -556,7 +556,7 @@ test("begin 只完成原子转换，drive 在独立 lease 下继续执行", asyn
   const agent = new FakeAgentAdapter("alpha", async () => ({ content: "公开方案" }));
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 
@@ -582,7 +582,7 @@ test("同步便捷执行会按调用参数续租慢 Agent", async () => {
   });
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 
@@ -599,7 +599,7 @@ test("重启分类不会自动重放 waiting_agent", async () => {
   const store = new FakeCouncilStore();
   const orchestrator = new CouncilOrchestrator(store, []);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
   const running = await orchestrator.begin(created.id);
@@ -631,7 +631,7 @@ test("人工确认门拒绝非 human 批准者", async () => {
   const store = new FakeCouncilStore();
   const orchestrator = new CouncilOrchestrator(store, []);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
@@ -651,7 +651,7 @@ test("人工确认门拒绝非 human 批准者", async () => {
       expectedGateId: gate.pendingGateId ?? "",
       expectedVersion: gate.version,
       approvalId: "approval_not_human",
-      approvedBy: "claude",
+      approvedByActorId: "claude",
     }),
     OrchestrationConfigError,
   );
@@ -671,7 +671,7 @@ test("持久化运行不能越过未确认的轮次门", async () => {
     const store = new FakeCouncilStore();
     const orchestrator = new CouncilOrchestrator(store, []);
     const created = await orchestrator.createRun(input(
-      [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+      [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
       {
         ...BASE_POLICY,
         allowedAgents: ["alpha"],
@@ -693,7 +693,7 @@ test("续租失败按 lease 丢失中断，不归因 Agent 且不提交迟到消
   });
   const orchestrator = new CouncilOrchestrator(store, [agent]);
   const created = await orchestrator.createRun(input(
-    [{ adapterId: "alpha", publicAuthor: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
   ));
 

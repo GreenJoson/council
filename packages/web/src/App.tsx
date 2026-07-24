@@ -398,7 +398,7 @@ export default function App() {
     try {
       await repository.publishMessage({
         topicId: activeTopicId,
-        author: "user",
+        author: "human",
         kind,
         content,
       });

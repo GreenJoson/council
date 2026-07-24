@@ -274,19 +274,19 @@
   color: var(--color-agent-codex);
 }
 
-.agent-user {
-  background: var(--color-agent-user-soft);
-  color: var(--color-agent-user);
+.agent-human {
+  background: var(--color-agent-human-soft);
+  color: var(--color-agent-human);
 }
 
-.agent-chair {
-  background: var(--color-agent-chair-soft);
-  color: var(--color-agent-chair);
+.agent-council {
+  background: var(--color-agent-council-soft);
+  color: var(--color-agent-council);
 }
 
-.agent-other {
-  background: var(--color-agent-other-soft);
-  color: var(--color-agent-other);
+.agent-legacy-unknown {
+  background: var(--color-agent-legacy-soft);
+  color: var(--color-agent-legacy);
 }
 
 .message-card {
@@ -442,7 +442,7 @@
 }
 
 .message-jump-step.step-rebuttal {
-  --step-color: var(--color-agent-user);
+  --step-color: var(--color-agent-human);
 }
 
 .message-jump-step.step-synthesis {
@@ -511,8 +511,8 @@
 }
 
 .kind-rebuttal {
-  background: var(--color-agent-user-soft);
-  color: var(--color-agent-user);
+  background: var(--color-agent-human-soft);
+  color: var(--color-agent-human);
 }
 
 .kind-synthesis {

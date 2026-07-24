@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 Council SQLite、两个 Store 连接与编排领域类型
- * @output 导出：重启、CAS、lease、单活动、原子消息和损坏数据测试
+ * @output 导出：v1 三类 other 映射/原子升级、v2 重启、CAS、lease、原子消息和损坏数据测试
  * @pos    SQLiteCouncilStore 双连接 fencing 与安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -24,7 +24,7 @@ import {
 import type {
   CreateRunInput,
   OrchestrationRun,
-  PublicAuthor,
+  ActorId,
   RoundCommitInput,
   RunLease,
 } from "../src/types.js";
@@ -44,14 +44,18 @@ function createBaseDatabase(databasePath: string): void {
         constraints_json TEXT NOT NULL,
         project_path TEXT,
         status TEXT NOT NULL CHECK (status IN ('open', 'decided', 'closed')),
-        created_by TEXT NOT NULL CHECK (created_by IN ('human', 'claude', 'codex', 'chair', 'other')),
+        created_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+        created_by_snapshot_json TEXT NOT NULL,
+        created_by_legacy TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE messages (
         id TEXT PRIMARY KEY,
         topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
-        author TEXT NOT NULL CHECK (author IN ('human', 'claude', 'codex', 'chair', 'other')),
+        author_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+        author_snapshot_json TEXT NOT NULL,
+        author_legacy TEXT,
         kind TEXT NOT NULL CHECK (kind IN ('brief', 'proposal', 'critique', 'rebuttal', 'synthesis', 'note')),
         content TEXT NOT NULL,
         parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
@@ -60,6 +64,23 @@ function createBaseDatabase(databasePath: string): void {
       CREATE TABLE council_meta (
         key TEXT PRIMARY KEY,
         value INTEGER NOT NULL
+      );
+      CREATE TABLE actor_identities (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        display_name TEXT NOT NULL,
+        short_name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        actor_type TEXT NOT NULL CHECK (actor_type IN ('human', 'system', 'agent', 'legacy')),
+        status TEXT NOT NULL CHECK (status IN ('active', 'needs_review', 'inactive')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE actor_aliases (
+        alias TEXT PRIMARY KEY COLLATE NOCASE,
+        actor_id TEXT NOT NULL REFERENCES actor_identities(id) ON DELETE CASCADE,
+        alias_kind TEXT NOT NULL CHECK (alias_kind IN ('canonical', 'legacy', 'adapter')),
+        created_at TEXT NOT NULL
       );
       INSERT INTO council_meta (key, value) VALUES ('revision', 0);
       CREATE TRIGGER trg_topics_revision_update
@@ -73,12 +94,51 @@ function createBaseDatabase(databasePath: string): void {
     `);
     database.exec(ORCHESTRATION_SCHEMA_SQL);
     const now = new Date().toISOString();
+    const actorSeed = database.prepare(`
+      INSERT INTO actor_identities (
+        id, slug, display_name, short_name, role, actor_type, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const aliasSeed = database.prepare(`
+      INSERT INTO actor_aliases (alias, actor_id, alias_kind, created_at)
+      VALUES (?, ?, 'canonical', ?)
+    `);
+    for (const actor of [
+      ["human", "human", "User", "U", "决策者", "human", "active"],
+      ["claude", "claude", "Claude", "CL", "方案顾问", "agent", "active"],
+      ["codex", "codex", "Codex", "CX", "代码审查", "agent", "active"],
+      ["deepseek", "deepseek", "DeepSeek", "DS", "模型顾问", "agent", "active"],
+      ["kimi", "kimi", "Kimi", "KI", "模型顾问", "agent", "active"],
+      [
+        "legacy-unknown",
+        "legacy-unknown",
+        "Legacy unknown",
+        "?",
+        "待人工识别的历史参与者",
+        "legacy",
+        "needs_review",
+      ],
+    ] as const) {
+      actorSeed.run(...actor, now, now);
+      if (actor[6] === "active") {
+        aliasSeed.run(actor[0], actor[0], now);
+      }
+    }
+    const humanSnapshot = JSON.stringify({
+      schemaVersion: 1,
+      actorId: "human",
+      slug: "human",
+      displayName: "User",
+      shortName: "U",
+      role: "决策者",
+    });
     database
       .prepare(`
         INSERT INTO topics (
           id, title, question, constraints_json, project_path,
-          status, created_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'open', 'human', ?, ?)
+          status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'open', 'human', ?, NULL, ?, ?)
       `)
       .run(
         TOPIC_ID,
@@ -86,6 +146,7 @@ function createBaseDatabase(databasePath: string): void {
         "双连接能否只提交一轮？",
         JSON.stringify(["取消后禁止写入"]),
         path.dirname(databasePath),
+        humanSnapshot,
         now,
         now,
       );
@@ -114,7 +175,7 @@ function createInput(options?: {
     topicId: TOPIC_ID,
     plan: Array.from({ length: rounds }, (_value, index) => ({
       adapterId: "alpha",
-      publicAuthor: index % 2 === 0 ? "claude" : "codex",
+      actorId: index % 2 === 0 ? "claude" : "codex",
       messageKind: index % 2 === 0 ? "proposal" : "critique",
       instruction: `执行第 ${String(index + 1)} 轮`,
     })),
@@ -131,6 +192,67 @@ function createInput(options?: {
       },
     },
   };
+}
+
+interface LegacyRunRound {
+  adapterId: string;
+  actorId?: string;
+  publicAuthor?: string;
+  messageKind: string;
+  instruction: string;
+}
+
+function convertRunToV1(
+  databasePath: string,
+  runId: string,
+  adapterId: string,
+  publicAuthor: "human" | "claude" | "codex" | "chair" | "other",
+): void {
+  const database = new DatabaseSync(databasePath);
+  try {
+    const row = database.prepare(
+      "SELECT snapshot_json FROM orchestration_runs WHERE id = ?",
+    ).get(runId) as unknown as { snapshot_json: string };
+    const snapshot = JSON.parse(row.snapshot_json) as {
+      plan: LegacyRunRound[];
+      activeAgentId?: string;
+      policy: {
+        allowedAgents: string[];
+        agentCleanupTimeoutMs?: number;
+      };
+    };
+    snapshot.plan = snapshot.plan.map(({ actorId: _actorId, ...round }) => ({
+      ...round,
+      adapterId,
+      publicAuthor,
+    }));
+    snapshot.policy.allowedAgents = [adapterId];
+    if (snapshot.activeAgentId !== undefined) {
+      snapshot.activeAgentId = adapterId;
+    }
+    delete snapshot.policy.agentCleanupTimeoutMs;
+    database.prepare(`
+      UPDATE orchestration_runs
+      SET snapshot_schema_version = 1, snapshot_json = ?
+      WHERE id = ?
+    `).run(JSON.stringify(snapshot), runId);
+  } finally {
+    database.close();
+  }
+}
+
+function readSnapshotSchemaVersion(databasePath: string, runId: string): number {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    const row = database.prepare(`
+      SELECT snapshot_schema_version
+      FROM orchestration_runs
+      WHERE id = ?
+    `).get(runId) as unknown as { snapshot_schema_version: number };
+    return row.snapshot_schema_version;
+  } finally {
+    database.close();
+  }
 }
 
 async function moveToWaitingAgent(
@@ -162,7 +284,7 @@ function nextRoundCommit(waiting: OrchestrationRun, lease: RunLease): RoundCommi
     },
     message: {
       topicId: waiting.topicId,
-      author: "claude",
+      actorId: "claude",
       kind: "proposal",
       content: "原子提交的公开回复。",
     },
@@ -233,6 +355,15 @@ test("运行快照可在 Store 重启后严格读取且状态变化推进 revisi
   await withDatabase(async (databasePath) => {
     const first = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     const created = await first.createRun(createInput());
+    const raw = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      const row = raw.prepare(
+        "SELECT snapshot_schema_version FROM orchestration_runs WHERE id = ?",
+      ).get(created.id) as unknown as { snapshot_schema_version: unknown };
+      assert.equal(row.snapshot_schema_version, 2);
+    } finally {
+      raw.close();
+    }
     const running = await first.replaceRun({ ...created, status: "running" }, created.version);
     const revisionAfterTransitions = getRevision(databasePath);
     first.close();
@@ -249,33 +380,141 @@ test("运行快照可在 Store 重启后严格读取且状态变化推进 revisi
   });
 });
 
-test("旧 V1 快照缺少清理时限时只用协议迁移常量回填", async () => {
+test("旧 v1 作者快照映射为 Actor 且缺少清理时限时只用协议常量回填", async () => {
   await withDatabase(async (databasePath) => {
     const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     try {
       const created = await store.createRun(createInput());
-      const raw = new DatabaseSync(databasePath);
-      try {
-        const row = raw.prepare(
-          "SELECT snapshot_json FROM orchestration_runs WHERE id = ?",
-        ).get(created.id) as unknown as { snapshot_json: string };
-        const snapshot = JSON.parse(row.snapshot_json) as {
-          policy: { agentCleanupTimeoutMs?: number };
-        };
-        delete snapshot.policy.agentCleanupTimeoutMs;
-        raw.prepare("UPDATE orchestration_runs SET snapshot_json = ? WHERE id = ?")
-          .run(JSON.stringify(snapshot), created.id);
-      } finally {
-        raw.close();
-      }
+      convertRunToV1(databasePath, created.id, "alpha", "claude");
 
       const migrated = await store.getRun(created.id);
       assert.equal(
         migrated.policy.agentCleanupTimeoutMs,
         LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
       );
+      assert.equal(migrated.plan[0]?.actorId, "claude");
     } finally {
       store.close();
+    }
+  });
+});
+
+test("v1 waiting_user 批准时原子升级 v2 并按 adapter 恢复 DeepSeek", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    const created = await store.createRun(createInput({ beforeRounds: [1] }));
+    const waiting = await store.replaceRun(
+      {
+        ...created,
+        status: "waiting_user",
+        pendingGateId: "before_round:1",
+      },
+      created.version,
+    );
+    convertRunToV1(databasePath, waiting.id, "deepseek", "other");
+
+    const legacy = await store.getRun(waiting.id);
+    assert.equal(legacy.plan[0]?.actorId, "deepseek");
+    const approved = await store.approveGate({
+      runId: legacy.id,
+      expectedGateId: "before_round:1",
+      expectedVersion: legacy.version,
+      approvalId: "approval_v1_deepseek",
+      approvedByActorId: "human",
+    });
+    assert.equal(approved.run.plan[0]?.actorId, "deepseek");
+    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
+    store.close();
+
+    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "deepseek");
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+test("v1 failed 恢复状态时原子升级 v2 并按 adapter 恢复 Kimi", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    const created = await store.createRun(createInput());
+    const failed = await store.replaceRun(
+      {
+        ...created,
+        status: "failed",
+        failure: {
+          code: "agent_failed",
+          message: "测试失败。",
+          retryable: true,
+        },
+      },
+      created.version,
+    );
+    convertRunToV1(databasePath, failed.id, "kimi", "other");
+
+    const legacy = await store.getRun(failed.id);
+    assert.equal(legacy.plan[0]?.actorId, "kimi");
+    const { failure: _failure, ...recovering } = legacy;
+    const recovered = await store.replaceRun(
+      { ...recovering, status: "running" },
+      legacy.version,
+    );
+    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
+    assert.equal(recovered.plan[0]?.actorId, "kimi");
+    store.close();
+
+    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "kimi");
+    } finally {
+      reopened.close();
+    }
+  });
+});
+
+test("v1 active 未知 other 提交回复后升级 v2 且保留 legacy Actor", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    const created = await store.createRun(createInput());
+    const waiting = await moveToWaitingAgent(store, created);
+    convertRunToV1(databasePath, waiting.id, "unknown-legacy-adapter", "other");
+    const legacy = await store.getRun(waiting.id);
+    assert.equal(legacy.plan[0]?.actorId, "legacy-unknown");
+    const lease = await store.claimRunLease({
+      runId: legacy.id,
+      ownerId: "legacy-worker",
+      ttlMs: 2_000,
+    });
+    const { activeAgentId: _activeAgentId, ...stable } = legacy;
+    await store.commitRound({
+      expectedVersion: legacy.version,
+      lease,
+      run: {
+        ...stable,
+        status: "running",
+        nextRoundIndex: 1,
+        currentAttempt: 0,
+      },
+      message: {
+        topicId: legacy.topicId,
+        actorId: "legacy-unknown",
+        kind: "proposal",
+        content: "历史未知 Agent 的公开回复。",
+      },
+    });
+    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
+    store.close();
+
+    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "legacy-unknown");
+      assert.equal(
+        (await reopened.getTopicContext(TOPIC_ID)).messages.at(-1)?.actorId,
+        "legacy-unknown",
+      );
+    } finally {
+      reopened.close();
     }
   });
 });
@@ -316,7 +555,7 @@ test("approvalId 重放幂等且不会跨过后续确认门", async () => {
         expectedGateId: "before_round:1",
         expectedVersion: waitingFirst.version,
         approvalId: "approval_first",
-        approvedBy: "human" as const,
+        approvedByActorId: "human" as const,
       };
       const revisionBeforeApproval = getRevision(databasePath);
       const first = await store.approveGate(approval);
@@ -461,7 +700,7 @@ test("双连接竞争轮次时只有一个原子提交消息和运行", async ()
       assert.equal(saved.version, waiting.version + 1);
       const context = await second.getTopicContext(TOPIC_ID);
       assert.equal(context.messages.length, 1);
-      assert.equal(context.messages[0]?.author, "claude");
+      assert.equal(context.messages[0]?.actorId, "claude");
       assert.ok(getRevision(databasePath) > revisionBeforeCommit);
     } finally {
       second.close();
@@ -470,7 +709,7 @@ test("双连接竞争轮次时只有一个原子提交消息和运行", async ()
   });
 });
 
-test("非规范公开作者在进入 SQLite 前被拒绝", async () => {
+test("未注册 Actor 在进入 SQLite 前被拒绝", async () => {
   await withDatabase(async (databasePath) => {
     const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     try {
@@ -482,8 +721,8 @@ test("非规范公开作者在进入 SQLite 前被拒绝", async () => {
         ttlMs: 60_000,
       });
       const commit = nextRoundCommit(waiting, lease);
-      const invalidAuthor: unknown = "custom-runtime";
-      commit.message.author = invalidAuthor as PublicAuthor;
+      const invalidActorId: unknown = "custom-runtime";
+      commit.message.actorId = invalidActorId as ActorId;
       await assert.rejects(store.commitRound(commit), InvalidRunStateError);
       assert.equal(countRows(databasePath, "messages"), 0);
     } finally {
@@ -512,7 +751,7 @@ test("损坏 JSON 快照明确失败而不是回退默认状态", async () => {
 
       const invalidProtocolSnapshot = {
         ...created,
-        plan: [{ ...created.plan[0], publicAuthor: "custom-runtime" }],
+        plan: [{ ...created.plan[0], actorId: "custom-runtime" }],
       };
       const rawProtocol = new DatabaseSync(databasePath);
       try {
@@ -524,7 +763,7 @@ test("损坏 JSON 快照明确失败而不是回退默认状态", async () => {
       await assert.rejects(
         store.getRun(created.id),
         (error: unknown) =>
-          error instanceof InvalidRunStateError && /规范公开作者/.test(error.message),
+          error instanceof InvalidRunStateError && /Actor custom-runtime 不存在/.test(error.message),
       );
     } finally {
       store.close();
@@ -690,13 +929,22 @@ test("Agent 上下文只读取按配置限制的最新公开消息", async () =>
     try {
       const insert = database.prepare(`
         INSERT INTO messages (
-          id, topic_id, author, kind, content, parent_message_id, created_at
-        ) VALUES (?, ?, 'human', 'note', ?, NULL, ?)
+          id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+          kind, content, parent_message_id, created_at
+        ) VALUES (?, ?, 'human', ?, NULL, 'note', ?, NULL, ?)
       `);
       for (let index = 1; index <= 5; index += 1) {
         insert.run(
           `message_context_${String(index)}`,
           TOPIC_ID,
+          JSON.stringify({
+            schemaVersion: 1,
+            actorId: "human",
+            slug: "human",
+            displayName: "User",
+            shortName: "U",
+            role: "决策者",
+          }),
           `公开消息 ${String(index)}`,
           new Date(Date.UTC(2026, 0, index)).toISOString(),
         );
@@ -731,7 +979,7 @@ test("commitRound 绑定当前计划作者和类型并拒绝偷改运行字段",
       });
       const base = nextRoundCommit(waiting, lease);
       await assert.rejects(
-        store.commitRound({ ...base, message: { ...base.message, author: "codex" } }),
+        store.commitRound({ ...base, message: { ...base.message, actorId: "codex" } }),
         StoreConflictError,
       );
       await assert.rejects(

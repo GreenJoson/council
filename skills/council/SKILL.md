@@ -7,6 +7,8 @@ description: Coordinate architecture discussions between Claude and Codex throug
 
 Use the `council_*` MCP tools as the only shared discussion store. Keep each model's private session separate; share only user-visible proposals, evidence, critiques, rebuttals, and decisions.
 
+MCP 进程的公开身份由启动配置绑定。工具参数不得选择、覆盖或伪造 Actor；不同客户端必须配置各自的 `COUNCIL_CALLER_ACTOR_ALIAS`。MCP 只能创建 `proposed` 决策，`accepted` 只能由用户通过桌面或 HTTP 入口确认。
+
 ## Select a mode
 
 - **Publish from the current desktop session**: create or read a topic, summarize the current public conclusion, then call `council_post_message`. Do not post hidden reasoning, credentials, raw tool logs, or unrelated conversation.

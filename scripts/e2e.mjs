@@ -1,6 +1,6 @@
 /**
- * @input  依赖：已构建的 Council API/Web、Python Playwright 与测试专用 Claude CLI 替身
- * @output 导出：真实 HTTP/SSE/自动轮次及 mock 响应式布局的可重复浏览器验收
+ * @input  依赖：已构建的 Council API/Web、显式迁移配置、Playwright 与测试 Claude 替身
+ * @output 导出：隔离 schema 迁移、真实 HTTP/SSE/自动轮次及 mock 布局的浏览器验收
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -192,6 +192,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",
     COUNCIL_CLAUDE_MAX_TURNS: "3",
     COUNCIL_SQLITE_BUSY_TIMEOUT_MS: "5000",
+    COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS: "3",
     COUNCIL_MAX_CONTEXT_CHARS: "20000",
     COUNCIL_MAX_OUTPUT_CHARS: "30000",
     COUNCIL_DEFAULT_MESSAGE_LIMIT: "100",

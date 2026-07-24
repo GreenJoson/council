@@ -113,7 +113,7 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
       question: "如何验证会话恢复？",
       constraints: [],
       projectPath: directory,
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const client = new ClaudeClient(config, database);
     const availability = await client.checkAvailability();
@@ -180,7 +180,7 @@ test("ClaudeClient 取消生成时不写 session 或消息", async () => {
       question: "取消后是否保持数据库不变？",
       constraints: [],
       projectPath: directory,
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const controller = new AbortController();
     const request = new ClaudeClient(config, database).ask({
@@ -237,7 +237,7 @@ test("ClaudeClient 拒绝数据库中绕过入口校验的相对项目路径", a
       question: "兼容层是否再次校验数据库中的路径？",
       constraints: [],
       projectPath: "relative-project",
-      createdBy: "human",
+      createdByAlias: "human",
     });
     await assert.rejects(
       new ClaudeClient(config, database).ask({
@@ -289,7 +289,7 @@ test("ClaudeClient 可信议题超限时不调用 Runtime 且数据库零写入"
       question: "可信头是否会被裁掉？",
       constraints: [],
       projectPath: directory,
-      createdBy: "human",
+      createdByAlias: "human",
     });
     await assert.rejects(
       new ClaudeClient(config, database, runtime as unknown as ClaudeRuntime).ask({
@@ -346,7 +346,7 @@ test("ClaudeClient 超长公开输出不推进 session 且不写消息", async (
       question: "超长回复能否污染会话？",
       constraints: [],
       projectPath: directory,
-      createdBy: "human",
+      createdByAlias: "human",
     });
     await assert.rejects(
       new ClaudeClient(config, database, runtime as unknown as ClaudeRuntime).ask({

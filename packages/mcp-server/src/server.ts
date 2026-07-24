@@ -1,6 +1,6 @@
 /**
- * @input  依赖：CouncilDatabase、ClaudeClient、MCP SDK 与 Zod
- * @output 导出：迁移完成后创建 server 的异步工厂和全部 council_* 工具
+ * @input  依赖：CouncilDatabase、绑定调用者身份的 MCP 配置、ClaudeClient、MCP SDK 与 Zod
+ * @output 导出：迁移完成后创建身份不可伪造的 server 工厂和全部 council_* 工具
  * @pos    本地架构委员会对 Codex App 与 Claude Desktop 的协议入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,8 +11,6 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
 import { ClaudeClient } from "./claude-client.js";
 import {
-  AUTHORS,
-  DECISION_STATUSES,
   MAX_ALTERNATIVE_COUNT,
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
@@ -33,9 +31,9 @@ import { CouncilValidationError } from "./errors.js";
 import { logger } from "./logger.js";
 import { normalizeProjectPath } from "./project-path.js";
 import type {
-  CouncilConfig,
   CouncilMessage,
   Decision,
+  McpCouncilConfig,
   PaginatedTopics,
   Topic,
   TopicDetail,
@@ -47,10 +45,17 @@ const topicIdField = z
   .regex(/^topic_[A-Za-z0-9-]+$/, "topic_id 格式无效")
   .describe("Council 议题 ID，例如 topic_<uuid>");
 const messageKindField = z.enum(MESSAGE_KINDS);
-const authorField = z.enum(AUTHORS);
 const topicStatusField = z.enum(TOPIC_STATUSES);
-const decisionStatusField = z.enum(DECISION_STATUSES);
+const decisionStatusField = z.enum(["proposed", "accepted", "rejected", "superseded"]);
 
+const actorSnapshotOutput = z.object({
+  schemaVersion: z.literal(1),
+  actorId: z.string(),
+  slug: z.string(),
+  displayName: z.string(),
+  shortName: z.string(),
+  role: z.string(),
+});
 const topicOutput = z.object({
   id: z.string(),
   title: z.string(),
@@ -58,14 +63,16 @@ const topicOutput = z.object({
   constraints: z.array(z.string()),
   projectPath: z.string().optional(),
   status: topicStatusField,
-  createdBy: authorField,
+  createdByActorId: z.string(),
+  createdBySnapshot: actorSnapshotOutput,
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 const messageOutput = z.object({
   id: z.string(),
   topicId: z.string(),
-  author: authorField,
+  actorId: z.string(),
+  actorSnapshot: actorSnapshotOutput,
   kind: messageKindField,
   content: z.string(),
   parentMessageId: z.string().optional(),
@@ -79,7 +86,8 @@ const decisionOutput = z.object({
   rationale: z.string(),
   alternatives: z.array(z.string()),
   status: decisionStatusField,
-  createdBy: authorField,
+  createdByActorId: z.string(),
+  createdBySnapshot: actorSnapshotOutput,
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -150,7 +158,7 @@ function formatTopic(topic: Topic): string {
 
 function formatMessage(message: CouncilMessage): string {
   return [
-    `## ${message.author} · ${message.kind}`,
+    `## ${message.actorSnapshot.displayName} · ${message.kind}`,
     `消息 ID：${message.id}`,
     "",
     message.content,
@@ -214,12 +222,13 @@ export interface CouncilServerBundle {
   claudeClient: ClaudeClient;
 }
 
-export async function createCouncilServer(config: CouncilConfig): Promise<CouncilServerBundle> {
+export async function createCouncilServer(config: McpCouncilConfig): Promise<CouncilServerBundle> {
   const database = await CouncilDatabase.open(
     config.databasePath,
     config.sqliteBusyTimeoutMs,
     { maxAttempts: config.schemaMigrationMaxAttempts },
   );
+  const caller = database.resolveActorAlias(config.callerActorAlias);
   const claudeClient = new ClaudeClient(config, database);
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
@@ -247,7 +256,6 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
           .max(MAX_PATH_CHARS)
           .optional()
           .describe("绝对项目目录；后台 Claude 顾问模式必须提供"),
-        created_by: authorField.default("human").describe("发起者身份"),
       },
       outputSchema: { topic: topicOutput },
       annotations: {
@@ -257,15 +265,15 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
         openWorldHint: false,
       },
     },
-    async ({ title, question, constraints, project_path, created_by }) =>
+    async ({ title, question, constraints, project_path }) =>
       await executeTool("council_create_topic", () => {
         const normalizedProjectPath = normalizeProjectPath(project_path);
-        const topic = database.createTopic({
+        const topic = database.createTopicAsActor({
           title,
           question,
           constraints,
           ...(normalizedProjectPath ? { projectPath: normalizedProjectPath } : {}),
-          createdBy: created_by,
+          actorId: caller.actorId,
         });
         return success(formatTopic(topic), { topic });
       }),
@@ -359,7 +367,6 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
         "架构图、模块依赖图、业务流程或时序图用 ```mermaid 围栏描述，UI 会渲染成图并归档到架构视图。",
       inputSchema: {
         topic_id: topicIdField,
-        author: authorField,
         kind: messageKindField,
         content: z
           .string()
@@ -376,11 +383,11 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
         openWorldHint: false,
       },
     },
-    async ({ topic_id, author, kind, content, parent_message_id }) =>
+    async ({ topic_id, kind, content, parent_message_id }) =>
       await executeTool("council_post_message", () => {
-        const message = database.createMessage({
+        const message = database.createMessageAsActor({
           topicId: topic_id,
-          author,
+          actorId: caller.actorId,
           kind,
           content,
           ...(parent_message_id ? { parentMessageId: parent_message_id } : {}),
@@ -394,7 +401,7 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
     {
       title: "记录架构决策",
       description:
-        "在议题中记录结构化决策、理由和替代方案。用户尚未接受时必须使用 proposed 状态。",
+        "在议题中记录结构化决策提案、理由和替代方案。MCP 只能创建 proposed；用户接受必须通过桌面或 HTTP 入口。",
       inputSchema: {
         topic_id: topicIdField,
         title: z.string().min(1).max(MAX_TITLE_CHARS),
@@ -404,8 +411,6 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
           .array(z.string().min(1).max(MAX_CONSTRAINT_CHARS))
           .max(MAX_ALTERNATIVE_COUNT)
           .default([]),
-        status: decisionStatusField.default("proposed"),
-        created_by: authorField,
       },
       outputSchema: { decision: decisionOutput },
       annotations: {
@@ -415,16 +420,16 @@ export async function createCouncilServer(config: CouncilConfig): Promise<Counci
         openWorldHint: false,
       },
     },
-    async ({ topic_id, title, decision, rationale, alternatives, status, created_by }) =>
+    async ({ topic_id, title, decision, rationale, alternatives }) =>
       await executeTool("council_record_decision", () => {
-        const recorded = database.createDecision({
+        const recorded = database.createDecisionAsActor({
           topicId: topic_id,
           title,
           decision,
           rationale,
           alternatives,
-          status,
-          createdBy: created_by,
+          status: "proposed",
+          actorId: caller.actorId,
         });
         return success(formatDecision(recorded), { decision: recorded });
       }),

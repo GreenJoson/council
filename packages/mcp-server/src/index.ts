@@ -8,12 +8,12 @@
  */
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig } from "./config.js";
+import { loadMcpConfig } from "./config.js";
 import { logger } from "./logger.js";
 import { createCouncilServer } from "./server.js";
 
 async function main(): Promise<void> {
-  const config = loadConfig();
+  const config = loadMcpConfig();
   const bundle = await createCouncilServer(config);
   const transport = new StdioServerTransport();
 

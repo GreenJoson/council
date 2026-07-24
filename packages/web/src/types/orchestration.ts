@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Council 自动轮次公开协议
- * @output 导出：Capabilities、Run、Agent 临时草稿、计划输入和独立快照类型
+ * @input  依赖：Council 动态 Actor 编排公开协议
+ * @output 导出：含 actorId 的 Capabilities、Run、Agent 临时草稿、计划输入和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,11 +23,9 @@ export type OrchestrationMessageKind =
   | "synthesis"
   | "note";
 
-export type OrchestrationPublicAuthor = "human" | "claude" | "codex" | "chair" | "other";
-
 export interface OrchestrationAdapter {
   id: string;
-  publicAuthor: OrchestrationPublicAuthor;
+  actorId: string;
   label: string;
   available: boolean;
   limitation?: string;
@@ -51,7 +49,7 @@ export interface OrchestrationCapabilities {
 
 export interface OrchestrationRoundPlan {
   adapterId: string;
-  publicAuthor: OrchestrationPublicAuthor;
+  actorId: string;
   messageKind: OrchestrationMessageKind;
   instruction: string;
 }

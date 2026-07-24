@@ -21,7 +21,7 @@ import type {
 
 function formatMessage(message: CouncilMessage): string {
   return [
-    `### ${message.author} / ${message.kind} / ${message.createdAt}`,
+    `### ${message.actorSnapshot.displayName} / ${message.kind} / ${message.createdAt}`,
     message.content,
   ].join("\n");
 }
@@ -117,9 +117,9 @@ export class ClaudeClient {
     if (content.length > MAX_MESSAGE_CHARS) {
       throw new Error("Claude 顾问返回的公开内容超过消息长度上限。");
     }
-    const message = this.database.createMessage({
+    const message = this.database.createMessageAsActor({
       topicId: input.topicId,
-      author: "claude",
+      actorId: "claude",
       kind: input.messageKind,
       content,
     });

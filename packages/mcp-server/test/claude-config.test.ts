@@ -1,6 +1,6 @@
 /**
  * @input  依赖：隔离数据目录、COUNCIL_CLAUDE_* 环境变量与 loadConfig
- * @output 导出：Claude 权限、迁移必填项、参数和定时器安全配置测试
+ * @output 导出：Claude 权限、MCP 调用者绑定、迁移必填项、参数和定时器安全配置测试
  * @pos    后台运行时启动前的配置边界单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, loadMcpConfig } from "../src/config.js";
 
 function createEnv(dataDir: string): NodeJS.ProcessEnv {
   return {
@@ -56,6 +56,24 @@ test("MCP 配置缺少 schema 迁移重试项时 fail fast", () => {
     assert.throws(
       () => loadConfig(env),
       /COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS/,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("MCP 配置必须显式绑定调用者，而 HTTP 通用配置不需要", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-config-caller-"));
+  try {
+    const env = createEnv(directory);
+    assert.equal(loadConfig(env).databasePath.endsWith("council.sqlite3"), true);
+    assert.throws(() => loadMcpConfig(env), /COUNCIL_CALLER_ACTOR_ALIAS/);
+    assert.equal(
+      loadMcpConfig({
+        ...env,
+        COUNCIL_CALLER_ACTOR_ALIAS: "codex",
+      }).callerActorAlias,
+      "codex",
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

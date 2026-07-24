@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { SQLiteCouncilStore } from "council-orchestrator";
 import { CouncilDatabase } from "../src/database.js";
 
@@ -27,17 +28,17 @@ test("CouncilDatabase 保存并分页读取共享讨论", async () => {
       question: "选择会话方案",
       constraints: ["必须可回滚"],
       projectPath: directory,
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const first = database.createMessage({
       topicId: topic.id,
-      author: "claude",
+      actorAlias: "claude",
       kind: "proposal",
       content: "采用方案 A。",
     });
     const second = database.createMessage({
       topicId: topic.id,
-      author: "codex",
+      actorAlias: "codex",
       kind: "critique",
       content: "方案 A 缺少回滚路径。",
       parentMessageId: first.id,
@@ -60,15 +61,49 @@ test("CouncilDatabase 保存并分页读取共享讨论", async () => {
       rationale: "迁移成本更低。",
       alternatives: ["立即拆分独立认证服务"],
       status: "accepted",
-      createdBy: "human",
+      createdByAlias: "human",
     });
     assert.equal(decision.status, "accepted");
     assert.equal(database.getTopic(topic.id).status, "decided");
 
     database.setAgentSession(topic.id, "claude", "session-test");
     assert.equal(database.getAgentSession(topic.id, "claude"), "session-test");
+    database.setAgentSession(topic.id, "claude-code", "session-replaced");
+    assert.equal(database.getAgentSession(topic.id, "claude"), "session-replaced");
+    const sessionInspection = new DatabaseSync(path.join(directory, "council.sqlite3"));
+    try {
+      assert.deepEqual(
+        sessionInspection.prepare(`
+          SELECT session_id, is_current
+          FROM agent_sessions
+          WHERE topic_id = ? AND actor_id = 'claude'
+          ORDER BY updated_at, rowid
+        `).all(topic.id).map((row) => ({ ...row })),
+        [
+          { session_id: "session-test", is_current: 0 },
+          { session_id: "session-replaced", is_current: 1 },
+        ],
+      );
+    } finally {
+      sessionInspection.close();
+    }
     assert.equal(database.deleteAgentSession(topic.id, "claude"), true);
     assert.equal(database.getAgentSession(topic.id, "claude"), undefined);
+    const afterDelete = new DatabaseSync(path.join(directory, "council.sqlite3"));
+    try {
+      assert.equal(
+        (
+          afterDelete.prepare(`
+            SELECT COUNT(*) AS count
+            FROM agent_sessions
+            WHERE topic_id = ? AND actor_id = 'claude'
+          `).get(topic.id) as { count: number }
+        ).count,
+        2,
+      );
+    } finally {
+      afterDelete.close();
+    }
 
     const page = database.listTopics({ projectPath: directory, limit: 10, offset: 0 });
     assert.equal(page.total, 1);
@@ -95,13 +130,13 @@ test("两个 MCP 进程可通过同一 SQLite 文件互相读取写入", async (
       question: "两个独立 MCP 进程能否看到同一议题？",
       constraints: [],
       projectPath: directory,
-      createdBy: "claude",
+      createdByAlias: "claude",
     });
     assert.equal(codexSide.getTopic(topic.id).title, "双桌面共享");
 
     codexSide.createMessage({
       topicId: topic.id,
-      author: "codex",
+      actorAlias: "codex",
       kind: "critique",
       content: "Codex 侧写回消息。",
     });
@@ -110,6 +145,43 @@ test("两个 MCP 进程可通过同一 SQLite 文件互相读取写入", async (
   } finally {
     codexSide.close();
     claudeSide.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("读取内容时拒绝索引 Actor 与冻结快照不一致", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-snapshot-mismatch-"));
+  const databasePath = path.join(directory, "council.sqlite3");
+  const database = await CouncilDatabase.open(databasePath, 5_000, { maxAttempts: 3 });
+  try {
+    const topic = database.createTopic({
+      title: "快照边界",
+      question: "历史身份是否可被篡改？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const message = database.createMessage({
+      topicId: topic.id,
+      actorAlias: "claude",
+      kind: "proposal",
+      content: "保持冻结身份。",
+    });
+    const raw = new DatabaseSync(databasePath);
+    try {
+      raw.prepare(`
+        UPDATE messages
+        SET author_snapshot_json = json_set(author_snapshot_json, '$.actorId', 'codex')
+        WHERE id = ?
+      `).run(message.id);
+    } finally {
+      raw.close();
+    }
+    assert.throws(
+      () => database.getTopicDetail(topic.id, 20),
+      /Message Actor snapshot 与索引身份不一致/,
+    );
+  } finally {
+    database.close();
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -128,12 +200,12 @@ test("content/orchestration revision 隔离且 lease 心跳不推进任何 revis
       title: "Revision 分域",
       question: "运行状态与内容刷新能否分离？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const beforeContent = database.getRevisions();
     database.createMessage({
       topicId: topic.id,
-      author: "human",
+      actorAlias: "human",
       kind: "note",
       content: "内容变更。",
     });
@@ -146,7 +218,7 @@ test("content/orchestration revision 隔离且 lease 心跳不推进任何 revis
       topicId: topic.id,
       plan: [{
         adapterId: "fake",
-        publicAuthor: "claude",
+        actorId: "claude",
         messageKind: "proposal",
         instruction: "测试 revision",
       }],

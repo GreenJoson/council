@@ -1,7 +1,7 @@
 /**
- * @input  依赖：现有 Council SQLite、编排端口、严格快照 codec 与随机 ID
- * @output 导出：含分页、单活动约束与 lease fencing 的 SQLiteCouncilStore
- * @pos    以 SQLite CAS 和 token/epoch 保证跨进程执行与消息原子一致性
+ * @input  依赖：含动态 Actor 的 Council SQLite、编排端口、严格 v1/v2 codec 与随机 ID
+ * @output 导出：含 Actor 校验、v1 状态写升级、分页、单活动约束与 lease fencing 的 Store
+ * @pos    以 SQLite CAS、冻结身份和 token/epoch 保证跨进程执行、历史 Run 与消息原子一致性
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -38,8 +38,8 @@ import {
   MAX_MESSAGE_CHARS,
 } from "../constants.js";
 import {
+  assertActorId,
   assertMessageKind,
-  assertPublicAuthor,
   decodeRunSnapshot,
   encodeRunSnapshot,
   validateRunSnapshot,
@@ -60,7 +60,7 @@ interface RunRow {
 interface ApprovalRow {
   gate_id: unknown;
   expected_version: unknown;
-  approved_by: unknown;
+  approved_by_actor_id: unknown;
 }
 
 interface TopicRow {
@@ -74,10 +74,19 @@ interface TopicRow {
 interface MessageRow {
   id: unknown;
   topic_id: unknown;
-  author: unknown;
+  author_actor_id: unknown;
   kind: unknown;
   content: unknown;
   created_at: unknown;
+}
+
+interface ActorRow {
+  id: unknown;
+  slug: unknown;
+  display_name: unknown;
+  short_name: unknown;
+  role: unknown;
+  status: unknown;
 }
 
 interface LeaseRow {
@@ -166,15 +175,21 @@ function assertSameImmutableFields(current: OrchestrationRun, next: Orchestratio
   }
 }
 
-function decodeRunRow(row: RunRow): OrchestrationRun {
+function decodeRunRow(
+  row: RunRow,
+  assertActorExists?: (actorId: string) => void,
+): OrchestrationRun {
   const snapshotSchemaVersion = positiveInteger(
     row.snapshot_schema_version,
     "orchestration_runs.snapshot_schema_version",
   );
-  if (snapshotSchemaVersion !== 1) {
+  if (snapshotSchemaVersion !== 1 && snapshotSchemaVersion !== 2) {
     throw new InvalidRunStateError("不支持的运行快照结构版本。");
   }
-  const snapshot = decodeRunSnapshot(nonEmptyString(row.snapshot_json, "snapshot_json"));
+  const snapshot = decodeRunSnapshot(
+    nonEmptyString(row.snapshot_json, "snapshot_json"),
+    snapshotSchemaVersion,
+  );
   const id = nonEmptyString(row.id, "orchestration_runs.id");
   const topicId = nonEmptyString(row.topic_id, "orchestration_runs.topic_id");
   const status = nonEmptyString(row.status, "orchestration_runs.status");
@@ -190,6 +205,9 @@ function decodeRunRow(row: RunRow): OrchestrationRun {
     snapshot.updatedAt !== updatedAt
   ) {
     throw new InvalidRunStateError("运行快照与可索引列不一致。");
+  }
+  for (const round of snapshot.plan) {
+    assertActorExists?.(round.actorId);
   }
   return snapshot;
 }
@@ -253,7 +271,9 @@ export class SQLiteCouncilStore implements CouncilStore {
   }
 
   #getRun(runId: string): OrchestrationRun {
-    return decodeRunRow(this.#getRunRow(runId));
+    return decodeRunRow(this.#getRunRow(runId), (actorId) => {
+      this.#assertActorExists(actorId);
+    });
   }
 
   #getLeaseRow(runId: string): LeaseRow | undefined {
@@ -309,6 +329,64 @@ export class SQLiteCouncilStore implements CouncilStore {
     }
   }
 
+  #activeActorRow(actorId: string): ActorRow {
+    assertActorId(actorId, "actorId");
+    const row = this.#database.prepare(`
+      SELECT id, slug, display_name, short_name, role, status
+      FROM actor_identities
+      WHERE id = ?
+    `).get(actorId) as unknown as ActorRow | undefined;
+    if (!row || row.status !== "active") {
+      throw new InvalidRunStateError(`Actor ${actorId} 不存在或不可用于新写入。`);
+    }
+    return row;
+  }
+
+  #assertActorExists(actorId: string): void {
+    assertActorId(actorId, "actorId");
+    const row = this.#database
+      .prepare("SELECT id FROM actor_identities WHERE id = ?")
+      .get(actorId) as unknown as Pick<ActorRow, "id"> | undefined;
+    if (!row || row.id !== actorId) {
+      throw new InvalidRunStateError(`运行快照引用的 Actor ${actorId} 不存在。`);
+    }
+  }
+
+  #actorSnapshotJson(actorId: string): string {
+    assertActorId(actorId, "actorId");
+    const row = this.#database.prepare(`
+      SELECT id, slug, display_name, short_name, role, status
+      FROM actor_identities
+      WHERE id = ?
+    `).get(actorId) as unknown as ActorRow | undefined;
+    if (!row) {
+      throw new InvalidRunStateError(`Actor ${actorId} 不存在。`);
+    }
+    return JSON.stringify({
+      schemaVersion: 1,
+      actorId: nonEmptyString(row.id, "actor.id"),
+      slug: nonEmptyString(row.slug, "actor.slug"),
+      displayName: nonEmptyString(row.display_name, "actor.display_name"),
+      shortName: nonEmptyString(row.short_name, "actor.short_name"),
+      role: nonEmptyString(row.role, "actor.role"),
+    });
+  }
+
+  resolveActorAlias(alias: string): string {
+    const normalizedAlias = nonEmptyString(alias.trim(), "actorAlias");
+    const row = this.#database.prepare(`
+      SELECT identities.id, identities.slug, identities.display_name,
+             identities.short_name, identities.role, identities.status
+      FROM actor_aliases AS aliases
+      INNER JOIN actor_identities AS identities ON identities.id = aliases.actor_id
+      WHERE aliases.alias = ? COLLATE NOCASE
+    `).get(normalizedAlias) as unknown as ActorRow | undefined;
+    if (!row || row.status !== "active") {
+      throw new InvalidRunStateError(`Actor alias ${normalizedAlias} 未注册或不可用。`);
+    }
+    return nonEmptyString(row.id, "actor.id");
+  }
+
   #saveRun(
     current: OrchestrationRun,
     desired: OrchestrationRun,
@@ -328,7 +406,8 @@ export class SQLiteCouncilStore implements CouncilStore {
     try {
       result = this.#database.prepare(`
         UPDATE orchestration_runs
-        SET topic_id = ?, status = ?, snapshot_json = ?, version = ?,
+        SET topic_id = ?, status = ?, snapshot_schema_version = 2,
+            snapshot_json = ?, version = ?,
             created_at = ?, updated_at = ?
         WHERE id = ? AND version = ?
       `).run(
@@ -371,12 +450,15 @@ export class SQLiteCouncilStore implements CouncilStore {
     });
     return this.#transaction(() => {
       this.#assertTopicExists(run.topicId);
+      for (const round of run.plan) {
+        this.#activeActorRow(round.actorId);
+      }
       try {
         this.#database.prepare(`
           INSERT INTO orchestration_runs (
             id, topic_id, status, snapshot_schema_version, snapshot_json,
             version, created_at, updated_at
-          ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, 2, ?, ?, ?, ?)
         `).run(
           run.id,
           run.topicId,
@@ -417,7 +499,11 @@ export class SQLiteCouncilStore implements CouncilStore {
         LIMIT ? OFFSET ?
       `)
       .all(topicId, limit, offset) as unknown as RunRow[];
-    const runs = rows.map(decodeRunRow);
+    const runs = rows.map((row) =>
+      decodeRunRow(row, (actorId) => {
+        this.#assertActorExists(actorId);
+      })
+    );
     const nextOffset = offset + runs.length;
     const hasMore = nextOffset < total;
     return {
@@ -449,7 +535,11 @@ export class SQLiteCouncilStore implements CouncilStore {
         LIMIT ? OFFSET ?
       `)
       .all(limit, offset) as unknown as RunRow[];
-    const runs = rows.map(decodeRunRow);
+    const runs = rows.map((row) =>
+      decodeRunRow(row, (actorId) => {
+        this.#assertActorExists(actorId);
+      })
+    );
     const nextOffset = offset + runs.length;
     const hasMore = nextOffset < total;
     return {
@@ -550,14 +640,15 @@ export class SQLiteCouncilStore implements CouncilStore {
     if (!GATE_ID_PATTERN.test(gateId)) {
       throw new InvalidRunStateError("approveGate.expectedGateId 格式无效。");
     }
-    if (input.approvedBy !== "human") {
+    if (input.approvedByActorId !== "human") {
       throw new InvalidRunStateError("人工确认门只能由 human 批准。");
     }
+    this.#activeActorRow(input.approvedByActorId);
 
     return this.#transaction(() => {
       const existing = this.#database
         .prepare(`
-          SELECT gate_id, expected_version, approved_by
+          SELECT gate_id, expected_version, approved_by_actor_id
           FROM orchestration_approvals
           WHERE run_id = ? AND approval_id = ?
         `)
@@ -566,7 +657,7 @@ export class SQLiteCouncilStore implements CouncilStore {
         if (
           existing.gate_id !== gateId ||
           existing.expected_version !== expectedVersion ||
-          existing.approved_by !== input.approvedBy
+          existing.approved_by_actor_id !== input.approvedByActorId
         ) {
           throw new StoreConflictError("同一个 approvalId 不能表示不同的批准操作。");
         }
@@ -593,15 +684,16 @@ export class SQLiteCouncilStore implements CouncilStore {
         .prepare(`
           INSERT INTO orchestration_approvals (
             run_id, approval_id, gate_id, expected_version,
-            approved_by, applied_run_version, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            approved_by_actor_id, approved_by_legacy,
+            applied_run_version, created_at
+          ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
         `)
         .run(
           runId,
           approvalId,
           gateId,
           expectedVersion,
-          input.approvedBy,
+          input.approvedByActorId,
           saved.version,
           now,
         );
@@ -631,7 +723,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       : nonEmptyString(topic.project_path, "topics.project_path");
     const rows = this.#database
       .prepare(`
-        SELECT id, topic_id, author, kind, content, created_at
+        SELECT id, topic_id, author_actor_id, kind, content, created_at
         FROM messages
         WHERE topic_id = ?
         ORDER BY created_at DESC, rowid DESC
@@ -640,9 +732,9 @@ export class SQLiteCouncilStore implements CouncilStore {
       .all(normalizedTopicId, this.#contextMessageLimit) as unknown as MessageRow[];
     rows.reverse();
     const messages = rows.map((row, index): CouncilPublicMessage => {
-      const author = row.author;
+      const actorId = row.author_actor_id;
       const kind = row.kind;
-      assertPublicAuthor(author, `messages[${String(index)}].author`);
+      assertActorId(actorId, `messages[${String(index)}].author_actor_id`);
       assertMessageKind(kind, `messages[${String(index)}].kind`);
       const messageTopicId = nonEmptyString(row.topic_id, `messages[${String(index)}].topic_id`);
       if (messageTopicId !== normalizedTopicId) {
@@ -651,7 +743,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       return {
         id: nonEmptyString(row.id, `messages[${String(index)}].id`),
         topicId: messageTopicId,
-        author,
+        actorId,
         kind,
         content: nonEmptyString(row.content, `messages[${String(index)}].content`),
         createdAt: nonEmptyString(row.created_at, `messages[${String(index)}].created_at`),
@@ -672,7 +764,8 @@ export class SQLiteCouncilStore implements CouncilStore {
     const desired = validateRunSnapshot(input.run);
     const messageTopicId = nonEmptyString(input.message.topicId, "commitRound.message.topicId");
     const content = nonEmptyString(input.message.content, "commitRound.message.content");
-    assertPublicAuthor(input.message.author, "commitRound.message.author");
+    assertActorId(input.message.actorId, "commitRound.message.actorId");
+    const actorSnapshotJson = this.#actorSnapshotJson(input.message.actorId);
     assertMessageKind(input.message.kind, "commitRound.message.kind");
     if (content.trim().length === 0) {
       throw new InvalidRunStateError("commitRound.message.content 不能只有空白。");
@@ -706,7 +799,7 @@ export class SQLiteCouncilStore implements CouncilStore {
         desired.failure !== undefined ||
         messageTopicId !== current.topicId ||
         desired.topicId !== current.topicId ||
-        input.message.author !== round.publicAuthor ||
+        input.message.actorId !== round.actorId ||
         input.message.kind !== round.messageKind
       ) {
         throw new StoreConflictError("轮次已取消、过期或不符合原子提交状态转换。");
@@ -717,7 +810,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       const message: CouncilPublicMessage = {
         id: `message_${randomUUID()}`,
         topicId: messageTopicId,
-        author: input.message.author,
+        actorId: input.message.actorId,
         kind: input.message.kind,
         content,
         createdAt: now,
@@ -725,13 +818,15 @@ export class SQLiteCouncilStore implements CouncilStore {
       this.#database
         .prepare(`
           INSERT INTO messages (
-            id, topic_id, author, kind, content, parent_message_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+            id, topic_id, author_actor_id, author_snapshot_json,
+            author_legacy, kind, content, parent_message_id, created_at
+          ) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)
         `)
         .run(
           message.id,
           message.topicId,
-          message.author,
+          message.actorId,
+          actorSnapshotJson,
           message.kind,
           message.content,
           message.createdAt,

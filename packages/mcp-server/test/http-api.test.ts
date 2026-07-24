@@ -39,7 +39,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
       databaseInstanceId: string;
     }>(statusResponse);
     assert.equal(status.data?.ready, true);
-    assert.equal(status.data?.schemaVersion, 1);
+    assert.equal(status.data?.schemaVersion, 2);
     assert.match(status.data?.databaseInstanceId ?? "", /^[0-9a-f-]{36}$/u);
 
     const createResponse = await fetch(`${harness.baseUrl}/api/v1/topics`, {
@@ -80,7 +80,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(messageResponse.status, 201);
     const message = await readEnvelope<CouncilMessage>(messageResponse);
     assert.equal(message.data?.topicId, topicId);
-    assert.equal(message.data?.author, "human");
+    assert.equal(message.data?.actorId, "human");
 
     const decisionResponse = await fetch(
       `${harness.baseUrl}/api/v1/topics/${topicId}/decisions`,
@@ -99,7 +99,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(decisionResponse.status, 201);
     const decision = await readEnvelope<Decision>(decisionResponse);
     assert.equal(decision.data?.status, "accepted");
-    assert.equal(decision.data?.createdBy, "human");
+    assert.equal(decision.data?.createdByActorId, "human");
 
     const detailResponse = await fetch(
       `${harness.baseUrl}/api/v1/topics/${topicId}?messageLimit=10&messageOffset=0`,
@@ -183,13 +183,13 @@ test("REST API 拒绝非法输入、跨议题父消息和非白名单来源", as
       title: "议题一",
       question: "父消息在哪个议题？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const secondTopic = harness.database.createTopic({
       title: "议题二",
       question: "能否跨议题引用？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const forgedTopicResponse = await fetch(`${harness.baseUrl}/api/v1/topics`, {
       method: "POST",
@@ -198,7 +198,7 @@ test("REST API 拒绝非法输入、跨议题父消息和非白名单来源", as
         title: "伪造创建者",
         question: "浏览器能否伪造创建者？",
         constraints: [],
-        createdBy: "claude",
+        createdByAlias: "claude",
       }),
     });
     assert.equal(forgedTopicResponse.status, 400);
@@ -230,7 +230,7 @@ test("REST API 拒绝非法输入、跨议题父消息和非白名单来源", as
           rationale: "用于验证身份边界。",
           alternatives: [],
           status: "accepted",
-          createdBy: "claude",
+          createdByAlias: "claude",
         }),
       },
     );
@@ -242,7 +242,7 @@ test("REST API 拒绝非法输入、跨议题父消息和非白名单来源", as
 
     const parent = harness.database.createMessage({
       topicId: firstTopic.id,
-      author: "claude",
+      actorAlias: "claude",
       kind: "proposal",
       content: "父消息",
     });

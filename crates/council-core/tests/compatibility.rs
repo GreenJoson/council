@@ -1,31 +1,36 @@
-//! @input 依赖：临时 SQLite 文件、CouncilStore 和原始 rusqlite 连接
-//! @output 导出：Node schema、分页、revision 与版本拒绝兼容性集成测试
+//! @input 依赖：临时 SQLite 文件、CouncilStore 和 Node schema v2 夹具
+//! @output 导出：动态 Actor、行快照一致、分页、revision 与版本拒绝兼容性集成测试
 //! @pos Rust 内容核心只消费 Node 已迁移 council.sqlite3 的回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
 use council_core::{
-    Author, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, DecisionStatus,
-    MessageKind, PostMessageInput, RecordDecisionInput, TopicStatus,
+    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, DecisionStatus, MessageKind,
+    PostMessageInput, RecordDecisionInput, TopicStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
 use tempfile::tempdir;
 
+const HUMAN_ALIAS: &str = "human";
+const CLAUDE_ALIAS: &str = "claude";
+const CODEX_ALIAS: &str = "codex";
+const KIMI_ALIAS: &str = "kimi";
+
 fn prepare_node_schema(database_path: &Path) {
     Connection::open(database_path)
         .expect("fixture database")
-        .execute_batch(include_str!("fixtures/node-schema-v1.sql"))
+        .execute_batch(include_str!("fixtures/node-schema-v2.sql"))
         .expect("node schema fixture");
 }
 
-fn topic_input(title: &str, project_path: &str, created_by: Author) -> CreateTopicInput {
+fn topic_input(title: &str, project_path: &str, created_by_alias: &str) -> CreateTopicInput {
     CreateTopicInput {
         title: title.into(),
         question: "如何保持兼容？".into(),
         constraints: vec!["必须可回滚".into()],
         project_path: Some(project_path.into()),
-        created_by,
+        created_by_alias: created_by_alias.into(),
     }
 }
 
@@ -48,16 +53,18 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
         .create_topic(topic_input(
             "共享内容存储",
             "/workspace/project-alpha",
-            Author::Human,
+            HUMAN_ALIAS,
         ))
         .expect("topic should be created");
     assert!(topic.id.starts_with("topic_"));
+    assert_eq!(topic.created_by_actor_id, "human");
+    assert_eq!(topic.created_by_snapshot.display_name, "User");
     assert_eq!(store.get_revisions().expect("topic revision").total, 1);
 
     let first = store
         .post_message(PostMessageInput {
             topic_id: topic.id.clone(),
-            author: Author::Claude,
+            actor_alias: CLAUDE_ALIAS.into(),
             kind: MessageKind::Proposal,
             content: "采用兼容 schema。".into(),
             parent_message_id: None,
@@ -66,12 +73,14 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
     let second = store
         .post_message(PostMessageInput {
             topic_id: topic.id.clone(),
-            author: Author::Codex,
+            actor_alias: CODEX_ALIAS.into(),
             kind: MessageKind::Critique,
             content: "还需要验证分页顺序。".into(),
             parent_message_id: Some(first.id.clone()),
         })
         .expect("second message");
+    assert_eq!(first.actor_id, "claude");
+    assert_eq!(second.actor_id, "codex");
     assert_eq!(store.get_revisions().expect("message revisions").total, 5);
 
     let latest = store.get_topic(&topic.id, 1, 0).expect("latest page");
@@ -92,22 +101,24 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             rationale: "允许渐进迁移。".into(),
             alternatives: vec!["创建第二份数据库".into()],
             status: DecisionStatus::Accepted,
-            created_by: Author::Human,
+            created_by_alias: HUMAN_ALIAS.into(),
         })
         .expect("decision should be recorded");
     assert_eq!(decision.status, DecisionStatus::Accepted);
+    assert_eq!(decision.created_by_actor_id, "human");
     let decided = store.get_topic(&topic.id, 20, 0).expect("decided topic");
     assert_eq!(decided.topic.status, TopicStatus::Decided);
     assert_eq!(decided.decisions, vec![decision]);
     assert_eq!(store.get_revisions().expect("decision revisions").total, 7);
 
-    store
+    let kimi_topic = store
         .create_topic(topic_input(
             "其他项目",
             "/workspace/project-beta",
-            Author::Other,
+            KIMI_ALIAS,
         ))
-        .expect("other topic");
+        .expect("Kimi topic");
+    assert_eq!(kimi_topic.created_by_actor_id, "kimi");
     let page = store
         .list_topics(Some("/workspace/project-alpha"), 10, 0)
         .expect("filtered topics");
@@ -115,6 +126,49 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
     assert_eq!(page.count, 1);
     assert_eq!(page.topics[0].id, topic.id);
     assert!(!page.has_more);
+}
+
+#[test]
+fn rejects_unknown_and_review_only_actor_aliases_for_new_writes() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("council.sqlite3");
+    prepare_node_schema(&database_path);
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("store should open");
+
+    for alias in ["unknown-provider", "other", "legacy-unknown"] {
+        let result =
+            store.create_topic(topic_input("无效 Actor", "/workspace/project-alpha", alias));
+        assert!(matches!(result, Err(CouncilError::InvalidData(_))));
+    }
+}
+
+#[test]
+fn rejects_actor_snapshot_that_disagrees_with_indexed_actor() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("council.sqlite3");
+    prepare_node_schema(&database_path);
+    let raw = Connection::open(&database_path).expect("raw connection");
+    raw.execute(
+        "INSERT INTO topics (
+           id, title, question, constraints_json, project_path, status,
+           created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+           created_at, updated_at
+         ) VALUES (
+           'topic_snapshot_mismatch', 'mismatch', 'mismatch', '[]', NULL, 'open',
+           'human',
+           '{\"schemaVersion\":1,\"actorId\":\"codex\",\"slug\":\"codex\",\"displayName\":\"Codex\",\"shortName\":\"CX\",\"role\":\"代码审查\"}',
+           NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+         )",
+        [],
+    )
+    .expect("insert mismatch fixture");
+    drop(raw);
+
+    let store = CouncilStore::open(&database_path, 5_000).expect("store should open");
+    assert!(matches!(
+        store.get_topic("topic_snapshot_mismatch", 20, 0),
+        Err(CouncilError::InvalidData(_))
+    ));
 }
 
 #[test]
@@ -128,20 +182,20 @@ fn shares_writes_across_connections_and_enforces_domain_conflicts() {
         .create_topic(topic_input(
             "双连接共享",
             "/workspace/project-alpha",
-            Author::Claude,
+            CLAUDE_ALIAS,
         ))
         .expect("first topic");
     let second_topic = first_store
         .create_topic(topic_input(
             "父消息边界",
             "/workspace/project-alpha",
-            Author::Human,
+            HUMAN_ALIAS,
         ))
         .expect("second topic");
     let parent = first_store
         .post_message(PostMessageInput {
             topic_id: first_topic.id.clone(),
-            author: Author::Human,
+            actor_alias: HUMAN_ALIAS.into(),
             kind: MessageKind::Note,
             content: "父消息".into(),
             parent_message_id: None,
@@ -159,7 +213,7 @@ fn shares_writes_across_connections_and_enforces_domain_conflicts() {
     second_store
         .post_message(PostMessageInput {
             topic_id: first_topic.id.clone(),
-            author: Author::Codex,
+            actor_alias: CODEX_ALIAS.into(),
             kind: MessageKind::Critique,
             content: "第二连接写回。".into(),
             parent_message_id: Some(parent.id.clone()),
@@ -176,7 +230,7 @@ fn shares_writes_across_connections_and_enforces_domain_conflicts() {
 
     let wrong_topic_parent = second_store.post_message(PostMessageInput {
         topic_id: second_topic.id.clone(),
-        author: Author::Human,
+        actor_alias: HUMAN_ALIAS.into(),
         kind: MessageKind::Note,
         content: "错误父消息".into(),
         parent_message_id: Some(parent.id),
@@ -190,7 +244,7 @@ fn shares_writes_across_connections_and_enforces_domain_conflicts() {
         rationale: "需要用户确认。".into(),
         alternatives: Vec::new(),
         status: DecisionStatus::Accepted,
-        created_by: Author::Claude,
+        created_by_alias: CLAUDE_ALIAS.into(),
     });
     assert!(matches!(agent_accept, Err(CouncilError::Conflict(_))));
 }
@@ -201,19 +255,22 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
     let database_path = directory.path().join("council.sqlite3");
     let topic_id = "topic_existing_typescript_fixture";
     let raw = Connection::open(&database_path).expect("raw connection");
-    raw.execute_batch(include_str!("fixtures/node-schema-v1.sql"))
+    raw.execute_batch(include_str!("fixtures/node-schema-v2.sql"))
         .expect("create Node-compatible schema fixture");
+    let snapshot = r#"{"schemaVersion":1,"actorId":"human","slug":"human","displayName":"User","shortName":"U","role":"决策者"}"#;
     raw.execute(
         "INSERT INTO topics (
            id, title, question, constraints_json, project_path, status,
-           created_by, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'open', 'human', ?6, ?7)",
+           created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+           created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'open', 'human', ?6, NULL, ?7, ?8)",
         params![
             topic_id,
             "旧库兼容",
             "Rust 能否读取现有字段？",
             "{invalid-json",
             "/workspace/project-alpha",
+            snapshot,
             "2026-01-01T00:00:00.000Z",
             "2026-01-01T00:00:00.000Z",
         ],
@@ -234,19 +291,20 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
         [],
     )
     .expect("set orchestration revision");
-    let raw_created_by: String = raw
+    let raw_actor_id: String = raw
         .query_row(
-            "SELECT created_by FROM topics WHERE id = ?1",
+            "SELECT created_by_actor_id FROM topics WHERE id = ?1",
             params![topic_id],
             |row| row.get(0),
         )
-        .expect("raw topic field");
-    assert_eq!(raw_created_by, "human");
+        .expect("raw topic actor");
+    assert_eq!(raw_actor_id, "human");
     drop(raw);
 
     let store = CouncilStore::open(&database_path, 5_000).expect("reopened store");
     let detail = store.get_topic(topic_id, 20, 0).expect("legacy topic");
     assert!(detail.topic.constraints.is_empty());
+    assert_eq!(detail.topic.created_by_snapshot.actor_id, "human");
     assert_eq!(
         store.get_revisions().expect("preserved revisions"),
         CouncilRevisions {
@@ -264,7 +322,7 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    assert_eq!(trigger_count, 9);
+    assert_eq!(trigger_count, 12);
 }
 
 #[test]
@@ -285,8 +343,9 @@ fn rejects_unmigrated_and_future_schema_versions() {
     Connection::open(&future)
         .expect("future database")
         .execute_batch(
-            "UPDATE schema_migrations SET version = 2;
-             PRAGMA user_version = 2;",
+            "INSERT INTO schema_migrations (version, name, applied_at)
+             VALUES (3, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 3;",
         )
         .expect("future schema fixture");
     assert!(matches!(

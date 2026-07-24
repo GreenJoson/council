@@ -17,7 +17,6 @@ import {
   type MessageKind,
   type OrchestrationRun,
   type PaginatedRuns,
-  type PublicAuthor,
 } from "council-orchestrator";
 import {
   AgentSettingsService,
@@ -43,7 +42,7 @@ import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.
 
 export interface RegisteredAgentAdapter {
   adapter: AgentAdapter;
-  publicAuthor: PublicAuthor;
+  actorAlias: string;
   label?: string;
   available?: boolean;
   limitation?: string;
@@ -79,12 +78,12 @@ export class CouncilOrchestrationService {
   readonly orchestrator: CouncilOrchestrator;
   readonly manager: RunExecutionManager;
   readonly #store: SQLiteCouncilStore;
-  readonly #authors = new Map<string, PublicAuthor>();
+  readonly #actors = new Map<string, string>();
   readonly #capabilities: Array<{
     id: string;
     label: string;
     available: boolean;
-    publicAuthor: PublicAuthor;
+    actorId: string;
     limitation?: string;
   }> = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
@@ -106,16 +105,17 @@ export class CouncilOrchestrationService {
       config.defaultMessageLimit,
     );
     for (const registration of registrations) {
-      if (this.#authors.has(registration.adapter.adapterId)) {
+      if (this.#actors.has(registration.adapter.adapterId)) {
         this.#store.close();
         throw new Error("编排 Agent 注册重复。");
       }
-      this.#authors.set(registration.adapter.adapterId, registration.publicAuthor);
+      const actorId = this.#store.resolveActorAlias(registration.actorAlias);
+      this.#actors.set(registration.adapter.adapterId, actorId);
       this.#capabilities.push({
         id: registration.adapter.adapterId,
         label: registration.label ?? registration.adapter.adapterId,
         available: registration.available ?? true,
-        publicAuthor: registration.publicAuthor,
+        actorId,
         ...(registration.limitation ? { limitation: registration.limitation } : {}),
       });
       if (registration.checkAvailability) {
@@ -180,22 +180,22 @@ export class CouncilOrchestrationService {
       await this.#ensureFreshAvailability(true);
     }
     const rounds = plan.map((round) => {
-      const publicAuthor = this.#authors.get(round.adapterId);
-      if (!publicAuthor) {
+      const actorId = this.#actors.get(round.adapterId);
+      if (!actorId) {
         throw new OrchestrationConfigError("计划包含未注册的 Agent 适配器。");
       }
       const capability = this.#capabilities.find((item) => item.id === round.adapterId);
       if (!capability?.available) {
         throw new OrchestrationConfigError("计划包含当前不可用的 Agent 适配器。");
       }
-      return { ...round, publicAuthor };
+      return { ...round, actorId };
     });
     return await this.orchestrator.createRun({
       topicId,
       plan: rounds,
       policy: {
         maxRounds: this.config.orchestrationDefaultMaxRounds,
-        allowedAgents: [...this.#authors.keys()],
+        allowedAgents: [...this.#actors.keys()],
         agentTimeoutMs: this.config.orchestrationDefaultAgentTimeoutMs,
         agentCleanupTimeoutMs: this.config.orchestrationAgentCleanupTimeoutMs,
         maxAttemptsPerRound: this.config.orchestrationDefaultMaxAttempts,
@@ -235,7 +235,7 @@ export class CouncilOrchestrationService {
       expectedGateId: input.expectedGateId,
       expectedVersion: input.expectedVersion,
       approvalId: input.approvalId,
-      approvedBy: "human",
+      approvedByActorId: this.#store.resolveActorAlias("human"),
     });
   }
 
@@ -448,7 +448,7 @@ export function createProductionOrchestrationService(
   return new CouncilOrchestrationService(httpConfig, [
     {
       adapter: claude,
-      publicAuthor: "claude",
+      actorAlias: "claude",
       label: "Claude Code",
       checkAvailability: async () => {
         const availability = await claudeRuntime.checkAvailability();
@@ -459,7 +459,7 @@ export function createProductionOrchestrationService(
     },
     {
       adapter: codex,
-      publicAuthor: "codex",
+      actorAlias: "codex",
       label: "Codex CLI",
       limitationWhenUnavailable:
         "Codex CLI 当前不可用或未登录；请安装 codex 并运行 codex login 后重试。",
@@ -472,14 +472,14 @@ export function createProductionOrchestrationService(
     },
     {
       adapter: deepseek,
-      publicAuthor: "other",
+      actorAlias: "deepseek",
       label: "DeepSeek",
       limitationWhenUnavailable: "请在设置中配置 DeepSeek 的模型、API 地址和 API Key。",
       checkAvailability: async () => await agentSettings.isReady("deepseek"),
     },
     {
       adapter: kimi,
-      publicAuthor: "other",
+      actorAlias: "kimi",
       label: "Kimi",
       limitationWhenUnavailable: "请在设置中配置 Kimi 的模型、API 地址和 API Key。",
       checkAvailability: async () => await agentSettings.isReady("kimi"),

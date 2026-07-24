@@ -30,7 +30,7 @@ function liveSnapshot(label: string, activeTopicId?: string): OrchestrationSnaps
     capabilities: {
       adapters: [{
         id: "claude-code",
-        publicAuthor: "claude",
+        actorId: "claude",
         label: "Claude Code",
         available: true,
       }],

@@ -8,14 +8,14 @@
 | `.gitignore` | 工程 | 阻止包含本机构建路径的 Cargo target 产物进入版本库 |
 | `src/lib.rs` | 入口 | 导出存储、错误、领域类型和输入结构 |
 | `src/error.rs` | 错误 | 定义可识别的 SQLite、NotFound、Conflict 和数据错误 |
-| `src/types.rs` | 类型 | 定义与 TypeScript camelCase JSON 兼容的内容领域模型 |
-| `src/store.rs` | 核心 | 只验证并读写由 Node 迁移器准备的内容字段、外键、索引、实例身份和 revision |
-| `tests/compatibility.rs` | 集成 | 验证分页、跨连接、Node schema fixture、revision、版本镜像和旧/未来结构拒绝 |
+| `src/types.rs` | 类型 | 定义与 TypeScript camelCase JSON 兼容的动态 Actor、内容和快照领域模型 |
+| `src/store.rs` | 核心 | 解析活跃 Actor alias，冻结写入快照，拒绝索引 Actor/行快照不一致，并验证 Node 迁移器准备的内容、Actor、会话字段/索引、实例身份和 revision |
+| `tests/compatibility.rs` | 集成 | 验证动态 Actor、快照身份一致、未知/待审计 alias 拒绝、分页、跨连接、revision、版本镜像和未来结构拒绝 |
 | `tests/fixtures/` | 测试结构 | 保存当前 Node schema 的显式 Rust 测试夹具 |
 
 ## 公开 API
 
-`CouncilStore::open` 只打开并验证 Node 已迁移的数据库；旧结构、版本镜像不一致或未来版本都会被拒绝。实例提供 `list_topics`、`get_topic`、`create_topic`、`post_message`、`record_decision` 和 `get_revisions`。写入方法接收显式领域输入，不依赖环境变量或固定文件位置。
+`CouncilStore::open` 只打开并验证 Node 已迁移的数据库；旧结构、版本镜像不一致或未来版本都会被拒绝。实例提供 `list_topics`、`get_topic`、`create_topic`、`post_message`、`record_decision` 和 `get_revisions`。新写入先通过大小写不敏感 alias 解析活跃 Actor，再把 actor ID 与版本化快照一并保存；历史 `other` 对应的待审计身份不可用于新写入。
 
 ```bash
 CARGO_TARGET_DIR=<temporary-target-dir> cargo test --manifest-path crates/council-core/Cargo.toml

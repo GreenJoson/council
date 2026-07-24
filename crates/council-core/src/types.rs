@@ -37,14 +37,6 @@ string_enum!(TopicStatus {
     Closed => "closed",
 });
 
-string_enum!(Author {
-    Human => "human",
-    Claude => "claude",
-    Codex => "codex",
-    Chair => "chair",
-    Other => "other",
-});
-
 string_enum!(MessageKind {
     Brief => "brief",
     Proposal => "proposal",
@@ -63,6 +55,17 @@ string_enum!(DecisionStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ActorSnapshot {
+    pub schema_version: u32,
+    pub actor_id: String,
+    pub slug: String,
+    pub display_name: String,
+    pub short_name: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Topic {
     pub id: String,
     pub title: String,
@@ -71,7 +74,8 @@ pub struct Topic {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_path: Option<String>,
     pub status: TopicStatus,
-    pub created_by: Author,
+    pub created_by_actor_id: String,
+    pub created_by_snapshot: ActorSnapshot,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -81,7 +85,8 @@ pub struct Topic {
 pub struct CouncilMessage {
     pub id: String,
     pub topic_id: String,
-    pub author: Author,
+    pub actor_id: String,
+    pub actor_snapshot: ActorSnapshot,
     pub kind: MessageKind,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,7 +104,8 @@ pub struct Decision {
     pub rationale: String,
     pub alternatives: Vec<String>,
     pub status: DecisionStatus,
-    pub created_by: Author,
+    pub created_by_actor_id: String,
+    pub created_by_snapshot: ActorSnapshot,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -144,13 +150,13 @@ pub struct CreateTopicInput {
     pub question: String,
     pub constraints: Vec<String>,
     pub project_path: Option<String>,
-    pub created_by: Author,
+    pub created_by_alias: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostMessageInput {
     pub topic_id: String,
-    pub author: Author,
+    pub actor_alias: String,
     pub kind: MessageKind,
     pub content: String,
     pub parent_message_id: Option<String>,
@@ -164,19 +170,27 @@ pub struct RecordDecisionInput {
     pub rationale: String,
     pub alternatives: Vec<String>,
     pub status: DecisionStatus,
-    pub created_by: Author,
+    pub created_by_alias: String,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Author, CouncilMessage, MessageKind};
+    use super::{ActorSnapshot, CouncilMessage, MessageKind};
 
     #[test]
     fn serializes_camel_case_and_omits_absent_parent() {
         let message = CouncilMessage {
             id: "message_test".into(),
             topic_id: "topic_test".into(),
-            author: Author::Claude,
+            actor_id: "claude".into(),
+            actor_snapshot: ActorSnapshot {
+                schema_version: 1,
+                actor_id: "claude".into(),
+                slug: "claude".into(),
+                display_name: "Claude".into(),
+                short_name: "CL".into(),
+                role: "方案顾问".into(),
+            },
             kind: MessageKind::Proposal,
             content: "方案".into(),
             parent_message_id: None,
@@ -185,7 +199,7 @@ mod tests {
 
         let value = serde_json::to_value(message).expect("message should serialize");
         assert_eq!(value["topicId"], "topic_test");
-        assert_eq!(value["author"], "claude");
+        assert_eq!(value["actorId"], "claude");
         assert!(value.get("parentMessageId").is_none());
     }
 }

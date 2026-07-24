@@ -309,12 +309,12 @@ export function createCouncilHttpApp(
     const body: unknown = request.body;
     const input = parse(createTopicBodySchema, body);
     const projectPath = normalizeProjectPath(input.projectPath);
-    const topic = database.createTopic({
+    const topic = database.createTopicAsActor({
       title: input.title,
       question: input.question,
       constraints: input.constraints,
       ...(projectPath ? { projectPath } : {}),
-      createdBy: "human",
+      actorId: "human",
     });
     sendSuccess(response, topic, "议题已创建。", 201);
   });
@@ -323,9 +323,9 @@ export function createCouncilHttpApp(
     const params = parse(topicParamsSchema, request.params);
     const body: unknown = request.body;
     const input = parse(createMessageBodySchema, body);
-    const message = database.createMessage({
+    const message = database.createMessageAsActor({
       topicId: params.topicId,
-      author: "human",
+      actorId: "human",
       kind: input.kind,
       content: input.content,
       ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
@@ -337,14 +337,14 @@ export function createCouncilHttpApp(
     const params = parse(topicParamsSchema, request.params);
     const body: unknown = request.body;
     const input = parse(createDecisionBodySchema, body);
-    const decision = database.createDecision({
+    const decision = database.createDecisionAsActor({
       topicId: params.topicId,
       title: input.title,
       decision: input.decision,
       rationale: input.rationale,
       alternatives: input.alternatives,
       status: input.status,
-      createdBy: "human",
+      actorId: "human",
     });
     sendSuccess(response, decision, "决策已记录。", 201);
   });

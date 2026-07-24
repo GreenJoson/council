@@ -16,6 +16,14 @@ const SETTINGS: DesktopSettings = {
   currentProjectPath: PROJECT,
   recentProjectPaths: [PROJECT],
 };
+const HUMAN_SNAPSHOT = {
+  schemaVersion: 1,
+  actorId: "human",
+  slug: "human",
+  displayName: "User",
+  shortName: "U",
+  role: "决策者",
+};
 const TOPIC = {
   id: "topic_alpha",
   title: "桌面议题",
@@ -23,7 +31,8 @@ const TOPIC = {
   constraints: ["共享同一 SQLite"],
   projectPath: PROJECT,
   status: "open",
-  createdBy: "human",
+  createdByActorId: "human",
+  createdBySnapshot: HUMAN_SNAPSHOT,
   createdAt: "2026-07-20T00:00:00.000Z",
   updatedAt: "2026-07-20T00:00:00.000Z",
 };
@@ -68,7 +77,8 @@ function bridge(): DesktopBridge {
     postMessage: vi.fn(async () => ({
       id: "message_alpha",
       topicId: TOPIC.id,
-      author: "human",
+      actorId: "human",
+      actorSnapshot: HUMAN_SNAPSHOT,
       kind: "note",
       content: "正文",
       createdAt: TOPIC.updatedAt,
@@ -81,7 +91,8 @@ function bridge(): DesktopBridge {
       rationale: "简单",
       alternatives: [],
       status: "accepted",
-      createdBy: "human",
+      createdByActorId: "human",
+      createdBySnapshot: HUMAN_SNAPSHOT,
       createdAt: TOPIC.updatedAt,
       updatedAt: TOPIC.updatedAt,
     })),
@@ -209,7 +220,15 @@ describe("NativeCouncilRepository", () => {
           rationale: "简单",
           alternatives: ["备选方案"],
           status: "accepted",
-          createdBy: "claude",
+          createdByActorId: "claude",
+          createdBySnapshot: {
+            schemaVersion: 1,
+            actorId: "claude",
+            slug: "claude",
+            displayName: "Claude",
+            shortName: "CL",
+            role: "方案顾问",
+          },
           createdAt: TOPIC.updatedAt,
           updatedAt: TOPIC.updatedAt,
         },

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
- * @output 导出：Capabilities、Run、分页与 Agent 增量事件的严格运行时解析函数
+ * @output 导出：含动态 actorId 的 Capabilities、Run、分页与 Agent 增量事件严格解析函数
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,7 +13,6 @@ import type {
   OrchestrationDefaultPolicy,
   OrchestrationFailure,
   OrchestrationMessageKind,
-  OrchestrationPublicAuthor,
   OrchestrationRoundPlan,
   OrchestrationRun,
   OrchestrationStatus,
@@ -50,9 +49,6 @@ const STATUSES: readonly OrchestrationStatus[] = [
 ];
 const MESSAGE_KINDS: readonly OrchestrationMessageKind[] = [
   "brief", "proposal", "critique", "rebuttal", "synthesis", "note",
-];
-const PUBLIC_AUTHORS: readonly OrchestrationPublicAuthor[] = [
-  "human", "claude", "codex", "chair", "other",
 ];
 const AGENT_OUTPUT_OPERATIONS: readonly AgentOutputOperation[] = [
   "snapshot", "reset", "append", "replace", "complete",
@@ -129,7 +125,7 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
   const limitation = optionalString(record, "limitation");
   return {
     id: stringValue(record, "id"),
-    publicAuthor: enumValue(record, "publicAuthor", PUBLIC_AUTHORS),
+    actorId: stringValue(record, "actorId"),
     label: stringValue(record, "label"),
     available: booleanValue(record, "available"),
     ...(limitation ? { limitation } : {}),
@@ -160,7 +156,7 @@ function parseRound(value: unknown): OrchestrationRoundPlan {
   const record = recordValue(value, "round");
   return {
     adapterId: stringValue(record, "adapterId"),
-    publicAuthor: enumValue(record, "publicAuthor", PUBLIC_AUTHORS),
+    actorId: stringValue(record, "actorId"),
     messageKind: enumValue(record, "messageKind", MESSAGE_KINDS),
     instruction: stringValue(record, "instruction"),
   };

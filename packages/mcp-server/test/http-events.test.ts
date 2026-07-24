@@ -99,7 +99,7 @@ test("SSE 侦测另一个数据库连接写入并发送 council.changed", async 
       title: "跨连接回帖",
       question: "另一 MCP 连接的消息能否触发事件？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const response = await fetch(`${harness.baseUrl}/api/v1/events`, {
       headers: { Origin: TEST_ALLOWED_ORIGIN },
@@ -115,7 +115,7 @@ test("SSE 侦测另一个数据库连接写入并发送 council.changed", async 
     otherProcess = new CouncilDatabase(harness.databasePath, 5_000);
     const reply = otherProcess.createMessage({
       topicId: topic.id,
-      author: "claude",
+      actorAlias: "claude",
       kind: "proposal",
       content: "来自另一个数据库连接的回帖。",
     });
@@ -161,7 +161,7 @@ test("SSE 按 Last-Event-ID 去重、追赶并从数据库重置中恢复", asyn
       title: "重连语义",
       question: "Last-Event-ID 如何与 revision 对齐？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const current = harness.database.getRevision();
     assert(current > 0);

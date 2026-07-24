@@ -20,7 +20,7 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
     status: "waiting_agent",
     plan: [{
       adapterId: "claude",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "审查边界",
     }],
@@ -49,7 +49,7 @@ function createSnapshot(runs: OrchestrationRun[]): OrchestrationSnapshot {
     capabilities: {
       adapters: [{
         id: "claude",
-        publicAuthor: "claude",
+        actorId: "claude",
         label: "Claude Code",
         available: true,
       }],

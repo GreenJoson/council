@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前议题、参与者、自动轮次、决策操作、面板状态与 MarkdownContent
+ * @input  依赖：含 owner/备选冻结快照的当前议题、参与者回退、自动轮次与决策操作
  * @output 导出：InspectorPanel 议题摘要、自动轮次和决策检查器
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策 summary/rationale
  *         按 Markdown 渲染（含内嵌 mermaid 围栏）；决策状态徽章走 presentation.tsx 的
@@ -26,7 +26,13 @@ import type {
 } from "../types/orchestration";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
 import { MarkdownContent } from "./MarkdownContent";
-import { AgentAvatar, decisionStatusLabels, DecisionStatusBadge, StatusBadge } from "./presentation";
+import {
+  AgentAvatar,
+  decisionStatusLabels,
+  DecisionStatusBadge,
+  participantFromActorSnapshot,
+  StatusBadge,
+} from "./presentation";
 
 export interface InspectorPanelProps {
   topic: TopicDetail;
@@ -64,7 +70,10 @@ export function InspectorPanel({
   onCancelRun,
   onRecoverRun,
 }: InspectorPanelProps) {
-  const owner = participants.get(topic.owner);
+  const owner = participantFromActorSnapshot(
+    topic.ownerSnapshot,
+    participants.get(topic.owner),
+  );
   const decision = topic.decision;
   const decisionAccepted = decision?.status === "accepted";
   const decisionSuperseded = decision?.status === "superseded";
@@ -86,7 +95,7 @@ export function InspectorPanel({
         <div>
           <dt>所有者</dt>
           <dd>
-            <AgentAvatar agent={topic.owner} size="small" />
+            <AgentAvatar agent={topic.owner} participant={owner} size="small" />
             <span>{owner?.name ?? topic.owner}</span>
           </dd>
         </div>
@@ -94,7 +103,12 @@ export function InspectorPanel({
           <dt>参与者</dt>
           <dd className="summary-participants">
             {topic.participants.map((agent) => (
-              <AgentAvatar agent={agent} key={agent} size="small" />
+              <AgentAvatar
+                agent={agent}
+                participant={participants.get(agent)}
+                key={agent}
+                size="small"
+              />
             ))}
           </dd>
         </div>
@@ -151,19 +165,25 @@ export function InspectorPanel({
       <InspectorSection title="备选方案" count={topic.alternatives.length}>
         {topic.alternatives.length > 0 ? (
           <ol className="alternative-list">
-            {topic.alternatives.map((alternative, index) => (
-              <li key={alternative.id}>
-                <span className="alternative-index">{index + 1}</span>
-                <div>
-                  <strong>{alternative.title}</strong>
-                  <small>
-                    {participants.get(alternative.author)?.name ?? alternative.author}
-                    <span aria-hidden="true"> · </span>
-                    {alternative.createdLabel}
-                  </small>
-                </div>
-              </li>
-            ))}
+            {topic.alternatives.map((alternative, index) => {
+              const author = participantFromActorSnapshot(
+                alternative.authorSnapshot,
+                participants.get(alternative.author),
+              );
+              return (
+                <li key={alternative.id}>
+                  <span className="alternative-index">{index + 1}</span>
+                  <div>
+                    <strong>{alternative.title}</strong>
+                    <small>
+                      {author?.name ?? alternative.author}
+                      <span aria-hidden="true"> · </span>
+                      {alternative.createdLabel}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <p className="empty-copy">尚未提出备选方案。</p>

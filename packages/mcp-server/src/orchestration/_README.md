@@ -11,7 +11,8 @@
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、允许单次覆盖完成复核、检查 Agent 可用性并组装生产依赖 |
 
-生产工厂注册 `claude`、`codex`、`deepseek` 与 `kimi` 四个后台适配器。适配器不调用兼容层客户端，
+生产工厂注册 `claude`、`codex`、`deepseek` 与 `kimi` 四个后台适配器，并分别绑定同名
+动态 Actor；DeepSeek/Kimi 不再共享 `other` 身份。适配器不调用兼容层客户端，
 因此不会提前写消息；回复只能由 `SQLiteCouncilStore.commitRound` 在 lease 和
 运行版本校验通过后原子发布。V1 也不恢复任何 Agent session，避免把兼容层的
 双写语义带入编排。

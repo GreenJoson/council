@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排协议枚举与未知 JSON 快照
- * @output 导出：严格运行快照解码、编码与规范公开作者断言
+ * @output 导出：v1/v2 运行快照严格解码、动态 Actor 编码与历史身份映射
  * @pos    阻止损坏或非规范持久化数据进入编排核心
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,11 +8,11 @@
 
 import {
   LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
+  LEGACY_PUBLIC_AUTHORS,
   FAILURE_CODES,
   MAX_AGENT_ID_CHARS,
   MAX_TIMER_DELAY_MS,
   MESSAGE_KINDS,
-  PUBLIC_AUTHORS,
   RUN_STATUSES,
   STOP_REASONS,
 } from "../constants.js";
@@ -21,14 +21,13 @@ import type {
   FailureCode,
   MessageKind,
   OrchestrationRun,
-  PublicAuthor,
   RunStatus,
   StopReason,
 } from "../types.js";
 
 const RUN_STATUS_SET = new Set<string>(RUN_STATUSES);
 const MESSAGE_KIND_SET = new Set<string>(MESSAGE_KINDS);
-const PUBLIC_AUTHOR_SET = new Set<string>(PUBLIC_AUTHORS);
+const LEGACY_PUBLIC_AUTHOR_SET = new Set<string>(LEGACY_PUBLIC_AUTHORS);
 const STOP_REASON_SET = new Set<string>(STOP_REASONS);
 const FAILURE_CODE_SET = new Set<string>(FAILURE_CODES);
 const REQUIRED_RUN_KEYS = [
@@ -125,9 +124,13 @@ function numberArray(value: unknown, path: string): number[] {
   return value.map((item, index) => integerValue(item, `${path}[${String(index)}]`, 1));
 }
 
-export function assertPublicAuthor(value: unknown, path: string): asserts value is PublicAuthor {
-  if (typeof value !== "string" || !PUBLIC_AUTHOR_SET.has(value)) {
-    fail(`${path} 必须是规范公开作者。`);
+export function assertActorId(value: unknown, path: string): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.length > MAX_AGENT_ID_CHARS ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value)
+  ) {
+    fail(`${path} 必须是规范 Actor 标识。`);
   }
 }
 
@@ -158,17 +161,45 @@ function failureCode(value: unknown): FailureCode {
   return value as FailureCode;
 }
 
-export function decodeRunSnapshot(snapshotJson: string): OrchestrationRun {
+const LEGACY_OTHER_ADAPTER_ACTOR_IDS: ReadonlyMap<string, string> = new Map([
+  ["deepseek", "deepseek"],
+  ["kimi", "kimi"],
+]);
+
+function legacyAuthorActorId(
+  value: unknown,
+  adapterId: string,
+  path: string,
+): string {
+  if (typeof value !== "string" || !LEGACY_PUBLIC_AUTHOR_SET.has(value)) {
+    fail(`${path} 必须是可识别的 V1 公开作者。`);
+  }
+  if (value === "chair") {
+    return "council";
+  }
+  if (value === "other") {
+    return LEGACY_OTHER_ADAPTER_ACTOR_IDS.get(adapterId) ?? "legacy-unknown";
+  }
+  return value;
+}
+
+export function decodeRunSnapshot(
+  snapshotJson: string,
+  snapshotSchemaVersion = 2,
+): OrchestrationRun {
   let parsed: unknown;
   try {
     parsed = JSON.parse(snapshotJson) as unknown;
   } catch {
     fail("snapshot_json 不是有效 JSON。");
   }
-  return validateRunSnapshot(parsed);
+  return validateRunSnapshot(parsed, snapshotSchemaVersion);
 }
 
-export function validateRunSnapshot(value: unknown): OrchestrationRun {
+export function validateRunSnapshot(
+  value: unknown,
+  snapshotSchemaVersion = 2,
+): OrchestrationRun {
   if (!isRecord(value)) {
     fail("根节点必须是对象。");
   }
@@ -181,17 +212,33 @@ export function validateRunSnapshot(value: unknown): OrchestrationRun {
     if (!isRecord(item)) {
       fail(`snapshot.plan[${String(index)}] 必须是对象。`);
     }
-    assertExactKeys(
-      item,
-      ["adapterId", "publicAuthor", "messageKind", "instruction"],
-      [],
-      `snapshot.plan[${String(index)}]`,
-    );
-    assertPublicAuthor(item.publicAuthor, `snapshot.plan[${String(index)}].publicAuthor`);
+    const planPath = `snapshot.plan[${String(index)}]`;
+    if (snapshotSchemaVersion === 1) {
+      assertExactKeys(
+        item,
+        ["adapterId", "publicAuthor", "messageKind", "instruction"],
+        [],
+        planPath,
+      );
+    } else if (snapshotSchemaVersion === 2) {
+      assertExactKeys(
+        item,
+        ["adapterId", "actorId", "messageKind", "instruction"],
+        [],
+        planPath,
+      );
+    } else {
+      fail("snapshot_schema_version 不受支持。");
+    }
     assertMessageKind(item.messageKind, `snapshot.plan[${String(index)}].messageKind`);
+    const adapterId = stringValue(item.adapterId, `${planPath}.adapterId`);
+    const actorId = snapshotSchemaVersion === 1
+      ? legacyAuthorActorId(item.publicAuthor, adapterId, `${planPath}.publicAuthor`)
+      : stringValue(item.actorId, `${planPath}.actorId`);
+    assertActorId(actorId, `${planPath}.actorId`);
     return {
-      adapterId: stringValue(item.adapterId, `snapshot.plan[${String(index)}].adapterId`),
-      publicAuthor: item.publicAuthor,
+      adapterId,
+      actorId,
       messageKind: item.messageKind,
       instruction: stringValue(item.instruction, `snapshot.plan[${String(index)}].instruction`),
     };
@@ -451,5 +498,5 @@ export function validateRunSnapshot(value: unknown): OrchestrationRun {
 }
 
 export function encodeRunSnapshot(run: OrchestrationRun): string {
-  return JSON.stringify(validateRunSnapshot(run));
+  return JSON.stringify(validateRunSnapshot(run, 2));
 }

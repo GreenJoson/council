@@ -13,7 +13,6 @@ import {
   MAX_MESSAGE_CHARS,
   MAX_TIMER_DELAY_MS,
   MESSAGE_KINDS,
-  PUBLIC_AUTHORS,
   RUN_STATUSES,
 } from "./constants.js";
 import {
@@ -50,7 +49,6 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const RUN_STATUS_SET = new Set<string>(RUN_STATUSES);
 const FAILURE_CODE_SET = new Set<string>(FAILURE_CODES);
 const MESSAGE_KIND_SET = new Set<string>(MESSAGE_KINDS);
-const PUBLIC_AUTHOR_SET = new Set<string>(PUBLIC_AUTHORS);
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const APPROVAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
@@ -135,9 +133,8 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
     if (!allowedAgentSet.has(adapterId)) {
       throw new OrchestrationConfigError(`轮次 ${String(index + 1)} 使用了未允许的 Agent。`);
     }
-    if (!PUBLIC_AUTHOR_SET.has(round.publicAuthor)) {
-      throw new OrchestrationConfigError(`轮次 ${String(index + 1)} 的公开作者无效。`);
-    }
+    const actorId = round.actorId.trim();
+    assertAgentId(actorId, `plan[${String(index)}].actorId`);
     if (!MESSAGE_KIND_SET.has(round.messageKind)) {
       throw new OrchestrationConfigError(`轮次 ${String(index + 1)} 的消息类型无效。`);
     }
@@ -147,7 +144,7 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
     }
     return {
       adapterId,
-      publicAuthor: round.publicAuthor,
+      actorId,
       messageKind: round.messageKind,
       instruction,
     };
@@ -205,7 +202,7 @@ function normalizeApprovalInput(input: ApproveGateInput): ApproveGateInput {
   ) {
     throw new OrchestrationConfigError("approvalId 必须是有效的幂等标识。");
   }
-  if (input.approvedBy !== "human") {
+  if (input.approvedByActorId !== "human") {
     throw new OrchestrationConfigError("人工确认门只能由 human 批准。");
   }
   return {
@@ -213,7 +210,7 @@ function normalizeApprovalInput(input: ApproveGateInput): ApproveGateInput {
     expectedGateId,
     expectedVersion: input.expectedVersion,
     approvalId,
-    approvedBy: input.approvedBy,
+    approvedByActorId: input.approvedByActorId,
   };
 }
 
@@ -256,7 +253,7 @@ function assertPersistedRun(run: OrchestrationRun): void {
       return Boolean(
         persisted &&
         round.adapterId === persisted.adapterId &&
-        round.publicAuthor === persisted.publicAuthor &&
+        round.actorId === persisted.actorId &&
         round.messageKind === persisted.messageKind &&
         round.instruction === persisted.instruction,
       );
@@ -788,7 +785,7 @@ export class CouncilOrchestrator {
         roundNumber,
         attempt: waiting.currentAttempt,
         adapterId: round.adapterId,
-        publicAuthor: round.publicAuthor,
+        actorId: round.actorId,
         instruction: round.instruction,
         messageKind: round.messageKind,
         context,
@@ -858,7 +855,7 @@ export class CouncilOrchestrator {
           run: nextRun,
           message: {
             topicId: waiting.topicId,
-            author: round.publicAuthor,
+            actorId: round.actorId,
             kind: round.messageKind,
             content,
           },

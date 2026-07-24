@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council Web 领域类型
- * @output 导出：可交互原型使用的脱敏示例工作区；含一组可验证的架构档案样例——
+ * @output 导出：带行级 Actor 快照的脱敏示例工作区；含一组可验证的架构档案样例——
  *         一个被取代的旧决策（topic-transport-legacy，superseded）+ 取代它的新决策
  *         （topic-transport-grpc，accepted，rationale 内嵌 ```mermaid 架构图）+ 一条
  *         含 ```mermaid 架构图的 synthesis 消息（topic-sharding），让架构档案视图的
@@ -12,6 +12,7 @@
 
 import type {
   AgentId,
+  ActorSnapshot,
   CouncilDecision,
   CouncilMessage,
   Participant,
@@ -21,12 +22,28 @@ import type {
 } from "../types/council";
 
 const participants: Participant[] = [
-  { id: "claude", name: "Claude", shortName: "CL", role: "方案顾问" },
-  { id: "codex", name: "Codex", shortName: "CX", role: "代码审查" },
-  { id: "user", name: "User", shortName: "U", role: "决策者" },
-  { id: "chair", name: "Council", shortName: "CO", role: "综合协调" },
-  { id: "other", name: "Other", shortName: "OT", role: "其他参与者" },
+  { id: "claude", slug: "claude", name: "Claude", shortName: "CL", role: "方案顾问" },
+  { id: "codex", slug: "codex", name: "Codex", shortName: "CX", role: "代码审查" },
+  { id: "human", slug: "human", name: "User", shortName: "U", role: "决策者" },
+  { id: "council", slug: "council", name: "Council", shortName: "CO", role: "综合协调" },
+  { id: "deepseek", slug: "deepseek", name: "DeepSeek", shortName: "DS", role: "模型顾问" },
+  { id: "kimi", slug: "kimi", name: "Kimi", shortName: "KI", role: "模型顾问" },
 ];
+
+export function mockActorSnapshot(actorId: AgentId): ActorSnapshot {
+  const participant = participants.find((candidate) => candidate.id === actorId);
+  if (!participant) {
+    throw new Error(`Mock Actor ${actorId} 未注册。`);
+  }
+  return {
+    schemaVersion: 1,
+    actorId: participant.id,
+    slug: participant.slug,
+    displayName: participant.name,
+    shortName: participant.shortName,
+    role: participant.role,
+  };
+}
 
 const defaultDecision: CouncilDecision = {
   title: "组合式幂等处理",
@@ -34,6 +51,7 @@ const defaultDecision: CouncilDecision = {
   rationale: "兼顾回调重试、并发写入和可观测性，同时保留清晰回滚路径。",
   status: "proposed",
   proposedBy: "claude",
+  proposedBySnapshot: mockActorSnapshot("claude"),
 };
 
 function createMessage(
@@ -44,7 +62,15 @@ function createMessage(
   content: string,
   createdLabel: string,
 ): CouncilMessage {
-  return { id, author, kind, title, content, createdLabel };
+  return {
+    id,
+    author,
+    actorSnapshot: mockActorSnapshot(author),
+    kind,
+    title,
+    content,
+    createdLabel,
+  };
 }
 
 /**
@@ -69,8 +95,9 @@ function createSecondaryTopic(
     updatedLabel,
     question,
     createdLabel: "本周",
-    owner: "user",
-    participants: ["claude", "codex", "user"],
+    owner: "human",
+    ownerSnapshot: mockActorSnapshot("human"),
+    participants: ["claude", "codex", "human"],
     messages: [
       createMessage(
         `${id}-proposal`,
@@ -118,8 +145,9 @@ const transportLegacyTopic: TopicDetail = {
   updatedLabel: "两周前",
   question: "订单服务与库存服务之间应该用什么方式同步库存扣减结果？",
   createdLabel: "两周前",
-  owner: "user",
-  participants: ["claude", "codex", "user"],
+  owner: "human",
+  ownerSnapshot: mockActorSnapshot("human"),
+  participants: ["claude", "codex", "human"],
   messages: [
     createMessage(
       "transport-legacy-proposal",
@@ -154,6 +182,7 @@ const transportLegacyTopic: TopicDetail = {
     rationale: "短期内实现成本最低，不需要新增消息中间件；已知代价是回调丢失时依赖轮询兜底，时延可能达到分钟级。",
     status: "superseded",
     proposedBy: "codex",
+    proposedBySnapshot: mockActorSnapshot("codex"),
     decidedAt: "2026-07-10T02:15:00.000Z",
     supersededByTopicId: "topic-transport-grpc",
   },
@@ -170,8 +199,9 @@ const transportGrpcTopic: TopicDetail = {
   updatedLabel: "今天",
   question: "REST 回调 + 轮询方案在扣减量上升后时延明显，如何把端到端同步时延降到亚秒级？",
   createdLabel: "3 天前",
-  owner: "user",
-  participants: ["claude", "codex", "user"],
+  owner: "human",
+  ownerSnapshot: mockActorSnapshot("human"),
+  participants: ["claude", "codex", "human"],
   messages: [
     createMessage(
       "transport-grpc-proposal",
@@ -226,6 +256,7 @@ graph LR
 该方案已取代 REST 回调 + 轮询对账的旧方案。`,
     status: "accepted",
     proposedBy: "claude",
+    proposedBySnapshot: mockActorSnapshot("claude"),
     decidedAt: "2026-07-19T07:40:00.000Z",
   },
 };
@@ -237,8 +268,9 @@ const primaryTopic: TopicDetail = {
   updatedLabel: "14:32",
   question: "如何在重复、乱序和并发回调下保证业务只生效一次，并保留清晰审计轨迹？",
   createdLabel: "今天 10:21",
-  owner: "user",
-  participants: ["claude", "codex", "user"],
+  owner: "human",
+  ownerSnapshot: mockActorSnapshot("human"),
+  participants: ["claude", "codex", "human"],
   messages: [
     createMessage(
       "message-proposal",
@@ -324,7 +356,7 @@ export function createMockWorkspace(): WorkspaceSnapshot {
   shardingTopic.messages.push(
     createMessage(
       "topic-sharding-synthesis",
-      "chair",
+      "council",
       "synthesis",
       "综合结论：按租户主分片，时间维度做二级分区",
       `汇总各方意见后收敛为"租户主分片 + 时间二级分区"的组合方案，兼顾租户间隔离性与历史数据裁剪效率。
@@ -360,6 +392,7 @@ flowchart TD
     rationale: "引入独立消息系统会带来新的运维面（部署、监控、灾备），现阶段收益不足以覆盖成本；吞吐量翻倍时重新评估。",
     status: "accepted",
     proposedBy: "codex",
+    proposedBySnapshot: mockActorSnapshot("codex"),
     decidedAt: "2026-07-14T03:03:00.000Z",
   };
 

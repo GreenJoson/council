@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：经过校验的 CouncilConfig（含 schema 迁移重试与 Agent 运行时配置）
+ * @output 导出：HTTP 通用 CouncilConfig 与绑定调用者身份的 McpCouncilConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,7 +9,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { MAX_LIST_LIMIT } from "./constants.js";
-import type { CouncilConfig } from "./types.js";
+import type { CouncilConfig, McpCouncilConfig } from "./types.js";
 
 const MAX_NODE_TIMER_MS = 2_147_483_647;
 const REQUIRED_PERMISSION_MODE = "plan";
@@ -191,5 +191,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     maxContextChars: parsePositiveInteger("COUNCIL_MAX_CONTEXT_CHARS", env),
     maxOutputChars: parsePositiveInteger("COUNCIL_MAX_OUTPUT_CHARS", env),
     defaultMessageLimit,
+  };
+}
+
+export function loadMcpConfig(env: NodeJS.ProcessEnv = process.env): McpCouncilConfig {
+  return {
+    ...loadConfig(env),
+    callerActorAlias: requireEnv("COUNCIL_CALLER_ACTOR_ALIAS", env),
   };
 }

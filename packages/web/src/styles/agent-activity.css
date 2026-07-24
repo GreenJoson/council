@@ -166,16 +166,16 @@
   color: var(--color-agent-codex);
 }
 
-.agent-reply-user {
-  color: var(--color-agent-user);
+.agent-reply-human {
+  color: var(--color-agent-human);
 }
 
-.agent-reply-chair {
-  color: var(--color-agent-chair);
+.agent-reply-council {
+  color: var(--color-agent-council);
 }
 
-.agent-reply-other {
-  color: var(--color-agent-other);
+.agent-reply-legacy-unknown {
+  color: var(--color-agent-legacy);
 }
 
 @keyframes agent-reply-enter {

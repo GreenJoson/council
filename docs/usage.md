@@ -107,11 +107,8 @@ Codex 会读取 Claude 的公开方案，检查项目证据，并发布一条 `c
 
 > 使用 `$council` 综合 topic `<topic-id>` 的方案、批评和回应。明确共识、保留分歧、推荐方案、验证步骤和回滚条件。用户尚未确认，只记录 proposed 决策。
 
-当你明确接受方案后，再说：
-
-> 我接受这个方案。使用 `$council` 把 topic `<topic-id>` 的最终决策记录为 accepted。
-
-`accepted` 决策会把议题标记为 `decided`。
+当你明确接受方案后，在 Council 桌面端点击接受决策。MCP 工具只能记录 `proposed`，不能把
+Agent 身份伪装成用户并写入 `accepted`；桌面/HTTP 用户入口确认后，议题才标记为 `decided`。
 
 ## 模式二：Codex 自动调用 Claude
 
@@ -158,6 +155,9 @@ cp packages/web/.env.example packages/web/.env.local
 编辑两个本地环境文件：
 
 - API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 配置使用同一数据目录。
+- 两个 stdio MCP 进程还必须分别显式配置调用者：Codex 使用
+  `COUNCIL_CALLER_ACTOR_ALIAS=codex`，Claude 使用
+  `COUNCIL_CALLER_ACTOR_ALIAS=claude`。该身份不会由工具参数覆盖。
 - Web 的 `VITE_COUNCIL_DATA_MODE` 设为 `http`。
 - `VITE_COUNCIL_API_URL` 填写本地 API origin。
 - `VITE_COUNCIL_PROJECT_PATH` 填写当前项目的绝对路径；Web 新建议题会把它保存为 Claude 的可信工作目录。
@@ -260,6 +260,8 @@ codex mcp get council
 ```
 
 Claude 应显示 `Connected`，Codex 应显示 `enabled: true`。
+若日志提示缺少 `COUNCIL_CALLER_ACTOR_ALIAS`，分别在两个客户端的 MCP 环境配置中绑定
+`claude` / `codex`，不要让它们共用同一个调用者值。
 
 ### 手动接力正常，但自动 Claude 不可用
 

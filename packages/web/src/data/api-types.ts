@@ -1,12 +1,11 @@
 /**
  * @input  依赖：Council REST API 返回的未知 JSON 值
- * @output 导出：后端协议类型及严格运行时解析函数
+ * @output 导出：含动态 Actor 快照的后端协议类型及严格运行时解析函数
  * @pos    HTTP 边界的唯一数据校验入口，禁止未验证数据进入 UI
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export type ApiAuthor = "human" | "claude" | "codex" | "chair" | "other";
 export type ApiTopicStatus = "open" | "decided" | "closed";
 export type ApiMessageKind =
   | "brief"
@@ -17,6 +16,15 @@ export type ApiMessageKind =
   | "note";
 export type ApiDecisionStatus = "proposed" | "accepted" | "rejected" | "superseded";
 
+export interface ApiActorSnapshot {
+  schemaVersion: 1;
+  actorId: string;
+  slug: string;
+  displayName: string;
+  shortName: string;
+  role: string;
+}
+
 export interface ApiTopic {
   id: string;
   title: string;
@@ -24,7 +32,8 @@ export interface ApiTopic {
   constraints: string[];
   projectPath?: string;
   status: ApiTopicStatus;
-  createdBy: ApiAuthor;
+  createdByActorId: string;
+  createdBySnapshot: ApiActorSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,7 +41,8 @@ export interface ApiTopic {
 export interface ApiMessage {
   id: string;
   topicId: string;
-  author: ApiAuthor;
+  actorId: string;
+  actorSnapshot: ApiActorSnapshot;
   kind: ApiMessageKind;
   content: string;
   parentMessageId?: string;
@@ -47,7 +57,8 @@ export interface ApiDecision {
   rationale: string;
   alternatives: string[];
   status: ApiDecisionStatus;
-  createdBy: ApiAuthor;
+  createdByActorId: string;
+  createdBySnapshot: ApiActorSnapshot;
   createdAt: string;
   updatedAt: string;
 }
@@ -168,7 +179,6 @@ function readArray<T>(
   return value.map(parser);
 }
 
-const AUTHORS: readonly ApiAuthor[] = ["human", "claude", "codex", "chair", "other"];
 const TOPIC_STATUSES: readonly ApiTopicStatus[] = ["open", "decided", "closed"];
 const MESSAGE_KINDS: readonly ApiMessageKind[] = [
   "brief",
@@ -199,9 +209,30 @@ export function parseApiEnvelope(value: unknown): ApiEnvelope {
   };
 }
 
+export function parseApiActorSnapshot(value: unknown): ApiActorSnapshot {
+  const record = readRecord(value, "actor snapshot");
+  const schemaVersion = readNumber(record, "schemaVersion");
+  if (!Number.isSafeInteger(schemaVersion) || schemaVersion !== 1) {
+    throw new Error("schemaVersion 必须是受支持的 Actor 快照版本");
+  }
+  return {
+    schemaVersion: 1,
+    actorId: readString(record, "actorId"),
+    slug: readString(record, "slug"),
+    displayName: readString(record, "displayName"),
+    shortName: readString(record, "shortName"),
+    role: readString(record, "role"),
+  };
+}
+
 export function parseApiTopic(value: unknown): ApiTopic {
   const record = readRecord(value, "topic");
   const projectPath = readOptionalString(record, "projectPath");
+  const createdByActorId = readString(record, "createdByActorId");
+  const createdBySnapshot = parseApiActorSnapshot(record.createdBySnapshot);
+  if (createdBySnapshot.actorId !== createdByActorId) {
+    throw new Error("topic Actor snapshot 与索引身份不一致");
+  }
   return {
     id: readString(record, "id"),
     title: readString(record, "title"),
@@ -209,7 +240,8 @@ export function parseApiTopic(value: unknown): ApiTopic {
     constraints: readStringArray(record, "constraints"),
     ...(projectPath ? { projectPath } : {}),
     status: readEnum(record, "status", TOPIC_STATUSES),
-    createdBy: readEnum(record, "createdBy", AUTHORS),
+    createdByActorId,
+    createdBySnapshot,
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
   };
@@ -218,10 +250,16 @@ export function parseApiTopic(value: unknown): ApiTopic {
 export function parseApiMessage(value: unknown): ApiMessage {
   const record = readRecord(value, "message");
   const parentMessageId = readOptionalString(record, "parentMessageId");
+  const actorId = readString(record, "actorId");
+  const actorSnapshot = parseApiActorSnapshot(record.actorSnapshot);
+  if (actorSnapshot.actorId !== actorId) {
+    throw new Error("message Actor snapshot 与索引身份不一致");
+  }
   return {
     id: readString(record, "id"),
     topicId: readString(record, "topicId"),
-    author: readEnum(record, "author", AUTHORS),
+    actorId,
+    actorSnapshot,
     kind: readEnum(record, "kind", MESSAGE_KINDS),
     content: readString(record, "content"),
     ...(parentMessageId ? { parentMessageId } : {}),
@@ -231,6 +269,11 @@ export function parseApiMessage(value: unknown): ApiMessage {
 
 export function parseApiDecision(value: unknown): ApiDecision {
   const record = readRecord(value, "decision");
+  const createdByActorId = readString(record, "createdByActorId");
+  const createdBySnapshot = parseApiActorSnapshot(record.createdBySnapshot);
+  if (createdBySnapshot.actorId !== createdByActorId) {
+    throw new Error("decision Actor snapshot 与索引身份不一致");
+  }
   return {
     id: readString(record, "id"),
     topicId: readString(record, "topicId"),
@@ -239,7 +282,8 @@ export function parseApiDecision(value: unknown): ApiDecision {
     rationale: readString(record, "rationale"),
     alternatives: readStringArray(record, "alternatives"),
     status: readEnum(record, "status", DECISION_STATUSES),
-    createdBy: readEnum(record, "createdBy", AUTHORS),
+    createdByActorId,
+    createdBySnapshot,
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
   };

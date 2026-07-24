@@ -1,7 +1,8 @@
 /**
- * @input  依赖：已决策议题摘要、参与者、只读议题详情懒加载回调（CouncilRepository.loadTopicDetail，
+ * @input  依赖：含 owner/决策/备选冻结快照的议题、参与者回退、详情懒加载回调，
  *         经共享的 useTopicDetails hook）、外部跳转定位请求（focusRequest）、打开讨论回调与 MarkdownContent
- * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）
+ * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）、
+ *         DecisionRecordArticle 单条冻结身份档案
  * @pos    Operator Console 决策记录视图：归档已接受/拟议中/已被取代的结构化决策
  *         （summary/rationale/原始问题按 Markdown 渲染、不折叠，含内嵌 mermaid 围栏），
  *         详情经 useTopicDetails 按需懒加载并缓存；架构档案时间线点击某条 ADR 后
@@ -25,7 +26,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useTopicDetails } from "../hooks/useTopicDetails";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
 import { MarkdownContent } from "./MarkdownContent";
-import { AgentAvatar, decisionStatusLabels, DecisionStatusBadge, StatusBadge } from "./presentation";
+import {
+  AgentAvatar,
+  decisionStatusLabels,
+  DecisionStatusBadge,
+  participantFromActorSnapshot,
+  StatusBadge,
+} from "./presentation";
 
 /** 外部触发的定位请求：nonce 保证重复点击同一 ADR 也能重新生效（见 App.tsx handleOpenDecisionRecord） */
 export interface DecisionRecordFocusRequest {
@@ -154,12 +161,24 @@ interface DecisionRecordArticleProps {
   onOpenTopic: (topicId: string) => void;
 }
 
-function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRecordArticleProps) {
+export function DecisionRecordArticle({
+  detail,
+  participants,
+  onOpenTopic,
+}: DecisionRecordArticleProps) {
   const decision = detail.decision;
   const decisionAccepted = decision?.status === "accepted";
   const decisionSuperseded = decision?.status === "superseded";
-  const owner = participants.get(detail.owner);
-  const proposer = decision ? participants.get(decision.proposedBy) : undefined;
+  const owner = participantFromActorSnapshot(
+    detail.ownerSnapshot,
+    participants.get(detail.owner),
+  );
+  const proposer = decision
+    ? participantFromActorSnapshot(
+      decision.proposedBySnapshot,
+      participants.get(decision.proposedBy),
+    )
+    : undefined;
 
   return (
     <article className="decision-record-article">
@@ -196,7 +215,11 @@ function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRe
             <MarkdownContent content={decision.rationale} />
           </div>
           <div className="decision-record-proposer">
-            <AgentAvatar agent={decision.proposedBy} size="small" />
+            <AgentAvatar
+              agent={decision.proposedBy}
+              participant={proposer}
+              size="small"
+            />
             <span>由 {proposer?.name ?? decision.proposedBy} 提出</span>
           </div>
         </section>
@@ -265,19 +288,25 @@ function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRe
         </header>
         {detail.alternatives.length > 0 ? (
           <ol className="alternative-list">
-            {detail.alternatives.map((alternative, index) => (
-              <li key={alternative.id}>
-                <span className="alternative-index">{index + 1}</span>
-                <div>
-                  <strong>{alternative.title}</strong>
-                  <small>
-                    {participants.get(alternative.author)?.name ?? alternative.author}
-                    <span aria-hidden="true"> · </span>
-                    {alternative.createdLabel}
-                  </small>
-                </div>
-              </li>
-            ))}
+            {detail.alternatives.map((alternative, index) => {
+              const author = participantFromActorSnapshot(
+                alternative.authorSnapshot,
+                participants.get(alternative.author),
+              );
+              return (
+                <li key={alternative.id}>
+                  <span className="alternative-index">{index + 1}</span>
+                  <div>
+                    <strong>{alternative.title}</strong>
+                    <small>
+                      {author?.name ?? alternative.author}
+                      <span aria-hidden="true"> · </span>
+                      {alternative.createdLabel}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         ) : (
           <p className="empty-copy">尚未提出备选方案。</p>
@@ -298,7 +327,7 @@ function DecisionRecordArticle({ detail, participants, onOpenTopic }: DecisionRe
       <div className="decision-record-owner">
         <span className="metadata-label">所有者</span>
         <span className="metadata-person">
-          <AgentAvatar agent={detail.owner} size="small" />
+          <AgentAvatar agent={detail.owner} participant={owner} size="small" />
           <span>{owner?.name ?? detail.owner}</span>
         </span>
       </div>

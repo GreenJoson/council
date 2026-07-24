@@ -25,7 +25,8 @@ export const MESSAGE_KINDS = [
   "note",
 ] as const;
 
-export const PUBLIC_AUTHORS = ["human", "claude", "codex", "chair", "other"] as const;
+/** 只用于读取 V1 冻结快照；新运行必须写 actorId。 */
+export const LEGACY_PUBLIC_AUTHORS = ["human", "claude", "codex", "chair", "other"] as const;
 
 export const STOP_REASONS = ["plan_completed", "max_rounds_reached"] as const;
 

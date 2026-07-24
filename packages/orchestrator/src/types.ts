@@ -9,20 +9,19 @@
 import type {
   FAILURE_CODES,
   MESSAGE_KINDS,
-  PUBLIC_AUTHORS,
   RUN_STATUSES,
   STOP_REASONS,
 } from "./constants.js";
 
 export type RunStatus = (typeof RUN_STATUSES)[number];
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
-export type PublicAuthor = (typeof PUBLIC_AUTHORS)[number];
+export type ActorId = string;
 export type StopReason = (typeof STOP_REASONS)[number];
 export type FailureCode = (typeof FAILURE_CODES)[number];
 
 export interface RoundPlan {
   adapterId: string;
-  publicAuthor: PublicAuthor;
+  actorId: ActorId;
   messageKind: MessageKind;
   instruction: string;
 }
@@ -76,7 +75,7 @@ export interface CreateRunInput {
 export interface CouncilPublicMessage {
   id: string;
   topicId: string;
-  author: PublicAuthor;
+  actorId: ActorId;
   kind: MessageKind;
   content: string;
   createdAt: string;
@@ -149,7 +148,7 @@ export interface AgentInvocation {
   roundNumber: number;
   attempt: number;
   adapterId: string;
-  publicAuthor: PublicAuthor;
+  actorId: ActorId;
   instruction: string;
   messageKind: MessageKind;
   context: CouncilTopicContext;
@@ -169,7 +168,7 @@ export interface RoundCommitInput {
   run: OrchestrationRun;
   message: {
     topicId: string;
-    author: PublicAuthor;
+    actorId: ActorId;
     kind: MessageKind;
     content: string;
   };
@@ -185,7 +184,7 @@ export interface ApproveGateInput {
   expectedGateId: string;
   expectedVersion: number;
   approvalId: string;
-  approvedBy: PublicAuthor;
+  approvedByActorId: ActorId;
 }
 
 export interface ApproveGateResult {

@@ -1,14 +1,14 @@
 /**
  * @input  依赖：无
- * @output 导出：Council Web 的议题、消息、决策（含 superseded 状态、decidedAt、
- *         supersededByTopicId）与仓储边界类型
+ * @output 导出：Council Web 的动态 Actor、Topic/Message/Decision 行快照、
+ *         superseded/decidedAt 与仓储边界类型
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
  *         同时供讨论面板、决策记录与架构档案三处消费
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export type AgentId = "claude" | "codex" | "user" | "chair" | "other";
+export type AgentId = string;
 
 export type MessageKind =
   | "proposal"
@@ -23,7 +23,17 @@ export type DecisionStatus = "proposed" | "accepted" | "superseded";
 
 export interface Participant {
   id: AgentId;
+  slug: string;
   name: string;
+  shortName: string;
+  role: string;
+}
+
+export interface ActorSnapshot {
+  schemaVersion: 1;
+  actorId: AgentId;
+  slug: string;
+  displayName: string;
   shortName: string;
   role: string;
 }
@@ -39,6 +49,7 @@ export interface TopicSummary {
 export interface CouncilMessage {
   id: string;
   author: AgentId;
+  actorSnapshot: ActorSnapshot;
   kind: MessageKind;
   title: string;
   content: string;
@@ -61,6 +72,7 @@ export interface AlternativeItem {
   id: string;
   title: string;
   author: AgentId;
+  authorSnapshot?: ActorSnapshot;
   createdLabel: string;
 }
 
@@ -70,6 +82,7 @@ export interface CouncilDecision {
   rationale: string;
   status: DecisionStatus;
   proposedBy: AgentId;
+  proposedBySnapshot: ActorSnapshot;
   /**
    * 决策进入 accepted/superseded 状态的时间（ISO 8601）；仍是 proposed 时留空。
    * 架构档案时间线用它生成稳定的 ADR 编号——编号按"最初被接受的时间"升序分配，
@@ -89,6 +102,7 @@ export interface TopicDetail extends TopicSummary {
   question: string;
   createdLabel: string;
   owner: AgentId;
+  ownerSnapshot: ActorSnapshot;
   participants: AgentId[];
   messages: CouncilMessage[];
   messageTotal?: number;

@@ -9,7 +9,6 @@
 import type { AgentId } from "../types/council";
 import { useEffect, useRef, useState } from "react";
 import type {
-  OrchestrationPublicAuthor,
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
@@ -28,18 +27,6 @@ const ACTIVE_STATUSES: ReadonlySet<OrchestrationRun["status"]> = new Set([
   "running",
   "waiting_agent",
 ]);
-
-const AUTHOR_LABELS: Readonly<Record<OrchestrationPublicAuthor, string>> = {
-  human: "User",
-  claude: "Claude",
-  codex: "Codex",
-  chair: "Council",
-  other: "Agent",
-};
-
-function toAgentId(author: OrchestrationPublicAuthor): AgentId {
-  return author === "human" ? "user" : author;
-}
 
 /**
  * 同议题理论上只允许一个活动 Run；若快照短暂包含多个，取更新时间最新者，
@@ -73,7 +60,10 @@ export function selectAgentReplyActivity(
   const adapter = snapshot.capabilities?.adapters.find(
     (candidate) => candidate.id === adapterId,
   );
-  const publicAuthor = adapter?.publicAuthor ?? round?.publicAuthor ?? "other";
+  const actorId = adapter?.actorId ?? round?.actorId;
+  if (!actorId) {
+    return null;
+  }
   const output = snapshot.agentOutputs?.find(
     (candidate) => candidate.runId === run.id && candidate.adapterId === adapterId,
   );
@@ -81,8 +71,8 @@ export function selectAgentReplyActivity(
   return {
     runId: run.id,
     adapterId,
-    agent: toAgentId(publicAuthor),
-    label: adapter?.label ?? AUTHOR_LABELS[publicAuthor],
+    agent: actorId,
+    label: adapter?.label ?? actorId,
     phase: run.status === "waiting_agent" ? "replying" : "preparing",
     content: output?.content ?? "",
   };

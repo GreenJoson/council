@@ -57,7 +57,7 @@ export function buildOfflineOrchestrationSnapshot(
     capabilities: {
       adapters: [{
         id: "local-agent-service",
-        publicAuthor: "other",
+        actorId: "council",
         label: "本地 Agent 服务",
         available: false,
         limitation: buildOfflineLimitation(baseUrl),

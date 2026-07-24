@@ -124,7 +124,7 @@ function createStoreInput(topicId: string, beforeRounds: readonly number[] = [])
     topicId,
     plan: [{
       adapterId: "fake",
-      publicAuthor: "claude",
+      actorId: "claude",
       messageKind: "proposal",
       instruction: "恢复后执行",
     }],
@@ -149,7 +149,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
   });
   const harness = await startHttpHarness({}, [{
     adapter: agent,
-    publicAuthor: "claude",
+    actorAlias: "claude",
     label: "Fake Claude",
     limitation: "仅用于确定性测试。",
   }]);
@@ -165,7 +165,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
         id: "fake",
         label: "Fake Claude",
         available: true,
-        publicAuthor: "claude",
+        actorId: "claude",
         limitation: "仅用于确定性测试。",
       }],
       defaultPolicy: {
@@ -185,10 +185,10 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
       title: "真实路由契约",
       question: "浏览器能否安全启动后台编排？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     for (const forbidden of [
-      { plan: [{ adapterId: "fake", publicAuthor: "claude", messageKind: "proposal", instruction: "x" }] },
+      { plan: [{ adapterId: "fake", actorAlias: "claude", messageKind: "proposal", instruction: "x" }] },
       { plan: [{ adapterId: "fake", messageKind: "proposal", instruction: "x" }], allowedAgents: ["fake"] },
     ]) {
       const rejected = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`, {
@@ -200,7 +200,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
     }
 
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
-    assert.equal(run.plan[0]?.publicAuthor, "claude");
+    assert.equal(run.plan[0]?.actorId, "claude");
     const listResponse = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`);
     const list = await readEnvelope<Record<string, unknown>>(listResponse);
     assert.deepEqual(Object.keys(list.data ?? {}).sort(), [
@@ -246,7 +246,7 @@ test("不可用 Agent 在 capabilities 标记 false 且 create 严格拒绝", as
   const agent = new FakeAgent("offline", async () => ({ content: "不应调用" }));
   const harness = await startHttpHarness({}, [{
     adapter: agent,
-    publicAuthor: "claude",
+    actorAlias: "claude",
     label: "Offline Agent",
     checkAvailability: async () => false,
   }]);
@@ -261,7 +261,7 @@ test("不可用 Agent 在 capabilities 标记 false 且 create 严格拒绝", as
       title: "不可用适配器",
       question: "是否应该创建必然失败的运行？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const rejected = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`, {
       method: "POST",
@@ -281,7 +281,7 @@ test("不可用 Agent 优先展示注册时提供的可执行 limitation 提示"
   const agent = new FakeAgent("codex", async () => ({ content: "不应调用" }));
   const harness = await startHttpHarness({}, [{
     adapter: agent,
-    publicAuthor: "codex",
+    actorAlias: "codex",
     label: "Codex CLI",
     limitationWhenUnavailable: "请安装 codex 并运行 codex login 后重试。",
     checkAvailability: async () => false,
@@ -307,7 +307,7 @@ test("CLI 登录后无需重启服务：createRun 强制复检并让缓存立即
   const agent = new FakeAgent("claude", async () => ({ content: "登录后的公开回复。" }));
   const harness = await startHttpHarness({}, [{
     adapter: agent,
-    publicAuthor: "claude",
+    actorAlias: "claude",
     label: "Claude Code",
     checkAvailability: async () => {
       checkCount += 1;
@@ -332,7 +332,7 @@ test("CLI 登录后无需重启服务：createRun 强制复检并让缓存立即
       title: "登录后直召",
       question: "登录后是否需要重启服务？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const created = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`, {
       method: "POST",
@@ -360,7 +360,7 @@ test("产品服务将配置的消息上限传入 Agent 上下文 Store", async (
   const agent = new FakeAgent("fake", async () => ({ content: "只使用有界上下文。" }));
   const harness = await startHttpHarness(
     { defaultMessageLimit: 2 },
-    [{ adapter: agent, publicAuthor: "claude" }],
+    [{ adapter: agent, actorAlias: "claude" }],
   );
   try {
     assert(harness.orchestration);
@@ -368,12 +368,12 @@ test("产品服务将配置的消息上限传入 Agent 上下文 Store", async (
       title: "Agent 上下文上限",
       question: "产品服务是否转发存储限制？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     for (let index = 1; index <= 5; index += 1) {
       harness.database.createMessage({
         topicId: topic.id,
-        author: "human",
+        actorAlias: "human",
         kind: "note",
         content: `历史消息 ${String(index)}`,
       });
@@ -408,14 +408,14 @@ test("cancel 立即中止活动调用且迟到结果不能写入", async () => {
     started.resolve();
     return await late.promise;
   });
-  const harness = await startHttpHarness({}, [{ adapter: agent, publicAuthor: "claude" }]);
+  const harness = await startHttpHarness({}, [{ adapter: agent, actorAlias: "claude" }]);
   try {
     assert(harness.orchestration);
     const topic = harness.database.createTopic({
       title: "取消迟到回复",
       question: "取消后是否还能落消息？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     const start = await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
@@ -454,7 +454,7 @@ test("另一服务实例取消会失效 lease，并在一个心跳内中止当�
     orchestrationLeaseTtlMs: 120,
     orchestrationLeaseRenewMs: 20,
     orchestrationSweepIntervalMs: 1_000,
-  }, [{ adapter: holderAgent, publicAuthor: "claude" }]);
+  }, [{ adapter: holderAgent, actorAlias: "claude" }]);
   let canceller: CouncilOrchestrationService | undefined;
   try {
     assert(harness.orchestration);
@@ -462,7 +462,7 @@ test("另一服务实例取消会失效 lease，并在一个心跳内中止当�
       title: "跨实例取消",
       question: "远端控制面能否中止当前 CLI？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
@@ -471,7 +471,7 @@ test("另一服务实例取消会失效 lease，并在一个心跳内中止当�
     await started.promise;
     canceller = new CouncilOrchestrationService(harness.config, [{
       adapter: new FakeAgent("fake", async () => ({ content: "不应由取消者调用" })),
-      publicAuthor: "claude",
+      actorAlias: "claude",
     }]);
     const cancelled = await canceller.cancel(run.id);
     assert.equal(cancelled.status, "cancelled");
@@ -495,7 +495,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
   const agent = new FakeAgent("fake", async () => ({ content: "等待完成确认的回复。" }));
   const harness = await startHttpHarness(
     { orchestrationConfirmCompletion: false, orchestrationSweepIntervalMs: 1_000 },
-    [{ adapter: agent, publicAuthor: "claude" }],
+    [{ adapter: agent, actorAlias: "claude" }],
   );
   try {
     assert(harness.orchestration);
@@ -503,7 +503,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
       title: "批准幂等",
       question: "批准重放是否跨门？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id, "fake", true);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
@@ -522,7 +522,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
     const forged = await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/approvals`, {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ ...approval, approvedBy: "claude" }),
+      body: JSON.stringify({ ...approval, approvedByActorId: "claude" }),
     });
     assert.equal(forged.status, 400);
 
@@ -546,7 +546,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
       title: "重放补调度",
       question: "外部批准提交后重放能否补回后台调度？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const replayRun = await createRunThroughHttp(
       harness.baseUrl,
@@ -567,7 +567,7 @@ test("approval 首次 202、重放 200/applied=false，且重放可补调度 run
       expectedGateId: replayWaiting.pendingGateId ?? "",
       expectedVersion: replayWaiting.version,
       approvalId: "approval_external_then_replay",
-      approvedBy: "human" as const,
+      approvedByActorId: "human" as const,
     };
     const externalStore = new SQLiteCouncilStore(harness.databasePath, 5_000);
     try {
@@ -609,14 +609,14 @@ test("recover 路由只恢复 failed 并异步完成，非法恢复返回 409", 
     }
     return { content: "恢复后的公开回复。" };
   });
-  const harness = await startHttpHarness({}, [{ adapter: agent, publicAuthor: "claude" }]);
+  const harness = await startHttpHarness({}, [{ adapter: agent, actorAlias: "claude" }]);
   try {
     assert(harness.orchestration);
     const topic = harness.database.createTopic({
       title: "显式恢复",
       question: "失败后能否受预算恢复？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
@@ -640,13 +640,13 @@ test("recover 路由只恢复 failed 并异步完成，非法恢复返回 409", 
 
 test("损坏运行快照只返回通用 500，不泄露 codec 或 SQLite 细节", async () => {
   const agent = new FakeAgent("fake", async () => ({ content: "不应执行" }));
-  const harness = await startHttpHarness({}, [{ adapter: agent, publicAuthor: "claude" }]);
+  const harness = await startHttpHarness({}, [{ adapter: agent, actorAlias: "claude" }]);
   try {
     const topic = harness.database.createTopic({
       title: "损坏快照",
       question: "HTTP 是否泄露内部结构？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     const raw = new DatabaseSync(harness.databasePath);
@@ -675,13 +675,13 @@ test("启动恢复按 active status 完整分页：忽略大量终态、恢复 r
       title: "旧议题",
       question: "大量终态后活动运行会被漏掉吗？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const interruptedTopic = harness.database.createTopic({
-      title: "中断议题", question: "未知 Agent 结果如何处理？", constraints: [], createdBy: "human",
+      title: "中断议题", question: "未知 Agent 结果如何处理？", constraints: [], createdByAlias: "human",
     });
     const waitingTopic = harness.database.createTopic({
-      title: "用户确认", question: "等待用户时是否自动推进？", constraints: [], createdBy: "human",
+      title: "用户确认", question: "等待用户时是否自动推进？", constraints: [], createdByAlias: "human",
     });
     const store = new SQLiteCouncilStore(harness.databasePath, 5_000);
     let running: OrchestrationRun;
@@ -716,7 +716,7 @@ test("启动恢复按 active status 完整分页：忽略大量终态、恢复 r
     }
     const agent = new FakeAgent("fake", async () => ({ content: "启动恢复回复。" }));
     service = new CouncilOrchestrationService(harness.config, [
-      { adapter: agent, publicAuthor: "claude" },
+      { adapter: agent, actorAlias: "claude" },
     ]);
     await service.initialize();
     await service.manager.waitForIdle();
@@ -742,10 +742,10 @@ test("旧有效 lease 到期后 sweeper 无需二次重启即可接管 running �
   let service: CouncilOrchestrationService | undefined;
   try {
     const runningTopic = harness.database.createTopic({
-      title: "旧 running lease", question: "TTL 后是否接管？", constraints: [], createdBy: "human",
+      title: "旧 running lease", question: "TTL 后是否接管？", constraints: [], createdByAlias: "human",
     });
     const waitingTopic = harness.database.createTopic({
-      title: "旧 waiting lease", question: "TTL 后是否中断？", constraints: [], createdBy: "human",
+      title: "旧 waiting lease", question: "TTL 后是否中断？", constraints: [], createdByAlias: "human",
     });
     const store = new SQLiteCouncilStore(harness.databasePath, 5_000);
     let running: OrchestrationRun;
@@ -768,7 +768,7 @@ test("旧有效 lease 到期后 sweeper 无需二次重启即可接管 running �
     }
     const agent = new FakeAgent("fake", async () => ({ content: "TTL 接管后的回复。" }));
     service = new CouncilOrchestrationService(harness.config, [
-      { adapter: agent, publicAuthor: "claude" },
+      { adapter: agent, actorAlias: "claude" },
     ]);
     await service.initialize();
     await waitForRun(service, running.id, (candidate) => candidate.status === "completed", 2_000);
@@ -792,7 +792,7 @@ test("扫描上限明确阻止启动，shutdown 清理 sweeper", async () => {
       title: `上限议题 ${String(index)}`,
       question: "是否明确失败？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     }));
     const store = new SQLiteCouncilStore(harness.databasePath, 5_000);
     try {
@@ -804,7 +804,7 @@ test("扫描上限明确阻止启动，shutdown 清理 sweeper", async () => {
       store.close();
     }
     service = new CouncilOrchestrationService(harness.config, [
-      { adapter: new FakeAgent("fake", async () => ({ content: "不应执行" })), publicAuthor: "claude" },
+      { adapter: new FakeAgent("fake", async () => ({ content: "不应执行" })), actorAlias: "claude" },
     ]);
     await assert.rejects(service.initialize(), /超过配置上限/);
     await service.shutdown();
@@ -836,11 +836,11 @@ test("续租丢失留下的 waiting_agent 由同一进程 sweeper 收敛为中�
     orchestrationLeaseTtlMs: 120,
     orchestrationLeaseRenewMs: 20,
     orchestrationSweepIntervalMs: 20,
-  }, [{ adapter: agent, publicAuthor: "claude" }]);
+  }, [{ adapter: agent, actorAlias: "claude" }]);
   try {
     assert(harness.orchestration);
     const topic = harness.database.createTopic({
-      title: "续租丢失", question: "同一进程能否自愈？", constraints: [], createdBy: "human",
+      title: "续租丢失", question: "同一进程能否自愈？", constraints: [], createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
@@ -883,14 +883,14 @@ test("shutdown 等待取消清理但受总预算限制，永不 settle 的 Adapt
     orchestrationAgentCleanupTimeoutMs: 30,
     orchestrationShutdownTimeoutMs: 50,
     orchestrationSweepIntervalMs: 20,
-  }, [{ adapter: agent, publicAuthor: "claude" }]);
+  }, [{ adapter: agent, actorAlias: "claude" }]);
   try {
     assert(harness.orchestration);
     const topic = harness.database.createTopic({
       title: "关闭清理屏障",
       question: "永不退出的 Adapter 会否拖死关闭？",
       constraints: [],
-      createdBy: "human",
+      createdByAlias: "human",
     });
     const run = await createRunThroughHttp(harness.baseUrl, topic.id);
     await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
