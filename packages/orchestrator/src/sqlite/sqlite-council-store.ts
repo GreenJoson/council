@@ -58,6 +58,19 @@ import {
   commitAtomicRound,
 } from "./atomic-round-commit.js";
 import {
+  abandonDiscussionCycle,
+  answerBlockingQuestion,
+  completeDiscussionCycle,
+  readActiveDiscussionCycle,
+  startDiscussionCycle,
+  type AbandonDiscussionCycleInput,
+  type AnswerBlockingQuestionInput,
+  type CompleteDiscussionCycleInput,
+  type DiscussionCycleView,
+  type StartDiscussionCycleInput,
+} from "../cycle/cycle-repository.js";
+import type { DiscussionCycle } from "../cycle/cycle-codec.js";
+import {
   decodeCouncilMessageRows,
   loadRuntimeBindingInvocationContext,
   type RuntimeMessageRow,
@@ -1034,6 +1047,30 @@ export class SQLiteCouncilStore implements CouncilStore {
         );
       return result.changes === 1;
     });
+  }
+
+  // ---- 圆桌收敛 ----
+  // 收敛状态与公开消息共享同一个 SQLite 连接和事务边界；单独开连接会让
+  // 「消息已提交但发言没记上」重新变得可能，因此一律走这里。
+
+  startDiscussionCycle(input: StartDiscussionCycleInput): DiscussionCycleView {
+    return this.#transaction(() => startDiscussionCycle(this.#database, input));
+  }
+
+  readActiveDiscussionCycle(topicId: string): DiscussionCycleView | undefined {
+    return readActiveDiscussionCycle(this.#database, topicId);
+  }
+
+  answerBlockingQuestion(input: AnswerBlockingQuestionInput): DiscussionCycleView {
+    return this.#transaction(() => answerBlockingQuestion(this.#database, input));
+  }
+
+  completeDiscussionCycle(input: CompleteDiscussionCycleInput): DiscussionCycle {
+    return this.#transaction(() => completeDiscussionCycle(this.#database, input));
+  }
+
+  abandonDiscussionCycle(input: AbandonDiscussionCycleInput): DiscussionCycle {
+    return this.#transaction(() => abandonDiscussionCycle(this.#database, input));
   }
 
   close(): void {

@@ -53,3 +53,4 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 取消或失败清理会在同一状态迁移中清空 session 与游标；任何缺少 session 的绑定都强制使用
 完整公开上下文。进程重启只保留仍存在的可恢复 session。只有 open 议题可以创建运行或重开
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续调用。
+| `cycle-driver.ts` | 自动交接 | 开局后按收敛状态机决定下一位发言人并创建/启动 Run；提问处停住，收敛时写 proposed 决策，预算用尽自动放弃 |
