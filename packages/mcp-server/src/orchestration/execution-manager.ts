@@ -26,6 +26,11 @@ export interface RunExecutionManagerOptions {
   runPageLimit: number;
   startupScanLimit: number;
   shutdownTimeoutMs: number;
+  /**
+   * 后台执行退出时回调（正常跑完、停在审批门、失败都会触发）。
+   * 圆桌驱动器靠它接着往下走——不给这个信号，自动交接就得靠轮询。
+   */
+  onRunSettled?: (runId: string) => void;
 }
 
 type ExecutionMode = "drive" | "interrupt";
@@ -178,6 +183,14 @@ export class RunExecutionManager {
       })
       .finally(() => {
         this.#tasks.delete(runId);
+        if (this.#shuttingDown) {
+          return;
+        }
+        try {
+          this.options.onRunSettled?.(runId);
+        } catch (error) {
+          logger.error("orchestration", "运行结束回调失败", error);
+        }
       });
     this.#tasks.set(runId, task);
   }

@@ -42,6 +42,7 @@ import { HttpError, sendError, sendSuccess, validationIssues } from "./responses
 import { RevisionEventStream } from "./revision-stream.js";
 import {
   agentParamsSchema,
+  answerCycleQuestionBodySchema,
   createAgentBodySchema,
   createDecisionBodySchema,
   createMessageBodySchema,
@@ -57,6 +58,7 @@ import {
   providerParamsSchema,
   runParamsSchema,
   runtimeBindingParamsSchema,
+  startCycleBodySchema,
   topicDetailQuerySchema,
   topicParamsSchema,
   updateAgentBodySchema,
@@ -508,6 +510,54 @@ export function createCouncilHttpApp(
       confirmationBeforeCompletion: input.confirmationBeforeCompletion,
     });
     sendSuccess(response, run, "编排运行已创建。", 201);
+  });
+
+  app.get("/api/v1/topics/:topicId/cycle", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const view = orchestration.readCycle(params.topicId);
+    sendSuccess(response, view ?? null);
+  });
+
+  app.post("/api/v1/topics/:topicId/cycle", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(startCycleBodySchema, request.body);
+    const view = await orchestration.startCycle({
+      topicId: params.topicId,
+      participants: input.participants,
+      ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
+    });
+    sendSuccess(response, view, "圆桌讨论已开始，提案人正在发言。", 201);
+  });
+
+  app.post("/api/v1/topics/:topicId/cycle/answers", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(answerCycleQuestionBodySchema, request.body);
+    const humanActorId = database.resolveActorAlias("human").actorId;
+    // 回答必须以公开消息的形式留在讨论流里，否则后面没人能复查这个前提是谁给的。
+    // 幂等靠 parent_message_id 认领：重试时先找回已发出的那条，不会重复发帖。
+    const existing = database.findReplyBy(input.questionMessageId, humanActorId);
+    const answer = existing ?? database.createMessageAsActor({
+      topicId: params.topicId,
+      actorId: "human",
+      kind: "note",
+      content: input.content,
+      parentMessageId: input.questionMessageId,
+    });
+    const view = await orchestration.answerCycleQuestion({
+      topicId: params.topicId,
+      questionMessageId: input.questionMessageId,
+      answerMessageId: answer.id,
+    });
+    sendSuccess(response, view ?? null, "回答已记录，讨论继续。", 202);
   });
 
   app.post("/api/v1/runs/:runId/actions/start", async (request, response) => {

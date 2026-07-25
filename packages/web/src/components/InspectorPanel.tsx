@@ -25,6 +25,7 @@ import type {
   OrchestrationSnapshot,
 } from "../types/orchestration";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
+import { CyclePanel } from "./CyclePanel";
 import { MarkdownContent } from "./MarkdownContent";
 import {
   AgentAvatar,
@@ -49,6 +50,11 @@ export interface InspectorPanelProps {
     instruction: string,
     confirmationBeforeCompletion: boolean,
   ) => Promise<boolean>;
+  onStartCycle: (participants: string[], roundBudget: number) => Promise<boolean>;
+  onAnswerCycleQuestion: (
+    questionMessageId: string,
+    content: string,
+  ) => Promise<boolean>;
   onStartRun: (runId: string) => Promise<void>;
   onApproveRun: (run: OrchestrationRun) => Promise<void>;
   onCancelRun: (runId: string) => Promise<void>;
@@ -67,6 +73,8 @@ export function InspectorPanel({
   orchestration,
   orchestrationBusyAction,
   onCreateAndStartRun,
+  onStartCycle,
+  onAnswerCycleQuestion,
   onStartRun,
   onApproveRun,
   onCancelRun,
@@ -121,6 +129,15 @@ export function InspectorPanel({
           <dd>{topic.updatedLabel}</dd>
         </div>
       </dl>
+
+      <CyclePanel
+        topicId={topic.id}
+        isTopicOpen={topic.status !== "decided"}
+        snapshot={orchestration}
+        busyAction={orchestrationBusyAction}
+        onStart={onStartCycle}
+        onAnswer={onAnswerCycleQuestion}
+      />
 
       <AutoRoundsPanel
         topicId={topic.id}

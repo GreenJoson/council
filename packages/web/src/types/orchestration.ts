@@ -145,10 +145,69 @@ export interface ApproveOrchestrationRunInput {
   approvalId: string;
 }
 
+export type CycleStage =
+  | "proposal"
+  | "critique"
+  | "rebuttal"
+  | "synthesis"
+  | "awaiting_user"
+  | "completed";
+
+export interface CycleTurn {
+  agentId: string;
+  stage: "proposal" | "critique" | "rebuttal" | "synthesis";
+  round: number;
+  stance: "agree" | "non_blocking" | "blocking";
+  messageId: string;
+}
+
+export interface DiscussionCycle {
+  id: string;
+  topicId: string;
+  stage: CycleStage;
+  status: "active" | "completed" | "abandoned";
+  /** 开局冻结的名册；首位是提案人。 */
+  participants: string[];
+  turns: CycleTurn[];
+  roundBudget: number;
+  currentRound: number;
+  proposedDecisionId?: string;
+  stopReason?: string;
+}
+
+export interface CycleBlockingQuestion {
+  id: string;
+  askedByActorId: string;
+  question: string;
+  rationale: string;
+  options: string[];
+  questionMessageId: string;
+}
+
+export interface DiscussionCycleView {
+  cycle: DiscussionCycle;
+  openQuestion?: CycleBlockingQuestion;
+}
+
+export interface StartCycleInput {
+  topicId: string;
+  participants: string[];
+  roundBudget?: number;
+}
+
+export interface AnswerCycleQuestionInput {
+  topicId: string;
+  questionMessageId: string;
+  /** 回答正文；服务端会以用户身份发成公开消息并挂在提问下面。 */
+  content: string;
+}
+
 export interface OrchestrationSnapshot {
   capabilities?: OrchestrationCapabilities;
   activeTopicId?: string;
   runs: OrchestrationRun[];
+  /** 当前议题的活动圆桌；null 表示确认过没有，undefined 表示还没读到。 */
+  cycle?: DiscussionCycleView | null;
   runtimeBindings?: RuntimeBinding[];
   agentOutputs?: OrchestrationAgentOutput[];
   sync: {

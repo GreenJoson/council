@@ -7,12 +7,15 @@
  */
 
 import type {
+  AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  DiscussionCycleView,
   OrchestrationRun,
   OrchestrationSnapshot,
   OrchestrationAgentOutput,
   RuntimeBinding,
+  StartCycleInput,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -28,6 +31,7 @@ import { createApiUrl, jsonRequest, requestApiData, type Fetcher } from "./http-
 import type { EventStream, EventStreamFactory } from "./http-repository";
 import { parseCouncilChangedRevision } from "./http-repository";
 import {
+  parseDiscussionCycleView,
   parseOrchestrationCapabilities,
   parseOrchestrationApprovalResult,
   parseOrchestrationRun,
@@ -173,10 +177,11 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     generation: number,
   ): Promise<OrchestrationSnapshot> {
     try {
-      const [status, runs, runtimeBindings] = await Promise.all([
+      const [status, runs, runtimeBindings, cycle] = await Promise.all([
         this.#loadStatus(),
         this.#loadAllRuns(topicId),
         this.#loadRuntimeBindings(topicId),
+        this.#loadCycle(topicId),
       ]);
       if (generation !== this.#selectionGeneration) {
         return cloneSnapshot(this.#snapshot);
@@ -189,6 +194,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         activeTopicId: topicId,
         runs,
         runtimeBindings,
+        cycle,
         agentOutputs: this.#outputsForTopic(topicId),
         sync: { status: "connected", label: "自动轮次已同步" },
       };
@@ -261,6 +267,56 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       result.run.topicId,
     )
       ? this.selectTopic(result.run.topicId)
+      : cloneSnapshot(this.#snapshot);
+  }
+
+  async startCycle(input: StartCycleInput): Promise<OrchestrationSnapshot> {
+    return await this.#cycleAction(
+      input.topicId,
+      "",
+      {
+        participants: input.participants,
+        ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
+      },
+    );
+  }
+
+  async answerCycleQuestion(
+    input: AnswerCycleQuestionInput,
+  ): Promise<OrchestrationSnapshot> {
+    return await this.#cycleAction(input.topicId, "/answers", {
+      questionMessageId: input.questionMessageId,
+      content: input.content,
+    });
+  }
+
+  /**
+   * 圆桌写操作统一走这里：成功后立刻重读该议题，让面板看到的是服务端真实状态
+   * 而不是本地猜测——自动交接是异步的，乐观更新只会显示一个不存在的阶段。
+   */
+  async #cycleAction(
+    topicId: string,
+    suffix: string,
+    body: Record<string, unknown>,
+  ): Promise<OrchestrationSnapshot> {
+    const selectionGeneration = this.#selectionGeneration;
+    const activeTopicId = this.#snapshot.activeTopicId;
+    try {
+      await requestApiData(
+        this.#fetcher,
+        createApiUrl(
+          this.#baseUrl,
+          `/api/v1/topics/${encodeURIComponent(topicId)}/cycle${suffix}`,
+        ),
+        parseDiscussionCycleView,
+        jsonRequest(body),
+      );
+    } catch (error: unknown) {
+      this.#publishSync("offline", "圆桌操作失败 · 状态未假定成功");
+      throw error;
+    }
+    return this.#canRefreshMutation(selectionGeneration, activeTopicId, topicId)
+      ? await this.selectTopic(topicId)
       : cloneSnapshot(this.#snapshot);
   }
 
@@ -500,6 +556,17 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         { includeClosed: "true" },
       ),
       parseRuntimeBindings,
+    );
+  }
+
+  async #loadCycle(topicId: string): Promise<DiscussionCycleView | null> {
+    return await requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/cycle`,
+      ),
+      parseDiscussionCycleView,
     );
   }
 

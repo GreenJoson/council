@@ -7,6 +7,10 @@
  */
 
 import type {
+  CycleStage,
+  CycleTurn,
+  DiscussionCycle,
+  DiscussionCycleView,
   OrchestrationAdapter,
   OrchestrationAgentOutput,
   OrchestrationCapabilities,
@@ -52,6 +56,18 @@ const STATUSES: readonly OrchestrationStatus[] = [
 ];
 const MESSAGE_KINDS: readonly OrchestrationMessageKind[] = [
   "brief", "proposal", "critique", "rebuttal", "synthesis", "note",
+];
+const DEBATE_STAGES: readonly CycleTurn["stage"][] = [
+  "proposal", "critique", "rebuttal", "synthesis",
+];
+const CYCLE_STAGES: readonly CycleStage[] = [
+  ...DEBATE_STAGES, "awaiting_user", "completed",
+];
+const CYCLE_STATUSES: readonly DiscussionCycle["status"][] = [
+  "active", "completed", "abandoned",
+];
+const VERDICT_STANCES: readonly CycleTurn["stance"][] = [
+  "agree", "non_blocking", "blocking",
 ];
 const AGENT_OUTPUT_OPERATIONS: readonly AgentOutputOperation[] = [
   "snapshot", "reset", "append", "replace", "complete",
@@ -232,6 +248,62 @@ export function parseOrchestrationRun(value: unknown): OrchestrationRun {
     version: integerValue(record, "version", 1),
     createdAt: stringValue(record, "createdAt"),
     updatedAt: stringValue(record, "updatedAt"),
+  };
+}
+
+export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const record = recordValue(value, "cycle view");
+  const cycleRecord = recordValue(record.cycle, "cycle");
+  const proposedDecisionId = optionalString(cycleRecord, "proposedDecisionId");
+  const stopReason = optionalString(cycleRecord, "stopReason");
+  const cycle: DiscussionCycle = {
+    id: stringValue(cycleRecord, "id"),
+    topicId: stringValue(cycleRecord, "topicId"),
+    stage: enumValue(cycleRecord, "stage", CYCLE_STAGES),
+    status: enumValue(cycleRecord, "status", CYCLE_STATUSES),
+    participants: arrayValue(cycleRecord, "participants", (item, index) => {
+      if (typeof item !== "string" || item.length === 0) {
+        throw new Error(`participants[${String(index)}] 必须是非空字符串`);
+      }
+      return item;
+    }),
+    turns: arrayValue(cycleRecord, "turns", (item) => {
+      const turn = recordValue(item, "turn");
+      return {
+        agentId: stringValue(turn, "agentId"),
+        stage: enumValue(turn, "stage", DEBATE_STAGES),
+        round: integerValue(turn, "round"),
+        stance: enumValue(turn, "stance", VERDICT_STANCES),
+        messageId: stringValue(turn, "messageId"),
+      };
+    }),
+    roundBudget: integerValue(cycleRecord, "roundBudget", 1),
+    currentRound: integerValue(cycleRecord, "currentRound"),
+    ...(proposedDecisionId ? { proposedDecisionId } : {}),
+    ...(stopReason ? { stopReason } : {}),
+  };
+  if (record.openQuestion === undefined || record.openQuestion === null) {
+    return { cycle };
+  }
+  const questionRecord = recordValue(record.openQuestion, "openQuestion");
+  return {
+    cycle,
+    openQuestion: {
+      id: stringValue(questionRecord, "id"),
+      askedByActorId: stringValue(questionRecord, "askedByActorId"),
+      question: stringValue(questionRecord, "question"),
+      rationale: stringValue(questionRecord, "rationale"),
+      options: arrayValue(questionRecord, "options", (item, index) => {
+        if (typeof item !== "string") {
+          throw new Error(`options[${String(index)}] 必须是字符串`);
+        }
+        return item;
+      }),
+      questionMessageId: stringValue(questionRecord, "questionMessageId"),
+    },
   };
 }
 

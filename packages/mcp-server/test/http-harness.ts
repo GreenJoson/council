@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CouncilDatabase } from "../src/database.js";
 import { createCouncilHttpApp } from "../src/http/app.js";
+import { createCycleDecisionWriter } from "../src/orchestration/cycle-decisions.js";
 import {
   CouncilOrchestrationService,
   type RegisteredAgentAdapter,
@@ -101,6 +102,8 @@ export async function startHttpHarness(
     : registrations
       ? new CouncilOrchestrationService(config, registrations)
       : undefined;
+  // 与 http-index 的装配保持一致：不挂载决策写入器，圆桌开局会被直接拒绝。
+  orchestration?.attachDecisionWriter(createCycleDecisionWriter(database));
   await orchestration?.initialize();
   const bundle = createCouncilHttpApp(config, database, orchestration);
   const server = createServer(bundle.app);

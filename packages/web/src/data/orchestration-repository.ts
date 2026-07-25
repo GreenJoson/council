@@ -7,11 +7,13 @@
  */
 
 import type {
+  AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
+  StartCycleInput,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -33,6 +35,9 @@ export interface OrchestrationRepository {
   createRun(input: CreateOrchestrationRunInput): Promise<OrchestrationRun>;
   startRun(runId: string): Promise<OrchestrationSnapshot>;
   approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot>;
+  /** 开始圆桌：冻结名册后由编排层自动交接，用户此后只在被提问时介入。 */
+  startCycle(input: StartCycleInput): Promise<OrchestrationSnapshot>;
+  answerCycleQuestion(input: AnswerCycleQuestionInput): Promise<OrchestrationSnapshot>;
   cancelRun(runId: string): Promise<OrchestrationSnapshot>;
   recoverRun(runId: string): Promise<OrchestrationSnapshot>;
   closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;

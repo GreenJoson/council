@@ -12,11 +12,13 @@ import type {
   DesktopOrchestrationHealth,
 } from "./desktop-bridge";
 import type {
+  AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
+  StartCycleInput,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -146,6 +148,16 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot> {
     return (await this.#requireLive()).approveRun(input);
+  }
+
+  async startCycle(input: StartCycleInput): Promise<OrchestrationSnapshot> {
+    return (await this.#requireLive()).startCycle(input);
+  }
+
+  async answerCycleQuestion(
+    input: AnswerCycleQuestionInput,
+  ): Promise<OrchestrationSnapshot> {
+    return (await this.#requireLive()).answerCycleQuestion(input);
   }
 
   async cancelRun(runId: string): Promise<OrchestrationSnapshot> {

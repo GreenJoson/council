@@ -6,10 +6,10 @@
 |---|---|---|
 | `repository.ts` | 边界 | 定义列表加载、显式选题、写操作和只读议题详情加载的数据访问接口 |
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
-| `orchestration-repository.ts` | 边界 | 定义 Agent 调用、RuntimeBinding 关闭/重开、带单次完成复核策略的创建和订阅接口 |
+| `orchestration-repository.ts` | 边界 | 定义 Agent 调用、圆桌开局/作答、RuntimeBinding 关闭/重开、带单次完成复核策略的创建和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
-| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
+| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、活动圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |

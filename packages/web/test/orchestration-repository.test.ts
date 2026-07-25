@@ -162,6 +162,9 @@ function createOrchestrationFixture(): OrchestrationFixture {
     if (/^\/api\/v1\/topics\/[^/]+\/runtime-bindings$/u.test(url.pathname)) {
       return success([]);
     }
+    if (/^\/api\/v1\/topics\/[^/]+\/cycle$/u.test(url.pathname)) {
+      return success(null);
+    }
     if (url.pathname === "/api/v1/topics/topic-one/runs" && method === "GET") {
       return success({
         total: runs.length,

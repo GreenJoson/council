@@ -521,6 +521,52 @@ export default function App() {
     }
   }
 
+  async function handleStartCycle(
+    participants: string[],
+    roundBudget: number,
+  ): Promise<boolean> {
+    setOrchestrationBusyAction("cycle");
+    setRunsErrorMessage(null);
+    try {
+      const snapshot = await orchestrationRepository.startCycle({
+        topicId: activeTopicId,
+        participants,
+        roundBudget,
+      });
+      setOrchestration(snapshot);
+      setToastMessage("圆桌已开始，提案人正在发言");
+      return true;
+    } catch (error: unknown) {
+      setRunsErrorMessage(getErrorMessage(error));
+      return false;
+    } finally {
+      setOrchestrationBusyAction(null);
+    }
+  }
+
+  async function handleAnswerCycleQuestion(
+    questionMessageId: string,
+    content: string,
+  ): Promise<boolean> {
+    setOrchestrationBusyAction("cycle");
+    setRunsErrorMessage(null);
+    try {
+      const snapshot = await orchestrationRepository.answerCycleQuestion({
+        topicId: activeTopicId,
+        questionMessageId,
+        content,
+      });
+      setOrchestration(snapshot);
+      setToastMessage("回答已发布，讨论继续");
+      return true;
+    } catch (error: unknown) {
+      setRunsErrorMessage(getErrorMessage(error));
+      return false;
+    } finally {
+      setOrchestrationBusyAction(null);
+    }
+  }
+
   async function handleRunAction(
     action: "start" | "cancel" | "recover",
     runId: string,
@@ -668,6 +714,8 @@ export default function App() {
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}
               onCreateAndStartRun={handleCreateAndStartRun}
+              onStartCycle={handleStartCycle}
+              onAnswerCycleQuestion={handleAnswerCycleQuestion}
               onStartRun={(runId) => handleRunAction("start", runId)}
               onApproveRun={handleApproveRun}
               onCancelRun={(runId) => handleRunAction("cancel", runId)}

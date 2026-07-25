@@ -330,6 +330,32 @@ export class CouncilDatabase {
     return topicFromRow(row);
   }
 
+  getMessage(messageId: string): CouncilMessage {
+    const row = this.#database
+      .prepare("SELECT * FROM messages WHERE id = ?")
+      .get(messageId) as unknown as MessageRow | undefined;
+    if (!row) {
+      throw new CouncilNotFoundError(`消息 ${messageId} 不存在。`);
+    }
+    return messageFromRow(row);
+  }
+
+  /**
+   * 找某条消息下由指定 Actor 发出的第一条回复。
+   * 回答阻塞提问靠它做幂等：重试时先认领已经发出去的那条，而不是再发一条。
+   */
+  findReplyBy(parentMessageId: string, actorId: string): CouncilMessage | undefined {
+    const row = this.#database
+      .prepare(`
+        SELECT * FROM messages
+        WHERE parent_message_id = ? AND author_actor_id = ?
+        ORDER BY created_at ASC, rowid ASC
+        LIMIT 1
+      `)
+      .get(parentMessageId, actorId) as unknown as MessageRow | undefined;
+    return row ? messageFromRow(row) : undefined;
+  }
+
   getTopicDetail(topicId: string, messageLimit: number, messageOffset = 0): TopicDetail {
     const topic = this.getTopic(topicId);
     const messageCountRow = this.#database

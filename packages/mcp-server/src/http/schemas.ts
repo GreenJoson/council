@@ -13,6 +13,7 @@ import {
   MAX_ALTERNATIVE_COUNT,
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
+  MAX_CYCLE_ROUND_BUDGET,
   MAX_ID_CHARS,
   MAX_INSTRUCTION_CHARS,
   MAX_LIST_LIMIT,
@@ -230,6 +231,33 @@ export const createRunBodySchema = z
   .strict();
 
 export const emptyActionBodySchema = z.object({}).strict();
+
+const messageIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS)
+  .regex(/^message_[A-Za-z0-9-]+$/, "messageId 格式无效");
+
+export const startCycleBodySchema = z
+  .object({
+    // 名册由用户开局时勾选并就此冻结；首位是提案人，顺序有意义。
+    participants: z
+      .array(z.string().trim().min(1).max(100))
+      .min(2, "圆桌至少要两位参与者，一个人不构成互审")
+      .max(MAX_ORCHESTRATION_PLAN_ROUNDS)
+      .refine(
+        (value) => new Set(value).size === value.length,
+        { message: "参与名册不能重复" },
+      ),
+    roundBudget: z.number().int().positive().max(MAX_CYCLE_ROUND_BUDGET).optional(),
+  })
+  .strict();
+
+export const answerCycleQuestionBodySchema = z
+  .object({
+    questionMessageId: messageIdSchema,
+    content: nonBlankString(MAX_MESSAGE_CHARS),
+  })
+  .strict();
 
 export const approveRunBodySchema = z
   .object({

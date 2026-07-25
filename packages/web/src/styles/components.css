@@ -1864,3 +1864,225 @@
   font-size: 10px;
   line-height: 1.5;
 }
+
+/* ---------- 圆桌讨论 ---------- */
+
+.cycle-card {
+  margin-top: 18px;
+}
+
+.cycle-round {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.cycle-hint,
+.cycle-warning {
+  margin: 12px 0 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.cycle-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-warning);
+}
+
+.cycle-roster {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cycle-roster-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-canvas-deep) 72%, transparent);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.cycle-roster-name {
+  flex: 1;
+}
+
+.cycle-badge {
+  padding: 2px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.cycle-badge.is-muted {
+  border-color: var(--color-divider);
+  color: var(--color-text-muted);
+}
+
+.cycle-budget {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.cycle-budget input {
+  width: 56px;
+  padding: 5px 7px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cycle-hint-inline {
+  font-size: 9px;
+}
+
+/* 阶段轨道：当前阶段高亮，已走过的阶段留痕，剩下的保持沉默 */
+.cycle-track {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cycle-track-step {
+  flex: 1;
+  padding: 5px 0;
+  border-top: 2px solid var(--color-divider);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.cycle-track-step.is-done {
+  border-top-color: var(--color-positive);
+  color: var(--color-positive);
+}
+
+.cycle-track-step.is-active {
+  border-top-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.cycle-question {
+  margin-top: 13px;
+  padding: 11px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-warning-soft) 46%, transparent);
+}
+
+.cycle-question-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-warning);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cycle-question-body {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cycle-question-rationale {
+  margin: 5px 0 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.cycle-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.cycle-question-input {
+  width: 100%;
+  margin-top: 9px;
+  padding: 8px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.cycle-turns {
+  display: grid;
+  gap: 5px;
+  margin: 13px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cycle-turn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--color-divider);
+  border-left-width: 2px;
+  border-radius: var(--radius-small);
+  font-size: 10px;
+}
+
+.cycle-turn.is-agree {
+  border-left-color: var(--color-positive);
+}
+
+.cycle-turn.is-non_blocking {
+  border-left-color: var(--color-warning);
+}
+
+.cycle-turn.is-blocking {
+  border-left-color: var(--color-danger);
+}
+
+.cycle-turn-agent {
+  flex: 1;
+  font-weight: 600;
+}
+
+.cycle-turn-stage,
+.cycle-turn-stance {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}

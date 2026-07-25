@@ -61,6 +61,26 @@ function extractFencedBlock(content: string, fence: string): string | undefined 
   return last;
 }
 
+/**
+ * 去掉协议尾块，只留给人看的正文。
+ *
+ * 决策正文要和最终 synthesis 逐字一致，但立场/提问块是状态机的管线信号，
+ * 留在决策里既没意义又会误导读者以为决策本身还有未决立场。
+ */
+export function stripProtocolTrailers(content: string): string {
+  let stripped = content;
+  for (const fence of [VERDICT_FENCE, QUESTION_FENCE]) {
+    stripped = stripped.replace(
+      new RegExp(
+        `^\`\`\`${fence}[ \\t]*\\r?\\n[\\s\\S]*?\\r?\\n?^\`\`\`[ \\t]*$`,
+        "gmu",
+      ),
+      "",
+    );
+  }
+  return stripped.trim();
+}
+
 function parseJsonObject(raw: string): Record<string, unknown> | undefined {
   let parsed: unknown;
   try {

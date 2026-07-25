@@ -229,6 +229,27 @@ export function readActiveDiscussionCycle(
 }
 
 /**
+ * 该议题上是否还有没跑完的编排 Run。
+ *
+ * 驱动器据此决定要不要召唤下一位：Run 停在审批门时并没有提交发言，
+ * 状态机看到的仍是"轮到同一个人"，不挡一下就会给同一阶段再开一个 Run。
+ * 判定口径与 `idx_orchestration_runs_one_active_topic` 的部分索引保持一致。
+ */
+export function hasActiveOrchestrationRun(
+  database: DatabaseSync,
+  topicId: string,
+): boolean {
+  const row = database.prepare(`
+    SELECT 1 AS present
+    FROM orchestration_runs
+    WHERE topic_id = ?
+      AND status IN ('idle', 'running', 'waiting_agent', 'waiting_user')
+    LIMIT 1
+  `).get(topicId) as unknown as { present: number } | undefined;
+  return row !== undefined;
+}
+
+/**
  * 记录一次发言并把 cycle 推到状态机指定的下一个阶段。
  * 重放同一条消息是幂等的：turns 已包含该 messageId 时直接返回当前视图。
  */

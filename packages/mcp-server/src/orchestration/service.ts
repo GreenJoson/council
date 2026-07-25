@@ -16,6 +16,7 @@ import {
   SQLiteCouncilStore,
   type AgentAdapter,
   type ApproveGateResult,
+  type DiscussionCycleView,
   type MessageKind,
   type OrchestrationRun,
   type PaginatedRuns,
@@ -48,6 +49,11 @@ import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
+import {
+  CycleDriver,
+  type CycleDecisionWriter,
+  type CycleRunner,
+} from "./cycle-driver.js";
 import { RunExecutionManager } from "./execution-manager.js";
 import { AgentProgressHub } from "./agent-progress-hub.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
@@ -127,6 +133,9 @@ export class CouncilOrchestrationService {
   readonly #baseLimitations = new Map<string, string | undefined>();
   readonly #staticAdapterIds = new Set<string>();
   readonly #dynamicAdapterFingerprints = new Map<string, string>();
+  readonly #cycles: CycleDriver;
+  /** 决策写入器需要 CouncilDatabase，晚于本服务构造；开局时校验已挂载。 */
+  #decisions: CycleDecisionWriter | undefined;
   #availabilityCheckedAt = 0;
   #availabilityRefresh: Promise<void> | null = null;
   #configurationTail = Promise.resolve();
@@ -193,7 +202,95 @@ export class CouncilOrchestrationService {
       runPageLimit: config.orchestrationRunPageLimit,
       startupScanLimit: config.orchestrationStartupScanLimit,
       shutdownTimeoutMs: config.orchestrationShutdownTimeoutMs,
+      onRunSettled: (runId) => {
+        this.#advanceCycleAfterRun(runId);
+      },
     });
+    const runner: CycleRunner = {
+      createRun: async (topicId, plan) => await this.createRun(topicId, plan),
+      startRun: async (runId) => await this.start(runId),
+    };
+    this.#cycles = new CycleDriver({
+      store: this.#store,
+      runner,
+      decisions: {
+        recordProposedDecision: async (input) => {
+          if (!this.#decisions) {
+            throw new OrchestrationConfigError("决策写入器未挂载，无法记录圆桌结论。");
+          }
+          return await this.#decisions.recordProposedDecision(input);
+        },
+      },
+      now: () => new Date().toISOString(),
+    });
+  }
+
+  // ---- 圆桌讨论 ----
+
+  /**
+   * 挂载决策写入器。CouncilDatabase 由进程入口在本服务之后创建，
+   * 所以只能事后注入；未挂载时开局会直接失败，不会拖到收敛那一刻才暴露。
+   */
+  attachDecisionWriter(writer: CycleDecisionWriter): void {
+    this.#decisions = writer;
+  }
+
+  /** 用户点「开始圆桌」：冻结名册，随即召唤提案人，此后无需再点。 */
+  async startCycle(input: {
+    topicId: string;
+    participants: readonly string[];
+    roundBudget?: number;
+  }): Promise<DiscussionCycleView> {
+    if (!this.#decisions) {
+      throw new OrchestrationConfigError("决策写入器未挂载，无法开始圆桌讨论。");
+    }
+    for (const participant of input.participants) {
+      if (!this.#actors.has(participant)) {
+        await this.#syncDynamicAgents();
+        break;
+      }
+    }
+    for (const participant of input.participants) {
+      if (!this.#actors.has(participant)) {
+        throw new OrchestrationConfigError("参与名册包含未注册的 Agent 适配器。");
+      }
+    }
+    return await this.#cycles.start(input);
+  }
+
+  readCycle(topicId: string): DiscussionCycleView | undefined {
+    return this.#store.readActiveDiscussionCycle(topicId);
+  }
+
+  /**
+   * 用户回答了阻塞提问：记账后立刻续跑，接着上次停住的阶段往下走。
+   * `answerMessageId` 必须是已公开的用户消息——回答要留在讨论流里可被复查。
+   */
+  async answerCycleQuestion(input: {
+    topicId: string;
+    questionMessageId: string;
+    answerMessageId: string;
+  }): Promise<DiscussionCycleView | undefined> {
+    this.#store.answerBlockingQuestion({
+      questionMessageId: input.questionMessageId,
+      answerMessageId: input.answerMessageId,
+      now: new Date().toISOString(),
+    });
+    return await this.#cycles.advance(input.topicId);
+  }
+
+  /** Run 落地后接着推进对应议题；这一步失败只记日志，不能反过来打断执行面。 */
+  #advanceCycleAfterRun(runId: string): void {
+    void (async () => {
+      try {
+        const run = await this.orchestrator.getRun(runId);
+        await this.#cycles.advance(run.topicId);
+      } catch (error) {
+        if (!missingRun(error)) {
+          logger.error("orchestration", "圆桌自动交接失败", error);
+        }
+      }
+    })();
   }
 
   capabilities(): object {

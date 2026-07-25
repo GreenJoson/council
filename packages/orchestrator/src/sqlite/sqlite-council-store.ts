@@ -61,6 +61,7 @@ import {
   abandonDiscussionCycle,
   answerBlockingQuestion,
   completeDiscussionCycle,
+  hasActiveOrchestrationRun,
   readActiveDiscussionCycle,
   startDiscussionCycle,
   type AbandonDiscussionCycleInput,
@@ -1059,6 +1060,10 @@ export class SQLiteCouncilStore implements CouncilStore {
 
   readActiveDiscussionCycle(topicId: string): DiscussionCycleView | undefined {
     return readActiveDiscussionCycle(this.#database, topicId);
+  }
+
+  hasActiveOrchestrationRun(topicId: string): boolean {
+    return hasActiveOrchestrationRun(this.#database, topicId);
   }
 
   answerBlockingQuestion(input: AnswerBlockingQuestionInput): DiscussionCycleView {

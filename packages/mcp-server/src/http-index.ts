@@ -13,6 +13,7 @@ import { CouncilDatabase } from "./database.js";
 import { createCouncilHttpApp } from "./http/app.js";
 import { loadHttpConfig } from "./http/config.js";
 import { logger } from "./logger.js";
+import { createCycleDecisionWriter } from "./orchestration/cycle-decisions.js";
 import { createProductionOrchestrationService } from "./orchestration/service.js";
 
 async function main(): Promise<void> {
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
       config,
       councilConfig,
     );
+    orchestration.attachDecisionWriter(createCycleDecisionWriter(database));
     await orchestration.initialize();
   } catch (error) {
     await orchestration?.shutdown();

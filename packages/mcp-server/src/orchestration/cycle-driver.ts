@@ -103,6 +103,11 @@ export class CycleDriver {
     const { cycle, action } = view;
     switch (action.kind) {
       case "invoke": {
+        if (this.#store.hasActiveOrchestrationRun(topicId)) {
+          // 上一个 Run 还没跑完（常见于停在审批门）：它没提交发言，状态机看到的
+          // 还是同一位待发言。此时再开一个 Run 会让同一阶段被召唤两次。
+          return view;
+        }
         const reviewers = cycle.participants.filter(
           (participant) => participant !== action.agentId,
         );

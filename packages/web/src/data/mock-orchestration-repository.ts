@@ -7,12 +7,14 @@
  */
 
 import type {
+  AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   OrchestrationCapabilities,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
+  StartCycleInput,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -274,6 +276,51 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     run.confirmedGates.push(input.expectedGateId);
     delete run.pendingGateId;
     this.#advance(run);
+    return this.#publish();
+  }
+
+  /**
+   * Mock 只演示"开局 → 提案人被召唤"这一段，后续交接由真实编排层驱动。
+   * 这里不复刻状态机：复刻一份必然与 convergence.ts 漂移，反而误导 UI 调试。
+   */
+  async startCycle(input: StartCycleInput): Promise<OrchestrationSnapshot> {
+    await waitForMock();
+    const proposer = input.participants[0];
+    if (!proposer) {
+      throw new Error("参与名册不能为空");
+    }
+    this.#snapshot.cycle = {
+      cycle: {
+        id: `cycle_${crypto.randomUUID()}`,
+        topicId: input.topicId,
+        stage: "proposal",
+        status: "active",
+        participants: [...input.participants],
+        turns: [],
+        roundBudget: input.roundBudget ?? 3,
+        currentRound: 1,
+      },
+    };
+    const run = await this.createRun({
+      topicId: input.topicId,
+      plan: [{
+        adapterId: proposer,
+        messageKind: "proposal",
+        instruction: "给出可执行方案，并说明失败条件与验证方式。",
+      }],
+    });
+    return await this.startRun(run.id);
+  }
+
+  async answerCycleQuestion(
+    input: AnswerCycleQuestionInput,
+  ): Promise<OrchestrationSnapshot> {
+    await waitForMock();
+    const view = this.#snapshot.cycle;
+    if (!view?.openQuestion || view.openQuestion.questionMessageId !== input.questionMessageId) {
+      return cloneSnapshot(this.#snapshot);
+    }
+    this.#snapshot.cycle = { cycle: { ...view.cycle, stage: "critique" } };
     return this.#publish();
   }
 
