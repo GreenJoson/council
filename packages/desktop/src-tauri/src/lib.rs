@@ -33,6 +33,8 @@ struct DesktopState {
     store: Option<CouncilStore>,
     /// 由 autostart 托管的本地 Agent 服务子进程；退出时随应用一并终止。
     service_child: Option<Child>,
+    /// sidecar 日志所在目录；服务起不来时唯一能说清原因的地方。
+    log_directory: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -81,7 +83,42 @@ struct RecordDecisionCommand {
     status: DecisionStatus,
 }
 
+/// 用户主目录；只用于判断日志库是否落在系统隐私保护范围内。
+fn home_directory() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 impl DesktopState {
+    /// 服务不可用时给出真正的原因，而不是笼统猜一个「还在迁移」。
+    ///
+    /// 优先转述 sidecar 日志里最后一条错误；日志指向打不开数据库、而日志库又在
+    /// 隐私保护目录下时，直接说清楚这是系统授权问题——这条路径上没有任何提示，
+    /// 排查一次要翻日志、比对路径、再想到重建会让 ad-hoc 签名失去既有授权。
+    fn service_unavailable_reason(&self) -> String {
+        let last_error = self
+            .log_directory
+            .as_deref()
+            .and_then(orchestration::last_service_error);
+        let library = self.settings.snapshot().log_library;
+        let blocked_by_privacy = match (&last_error, &library, home_directory()) {
+            (Some(error), Some(path), Some(home)) => {
+                error.contains("unable to open database file")
+                    && orchestration::is_privacy_protected(path, &home)
+            }
+            _ => false,
+        };
+        if blocked_by_privacy {
+            return "本地 Agent Service 无法打开日志库：该目录位于 macOS 隐私保护范围内，\
+                    应用没有访问权限。请在「系统设置 → 隐私与安全性 → 文件与文件夹」中\
+                    为 Council 开启对应权限，或用「重选日志库」把日志库移到保护范围之外。"
+                .to_string();
+        }
+        match last_error {
+            Some(error) => format!("本地 Agent Service 未就绪：{error}"),
+            None => "本地 Agent Service 尚未就绪，请稍候重试。".to_string(),
+        }
+    }
+
     fn ensure_store(&mut self) -> Result<&mut CouncilStore, String> {
         let snapshot = self.settings.snapshot();
         let database_path = snapshot
@@ -89,9 +126,8 @@ impl DesktopState {
             .ok_or_else(|| "请先设置 Council 日志库".to_string())?
             .join(DATABASE_FILE_NAME);
         let endpoint = validation::loopback_http_base_url(&snapshot.orchestration_base_url)?;
-        let ready = orchestration::probe_http_service(&endpoint).ok_or_else(|| {
-            "本地 Agent Service 尚未完成数据库迁移，请等待 ready 后重试。".to_string()
-        })?;
+        let ready = orchestration::probe_http_service(&endpoint)
+            .ok_or_else(|| self.service_unavailable_reason())?;
         if let Some(store) = self.store.as_ref()
             && store.database_instance_id() != ready.database_instance_id
         {
@@ -489,6 +525,7 @@ pub fn run() {
                 database_path: None,
                 store: None,
                 service_child: None,
+                log_directory: app.path().app_log_dir().ok(),
             };
             if desktop_state.settings.snapshot().log_library.is_some() {
                 // Node sidecar 是唯一 schema 迁移器；只有 ready 后 Rust 才能打开数据库。
@@ -590,13 +627,14 @@ mod tests {
             database_path: None,
             store: None,
             service_child: None,
+            log_directory: None,
         };
 
         let error = match state.ensure_store() {
             Ok(_) => panic!("sidecar is not ready"),
             Err(error) => error,
         };
-        assert!(error.contains("尚未完成数据库迁移"));
+        assert!(error.contains("尚未就绪"));
         assert!(state.database_path.is_none());
         assert!(state.store.is_none());
     }

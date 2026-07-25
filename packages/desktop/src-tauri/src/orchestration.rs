@@ -28,6 +28,7 @@ const SIDECAR_BINARY_NAME: &str = "council-agent-service";
 const SERVICE_LOG_FILE_NAME: &str = "agent-service.log";
 const LOGIN_SHELL_PATH_MARKER: &str = "__COUNCIL_PATH__";
 const LOGIN_SHELL_POLL_COUNT: u32 = 50;
+const LOG_TAIL_BYTES: u64 = 16 * 1024;
 /// SIGTERM 后的有界等待：20 次 × 100ms = 2 秒，超时升级 SIGKILL。
 const TERMINATE_POLL_COUNT: u32 = 20;
 const TERMINATE_POLL_INTERVAL_MS: u64 = 100;
@@ -148,6 +149,37 @@ pub fn built_in_autostart(
 
 pub fn service_log_path(log_directory: &Path) -> PathBuf {
     log_directory.join(SERVICE_LOG_FILE_NAME)
+}
+
+/// 服务日志里最后一条 ERROR 的正文（不含堆栈）。
+///
+/// 探测失败只知道"没起来"，真正的原因一律在 sidecar 日志里。不把它带到界面上，
+/// 用户看到的永远是同一句无关的猜测，而每次排查都要有人手动去翻这个文件。
+pub fn last_service_error(log_directory: &Path) -> Option<String> {
+    let mut file = fs::File::open(service_log_path(log_directory)).ok()?;
+    let length = file.metadata().ok()?.len();
+    // 只读尾部：这个文件会一直追加，整读迟早会变成启动路径上的一次大 IO。
+    let start = length.saturating_sub(LOG_TAIL_BYTES);
+    if start > 0 {
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(start)).ok()?;
+    }
+    let mut tail = String::new();
+    file.read_to_string(&mut tail).ok()?;
+    tail.lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .next_back()
+        .map(|line| line.rsplit_once("] ").map_or(line, |(_, rest)| rest).to_string())
+}
+
+/// 该目录是否位于 macOS 会拦截的隐私保护位置。
+///
+/// 这些目录下应用要单独获得授权，而 sidecar 是被拉起的子进程——被拒时不会弹授权框，
+/// 只会拿到一个 "unable to open database file"，看起来像数据库坏了。
+pub fn is_privacy_protected(directory: &Path, home: &Path) -> bool {
+    ["Documents", "Desktop", "Downloads"]
+        .iter()
+        .any(|name| directory.starts_with(home.join(name)))
 }
 
 /// 只有 status 返回 HTTP 200、统一 code=0、data.ready=true 且带数据库实例身份才视为可用；
@@ -317,7 +349,10 @@ pub fn terminate_service(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::{built_in_autostart, probe_http_service, service_defaults};
+    use super::{
+        built_in_autostart, is_privacy_protected, last_service_error, probe_http_service,
+        service_defaults, SERVICE_LOG_FILE_NAME,
+    };
     use crate::validation::LoopbackEndpoint;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -404,6 +439,56 @@ mod tests {
                 .map(String::as_str),
             Some("plan")
         );
+    }
+
+    #[test]
+    fn last_service_error_reports_the_newest_failure_without_the_stack() {
+        let directory = std::env::temp_dir().join(format!(
+            "council-log-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("create log dir");
+        std::fs::write(
+            directory.join(SERVICE_LOG_FILE_NAME),
+            concat!(
+                "[2026-07-25T00:00:00.000Z] [ERROR] [http-server] 旧错误: Error: 早就修好了\n",
+                "    at somewhere (/path/to/bundle.cjs:1:1)\n",
+                "[2026-07-25T01:00:00.000Z] [INFO] [http-server] 已监听\n",
+                "[2026-07-25T02:00:00.000Z] [ERROR] [http-server] Council HTTP 启动失败: ",
+                "Error: unable to open database file\n",
+                "    at openDatabase (/path/to/bundle.cjs:2:2)\n",
+            ),
+        )
+        .expect("write log");
+
+        let error = last_service_error(&directory).expect("read last error");
+        // 取最后一条而不是第一条：早已修好的旧错误会把排查引到完全错误的方向。
+        assert!(error.contains("unable to open database file"), "{error}");
+        assert!(!error.contains("早就修好了"), "{error}");
+        // 堆栈是另起一行的，不该被当成错误正文带进界面。
+        assert!(!error.contains("openDatabase"), "{error}");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn privacy_protected_locations_are_recognised_without_matching_lookalikes() {
+        let home = std::path::Path::new("/Users/someone");
+        for name in ["Documents", "Desktop", "Downloads"] {
+            assert!(is_privacy_protected(&home.join(name).join("council"), home), "{name}");
+        }
+        assert!(!is_privacy_protected(
+            std::path::Path::new("/Users/someone/Projects/council"),
+            home,
+        ));
+        // 同名但不在本用户主目录下的路径不算——授权范围是按用户目录划的。
+        assert!(!is_privacy_protected(
+            std::path::Path::new("/Volumes/External/Documents/council"),
+            home,
+        ));
     }
 
     #[test]
