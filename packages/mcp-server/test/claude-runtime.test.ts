@@ -26,7 +26,12 @@ const pidIndex = args.indexOf("--pid-file");
 const pidFile = pidIndex >= 0 ? args[pidIndex + 1] : undefined;
 const childPidIndex = args.indexOf("--child-pid-file");
 const childPidFile = childPidIndex >= 0 ? args[childPidIndex + 1] : undefined;
+const argDumpIndex = args.indexOf("--arg-dump-file");
+const argDumpFile = argDumpIndex >= 0 ? args[argDumpIndex + 1] : undefined;
 
+if (argDumpFile) {
+  writeFileSync(argDumpFile, JSON.stringify(args));
+}
 if (pidFile) {
   writeFileSync(pidFile, String(process.pid));
 }
@@ -211,6 +216,29 @@ test("ClaudeRuntime 纯生成并显式恢复 session 与模型", async () => {
       model: "configured-model",
     });
     assert.equal(resumed.content, "public rebuttal;session_previous;configured-model");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 清空 MCP 配置，被召唤 Agent 拿不到 Council 写工具或递归召唤能力", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-mcp-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  const argDumpFile = path.join(directory, "args.json");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success", {
+      claudeArgs: [fakeClaudePath, "--fake-mode", "success", "--arg-dump-file", argDumpFile],
+    }));
+    await runtime.generate({ prompt: "public prompt", cwd: directory });
+
+    const passed = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.ok(passed.includes("--strict-mcp-config"), "必须禁止读取调用者的 MCP 配置文件");
+    assert.equal(
+      passed[passed.indexOf("--mcp-config") + 1],
+      '{"mcpServers":{}}',
+      "MCP 服务器表必须为空",
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

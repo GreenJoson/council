@@ -92,6 +92,9 @@ test("Claude 配置拒绝运行时保留参数和危险权限参数", () => {
     "--dangerously-skip-permissions",
     "--allowedTools=Bash",
     "--add-dir",
+    // 重新挂回 MCP 就等于把 Council 写工具还给被召唤 Agent，与只读沙箱无关
+    "--mcp-config",
+    "--strict-mcp-config",
   ];
   try {
     for (const argument of forbidden) {

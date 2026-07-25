@@ -31,6 +31,7 @@ const FORBIDDEN_CLAUDE_ARGS = new Set([
   "--dangerously-skip-permissions",
   "--fork-session",
   "--max-turns",
+  "--mcp-config",
   "--model",
   "--output-format",
   "--permission-mode",
@@ -38,6 +39,7 @@ const FORBIDDEN_CLAUDE_ARGS = new Set([
   "--print",
   "--resume",
   "--session-id",
+  "--strict-mcp-config",
 ]);
 
 // Codex 侧拦截运行时保留参数、危险沙箱/审批参数与子命令注入；

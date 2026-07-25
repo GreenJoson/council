@@ -25,7 +25,12 @@ const modeIndex = args.indexOf("--fake-mode");
 const mode = modeIndex >= 0 ? args[modeIndex + 1] : "success";
 const pidIndex = args.indexOf("--pid-file");
 const pidFile = pidIndex >= 0 ? args[pidIndex + 1] : undefined;
+const argDumpIndex = args.indexOf("--arg-dump-file");
+const argDumpFile = argDumpIndex >= 0 ? args[argDumpIndex + 1] : undefined;
 
+if (argDumpFile) {
+  writeFileSync(argDumpFile, JSON.stringify(args));
+}
 if (args.includes("--version")) {
   process.stdout.write("fake-codex 0.144.6\\n");
   process.exit(0);
@@ -171,6 +176,42 @@ test("CodexRuntime 纯生成强制只读沙箱并提取 thread session", async (
       `public prompt;read-only;${directory};skip-git;none;none`,
     );
     assert.equal(first.sessionId, "codex_runtime_session");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntime 新会话与 resume 都清空 MCP 配置", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-mcp-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  const argDumpFile = path.join(directory, "args.json");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  const readIsolationConfigs = (): string[] => {
+    const passed = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    return passed.filter((value, index) => passed[index - 1] === "--config");
+  };
+  try {
+    const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "success", {
+      codexArgs: [fakeCodexPath, "--fake-mode", "success", "--arg-dump-file", argDumpFile],
+    }));
+
+    await runtime.generate({ prompt: "public prompt", cwd: directory });
+    assert.ok(
+      readIsolationConfigs().includes("mcp_servers={}"),
+      "新会话必须清空 MCP 服务器表",
+    );
+
+    await runtime.generate({
+      prompt: "public rebuttal",
+      cwd: directory,
+      sessionId: "codex_session_previous",
+    });
+    const resumeConfigs = readIsolationConfigs();
+    assert.ok(resumeConfigs.includes("mcp_servers={}"), "resume 必须同样清空 MCP 服务器表");
+    assert.ok(
+      resumeConfigs.includes('sandbox_mode="read-only"'),
+      "resume 的只读沙箱覆盖不得被 MCP 覆盖挤掉",
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

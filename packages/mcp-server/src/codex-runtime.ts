@@ -1,7 +1,7 @@
 /**
  * @input  依赖：公开 prompt、Codex CLI JSONL 增量传输与可选 AbortSignal
  * @output 导出：纯 CodexRuntime、公开消息增量、结构化安全错误和可用性检查
- * @pos    分离公开消息/过程事件与最终正文上限、强制只读沙箱的 Codex 运行边界
+ * @pos    分离公开消息/过程事件与最终正文上限、强制只读沙箱与空 MCP 配置的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -63,6 +63,8 @@ export class CodexRuntimeError extends Error {
 }
 
 const ABORT_MESSAGE = "Codex 调用已取消。";
+// TOML 覆盖：把 MCP 服务器表整体置空，详见 generate() 中的说明。
+const MCP_ISOLATION_CONFIG = "mcp_servers={}";
 const STREAM_TOTAL_OUTPUT_MULTIPLIER = 128;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
@@ -316,6 +318,10 @@ export class CodexRuntime {
             `sandbox_mode="${this.config.codexSandboxMode}"`,
           ]
         : ["exec", "--sandbox", this.config.codexSandboxMode, "--cd", input.cwd];
+      // 只读沙箱管不到 MCP 工具的外部副作用。当前 Codex 侧没有配置 MCP，但用户级
+      // config.toml 随时可能新增——一旦其中出现 Council，被召唤 Agent 就能自行发帖、
+      // 建议题或递归召唤。在进程边界上清空，使该风险不依赖用户配置的当前状态。
+      args.push("--config", MCP_ISOLATION_CONFIG);
       args.push(
         "--skip-git-repo-check",
         "--json",

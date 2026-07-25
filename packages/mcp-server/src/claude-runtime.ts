@@ -1,7 +1,8 @@
 /**
  * @input  依赖：公开 prompt、Claude Code CLI stream-json、共享进程工具与可选 AbortSignal
  * @output 导出：纯 ClaudeRuntime 增量生成接口、可用性检查与脱敏失败分类
- * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界
+ * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界；
+ *         生成时强制清空 MCP 配置，使被召唤 Agent 无法取得 Council 写工具或递归召唤自身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -30,6 +31,16 @@ type ClaudeRuntimeConfig = Pick<
   | "claudeMaxTurns"
   | "maxOutputChars"
 >;
+
+// 只读沙箱只约束文件系统，约束不到 MCP 工具的外部副作用。被编排召唤的 headless Agent
+// 若继承调用者的 MCP 配置，就能拿到 Council 自身的写工具——自行发帖会绕过 lease/原子提交、
+// 自行建议题会造成议题分裂、递归召唤会让自动交接失去出口。正式回复一律由编排器提交，
+// Agent 不需要任何 MCP，因此在进程边界上直接清空，而不是靠提示词约束。
+const MCP_ISOLATION_ARGS = [
+  "--strict-mcp-config",
+  "--mcp-config",
+  '{"mcpServers":{}}',
+] as const;
 
 export interface ClaudeRuntimeInput {
   prompt: string;
@@ -311,6 +322,7 @@ export class ClaudeRuntime {
       "--include-partial-messages",
       "--permission-mode",
       this.config.claudePermissionMode,
+      ...MCP_ISOLATION_ARGS,
       "--max-turns",
       String(this.config.claudeMaxTurns),
       ...(model ? ["--model", model] : []),
