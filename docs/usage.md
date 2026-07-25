@@ -64,6 +64,8 @@ npm run build:desktop
 
 `@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。每轮仍启动一个可取消的独立 OS 进程，并不存在常驻后台终端。
 
+Council 0.5.0 不随桌面安装包分发第三方专有 Agent SDK。当前持久性是“议题级逻辑 session + CLI resume”，不是隐藏的常驻模型进程：既保留上下文与增量效率，也让每一轮都可单独取消、超时和 fencing。未来常驻 helper 只能作为可选 transport 接入，不能改变公开上下文、请求账本和决策关闭语义。
+
 ## 模型与 Provider 设置
 
 点击顶栏齿轮打开 Model Router。设置明确分为两层：
