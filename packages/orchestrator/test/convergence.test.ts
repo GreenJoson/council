@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ConvergenceStateError,
+  buildStageInstruction,
   nextCycleAction,
   parseAgentReply,
   stageAfterAction,
@@ -264,6 +265,40 @@ test("Agent 复述协议示例后再给结论时，取最后一个尾块", () =>
     "```",
   ].join("\n"));
   assert.deepEqual(reply.verdict, { stance: "agree", summary: "证据充分" });
+});
+
+test("下发给 Agent 的尾块规格与解析器认的围栏一致", () => {
+  const instruction = buildStageInstruction({
+    stage: "critique",
+    round: 1,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+  });
+  // 指令里写的围栏名就是解析器要找的围栏名——两边漂移会让全体 Agent 一起被判 blocking。
+  for (const fence of ["council-verdict", "council-question"]) {
+    assert.ok(
+      instruction.includes(`\`\`\`${fence}\n`),
+      `指令必须给出 ${fence} 围栏示例`,
+    );
+  }
+  for (const stance of ["agree", "non_blocking", "blocking"]) {
+    assert.ok(instruction.includes(stance), `指令必须说明 ${stance} 的含义`);
+  }
+
+  // 严格按规格写出来的回复必须能被解析。
+  const reply = parseAgentReply([
+    "结论：可以推进。",
+    "",
+    "```council-verdict",
+    '{"stance":"agree","summary":"证据充分"}',
+    "```",
+  ].join("\n"));
+  assert.equal(reply.verdictDeclared, true);
+  assert.equal(reply.verdict.stance, "agree");
+
+  // 指令模板本身不是立场声明，占位符不能被当成 agree 读进去。
+  assert.equal(parseAgentReply(instruction).verdict.stance, "blocking");
 });
 
 test("提问尾块越界时整体丢弃，不产出半个问题", () => {
