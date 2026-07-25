@@ -15,6 +15,8 @@ import test from "node:test";
 import {
   DISCUSSION_CYCLE_SCHEMA_SQL,
   InvalidRunStateError,
+  readActiveDiscussionCycle,
+  startDiscussionCycle,
   LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
   LeaseConflictError,
   LeaseLostError,
@@ -1610,5 +1612,116 @@ test("Store close 幂等且迁移失败会释放数据库连接", async () => {
     const reopened = new DatabaseSync(invalidPath);
     reopened.exec("CREATE TABLE connection_released (id INTEGER PRIMARY KEY);");
     reopened.close();
+  });
+});
+
+test("议题正等待某 Agent 时，轮次提交把发言与公开消息写在同一个事务里", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    const database = new DatabaseSync(databasePath);
+    try {
+      const opened = startDiscussionCycle(database, {
+        topicId: TOPIC_ID,
+        // 名册用计划里的 adapterId：提交时按它判断这一轮是不是 cycle 在等的人。
+        participants: ["alpha", "beta"],
+        roundBudget: 2,
+        now: new Date().toISOString(),
+      });
+      assert.equal(opened.action.kind, "invoke");
+
+      const created = await store.createRun(createInput());
+      const waiting = await moveToWaitingAgent(store, created);
+      const lease = await store.claimRunLease({
+        runId: waiting.id,
+        ownerId: "cycle-commit-test",
+        ttlMs: 60_000,
+      });
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const base = nextRoundCommit(waiting, lease, bindingLease);
+      const committed = await store.commitRound({
+        ...base,
+        message: {
+          ...base.message,
+          content: [
+            "方案正文。",
+            "",
+            "```council-verdict",
+            '{"stance":"agree","summary":"证据充分"}',
+            "```",
+          ].join("\n"),
+        },
+      });
+
+      const view = readActiveDiscussionCycle(database, TOPIC_ID);
+      assert.equal(view?.cycle.turns.length, 1, "公开消息落库即意味着发言已记上");
+      assert.equal(view?.cycle.turns[0]?.messageId, committed.message.id);
+      assert.equal(view?.cycle.turns[0]?.stance, "agree");
+      assert.equal(view?.cycle.stage, "critique", "cycle 应已交接给下一位");
+      assert.deepEqual(view?.action, {
+        kind: "invoke",
+        agentId: "beta",
+        stage: "critique",
+        messageKind: "critique",
+        round: 1,
+      });
+    } finally {
+      database.close();
+      store.close();
+    }
+  });
+});
+
+test("同一条回复里的提问会挂起 cycle，并回到发言推进后的阶段", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    const database = new DatabaseSync(databasePath);
+    try {
+      startDiscussionCycle(database, {
+        topicId: TOPIC_ID,
+        participants: ["alpha", "beta"],
+        roundBudget: 2,
+        now: new Date().toISOString(),
+      });
+      const created = await store.createRun(createInput());
+      const waiting = await moveToWaitingAgent(store, created);
+      const lease = await store.claimRunLease({
+        runId: waiting.id,
+        ownerId: "cycle-question-test",
+        ttlMs: 60_000,
+      });
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const base = nextRoundCommit(waiting, lease, bindingLease);
+      await store.commitRound({
+        ...base,
+        message: {
+          ...base.message,
+          content: [
+            "方案正文，但定价口径我判断不了。",
+            "",
+            "```council-verdict",
+            '{"stance":"agree","summary":"技术路径清楚"}',
+            "```",
+            "",
+            "```council-question",
+            '{"question":"按订阅还是按次？","rationale":"存储层实现不可逆","options":["订阅","按次"]}',
+            "```",
+          ].join("\n"),
+        },
+      });
+
+      const view = readActiveDiscussionCycle(database, TOPIC_ID);
+      assert.equal(view?.cycle.stage, "awaiting_user");
+      assert.equal(
+        view?.cycle.resumeStage,
+        "critique",
+        "提问发生在 proposal，但发言已推进到 critique，回答后必须回到 critique",
+      );
+      assert.equal(view?.openQuestion?.question, "按订阅还是按次？");
+      assert.deepEqual(view?.action, { kind: "await_user" });
+      assert.equal(view?.cycle.turns.length, 1, "提问不影响该次发言已被记录");
+    } finally {
+      database.close();
+      store.close();
+    }
   });
 });

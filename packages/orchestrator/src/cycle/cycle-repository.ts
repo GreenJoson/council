@@ -65,6 +65,11 @@ export interface OpenBlockingQuestionInput {
   expectedVersion: number;
   askedByActorId: string;
   askedAtStage: DebateStage;
+  /**
+   * 用户回答后要回到的阶段。默认与提问阶段相同；发言与提问在同一条消息里到达时，
+   * 发言可能已经把 cycle 推到了下一阶段，此时必须回到推进后的阶段而不是提问时的阶段。
+   */
+  resumeStage?: DebateStage;
   question: AgentQuestion;
   questionMessageId: string;
   now: string;
@@ -320,7 +325,7 @@ export function openBlockingQuestion(
   casUpdate(
     database,
     `stage = 'awaiting_user', resume_stage = ?, updated_at = ?`,
-    [input.askedAtStage, input.now],
+    [input.resumeStage ?? input.askedAtStage, input.now],
     input.cycleId,
     input.expectedVersion,
   );

@@ -9,6 +9,7 @@
 export * from "./constants.js";
 export * from "./cycle/convergence.js";
 export * from "./cycle/cycle-codec.js";
+export * from "./cycle/cycle-commit.js";
 export * from "./cycle/cycle-repository.js";
 export * from "./cycle/stage-instructions.js";
 export * from "./cycle/verdict.js";

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council SQLite、冻结 Run、双 lease 与 RuntimeBinding 仓储
- * @output 导出：Run、公开消息、逻辑请求账本、session/游标和 lease 的原子提交
+ * @output 导出：Run、公开消息、cycle 发言、逻辑请求账本、session/游标和 lease 的原子提交
  * @pos    SQLiteCouncilStore 的单轮提交事务职责
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -21,6 +21,7 @@ import type {
   RoundCommitResult,
   RunLease,
 } from "../types.js";
+import { commitCycleTurn } from "../cycle/cycle-commit.js";
 import {
   assertActorId,
   assertMessageKind,
@@ -244,6 +245,18 @@ export function commitAtomicRound(
   );
   database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?")
     .run(now, message.topicId);
+  // 若该议题正等着这位 Agent 说话，发言必须和消息同事务落库。
+  // 拆成两次写入的话，中间崩溃会留下"消息已公开但发言没记上"，
+  // 自动交接会永远停在同一个人身上。
+  commitCycleTurn(database, {
+    topicId: message.topicId,
+    agentId: round.adapterId,
+    messageKind: message.kind,
+    messageId: message.id,
+    actorId: message.actorId,
+    content: message.content,
+    now,
+  });
   let bindingResult;
   try {
     bindingResult = database.prepare(`
