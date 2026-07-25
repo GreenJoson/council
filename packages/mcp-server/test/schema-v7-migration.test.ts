@@ -106,6 +106,7 @@ function insertCycle(
     topic_id: "topic_v7",
     stage: "proposal",
     status: "active",
+    participants_json: '["claude","codex"]',
     round_budget: 3,
     current_round: 1,
     resume_stage: null,
@@ -205,6 +206,24 @@ test("v7 cycle 终态不变量：预算上限、completed_at 与 proposed 决策
       completed_at: NOW,
       proposed_decision_id: "decision_v7",
     });
+  } finally {
+    database.close();
+    fixture.cleanup();
+  }
+});
+
+test("v7 参与名册必须是非空数组，空名册的 cycle 永远推进不了", async () => {
+  const fixture = temporaryDatabase();
+  const database = await openSeeded(fixture.databasePath);
+  try {
+    for (const invalid of ["[]", "{}", "claude,codex", '"claude"']) {
+      assert.throws(
+        () => { insertCycle(database, { participants_json: invalid }); },
+        /CHECK/iu,
+        `名册 ${invalid} 不该写得进去`,
+      );
+    }
+    insertCycle(database, { participants_json: '["claude"]' });
   } finally {
     database.close();
     fixture.cleanup();

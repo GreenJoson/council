@@ -279,6 +279,8 @@ export const RUNTIME_BINDING_SCHEMA_SQL = `
  *
  * 一个 Topic 同时只允许一个 active cycle——议题分裂正是圆桌出不了决策的根因，
  * 所以并发唯一性交给部分唯一索引，而不是应用层判断。
+ * participants_json 在开局冻结，首位是提案人；中途改 Agent 名册会让"所有评审都发言了"
+ * 这个推进条件在同一个 cycle 里前后不一致，所以名册和运行计划一样必须冻结。
  * stage 是固定四段协议（proposal→critique→rebuttal→synthesis），不做通用 DAG：
  * 通用编排能表达一切流程，也就无法保证任何一次讨论会收敛。
  * accepted 决策同时终结 cycle 与未答问题——沿用 RuntimeBinding 的同一条 fencing，
@@ -296,6 +298,11 @@ export const DISCUSSION_CYCLE_SCHEMA_SQL = `
       )
     ),
     status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'abandoned')),
+    participants_json TEXT NOT NULL CHECK (
+      json_valid(participants_json)
+      AND json_type(participants_json) = 'array'
+      AND json_array_length(participants_json) > 0
+    ),
     round_budget INTEGER NOT NULL CHECK (round_budget > 0),
     current_round INTEGER NOT NULL CHECK (current_round >= 0),
     resume_stage TEXT CHECK (
