@@ -24,6 +24,7 @@
 | `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器与本地 Agent 服务配置/健康命令 |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，并提供不参与设置世代的只读议题详情加载 |
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
+| `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 | `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |

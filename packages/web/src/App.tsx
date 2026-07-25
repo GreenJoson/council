@@ -46,15 +46,13 @@ import type {
   Participant,
   WorkspaceSnapshot,
 } from "./types/council";
+import { getErrorMessage } from "./data/error-message";
 import type {
   OrchestrationMessageKind,
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "./types/orchestration";
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "发生未知错误";
-}
 
 export default function App() {
   const repository = useMemo(() => createCouncilRepository(), []);
