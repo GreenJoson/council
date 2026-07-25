@@ -23,6 +23,7 @@ import {
   RunStateConflictError,
   RunBusyError,
   StoreConflictError,
+  type RuntimeBinding,
 } from "council-orchestrator";
 import { z } from "zod/v4";
 import { CouncilDatabase } from "../database.js";
@@ -51,9 +52,11 @@ import {
   emptyActionBodySchema,
   eventsQuerySchema,
   listRunsQuerySchema,
+  listRuntimeBindingsQuerySchema,
   listTopicsQuerySchema,
   providerParamsSchema,
   runParamsSchema,
+  runtimeBindingParamsSchema,
   topicDetailQuerySchema,
   topicParamsSchema,
   updateAgentBodySchema,
@@ -66,6 +69,25 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
     throw new HttpError(400, "请求参数校验失败。", validationIssues(result.error.issues));
   }
   return result.data;
+}
+
+function publicRuntimeBinding(binding: RuntimeBinding): object {
+  return {
+    id: binding.id,
+    topicId: binding.topicId,
+    agentId: binding.agentId,
+    actorId: binding.actorId,
+    providerId: binding.providerId,
+    transportKind: binding.transportKind,
+    status: binding.status,
+    hasSession: Boolean(binding.sessionId),
+    stateVersion: binding.stateVersion,
+    lastActivityAt: binding.lastActivityAt,
+    ...(binding.closeReason ? { closeReason: binding.closeReason } : {}),
+    createdAt: binding.createdAt,
+    updatedAt: binding.updatedAt,
+    ...(binding.closedAt ? { closedAt: binding.closedAt } : {}),
+  };
 }
 
 function rethrowModelRouterError(error: unknown): never {
@@ -394,7 +416,7 @@ export function createCouncilHttpApp(
     sendSuccess(response, message, "消息已发布。", 201);
   });
 
-  app.post("/api/v1/topics/:topicId/decisions", (request, response) => {
+  app.post("/api/v1/topics/:topicId/decisions", async (request, response) => {
     const params = parse(topicParamsSchema, request.params);
     const body: unknown = request.body;
     const input = parse(createDecisionBodySchema, body);
@@ -407,7 +429,50 @@ export function createCouncilHttpApp(
       status: input.status,
       actorId: "human",
     });
+    if (decision.status === "accepted" && orchestration) {
+      await orchestration.closeTopicRuntimeBindings(params.topicId);
+    }
     sendSuccess(response, decision, "决策已记录。", 201);
+  });
+
+  app.get("/api/v1/topics/:topicId/runtime-bindings", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const query = parse(listRuntimeBindingsQuerySchema, request.query);
+    sendSuccess(
+      response,
+      (await orchestration.listRuntimeBindings(params.topicId, query.includeClosed))
+        .map(publicRuntimeBinding),
+    );
+  });
+
+  app.post("/api/v1/runtime-bindings/:bindingId/actions/close", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(runtimeBindingParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    sendSuccess(
+      response,
+      publicRuntimeBinding(await orchestration.closeRuntimeBinding(params.bindingId)),
+      "持久会话已关闭。",
+    );
+  });
+
+  app.post("/api/v1/runtime-bindings/:bindingId/actions/reopen", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(runtimeBindingParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    sendSuccess(
+      response,
+      publicRuntimeBinding(await orchestration.reopenRuntimeBinding(params.bindingId)),
+      "持久会话已重新打开。",
+      201,
+    );
   });
 
   app.get("/api/v1/topics/:topicId/runs", async (request, response) => {

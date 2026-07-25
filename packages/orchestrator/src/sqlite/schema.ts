@@ -22,6 +22,11 @@ const REQUIRED_COUNCIL_TABLES = [
   "council_meta",
   "actor_identities",
   "actor_aliases",
+  "decisions",
+  "provider_profiles",
+  "agent_definitions",
+  "runtime_bindings",
+  "runtime_binding_leases",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -46,7 +51,7 @@ const REQUIRED_ORCHESTRATION_TRIGGERS = [
   "trg_orchestration_runs_revision_delete",
 ] as const;
 
-export const ORCHESTRATION_SCHEMA_VERSION = 3;
+export const ORCHESTRATION_SCHEMA_VERSION = 4;
 
 function orchestrationSchemaSql(
   schemaVersion: number,
@@ -133,8 +138,139 @@ function orchestrationSchemaSql(
 export const LEGACY_ORCHESTRATION_SCHEMA_V2_SQL = orchestrationSchemaSql(2, "1, 2");
 export const ORCHESTRATION_SCHEMA_SQL = orchestrationSchemaSql(
   ORCHESTRATION_SCHEMA_VERSION,
-  "1, 2, 3",
+  "1, 2, 3, 4",
 );
+
+/** RuntimeBinding DDL 的唯一正本；由 Node 迁移器执行，Store/Rust 只验证。 */
+export const RUNTIME_BINDING_SCHEMA_SQL = `
+  CREATE TABLE runtime_bindings (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE RESTRICT,
+    actor_id TEXT NOT NULL REFERENCES actor_identities(id) ON DELETE RESTRICT,
+    provider_id TEXT NOT NULL REFERENCES provider_profiles(id) ON DELETE RESTRICT,
+    binding_revision TEXT NOT NULL,
+    agent_config_revision INTEGER NOT NULL CHECK (agent_config_revision > 0),
+    provider_config_revision INTEGER NOT NULL CHECK (provider_config_revision > 0),
+    project_path TEXT,
+    transport_kind TEXT NOT NULL CHECK (
+      transport_kind IN ('claude-resume', 'codex-resume', 'openai-sessionless')
+    ),
+    session_id TEXT,
+    cursor_created_at TEXT,
+    cursor_message_id TEXT,
+    status TEXT NOT NULL CHECK (
+      status IN (
+        'starting', 'ready', 'thinking', 'streaming', 'idle',
+        'interrupted', 'closing', 'closed'
+      )
+    ),
+    state_version INTEGER NOT NULL CHECK (state_version > 0),
+    epoch INTEGER NOT NULL CHECK (epoch >= 0),
+    process_instance_id TEXT,
+    last_activity_at TEXT NOT NULL,
+    close_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    closed_at TEXT,
+    CHECK (
+      (cursor_created_at IS NULL AND cursor_message_id IS NULL)
+      OR (cursor_created_at IS NOT NULL AND cursor_message_id IS NOT NULL)
+    ),
+    CHECK (
+      (status = 'closed' AND closed_at IS NOT NULL)
+      OR (status <> 'closed' AND closed_at IS NULL)
+    )
+  );
+
+  CREATE TABLE runtime_binding_leases (
+    binding_id TEXT PRIMARY KEY REFERENCES runtime_bindings(id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    lease_token TEXT NOT NULL UNIQUE,
+    epoch INTEGER NOT NULL CHECK (epoch > 0),
+    expires_at_ms INTEGER NOT NULL CHECK (expires_at_ms > 0),
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE runtime_binding_requests (
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+    request_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    consumed_at TEXT NOT NULL,
+    PRIMARY KEY (topic_id, agent_id, request_message_id)
+  );
+
+  CREATE INDEX idx_runtime_bindings_topic_status
+    ON runtime_bindings(topic_id, status, updated_at DESC);
+  CREATE INDEX idx_runtime_bindings_idle
+    ON runtime_bindings(status, last_activity_at);
+  CREATE UNIQUE INDEX idx_runtime_bindings_one_open_agent
+    ON runtime_bindings(topic_id, agent_id)
+    WHERE status <> 'closed';
+  CREATE UNIQUE INDEX idx_runtime_bindings_active_session
+    ON runtime_bindings(provider_id, agent_id, transport_kind, session_id)
+    WHERE session_id IS NOT NULL
+      AND status <> 'closed'
+      AND transport_kind IN ('claude-resume', 'codex-resume');
+  CREATE INDEX idx_runtime_binding_leases_expiry
+    ON runtime_binding_leases(expires_at_ms);
+
+  CREATE TRIGGER trg_runtime_bindings_revision_insert
+    AFTER INSERT ON runtime_bindings BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_runtime_bindings_revision_update
+    AFTER UPDATE ON runtime_bindings BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_runtime_bindings_revision_delete
+    AFTER DELETE ON runtime_bindings BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+
+  CREATE TRIGGER trg_decisions_runtime_close_insert
+    AFTER INSERT ON decisions
+    WHEN NEW.status = 'accepted'
+    BEGIN
+      UPDATE runtime_bindings
+      SET status = 'closing',
+          state_version = state_version + 1,
+          epoch = epoch + 1,
+          close_reason = 'decision-accepted',
+          updated_at = NEW.updated_at,
+          last_activity_at = NEW.updated_at
+      WHERE topic_id = NEW.topic_id
+        AND status NOT IN ('closing', 'closed');
+      DELETE FROM runtime_binding_leases
+      WHERE binding_id IN (
+        SELECT id FROM runtime_bindings
+        WHERE topic_id = NEW.topic_id AND status = 'closing'
+      );
+    END;
+
+  CREATE TRIGGER trg_decisions_runtime_close_update
+    AFTER UPDATE OF status ON decisions
+    WHEN OLD.status <> 'accepted' AND NEW.status = 'accepted'
+    BEGIN
+      UPDATE runtime_bindings
+      SET status = 'closing',
+          state_version = state_version + 1,
+          epoch = epoch + 1,
+          close_reason = 'decision-accepted',
+          updated_at = NEW.updated_at,
+          last_activity_at = NEW.updated_at
+      WHERE topic_id = NEW.topic_id
+        AND status NOT IN ('closing', 'closed');
+      DELETE FROM runtime_binding_leases
+      WHERE binding_id IN (
+        SELECT id FROM runtime_bindings
+        WHERE topic_id = NEW.topic_id AND status = 'closing'
+      );
+    END;
+`;
 
 interface SchemaObjectRow {
   type: unknown;

@@ -13,6 +13,7 @@ export {
   LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,
   ORCHESTRATION_SCHEMA_SQL,
   ORCHESTRATION_SCHEMA_VERSION,
+  RUNTIME_BINDING_SCHEMA_SQL,
   assertOrchestrationSchema,
 } from "./sqlite/schema.js";
 export * from "./sqlite/sqlite-council-store.js";

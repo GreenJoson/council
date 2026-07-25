@@ -396,7 +396,7 @@ export default function App() {
     setIsPublishing(true);
     setContentErrorMessage(null);
     try {
-      await repository.publishMessage({
+      const published = await repository.publishMessage({
         topicId: activeTopicId,
         author: "human",
         kind,
@@ -406,7 +406,16 @@ export default function App() {
         setToastMessage("回复已发布并同步");
         return true;
       }
-      await triggerMentionRun(mention);
+      const requestMessageId = published.topics
+        .find((topic) => topic.id === activeTopicId)
+        ?.messages
+        .filter((message) => message.author === "human" && message.content === content)
+        .at(-1)
+        ?.id;
+      if (!requestMessageId) {
+        throw new Error("公开请求已发布，但无法冻结对应消息，Agent 调用未启动。");
+      }
+      await triggerMentionRun(mention, requestMessageId);
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -416,7 +425,10 @@ export default function App() {
     }
   }
 
-  async function triggerMentionRun(mention: MentionPublishRequest): Promise<void> {
+  async function triggerMentionRun(
+    mention: MentionPublishRequest,
+    requestMessageId: string,
+  ): Promise<void> {
     setOrchestrationBusyAction("create");
     setRunsErrorMessage(null);
     try {
@@ -427,6 +439,7 @@ export default function App() {
           adapterId: mention.adapterId,
           messageKind: mention.responseKind,
           instruction: mention.instruction,
+          requestMessageId,
         }],
       });
       setOrchestrationBusyAction(`start:${created.id}`);
@@ -555,6 +568,28 @@ export default function App() {
     }
   }
 
+  async function handleRuntimeBindingAction(
+    action: "close" | "reopen",
+    bindingId: string,
+  ): Promise<void> {
+    setOrchestrationBusyAction(`binding:${action}:${bindingId}`);
+    setRunsErrorMessage(null);
+    try {
+      if (action === "close") {
+        await orchestrationRepository.closeRuntimeBinding(bindingId);
+      } else {
+        await orchestrationRepository.reopenRuntimeBinding(bindingId);
+      }
+      const snapshot = await orchestrationRepository.selectTopic(activeTopicId);
+      setOrchestration(snapshot);
+      setToastMessage(action === "close" ? "持久会话已关闭" : "持久会话已重新打开");
+    } catch (error: unknown) {
+      setRunsErrorMessage(getErrorMessage(error));
+    } finally {
+      setOrchestrationBusyAction(null);
+    }
+  }
+
   const closeResponsivePanels = () => {
     setIsTopicsOpen(false);
     setIsInspectorOpen(false);
@@ -639,6 +674,10 @@ export default function App() {
               onApproveRun={handleApproveRun}
               onCancelRun={(runId) => handleRunAction("cancel", runId)}
               onRecoverRun={(runId) => handleRunAction("recover", runId)}
+              onCloseRuntimeBinding={(bindingId) =>
+                handleRuntimeBindingAction("close", bindingId)}
+              onReopenRuntimeBinding={(bindingId) =>
+                handleRuntimeBindingAction("reopen", bindingId)}
             />
           </>
         ) : (

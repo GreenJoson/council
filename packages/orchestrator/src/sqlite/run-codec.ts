@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排协议枚举与未知 JSON 快照
- * @output 导出：v1/v2 只读兼容与 v3 强制 binding revision 的严格运行快照编解码
+ * @output 导出：v1-v3 只读兼容与 v4 RuntimeBinding 冻结的严格运行快照编解码
  * @pos    阻止损坏或非规范持久化数据进入编排核心
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -185,7 +185,7 @@ function legacyAuthorActorId(
 
 export function decodeRunSnapshot(
   snapshotJson: string,
-  snapshotSchemaVersion = 3,
+  snapshotSchemaVersion = 4,
 ): OrchestrationRun {
   let parsed: unknown;
   try {
@@ -198,7 +198,7 @@ export function decodeRunSnapshot(
 
 export function validateRunSnapshot(
   value: unknown,
-  snapshotSchemaVersion = 3,
+  snapshotSchemaVersion = 4,
 ): OrchestrationRun {
   if (!isRecord(value)) {
     fail("根节点必须是对象。");
@@ -234,6 +234,20 @@ export function validateRunSnapshot(
         [],
         planPath,
       );
+    } else if (snapshotSchemaVersion === 4) {
+      assertExactKeys(
+        item,
+        [
+          "adapterId",
+          "actorId",
+          "bindingRevision",
+          "runtimeBindingId",
+          "messageKind",
+          "instruction",
+        ],
+        ["requestMessageId"],
+        planPath,
+      );
     } else {
       fail("snapshot_schema_version 不受支持。");
     }
@@ -249,6 +263,22 @@ export function validateRunSnapshot(
       ...(item.bindingRevision === undefined
         ? {}
         : { bindingRevision: stringValue(item.bindingRevision, `${planPath}.bindingRevision`) }),
+      ...(item.runtimeBindingId === undefined
+        ? {}
+        : {
+            runtimeBindingId: stringValue(
+              item.runtimeBindingId,
+              `${planPath}.runtimeBindingId`,
+            ),
+          }),
+      ...(item.requestMessageId === undefined
+        ? {}
+        : {
+            requestMessageId: stringValue(
+              item.requestMessageId,
+              `${planPath}.requestMessageId`,
+            ),
+          }),
       messageKind: item.messageKind,
       instruction: stringValue(item.instruction, `snapshot.plan[${String(index)}].instruction`),
     };

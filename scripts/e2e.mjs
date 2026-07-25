@@ -1,5 +1,5 @@
 /**
- * @input  依赖：已构建的 Council API/Web、显式迁移配置、Playwright、测试 Claude/Keychain/远程 Provider 替身
+ * @input  依赖：已构建的 Council API/Web、显式迁移/RuntimeBinding 配置、Playwright 与 Agent 替身
  * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、本机/远程 Agent 调用及 mock 布局的浏览器验收
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
@@ -225,6 +225,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_ORCHESTRATION_RUN_PAGE_LIMIT: "50",
     COUNCIL_ORCHESTRATION_STARTUP_SCAN_LIMIT: "100",
     COUNCIL_ORCHESTRATION_SHUTDOWN_TIMEOUT_MS: "2000",
+    COUNCIL_RUNTIME_BINDING_IDLE_TIMEOUT_MS: "1800000",
   };
 }
 

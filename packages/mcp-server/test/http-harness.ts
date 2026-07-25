@@ -87,6 +87,7 @@ export async function startHttpHarness(
     orchestrationRunPageLimit: 20,
     orchestrationStartupScanLimit: 1_000,
     orchestrationShutdownTimeoutMs: 1_000,
+    runtimeBindingIdleTimeoutMs: 1_800_000,
     ...overrides,
     databasePath,
   };

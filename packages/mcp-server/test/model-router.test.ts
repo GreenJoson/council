@@ -16,7 +16,10 @@ import { test } from "node:test";
 import type { SecretStore } from "../src/keychain-secret-store.js";
 import { ModelRouterService } from "../src/model-router-service.js";
 import { ModelRouterStore } from "../src/model-router-store.js";
-import { migrateCouncilSchema } from "../src/schema-migrator.js";
+import {
+  COUNCIL_SCHEMA_VERSION,
+  migrateCouncilSchema,
+} from "../src/schema-migrator.js";
 
 async function createFixture() {
   const directory = mkdtempSync(path.join(tmpdir(), "council-model-router-"));
@@ -548,7 +551,7 @@ test("Kimi/DeepSeek 自定义 alias、删除与自然 alias 重建经过迁移�
     service = undefined;
     assert.deepEqual(
       await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 }),
-      { migrated: false, version: 5 },
+      { migrated: false, version: COUNCIL_SCHEMA_VERSION },
     );
 
     service = new ModelRouterService(
@@ -590,7 +593,7 @@ test("Kimi/DeepSeek 自定义 alias、删除与自然 alias 重建经过迁移�
     service = undefined;
     assert.deepEqual(
       await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 }),
-      { migrated: false, version: 5 },
+      { migrated: false, version: COUNCIL_SCHEMA_VERSION },
     );
 
     service = new ModelRouterService(
@@ -618,7 +621,7 @@ test("Kimi/DeepSeek 自定义 alias、删除与自然 alias 重建经过迁移�
     service = undefined;
     assert.deepEqual(
       await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 }),
-      { migrated: false, version: 5 },
+      { migrated: false, version: COUNCIL_SCHEMA_VERSION },
     );
 
     service = new ModelRouterService(

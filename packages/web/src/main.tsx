@@ -16,6 +16,7 @@ import "./styles/theme.css";
 import "./styles/app.css";
 import "./styles/components.css";
 import "./styles/orchestration.css";
+import "./styles/runtime-bindings.css";
 import "./styles/agent-activity.css";
 import "./styles/media.css";
 import "./styles/architecture.css";

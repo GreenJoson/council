@@ -1,7 +1,7 @@
 /**
- * @input  依赖：当前消息类型、同步状态、发布状态、提交回调、引用回复种子与自动轮次快照
+ * @input  依赖：当前消息类型、议题开放状态、同步/发布状态、提交回调、引用种子与自动轮次快照
  *         （用于 @claude/@codex 召唤自动补全、可用性与"每议题一个活动 run"冲突判断）
- * @output 导出：Composer 公开回复编辑器
+ * @output 导出：Composer 公开回复编辑器与已决议题 @Agent 禁用边界
  * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
  *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次单轮自动 run
  *         （召唤解析见 data/mention-parser.ts，冲突判断复用 AutoRoundsPanel 的
@@ -22,7 +22,10 @@ import {
 } from "../data/mention-parser";
 import type { MessageKind, SyncState } from "../types/council";
 import type { OrchestrationAdapter, OrchestrationSnapshot } from "../types/orchestration";
-import { getCreateRunBlockedReason } from "./AutoRoundsPanel";
+import {
+  getCreateRunBlockedReason,
+  getTopicAgentCallBlockedReason,
+} from "./AutoRoundsPanel";
 import { messageKindLabels } from "./presentation";
 
 const composerKinds: MessageKind[] = ["proposal", "critique", "rebuttal", "synthesis"];
@@ -46,6 +49,7 @@ export interface MentionPublishRequest {
 
 export interface ComposerProps {
   isPublishing: boolean;
+  allowAgentCalls: boolean;
   sync: SyncState;
   /**
    * mention 非空时：kind 固定传入 "note"（这条消息是指令性发言，不是提案本身）；
@@ -62,6 +66,7 @@ export interface ComposerProps {
 
 export function Composer({
   isPublishing,
+  allowAgentCalls,
   sync,
   onPublish,
   quoteSeed,
@@ -130,7 +135,13 @@ export function Composer({
 
   let mentionStatus: MentionStatus = { kind: "none" };
   if (mention && mentionAdapter) {
-    if (!mentionAdapter.available) {
+    if (!allowAgentCalls) {
+      mentionStatus = {
+        kind: "blocked",
+        reason: getTopicAgentCallBlockedReason(false)
+          ?? "议题已经决策，不能再通过 @ 召唤 Agent。",
+      };
+    } else if (!mentionAdapter.available) {
       mentionStatus = {
         kind: "blocked",
         reason: mentionAdapter.limitation ?? `${mentionAdapter.label} 当前不能被 Web 主动调用。`,

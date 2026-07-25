@@ -1,7 +1,7 @@
 /**
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
- * @output 导出：MockOrchestrationRepository 交互式原型实现
- * @pos    mock 模式下独立模拟创建、启动、增量草稿、批准、取消和恢复
+ * @output 导出：MockOrchestrationRepository 运行与持久会话交互原型
+ * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,6 +12,7 @@ import type {
   OrchestrationCapabilities,
   OrchestrationRun,
   OrchestrationSnapshot,
+  RuntimeBinding,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -158,6 +159,7 @@ function waitForMock(): Promise<void> {
 export class MockOrchestrationRepository implements OrchestrationRepository {
   readonly #listeners = new Set<OrchestrationListener>();
   readonly #runs: OrchestrationRun[] = [];
+  readonly #bindings: RuntimeBinding[] = [];
   readonly #modelRouter = structuredClone(MOCK_MODEL_ROUTER);
   #snapshot: OrchestrationSnapshot = {
     capabilities: structuredClone(CAPABILITIES),
@@ -175,6 +177,9 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     await waitForMock();
     this.#snapshot.activeTopicId = topicId;
     this.#snapshot.runs = this.#runs.filter((run) => run.topicId === topicId);
+    this.#snapshot.runtimeBindings = this.#bindings.filter(
+      (binding) => binding.topicId === topicId,
+    );
     return this.#publish();
   }
 
@@ -217,6 +222,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     };
     this.#snapshot.activeTopicId = input.topicId;
     this.#runs.unshift(run);
+    this.#ensureBinding(input.topicId, input.plan[0]?.adapterId);
     this.#syncVisibleRuns();
     this.#publish();
     return structuredClone(run);
@@ -300,6 +306,44 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     delete run.failure;
     this.#advance(run);
     return this.#publish();
+  }
+
+  async closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    await waitForMock();
+    const binding = this.#findBinding(bindingId);
+    binding.status = "closed";
+    binding.closeReason = "manual-close";
+    binding.closedAt = new Date().toISOString();
+    binding.updatedAt = binding.closedAt;
+    binding.stateVersion += 1;
+    this.#syncVisibleBindings();
+    this.#publish();
+    return structuredClone(binding);
+  }
+
+  async reopenRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    await waitForMock();
+    const previous = this.#findBinding(bindingId);
+    if (previous.status !== "closed") {
+      return structuredClone(previous);
+    }
+    const now = new Date().toISOString();
+    const binding: RuntimeBinding = {
+      ...previous,
+      id: `binding_${crypto.randomUUID()}`,
+      status: "idle",
+      hasSession: false,
+      stateVersion: 1,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    delete binding.closeReason;
+    delete binding.closedAt;
+    this.#bindings.push(binding);
+    this.#syncVisibleBindings();
+    this.#publish();
+    return structuredClone(binding);
   }
 
   async getModelRouter(): Promise<ModelRouterSnapshot> {
@@ -426,6 +470,47 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     return run;
   }
 
+  #findBinding(bindingId: string): RuntimeBinding {
+    const binding = this.#bindings.find((candidate) => candidate.id === bindingId);
+    if (!binding) {
+      throw new Error("持久会话不存在");
+    }
+    return binding;
+  }
+
+  #ensureBinding(topicId: string, agentId: string | undefined): void {
+    if (!agentId || this.#bindings.some(
+      (binding) =>
+        binding.topicId === topicId
+        && binding.agentId === agentId
+        && binding.status !== "closed",
+    )) {
+      return;
+    }
+    const agent = this.#findAgent(agentId);
+    const provider = this.#findProvider(agent.providerId);
+    const now = new Date().toISOString();
+    this.#bindings.push({
+      id: `binding_${crypto.randomUUID()}`,
+      topicId,
+      agentId,
+      actorId: agent.actorId,
+      providerId: provider.id,
+      transportKind: provider.protocol === "claude-cli"
+        ? "claude-resume"
+        : provider.protocol === "codex-cli"
+          ? "codex-resume"
+          : "openai-sessionless",
+      status: "idle",
+      hasSession: false,
+      stateVersion: 1,
+      lastActivityAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.#syncVisibleBindings();
+  }
+
   #findProvider(providerId: string): ProviderProfile {
     const provider = this.#modelRouter.providers.find(
       (candidate) => candidate.id === providerId,
@@ -447,6 +532,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
 
   #publish(): OrchestrationSnapshot {
     this.#syncVisibleRuns();
+    this.#syncVisibleBindings();
     const snapshot = cloneSnapshot(this.#snapshot);
     for (const listener of this.#listeners) {
       listener(cloneSnapshot(snapshot));
@@ -458,6 +544,13 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     const topicId = this.#snapshot.activeTopicId;
     this.#snapshot.runs = topicId
       ? this.#runs.filter((run) => run.topicId === topicId)
+      : [];
+  }
+
+  #syncVisibleBindings(): void {
+    const topicId = this.#snapshot.activeTopicId;
+    this.#snapshot.runtimeBindings = topicId
+      ? this.#bindings.filter((binding) => binding.topicId === topicId)
       : [];
   }
 }

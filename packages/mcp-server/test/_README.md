@@ -17,14 +17,14 @@
 | `http-config.test.ts` | 单元测试 | 验证 HTTP 必填配置、迁移重试缺失 fail-fast、loopback host 与 exact origin |
 | `http-api.test.ts` | 集成测试 | 验证 REST 生命周期、ready 数据库身份、错误、CORS、安全头和限流 |
 | `http-events.test.ts` | 集成测试 | 验证跨连接变更、Agent 草稿增量/重连快照、独立 retry 与 Last-Event-ID 语义 |
-| `claude-agent-adapter.test.ts` | 安全测试 | 验证可信指令保留、只裁公开历史、V1 无 session 与显式安全失败原因 |
-| `codex-agent-adapter.test.ts` | 安全测试 | 验证 Codex 可信指令、只裁公开历史、V1 无 session、失败恢复与安全原因分类 |
+| `claude-agent-adapter.test.ts` | 安全测试 | 验证可信指令保留、首轮历史裁剪、session 恢复、公开增量与显式安全失败原因 |
+| `codex-agent-adapter.test.ts` | 安全测试 | 验证可信指令、首轮历史裁剪、session 恢复、公开增量、失败恢复与安全原因分类 |
 | `model-router.test.ts` | 安全测试 | 验证同 Provider 多 Agent/独立 UUID Actor 与 alias、Kimi/DeepSeek 自定义 alias 与删除后自然 alias 重建跨迁移重开稳定、品牌不退化为 Other、Claude/Codex 身份不可变、Provider 软删除后原行复活与新凭据生效、API Key 零落盘、Keychain/alias 原子回滚及活动 Run 变更失败关闭 |
 | `keychain-secret-store.test.ts` | 安全测试 | 验证 Keychain 凭据不存在返回空值，命令故障必须 fail closed |
 | `openai-compatible-runtime.test.ts` | 协议测试 | 验证远程流式 Chat Completions、公开增量、JSON 回退、错误脱敏与有界响应 |
 | `openai-compatible-agent-adapter.test.ts` | 安全测试 | 验证远程运行时脱敏原因可公开且未知异常继续隔离 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |
-| `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、系统 Agent 名称/alias/删除拒绝、单次完成复核覆盖、上下文限制转发、断线、取消、审批、恢复与 sweeper |
+| `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、系统 Agent 名称/alias/删除拒绝、单次完成复核覆盖、上下文限制转发、跨议题 session 碰撞失败关闭、断线、取消、审批、恢复与 sweeper |
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
 | `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式 Chat Completions，用于远程 Provider/双 Agent E2E |

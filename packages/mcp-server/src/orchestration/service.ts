@@ -1,13 +1,13 @@
 /**
  * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
- *         增量草稿中心与 ExecutionManager
+ *         增量草稿中心、统一日志与 ExecutionManager
  * @output 导出：带配置互斥的编排产品服务、安全 Model Router 入口及临时 Agent 草稿流
  * @pos    REST/SSE 契约使用的编排与模型配置一致性聚合根、生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CouncilOrchestrator,
   OrchestrationConfigError,
@@ -19,6 +19,7 @@ import {
   type MessageKind,
   type OrchestrationRun,
   type PaginatedRuns,
+  type RuntimeBinding,
 } from "council-orchestrator";
 import {
   type CreateAgentInput,
@@ -42,6 +43,7 @@ import {
   MacOsKeychainSecretStore,
   UnavailableSecretStore,
 } from "../keychain-secret-store.js";
+import { logger } from "../logger.js";
 import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
@@ -76,6 +78,7 @@ export interface PublicRoundInput {
   adapterId: string;
   messageKind: MessageKind;
   instruction: string;
+  requestMessageId?: string;
 }
 
 export interface CreateRunOptions {
@@ -115,6 +118,8 @@ export class CouncilOrchestrationService {
   readonly orchestrator: CouncilOrchestrator;
   readonly manager: RunExecutionManager;
   readonly #store: SQLiteCouncilStore;
+  readonly #fallbackRouterStore?: ModelRouterStore;
+  readonly #processInstanceId = `council_${randomUUID()}`;
   readonly #actors = new Map<string, string>();
   readonly #capabilities: PublicAgentCapability[] = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
@@ -125,6 +130,8 @@ export class CouncilOrchestrationService {
   #availabilityCheckedAt = 0;
   #availabilityRefresh: Promise<void> | null = null;
   #configurationTail = Promise.resolve();
+  #runtimeBindingIdleTimer: ReturnType<typeof globalThis.setInterval> | undefined;
+  #runtimeBindingIdleSweep: Promise<void> | null = null;
 
   constructor(
     private readonly config: CouncilHttpConfig,
@@ -139,6 +146,12 @@ export class CouncilOrchestrationService {
       Date.now,
       config.defaultMessageLimit,
     );
+    if (!modelRouter) {
+      this.#fallbackRouterStore = new ModelRouterStore(
+        config.databasePath,
+        config.sqliteBusyTimeoutMs,
+      );
+    }
     for (const registration of registrations) {
       if (this.#actors.has(registration.adapter.adapterId)) {
         this.#store.close();
@@ -173,6 +186,7 @@ export class CouncilOrchestrationService {
       registrations.map((registration) => registration.adapter),
     );
     this.manager = new RunExecutionManager(this.orchestrator, {
+      ownerId: this.#processInstanceId,
       leaseTtlMs: config.orchestrationLeaseTtlMs,
       leaseRenewMs: config.orchestrationLeaseRenewMs,
       sweepIntervalMs: config.orchestrationSweepIntervalMs,
@@ -196,7 +210,7 @@ export class CouncilOrchestrationService {
         },
       },
       limitations: [
-        "V1 不恢复 Agent session。",
+        "Claude/Codex 通过议题级逻辑绑定恢复 session；兼容远程 Provider 保持无状态。",
         "只有已注册的后台适配器可以自动执行。",
       ],
     };
@@ -225,7 +239,8 @@ export class CouncilOrchestrationService {
       // 用户明确点名了被标记不可用的适配器：强制复检而非等 TTL，让 CLI 刚登录立即可用
       await this.#ensureFreshAvailability(true);
     }
-    const rounds = plan.map((round) => {
+    const rounds = [];
+    for (const round of plan) {
       const actorId = this.#actors.get(round.adapterId);
       if (!actorId) {
         throw new OrchestrationConfigError("计划包含未注册的 Agent 适配器。");
@@ -234,8 +249,43 @@ export class CouncilOrchestrationService {
       if (!capability?.available) {
         throw new OrchestrationConfigError("计划包含当前不可用的 Agent 适配器。");
       }
-      return { ...round, actorId };
-    });
+      const agent =
+        this.modelRouter?.getAgent(round.adapterId)
+        ?? this.#fallbackRouterStore?.getAgent(round.adapterId)
+        ?? this.#fallbackRouterStore?.getAgent(actorId);
+      const provider = agent
+        ? this.modelRouter?.getProvider(agent.providerId)
+          ?? this.#fallbackRouterStore?.getProvider(agent.providerId)
+        : undefined;
+      const bindingRevision = this.orchestrator.adapterBindingRevision(round.adapterId);
+      if (!agent || !provider || !bindingRevision) {
+        throw new OrchestrationConfigError(
+          "计划 Agent 缺少可冻结的模型路由或适配器配置。",
+        );
+      }
+      const transportKind = provider.protocol === "claude-cli"
+        ? "claude-resume"
+        : provider.protocol === "codex-cli"
+          ? "codex-resume"
+          : "openai-sessionless";
+      const binding = await this.#store.ensureRuntimeBinding({
+        topicId,
+        agentId: agent.id,
+        actorId,
+        providerId: provider.id,
+        bindingRevision,
+        agentConfigRevision: agent.configRevision,
+        providerConfigRevision: provider.configRevision,
+        transportKind,
+        processInstanceId: this.#processInstanceId,
+      });
+      rounds.push({
+        ...round,
+        actorId,
+        bindingRevision,
+        runtimeBindingId: binding.id,
+      });
+    }
     return await this.orchestrator.createRun({
       topicId,
       plan: rounds,
@@ -303,6 +353,97 @@ export class CouncilOrchestrationService {
 
   async cancel(runId: string): Promise<OrchestrationRun> {
     return await this.manager.cancel(runId);
+  }
+
+  async listRuntimeBindings(
+    topicId: string,
+    includeClosed = false,
+  ): Promise<readonly RuntimeBinding[]> {
+    return await this.#store.listRuntimeBindings({ topicId, includeClosed });
+  }
+
+  async closeRuntimeBinding(
+    bindingId: string,
+    reason = "manual-close",
+  ): Promise<RuntimeBinding> {
+    this.orchestrator.abortActiveBinding(
+      bindingId,
+      new Error("RuntimeBinding 已关闭，活动调用停止。"),
+    );
+    const closing = await this.#store.requestRuntimeBindingClose(bindingId, reason);
+    if (closing.status === "closed") {
+      return closing;
+    }
+    return await this.#store.finalizeRuntimeBindingClose({
+      bindingId,
+      expectedStateVersion: closing.stateVersion,
+      closeReason: reason,
+    });
+  }
+
+  async closeTopicRuntimeBindings(
+    topicId: string,
+    reason = "decision-accepted",
+  ): Promise<readonly RuntimeBinding[]> {
+    const bindings = await this.#store.listRuntimeBindings({
+      topicId,
+      includeClosed: false,
+    });
+    const closed: RuntimeBinding[] = [];
+    for (const binding of bindings) {
+      closed.push(await this.closeRuntimeBinding(binding.id, reason));
+    }
+    return closed;
+  }
+
+  async closeAllRuntimeBindings(
+    reason = "configuration-changed",
+  ): Promise<readonly RuntimeBinding[]> {
+    const bindings = await this.#store.listOpenRuntimeBindings();
+    const closed: RuntimeBinding[] = [];
+    for (const binding of bindings) {
+      closed.push(await this.closeRuntimeBinding(binding.id, reason));
+    }
+    return closed;
+  }
+
+  async reopenRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return await this.#withConfigurationLock(async () => {
+      await this.#syncDynamicAgents();
+      const previous = await this.#store.getRuntimeBinding(bindingId);
+      if (previous.status !== "closed") {
+        return previous;
+      }
+      const agent =
+        this.modelRouter?.getAgent(previous.agentId)
+        ?? this.#fallbackRouterStore?.getAgent(previous.agentId);
+      const provider = agent
+        ? this.modelRouter?.getProvider(agent.providerId)
+          ?? this.#fallbackRouterStore?.getProvider(agent.providerId)
+        : undefined;
+      const bindingRevision = this.orchestrator.adapterBindingRevision(previous.agentId);
+      if (!agent || !provider || !bindingRevision) {
+        throw new OrchestrationConfigError(
+          "原 Agent 配置已删除或停用，不能重新打开持久会话。",
+        );
+      }
+      const transportKind = provider.protocol === "claude-cli"
+        ? "claude-resume"
+        : provider.protocol === "codex-cli"
+          ? "codex-resume"
+          : "openai-sessionless";
+      return await this.#store.ensureRuntimeBinding({
+        topicId: previous.topicId,
+        agentId: agent.id,
+        actorId: agent.actorId,
+        providerId: provider.id,
+        bindingRevision,
+        agentConfigRevision: agent.configRevision,
+        providerConfigRevision: provider.configRevision,
+        transportKind,
+        processInstanceId: this.#processInstanceId,
+      });
+    });
   }
 
   async recover(runId: string): Promise<OrchestrationRun> {
@@ -423,6 +564,7 @@ export class CouncilOrchestrationService {
 
   async #settingsChanged(): Promise<void> {
     this.#availabilityCheckedAt = 0;
+    await this.closeAllRuntimeBindings();
     await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability(true);
   }
@@ -435,9 +577,34 @@ export class CouncilOrchestrationService {
   }
 
   async initialize(): Promise<void> {
+    await this.#store.markRuntimeBindingsInterrupted(this.#processInstanceId);
+    await this.#closeIdleRuntimeBindings();
     await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability(true);
     await this.manager.recoverOnStartup();
+    this.#startRuntimeBindingIdleSweep();
+  }
+
+  #startRuntimeBindingIdleSweep(): void {
+    if (this.#runtimeBindingIdleTimer) {
+      return;
+    }
+    this.#runtimeBindingIdleTimer = globalThis.setInterval(() => {
+      this.#runtimeBindingIdleSweep ??= this.#closeIdleRuntimeBindings()
+        .catch((error: unknown) => {
+          logger.error("runtime-binding", "空闲持久会话清理失败", error);
+        })
+        .finally(() => {
+          this.#runtimeBindingIdleSweep = null;
+        });
+    }, this.config.orchestrationSweepIntervalMs);
+  }
+
+  async #closeIdleRuntimeBindings(): Promise<void> {
+    const cutoff = new Date(
+      Date.now() - this.config.runtimeBindingIdleTimeoutMs,
+    ).toISOString();
+    await this.#store.closeIdleRuntimeBindings(cutoff);
   }
 
   /** 返回 capabilities 前按 TTL 重新检测可用性，让 CLI 登录状态变化无需重启即可生效。 */
@@ -576,11 +743,17 @@ export class CouncilOrchestrationService {
   }
 
   async shutdown(): Promise<void> {
+    if (this.#runtimeBindingIdleTimer) {
+      globalThis.clearInterval(this.#runtimeBindingIdleTimer);
+      this.#runtimeBindingIdleTimer = undefined;
+    }
+    await this.#runtimeBindingIdleSweep;
     await this.manager.shutdown();
   }
 
   close(): void {
     this.#store.close();
+    this.#fallbackRouterStore?.close();
     this.modelRouter?.close();
   }
 }

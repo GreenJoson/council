@@ -55,6 +55,7 @@ const envSchema = z
       MAX_ORCHESTRATION_STARTUP_SCAN,
     ),
     COUNCIL_ORCHESTRATION_SHUTDOWN_TIMEOUT_MS: timerInteger,
+    COUNCIL_RUNTIME_BINDING_IDLE_TIMEOUT_MS: timerInteger,
   });
 
 // Tauri webview（macOS/Linux 生产构建）的固定 origin：自定义协议经 new URL()
@@ -167,5 +168,7 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
       parsed.data.COUNCIL_ORCHESTRATION_STARTUP_SCAN_LIMIT,
     orchestrationShutdownTimeoutMs:
       parsed.data.COUNCIL_ORCHESTRATION_SHUTDOWN_TIMEOUT_MS,
+    runtimeBindingIdleTimeoutMs:
+      parsed.data.COUNCIL_RUNTIME_BINDING_IDLE_TIMEOUT_MS,
   };
 }

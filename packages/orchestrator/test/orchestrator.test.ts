@@ -50,7 +50,14 @@ function input(
   plan: readonly RoundPlan[],
   policy: OrchestrationPolicy = BASE_POLICY,
 ): CreateRunInput {
-  return { topicId: "topic_test", plan, policy };
+  return {
+    topicId: "topic_test",
+    plan: plan.map((round) => ({
+      ...round,
+      runtimeBindingId: round.runtimeBindingId ?? `binding_${round.adapterId}`,
+    })),
+    policy,
+  };
 }
 
 function withoutBindingRevision(run: OrchestrationRun): OrchestrationRun {

@@ -1,6 +1,6 @@
 /**
- * @input  依赖：已构建的 Node schema migrator、目标 SQLite 路径与 fresh/v2/v3 模式
- * @output 导出：由 Node canonical 迁移器真实创建的 v5 测试数据库
+ * @input  依赖：已构建的 Node schema migrator、目标 SQLite 路径与 fresh/v2/v3/v5 模式
+ * @output 导出：由 Node canonical 迁移器真实创建的 v6 测试数据库
  * @pos    Rust 跨语言兼容测试的唯一数据库生成入口；禁止手抄 Node DDL
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,12 +17,13 @@ if (
   (
     mode !== "fresh" &&
     mode !== "v2-migrated" &&
-    mode !== "v3-migrated"
+    mode !== "v3-migrated" &&
+    mode !== "v5-migrated"
   ) ||
   !databaseArgument
 ) {
   throw new Error(
-    "用法：create-rust-test-database.mjs <fresh|v2-migrated|v3-migrated> <database-path>",
+    "用法：create-rust-test-database.mjs <fresh|v2-migrated|v3-migrated|v5-migrated> <database-path>",
   );
 }
 const databasePath = resolve(databaseArgument);
@@ -50,11 +51,19 @@ if (mode === "fresh") {
     database.close();
   }
   await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
-} else {
+} else if (mode === "v3-migrated") {
   await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER trg_decisions_runtime_close_update;
+      DROP TRIGGER trg_decisions_runtime_close_insert;
+      DROP TRIGGER trg_runtime_bindings_revision_delete;
+      DROP TRIGGER trg_runtime_bindings_revision_update;
+      DROP TRIGGER trg_runtime_bindings_revision_insert;
+      DROP TABLE runtime_binding_requests;
+      DROP TABLE runtime_binding_leases;
+      DROP TABLE runtime_bindings;
       DROP TABLE orchestration_approvals;
       DROP TABLE orchestration_run_leases;
       DROP TABLE orchestration_runs;
@@ -102,6 +111,23 @@ if (mode === "fresh") {
         'Kimi', 'fixture-model', 'kimi', 1, NULL, ?, ?
       )
     `).run(now, now);
+  } finally {
+    database.close();
+  }
+  await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
+} else {
+  await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.exec(`
+      DROP TRIGGER trg_decisions_runtime_close_update;
+      DROP TRIGGER trg_decisions_runtime_close_insert;
+      DROP TABLE runtime_binding_requests;
+      DROP TABLE runtime_binding_leases;
+      DROP TABLE runtime_bindings;
+      DELETE FROM schema_migrations WHERE version >= 6;
+      PRAGMA user_version = 5;
+    `);
   } finally {
     database.close();
   }

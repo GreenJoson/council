@@ -16,6 +16,7 @@ import type {
   CreateOrchestrationRunInput,
   OrchestrationRun,
   OrchestrationSnapshot,
+  RuntimeBinding,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -153,6 +154,14 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async recoverRun(runId: string): Promise<OrchestrationSnapshot> {
     return (await this.#requireLive()).recoverRun(runId);
+  }
+
+  async closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return (await this.#requireLive()).closeRuntimeBinding(bindingId);
+  }
+
+  async reopenRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return (await this.#requireLive()).reopenRuntimeBinding(bindingId);
   }
 
   async getModelRouter(): Promise<ModelRouterSnapshot> {

@@ -1,6 +1,6 @@
 /**
- * @input  依赖：临时 v1/v2/v4/fresh SQLite、Node online backup 与 schema 迁移故障注入
- * @output 验证：动态 Actor、Provider/Agent 路由、Session 无损归并、备份、回滚和 revision
+ * @input  依赖：临时 v1/v2/v4/v5/fresh SQLite、Node online backup 与 schema 迁移故障注入
+ * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -288,6 +288,11 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
+      DROP TRIGGER IF EXISTS trg_decisions_runtime_close_update;
+      DROP TABLE runtime_binding_requests;
+      DROP TABLE runtime_binding_leases;
+      DROP TABLE runtime_bindings;
       DROP TABLE agent_definitions;
       DROP TABLE provider_profiles;
       DROP TABLE brand_assets;
@@ -494,7 +499,12 @@ async function createCanonicalV4Database(databasePath: string): Promise<{
       UPDATE agent_definitions
       SET display_name = 'Codex CLI', mention_alias = 'codex-v4-custom'
       WHERE actor_id = 'codex';
-      DELETE FROM schema_migrations WHERE version = 5;
+      DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
+      DROP TRIGGER IF EXISTS trg_decisions_runtime_close_update;
+      DROP TABLE runtime_binding_requests;
+      DROP TABLE runtime_binding_leases;
+      DROP TABLE runtime_bindings;
+      DELETE FROM schema_migrations WHERE version >= 5;
       PRAGMA user_version = 4;
     `);
     return {
@@ -584,6 +594,64 @@ test("fresh DB 由 Node 创建版本账本且 revision trigger 可工作", async
   }
 });
 
+test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
+    const downgrade = new DatabaseSync(fixture.databasePath);
+    try {
+      downgrade.exec(`
+        DROP TRIGGER trg_decisions_runtime_close_update;
+        DROP TRIGGER trg_decisions_runtime_close_insert;
+        DROP TABLE runtime_binding_requests;
+        DROP TABLE runtime_binding_leases;
+        DROP TABLE runtime_bindings;
+        DELETE FROM schema_migrations WHERE version >= 6;
+        PRAGMA user_version = 5;
+      `);
+    } finally {
+      downgrade.close();
+    }
+
+    await assert.rejects(
+      migrateCouncilSchema(fixture.databasePath, 5_000, {
+        maxAttempts: 3,
+        faultPoint: "before-commit",
+      }),
+      /故障注入/,
+    );
+    const rolledBack = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.equal(pragmaInteger(rolledBack, "user_version"), 5);
+      const bindingTables = rolledBack.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table' AND name LIKE 'runtime_binding%'
+      `).get() as unknown as { count: number };
+      assert.equal(bindingTables.count, 0);
+    } finally {
+      rolledBack.close();
+    }
+
+    const migrated = await migrateCouncilSchema(fixture.databasePath, 5_000, {
+      maxAttempts: 3,
+    });
+    assert.equal(migrated.version, COUNCIL_SCHEMA_VERSION);
+    const reopened = await migrateCouncilSchema(fixture.databasePath, 5_000, {
+      maxAttempts: 3,
+    });
+    assert.equal(reopened.migrated, false);
+    const current = new DatabaseSync(fixture.databasePath);
+    try {
+      assertCouncilSchema(current);
+    } finally {
+      current.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("canonical v4 迁移为动态远程 Actor，冻结快照与重启均保持稳定", async () => {
   const fixture = temporaryDatabase();
   try {
@@ -592,7 +660,7 @@ test("canonical v4 迁移为动态远程 Actor，冻结快照与重启均保持�
       maxAttempts: 3,
     });
     assert.equal(migrated.migrated, true);
-    assert.equal(migrated.version, 5);
+    assert.equal(migrated.version, COUNCIL_SCHEMA_VERSION);
 
     const database = new DatabaseSync(fixture.databasePath);
     let currentActors: Array<{
@@ -694,7 +762,7 @@ test("canonical v4 迁移为动态远程 Actor，冻结快照与重启均保持�
 
     assert.deepEqual(
       await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 }),
-      { migrated: false, version: 5 },
+      { migrated: false, version: COUNCIL_SCHEMA_VERSION },
     );
     const reopened = new DatabaseSync(fixture.databasePath);
     try {
@@ -1346,8 +1414,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (3, 'provider-agent-model-router', '2026-01-03T00:00:00.000Z'),
         (4, 'frozen-run-bindings', '2026-01-04T00:00:00.000Z'),
         (5, 'dynamic-provider-actors', '2026-01-05T00:00:00.000Z'),
-        (6, 'future', '2026-01-06T00:00:00.000Z');
-      PRAGMA user_version = 6;
+        (6, 'topic-runtime-bindings', '2026-01-06T00:00:00.000Z'),
+        (7, 'future', '2026-01-07T00:00:00.000Z');
+      PRAGMA user_version = 7;
     `);
     futureDatabase.close();
     await assert.rejects(

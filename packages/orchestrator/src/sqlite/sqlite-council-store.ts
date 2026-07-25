@@ -1,7 +1,7 @@
 /**
- * @input  依赖：含动态 Actor 的 Council SQLite、编排端口、v1/v2 兼容与 v3 codec
- * @output 导出：旧 Run 只读/取消、v3 Actor/绑定校验、分页、单活动约束与 lease fencing 的 Store
- * @pos    以 SQLite CAS、冻结身份和 token/epoch 保证跨进程执行、历史 Run 与消息原子一致性
+ * @input  依赖：含动态 Actor/RuntimeBinding 的 Council SQLite、编排端口与拆分后的上下文/原子提交模块
+ * @output 导出：旧 Run 只读/取消、v4 绑定冻结、双 lease fencing 与 SQLiteCouncilStore
+ * @pos    编排 Store 门面；把调用上下文和单轮原子提交委托给专职模块
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -19,23 +19,30 @@ import type { CouncilStore } from "../ports.js";
 import type {
   ApproveGateInput,
   ApproveGateResult,
+  ClaimRuntimeBindingLeaseInput,
   ClaimRunLeaseInput,
-  CouncilPublicMessage,
   CouncilTopicContext,
   CreateRunInput,
+  EnsureRuntimeBindingInput,
+  FinalizeRuntimeBindingCloseInput,
   ListRunsForTopicInput,
   ListRestartCandidatesInput,
+  ListRuntimeBindingsInput,
   OrchestrationRun,
   PaginatedRuns,
   RenewRunLeaseInput,
+  RenewRuntimeBindingLeaseInput,
   RoundCommitInput,
   RoundCommitResult,
   RunLease,
+  RuntimeBinding,
+  RuntimeBindingInvocationContext,
+  RuntimeBindingLease,
+  TransitionRuntimeBindingInput,
 } from "../types.js";
 import {
   MAX_APPROVAL_ID_CHARS,
   MAX_LEASE_OWNER_CHARS,
-  MAX_MESSAGE_CHARS,
 } from "../constants.js";
 import {
   assertActorId,
@@ -45,6 +52,16 @@ import {
   validateRunSnapshot,
 } from "./run-codec.js";
 import { assertOrchestrationSchema } from "./schema.js";
+import { RuntimeBindingRepository } from "./runtime-binding-repository.js";
+import {
+  assertSameImmutableFields,
+  commitAtomicRound,
+} from "./atomic-round-commit.js";
+import {
+  decodeCouncilMessageRows,
+  loadRuntimeBindingInvocationContext,
+  type RuntimeMessageRow,
+} from "./runtime-invocation-context.js";
 
 interface RunRow {
   id: unknown;
@@ -69,15 +86,7 @@ interface TopicRow {
   question: unknown;
   constraints_json: unknown;
   project_path: unknown;
-}
-
-interface MessageRow {
-  id: unknown;
-  topic_id: unknown;
-  author_actor_id: unknown;
-  kind: unknown;
-  content: unknown;
-  created_at: unknown;
+  status: unknown;
 }
 
 interface ActorRow {
@@ -109,9 +118,13 @@ const GATE_ID_PATTERN = /^before_(?:completion|round:[1-9][0-9]*)$/;
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 1_000;
 
 function assertExecutableSnapshot(run: OrchestrationRun): void {
-  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+  if (
+    run.plan.some((round) =>
+      !round.bindingRevision?.trim() || !round.runtimeBindingId?.trim()
+    )
+  ) {
     throw new InvalidRunStateError(
-      "旧运行缺少冻结的 Agent bindingRevision，只允许读取或取消；请创建新运行。",
+      "旧运行缺少冻结的 Agent bindingRevision 或 runtimeBindingId，只允许读取或取消；请创建新运行。",
     );
   }
 }
@@ -171,18 +184,6 @@ function strictStringArray(json: string, path: string): string[] {
   return [...parsed];
 }
 
-function assertSameImmutableFields(current: OrchestrationRun, next: OrchestrationRun): void {
-  if (
-    next.id !== current.id ||
-    next.topicId !== current.topicId ||
-    next.createdAt !== current.createdAt ||
-    JSON.stringify(next.plan) !== JSON.stringify(current.plan) ||
-    JSON.stringify(next.policy) !== JSON.stringify(current.policy)
-  ) {
-    throw new StoreConflictError("运行的标识、议题、创建时间、计划或策略不可替换。");
-  }
-}
-
 function decodeRunRow(
   row: RunRow,
   assertActorExists?: (actorId: string) => void,
@@ -194,7 +195,8 @@ function decodeRunRow(
   if (
     snapshotSchemaVersion !== 1 &&
     snapshotSchemaVersion !== 2 &&
-    snapshotSchemaVersion !== 3
+    snapshotSchemaVersion !== 3 &&
+    snapshotSchemaVersion !== 4
   ) {
     throw new InvalidRunStateError("不支持的运行快照结构版本。");
   }
@@ -228,6 +230,7 @@ export class SQLiteCouncilStore implements CouncilStore {
   readonly #database: DatabaseSync;
   readonly #now: () => number;
   readonly #contextMessageLimit: number;
+  readonly #runtimeBindings: RuntimeBindingRepository;
   #closed = false;
 
   constructor(
@@ -258,6 +261,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       throw error;
     }
     this.#database = database;
+    this.#runtimeBindings = new RuntimeBindingRepository(database, now);
   }
 
   #transaction<T>(operation: () => T): T {
@@ -341,6 +345,18 @@ export class SQLiteCouncilStore implements CouncilStore {
     }
   }
 
+  #assertTopicOpen(topicId: string): void {
+    const row = this.#database
+      .prepare("SELECT id, status FROM topics WHERE id = ?")
+      .get(topicId) as unknown as Pick<TopicRow, "id" | "status"> | undefined;
+    if (!row || row.id !== topicId) {
+      throw new InvalidRunStateError(`Council 议题 ${topicId} 不存在。`);
+    }
+    if (row.status !== "open") {
+      throw new StoreConflictError("只有 open 议题可以创建 Agent 调用。");
+    }
+  }
+
   #activeActorRow(actorId: string): ActorRow {
     assertActorId(actorId, "actorId");
     const row = this.#database.prepare(`
@@ -412,7 +428,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       row.snapshot_schema_version,
       "orchestration_runs.snapshot_schema_version",
     );
-    if (version !== 1 && version !== 2 && version !== 3) {
+    if (version !== 1 && version !== 2 && version !== 3 && version !== 4) {
       throw new InvalidRunStateError("不支持的运行快照结构版本。");
     }
     return version;
@@ -433,7 +449,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       ...desired,
       version: expectedVersion + 1,
       updatedAt: now,
-    }, snapshotSchemaVersion === 3 ? 3 : 2);
+    }, snapshotSchemaVersion >= 3 ? snapshotSchemaVersion : 2);
     let result;
     try {
       result = this.#database.prepare(`
@@ -480,9 +496,9 @@ export class SQLiteCouncilStore implements CouncilStore {
       version: 1,
       createdAt: now,
       updatedAt: now,
-    }, 3);
+    }, 4);
     return this.#transaction(() => {
-      this.#assertTopicExists(run.topicId);
+      this.#assertTopicOpen(run.topicId);
       for (const round of run.plan) {
         this.#activeActorRow(round.actorId);
       }
@@ -491,12 +507,12 @@ export class SQLiteCouncilStore implements CouncilStore {
           INSERT INTO orchestration_runs (
             id, topic_id, status, snapshot_schema_version, snapshot_json,
             version, created_at, updated_at
-          ) VALUES (?, ?, ?, 3, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, 4, ?, ?, ?, ?)
         `).run(
           run.id,
           run.topicId,
           run.status,
-          encodeRunSnapshot(run, 3),
+          encodeRunSnapshot(run, 4),
           run.version,
           run.createdAt,
           run.updatedAt,
@@ -590,7 +606,7 @@ export class SQLiteCouncilStore implements CouncilStore {
     expectedVersion: number,
   ): Promise<OrchestrationRun> {
     positiveInteger(expectedVersion, "expectedVersion");
-    const desired = validateRunSnapshot(run, 3);
+    const desired = validateRunSnapshot(run, 4);
     assertExecutableSnapshot(desired);
     return this.#transaction(() => {
       const current = this.#getRun(desired.id);
@@ -612,7 +628,7 @@ export class SQLiteCouncilStore implements CouncilStore {
     lease: RunLease,
   ): Promise<OrchestrationRun> {
     positiveInteger(expectedVersion, "expectedVersion");
-    const desired = validateRunSnapshot(run, 3);
+    const desired = validateRunSnapshot(run, 4);
     assertExecutableSnapshot(desired);
     return this.#transaction(() => {
       const nowMs = this.#now();
@@ -762,29 +778,12 @@ export class SQLiteCouncilStore implements CouncilStore {
         SELECT id, topic_id, author_actor_id, kind, content, created_at
         FROM messages
         WHERE topic_id = ?
-        ORDER BY created_at DESC, rowid DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ?
       `)
-      .all(normalizedTopicId, this.#contextMessageLimit) as unknown as MessageRow[];
+      .all(normalizedTopicId, this.#contextMessageLimit) as unknown as RuntimeMessageRow[];
     rows.reverse();
-    const messages = rows.map((row, index): CouncilPublicMessage => {
-      const actorId = row.author_actor_id;
-      const kind = row.kind;
-      assertActorId(actorId, `messages[${String(index)}].author_actor_id`);
-      assertMessageKind(kind, `messages[${String(index)}].kind`);
-      const messageTopicId = nonEmptyString(row.topic_id, `messages[${String(index)}].topic_id`);
-      if (messageTopicId !== normalizedTopicId) {
-        throw new InvalidRunStateError("消息不属于请求的议题。");
-      }
-      return {
-        id: nonEmptyString(row.id, `messages[${String(index)}].id`),
-        topicId: messageTopicId,
-        actorId,
-        kind,
-        content: nonEmptyString(row.content, `messages[${String(index)}].content`),
-        createdAt: nonEmptyString(row.created_at, `messages[${String(index)}].created_at`),
-      };
-    });
+    const messages = decodeCouncilMessageRows(rows, normalizedTopicId);
     return {
       topicId: normalizedTopicId,
       title: nonEmptyString(topic.title, "topics.title"),
@@ -795,84 +794,97 @@ export class SQLiteCouncilStore implements CouncilStore {
     };
   }
 
-  async commitRound(input: RoundCommitInput): Promise<RoundCommitResult> {
-    const expectedVersion = positiveInteger(input.expectedVersion, "commitRound.expectedVersion");
-    const desired = validateRunSnapshot(input.run, 3);
-    assertExecutableSnapshot(desired);
-    const messageTopicId = nonEmptyString(input.message.topicId, "commitRound.message.topicId");
-    const content = nonEmptyString(input.message.content, "commitRound.message.content");
-    assertActorId(input.message.actorId, "commitRound.message.actorId");
-    const actorSnapshotJson = this.#actorSnapshotJson(input.message.actorId);
-    assertMessageKind(input.message.kind, "commitRound.message.kind");
-    if (content.trim().length === 0) {
-      throw new InvalidRunStateError("commitRound.message.content 不能只有空白。");
-    }
-    if (content.length > MAX_MESSAGE_CHARS) {
-      throw new InvalidRunStateError("commitRound.message.content 超过长度上限。");
-    }
+  async ensureRuntimeBinding(input: EnsureRuntimeBindingInput): Promise<RuntimeBinding> {
+    return this.#transaction(() => this.#runtimeBindings.ensure(input));
+  }
 
-    return this.#transaction(() => {
-      const nowMs = this.#now();
-      this.#assertLease(input.lease, nowMs);
-      if (input.lease.runId !== desired.id) {
-        throw new LeaseLostError("执行 lease 不属于当前运行。");
-      }
-      const current = this.#getRun(desired.id);
-      const round = current.plan[current.nextRoundIndex];
-      if (
-        current.version !== expectedVersion ||
-        current.status !== "waiting_agent" ||
-        !round ||
-        desired.version !== expectedVersion ||
-        desired.status !== "running" ||
-        desired.nextRoundIndex !== current.nextRoundIndex + 1 ||
-        desired.currentAttempt !== 0 ||
-        desired.manualRecoveriesUsed !== current.manualRecoveriesUsed ||
-        JSON.stringify(desired.confirmedGates) !== JSON.stringify(current.confirmedGates) ||
-        desired.updatedAt !== current.updatedAt ||
-        desired.activeAgentId !== undefined ||
-        desired.pendingGateId !== undefined ||
-        desired.stopReason !== undefined ||
-        desired.failure !== undefined ||
-        messageTopicId !== current.topicId ||
-        desired.topicId !== current.topicId ||
-        input.message.actorId !== round.actorId ||
-        input.message.kind !== round.messageKind
-      ) {
-        throw new StoreConflictError("轮次已取消、过期或不符合原子提交状态转换。");
-      }
-      assertSameImmutableFields(current, desired);
-      const now = new Date(nowMs).toISOString();
-      const saved = this.#saveRun(current, desired, expectedVersion, now);
-      const message: CouncilPublicMessage = {
-        id: `message_${randomUUID()}`,
-        topicId: messageTopicId,
-        actorId: input.message.actorId,
-        kind: input.message.kind,
-        content,
-        createdAt: now,
-      };
-      this.#database
-        .prepare(`
-          INSERT INTO messages (
-            id, topic_id, author_actor_id, author_snapshot_json,
-            author_legacy, kind, content, parent_message_id, created_at
-          ) VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, ?)
-        `)
-        .run(
-          message.id,
-          message.topicId,
-          message.actorId,
-          actorSnapshotJson,
-          message.kind,
-          message.content,
-          message.createdAt,
-        );
-      this.#database
-        .prepare("UPDATE topics SET updated_at = ? WHERE id = ?")
-        .run(now, message.topicId);
-      return { run: saved, message };
-    });
+  async getRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return this.#runtimeBindings.get(bindingId);
+  }
+
+  async listRuntimeBindings(
+    input: ListRuntimeBindingsInput,
+  ): Promise<readonly RuntimeBinding[]> {
+    this.#assertTopicExists(input.topicId);
+    return this.#runtimeBindings.list(input);
+  }
+
+  async listOpenRuntimeBindings(): Promise<readonly RuntimeBinding[]> {
+    return this.#runtimeBindings.listOpen();
+  }
+
+  async getRuntimeBindingInvocationContext(
+    bindingId: string,
+    requestMessageId?: string,
+  ): Promise<RuntimeBindingInvocationContext> {
+    return await loadRuntimeBindingInvocationContext({
+      database: this.#database,
+      runtimeBindings: this.#runtimeBindings,
+      contextMessageLimit: this.#contextMessageLimit,
+      getTopicContext: async (topicId) => await this.getTopicContext(topicId),
+    }, bindingId, requestMessageId);
+  }
+
+  async claimRuntimeBindingLease(
+    input: ClaimRuntimeBindingLeaseInput,
+  ): Promise<RuntimeBindingLease> {
+    return this.#transaction(() => this.#runtimeBindings.claimLease(input));
+  }
+
+  async renewRuntimeBindingLease(
+    input: RenewRuntimeBindingLeaseInput,
+  ): Promise<RuntimeBindingLease> {
+    return this.#transaction(() => this.#runtimeBindings.renewLease(input));
+  }
+
+  async transitionRuntimeBinding(
+    input: TransitionRuntimeBindingInput,
+  ): Promise<RuntimeBinding> {
+    return this.#transaction(() => this.#runtimeBindings.transition(input));
+  }
+
+  async releaseRuntimeBindingLease(lease: RuntimeBindingLease): Promise<boolean> {
+    return this.#transaction(() => this.#runtimeBindings.releaseLease(lease));
+  }
+
+  async requestRuntimeBindingClose(
+    bindingId: string,
+    reason: string,
+  ): Promise<RuntimeBinding> {
+    return this.#transaction(() => this.#runtimeBindings.requestClose(bindingId, reason));
+  }
+
+  async finalizeRuntimeBindingClose(
+    input: FinalizeRuntimeBindingCloseInput,
+  ): Promise<RuntimeBinding> {
+    return this.#transaction(() => this.#runtimeBindings.finalizeClose(input));
+  }
+
+  async markRuntimeBindingsInterrupted(processInstanceId: string): Promise<number> {
+    return this.#transaction(() =>
+      this.#runtimeBindings.markInterrupted(processInstanceId)
+    );
+  }
+
+  async closeIdleRuntimeBindings(beforeIso: string): Promise<number> {
+    return this.#transaction(() => this.#runtimeBindings.closeIdle(beforeIso));
+  }
+
+  async commitRound(input: RoundCommitInput): Promise<RoundCommitResult> {
+    return this.#transaction(() =>
+      commitAtomicRound({
+        database: this.#database,
+        runtimeBindings: this.#runtimeBindings,
+        now: this.#now,
+        assertRunLease: (lease, nowMs) => {
+          this.#assertLease(lease, nowMs);
+        },
+        getRun: (runId) => this.#getRun(runId),
+        saveRun: (current, desired, expectedVersion, now) =>
+          this.#saveRun(current, desired, expectedVersion, now),
+        actorSnapshotJson: (actorId) => this.#actorSnapshotJson(actorId),
+      }, input)
+    );
   }
 
   async claimRunLease(input: ClaimRunLeaseInput): Promise<RunLease> {

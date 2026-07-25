@@ -1,7 +1,8 @@
 # Actor Identity v2 迁移
 
 Council schema v2 把固定作者枚举替换为可扩展的 Actor Identity。身份层只回答“谁发布了这条
-公开记录”，不保存 Provider 图标、品牌色、模型配置，也不负责维持 Agent 进程会话。
+公开记录”，不保存 Provider 图标、品牌色、模型配置，也不直接负责 RuntimeBinding、外部
+session 或 Agent 子进程生命周期；这些能力已经由后续运行时层实现。
 
 ## 领域模型
 
@@ -9,8 +10,9 @@ Council schema v2 把固定作者枚举替换为可扩展的 Actor Identity。�
 - `actor_aliases` 以大小写不敏感唯一键把 CLI、适配器或历史名称解析到 Actor。
 - Topic、Message、Decision 保存 Actor ID、写入时冻结的版本化快照和可选历史原值；读取时
   必须验证快照 `actorId` 与行索引 Actor 一致。
-- Agent session 使用独立行 ID 保存全部历史，并以 `is_current` 的部分唯一索引保证同一
-  Topic/Actor 只有一个当前会话；别名归并不得覆盖或删除旧 session。
+- schema v2 的兼容表 `agent_sessions` 使用独立行 ID 保存迁移前的历史会话，并以
+  `is_current` 的部分唯一索引保证同一 Topic/Actor 只有一个当前历史会话；别名归并不得
+  覆盖或删除旧记录。它不是 M3 的运行时 session 所有权表。
 - 新写入只能使用 `active` Actor 的 alias；未知、停用或 `needs_review` alias 失败关闭。
 - 冻结快照 schema v1 包含 `actorId`、`slug`、`displayName`、`shortName` 和 `role`。以后修改
   Actor 展示信息不会重写历史记录。
@@ -69,10 +71,22 @@ Node Agent Service 仍是唯一生产迁移所有者。升级顺序保持不变�
 
 所有自动化测试使用临时 SQLite。开发验证不会迁移或修改日常日志库。
 
-## 当前边界
+## 当前运行时边界
 
-本里程碑只交付身份与历史数据兼容：
+身份迁移本身只交付身份与历史数据兼容；后续 M3 已经增加 RuntimeBinding 生命周期：
 
-- Provider 官方图标、品牌资源和颜色属于后续展示层里程碑。
-- 同议题常驻 Claude/Codex 进程、session 生命周期和 idle TTL 属于后续运行时里程碑。
-- Provider 设置仍决定调用哪个运行时；Actor Identity 只决定公开记录归属。
+- `runtime_bindings` 以“议题 + Agent”保存逻辑绑定。同一议题/Agent 只允许一个未关闭绑定，
+  Claude 与 Codex 分别通过 CLI 的 resume 协议恢复该绑定持有的外部 session。
+- 首次调用发送完整公开上下文；成功提交后保存稳定消费游标，后续只发送公开增量。每个
+  human 请求还会以“议题 + Agent + 请求消息”写入独立逻辑账本，物理绑定被关闭或删除后
+  仍拒绝重复调用。
+- 活动 Claude/Codex 外部 session 只能归属一个 RuntimeBinding。跨议题返回相同 session
+  会使第二次原子提交失败，新绑定被中断并清除 session，不能让两个议题恢复同一上下文。
+- 绑定使用独立 lease/epoch fencing 保证串行执行。手动关闭、配置变更、接受议题决策或达到
+  配置项 `COUNCIL_RUNTIME_BINDING_IDLE_TIMEOUT_MS` 指定的 idle TTL 后会关闭；旧绑定和公开
+  讨论保留为审计记录。
+- 兼容 OpenAI 协议的远程 Provider 当前保持无状态，不保存可恢复 session。
+- 当前仍是“每轮一个可取消的 OS 子进程 + 逻辑 session resume”，不是一个长期常驻的
+  Claude/Codex 终端进程。常驻 OS 进程可作为未来的性能优化，但必须先解决进程所有权、
+  崩溃接管、取消、资源上限和跨版本恢复，不能把它误写成当前能力。
+- Provider 设置决定调用哪个运行时；Actor Identity 仍只决定公开记录归属。

@@ -214,12 +214,24 @@ test("content/orchestration revision 隔离且 lease 心跳不推进任何 revis
     assert.ok(afterContent.content > beforeContent.content);
     assert.equal(afterContent.orchestration, beforeContent.orchestration);
 
+    const binding = await store.ensureRuntimeBinding({
+      topicId: topic.id,
+      agentId: "claude",
+      actorId: "claude",
+      providerId: "provider-claude",
+      bindingRevision: "test-binding:fake:v1",
+      agentConfigRevision: 1,
+      providerConfigRevision: 1,
+      transportKind: "claude-resume",
+      processInstanceId: "revision-test",
+    });
     const run = await store.createRun({
       topicId: topic.id,
       plan: [{
         adapterId: "fake",
         actorId: "claude",
         bindingRevision: "test-binding:fake:v1",
+        runtimeBindingId: binding.id,
         messageKind: "proposal",
         instruction: "测试 revision",
       }],

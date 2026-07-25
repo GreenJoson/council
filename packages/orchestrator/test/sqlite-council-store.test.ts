@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 Council SQLite、两个 Store 连接与编排领域类型
- * @output 导出：v1 三类 other 映射/原子升级、v2 重启、CAS、lease、原子消息和损坏数据测试
+ * @output 导出：历史映射/原子升级、v6 持久会话、逻辑请求幂等、双 lease、CAS 和损坏数据测试
  * @pos    SQLiteCouncilStore 双连接 fencing 与安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,6 +18,7 @@ import {
   LeaseConflictError,
   LeaseLostError,
   ORCHESTRATION_SCHEMA_SQL,
+  RUNTIME_BINDING_SCHEMA_SQL,
   SQLiteCouncilStore,
   StoreConflictError,
 } from "../src/index.js";
@@ -27,6 +28,8 @@ import type {
   ActorId,
   RoundCommitInput,
   RunLease,
+  RuntimeBindingLease,
+  RuntimeTransportKind,
 } from "../src/types.js";
 
 const BUSY_TIMEOUT_MS = 5_000;
@@ -61,6 +64,22 @@ function createBaseDatabase(databasePath: string): void {
         parent_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE decisions (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        alternatives_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('proposed', 'accepted', 'rejected', 'superseded')
+        ),
+        created_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+        created_by_snapshot_json TEXT NOT NULL,
+        created_by_legacy TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE council_meta (
         key TEXT PRIMARY KEY,
         value INTEGER NOT NULL
@@ -82,6 +101,17 @@ function createBaseDatabase(databasePath: string): void {
         alias_kind TEXT NOT NULL CHECK (alias_kind IN ('canonical', 'legacy', 'adapter')),
         created_at TEXT NOT NULL
       );
+      CREATE TABLE provider_profiles (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL
+      );
+      CREATE TABLE agent_definitions (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL UNIQUE REFERENCES actor_identities(id),
+        provider_id TEXT NOT NULL REFERENCES provider_profiles(id),
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        deleted_at TEXT
+      );
       INSERT INTO council_meta (key, value) VALUES ('revision', 0);
       CREATE TRIGGER trg_topics_revision_update
         AFTER UPDATE ON topics BEGIN
@@ -93,6 +123,7 @@ function createBaseDatabase(databasePath: string): void {
         END;
     `);
     database.exec(ORCHESTRATION_SCHEMA_SQL);
+    database.exec(RUNTIME_BINDING_SCHEMA_SQL);
     const now = new Date().toISOString();
     const actorSeed = database.prepare(`
       INSERT INTO actor_identities (
@@ -124,6 +155,15 @@ function createBaseDatabase(databasePath: string): void {
         aliasSeed.run(actor[0], actor[0], now);
       }
     }
+    database.prepare(`
+      INSERT INTO provider_profiles (id, status)
+      VALUES ('provider_test', 'active')
+    `).run();
+    database.prepare(`
+      INSERT INTO agent_definitions (
+        id, actor_id, provider_id, enabled, deleted_at
+      ) VALUES ('alpha', 'claude', 'provider_test', 1, NULL)
+    `).run();
     const humanSnapshot = JSON.stringify({
       schemaVersion: 1,
       actorId: "human",
@@ -150,6 +190,19 @@ function createBaseDatabase(databasePath: string): void {
         now,
         now,
       );
+    database.prepare(`
+      INSERT INTO runtime_bindings (
+        id, topic_id, agent_id, actor_id, provider_id, binding_revision,
+        agent_config_revision, provider_config_revision, project_path,
+        transport_kind, session_id, cursor_created_at, cursor_message_id,
+        status, state_version, epoch, process_instance_id, last_activity_at,
+        close_reason, created_at, updated_at, closed_at
+      ) VALUES (
+        'binding_alpha', ?, 'alpha', 'claude', 'provider_test',
+        'test-binding:alpha:v1', 1, 1, ?, 'openai-sessionless',
+        NULL, NULL, NULL, 'idle', 1, 0, NULL, ?, NULL, ?, ?, NULL
+      )
+    `).run(TOPIC_ID, path.dirname(databasePath), now, now, now);
   } finally {
     database.close();
   }
@@ -175,8 +228,9 @@ function createInput(options?: {
     topicId: TOPIC_ID,
     plan: Array.from({ length: rounds }, (_value, index) => ({
       adapterId: "alpha",
-      actorId: index % 2 === 0 ? "claude" : "codex",
+      actorId: "claude",
       bindingRevision: "test-binding:alpha:v1",
+      runtimeBindingId: "binding_alpha",
       messageKind: index % 2 === 0 ? "proposal" : "critique",
       instruction: `执行第 ${String(index + 1)} 轮`,
     })),
@@ -199,6 +253,8 @@ interface LegacyRunRound {
   adapterId: string;
   actorId?: string;
   bindingRevision?: string;
+  runtimeBindingId?: string;
+  requestMessageId?: string;
   publicAuthor?: string;
   messageKind: string;
   instruction: string;
@@ -226,6 +282,8 @@ function convertRunToV1(
     snapshot.plan = snapshot.plan.map(({
       actorId: _actorId,
       bindingRevision: _bindingRevision,
+      runtimeBindingId: _runtimeBindingId,
+      requestMessageId: _requestMessageId,
       ...round
     }) => ({
       ...round,
@@ -261,6 +319,8 @@ function convertRunToV2WithoutBindingRevision(
     };
     snapshot.plan = snapshot.plan.map(({
       bindingRevision: _bindingRevision,
+      runtimeBindingId: _runtimeBindingId,
+      requestMessageId: _requestMessageId,
       ...round
     }) => round);
     database.prepare(`
@@ -303,11 +363,55 @@ async function moveToWaitingAgent(
   );
 }
 
-function nextRoundCommit(waiting: OrchestrationRun, lease: RunLease): RoundCommitInput {
+async function prepareBindingLease(
+  store: SQLiteCouncilStore,
+  waiting: OrchestrationRun,
+  transportKind: RuntimeTransportKind = "openai-sessionless",
+): Promise<RuntimeBindingLease> {
+  const round = waiting.plan[waiting.nextRoundIndex];
+  if (!round?.runtimeBindingId || !round.bindingRevision) {
+    throw new Error("测试轮次缺少 RuntimeBinding 冻结字段。");
+  }
+  const ensured = await store.ensureRuntimeBinding({
+    topicId: waiting.topicId,
+    agentId: round.adapterId,
+    actorId: round.actorId,
+    providerId: "provider_test",
+    bindingRevision: round.bindingRevision,
+    agentConfigRevision: 1,
+    providerConfigRevision: 1,
+    transportKind,
+    processInstanceId: "test-process",
+  });
+  assert.equal(ensured.id, round.runtimeBindingId);
+  const bindingLease = await store.claimRuntimeBindingLease({
+    bindingId: ensured.id,
+    ownerId: `run:${waiting.id}`,
+    ttlMs: 60_000,
+    processInstanceId: "test-process",
+  });
+  const claimed = await store.getRuntimeBinding(ensured.id);
+  await store.transitionRuntimeBinding({
+    lease: bindingLease,
+    expectedStateVersion: claimed.stateVersion,
+    status: "thinking",
+    processInstanceId: "test-process",
+  });
+  return bindingLease;
+}
+
+function nextRoundCommit(
+  waiting: OrchestrationRun,
+  lease: RunLease,
+  bindingLease: RuntimeBindingLease,
+  consumedCursor?: RoundCommitInput["consumedCursor"],
+): RoundCommitInput {
   const { activeAgentId: _activeAgentId, ...stable } = waiting;
   return {
     expectedVersion: waiting.version,
     lease,
+    bindingLease,
+    ...(consumedCursor ? { consumedCursor } : {}),
     run: {
       ...stable,
       status: "running",
@@ -392,7 +496,7 @@ test("运行快照可在 Store 重启后严格读取且状态变化推进 revisi
       const row = raw.prepare(
         "SELECT snapshot_schema_version FROM orchestration_runs WHERE id = ?",
       ).get(created.id) as unknown as { snapshot_schema_version: unknown };
-      assert.equal(row.snapshot_schema_version, 3);
+      assert.equal(row.snapshot_schema_version, 4);
     } finally {
       raw.close();
     }
@@ -643,7 +747,8 @@ test("取消先提交后迟到轮次不能写入公开消息", async () => {
         ownerId: "cancel-test",
         ttlMs: 60_000,
       });
-      const staleCommit = nextRoundCommit(waiting, lease);
+      const bindingLease = await prepareBindingLease(cancelling, waiting);
+      const staleCommit = nextRoundCommit(waiting, lease, bindingLease);
       const revisionBeforeCancel = getRevision(databasePath);
       const cancelled = await cancelling.cancelRun(created.id);
       assert.equal(cancelled.status, "cancelled");
@@ -700,7 +805,8 @@ test("Store 拒绝超长 Agent 消息且运行和消息保持原子不变", asyn
         ownerId: "oversize-message",
         ttlMs: 60_000,
       });
-      const commit = nextRoundCommit(waiting, lease);
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const commit = nextRoundCommit(waiting, lease, bindingLease);
       commit.message.content = "x".repeat(30_001);
 
       await assert.rejects(store.commitRound(commit), InvalidRunStateError);
@@ -725,7 +831,8 @@ test("双连接竞争轮次时只有一个原子提交消息和运行", async ()
         ownerId: "commit-test",
         ttlMs: 60_000,
       });
-      const commit = nextRoundCommit(waiting, lease);
+      const bindingLease = await prepareBindingLease(first, waiting);
+      const commit = nextRoundCommit(waiting, lease, bindingLease);
       const revisionBeforeCommit = getRevision(databasePath);
       const results = await Promise.allSettled([
         first.commitRound(commit),
@@ -759,10 +866,11 @@ test("未注册 Actor 在进入 SQLite 前被拒绝", async () => {
         ownerId: "author-test",
         ttlMs: 60_000,
       });
-      const commit = nextRoundCommit(waiting, lease);
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const commit = nextRoundCommit(waiting, lease, bindingLease);
       const invalidActorId: unknown = "custom-runtime";
       commit.message.actorId = invalidActorId as ActorId;
-      await assert.rejects(store.commitRound(commit), InvalidRunStateError);
+      await assert.rejects(store.commitRound(commit), StoreConflictError);
       assert.equal(countRows(databasePath, "messages"), 0);
     } finally {
       store.close();
@@ -833,12 +941,23 @@ test("消息插入失败会回滚同一事务内的运行 CAS", async () => {
         raw.close();
       }
 
-      await assert.rejects(store.commitRound(nextRoundCommit(waiting, lease)));
+      const bindingLease = await prepareBindingLease(store, waiting);
+      await assert.rejects(
+        store.commitRound(nextRoundCommit(waiting, lease, bindingLease)),
+      );
       const persisted = await store.getRun(created.id);
       assert.equal(persisted.status, "waiting_agent");
       assert.equal(persisted.version, waiting.version);
       assert.equal(persisted.nextRoundIndex, 0);
       assert.equal(countRows(databasePath, "messages"), 0);
+      const binding = await store.getRuntimeBinding(bindingLease.bindingId);
+      assert.equal(binding.status, "thinking");
+      assert.equal(binding.cursor, undefined);
+      const renewed = await store.renewRuntimeBindingLease({
+        lease: bindingLease,
+        ttlMs: 60_000,
+      });
+      assert.equal(renewed.epoch, bindingLease.epoch);
     } finally {
       store.close();
     }
@@ -903,11 +1022,14 @@ test("过期 lease 接管递增 epoch 并拒绝旧 token 的迟到提交", async
       });
       assert.equal(currentLease.epoch, oldLease.epoch + 1);
       assert.notEqual(currentLease.token, oldLease.token);
+      const bindingLease = await prepareBindingLease(second, waiting);
       await assert.rejects(
-        first.commitRound(nextRoundCommit(waiting, oldLease)),
+        first.commitRound(nextRoundCommit(waiting, oldLease, bindingLease)),
         LeaseLostError,
       );
-      const committed = await second.commitRound(nextRoundCommit(waiting, currentLease));
+      const committed = await second.commitRound(
+        nextRoundCommit(waiting, currentLease, bindingLease),
+      );
       assert.equal(committed.run.nextRoundIndex, 1);
       assert.equal(countRows(databasePath, "messages"), 1);
     } finally {
@@ -1016,7 +1138,8 @@ test("commitRound 绑定当前计划作者和类型并拒绝偷改运行字段",
         ownerId: "strict-commit",
         ttlMs: 60_000,
       });
-      const base = nextRoundCommit(waiting, lease);
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const base = nextRoundCommit(waiting, lease, bindingLease);
       await assert.rejects(
         store.commitRound({ ...base, message: { ...base.message, actorId: "codex" } }),
         StoreConflictError,
@@ -1045,6 +1168,427 @@ test("commitRound 绑定当前计划作者和类型并拒绝偷改运行字段",
       );
       assert.equal(countRows(databasePath, "messages"), 0);
       assert.deepEqual(await store.getRun(waiting.id), waiting);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("accepted INSERT 会关闭议题全部 RuntimeBinding 并删除 lease", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const binding = await store.getRuntimeBinding("binding_alpha");
+      const lease = await store.claimRuntimeBindingLease({
+        bindingId: binding.id,
+        ownerId: "accepted-insert",
+        ttlMs: 60_000,
+        processInstanceId: "test-process",
+      });
+      const now = new Date().toISOString();
+      const database = new DatabaseSync(databasePath);
+      try {
+        database.prepare(`
+          INSERT INTO decisions (
+            id, topic_id, title, decision, rationale, alternatives_json,
+            status, created_by_actor_id, created_by_snapshot_json,
+            created_by_legacy, created_at, updated_at
+          ) VALUES (
+            'decision_accepted_insert', ?, '结束议题', '接受方案', '测试触发器',
+            '[]', 'accepted', 'human', ?, NULL, ?, ?
+          )
+        `).run(
+          TOPIC_ID,
+          JSON.stringify({ schemaVersion: 1, actorId: "human" }),
+          now,
+          now,
+        );
+      } finally {
+        database.close();
+      }
+
+      const closing = await store.getRuntimeBinding(binding.id);
+      assert.equal(closing.status, "closing");
+      assert.equal(closing.closeReason, "decision-accepted");
+      assert.equal(closing.epoch, lease.epoch + 1);
+      await assert.rejects(
+        store.renewRuntimeBindingLease({ lease, ttlMs: 60_000 }),
+        LeaseLostError,
+      );
+      assert.equal(await store.closeIdleRuntimeBindings(now), 1);
+      assert.equal((await store.getRuntimeBinding(binding.id)).status, "closed");
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("空闲超时只原子关闭到期的 idle RuntimeBinding", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const closedCount = await store.closeIdleRuntimeBindings(
+        new Date(Date.now() + 60_000).toISOString(),
+      );
+      assert.equal(closedCount, 1);
+      const binding = await store.getRuntimeBinding("binding_alpha");
+      assert.equal(binding.status, "closed");
+      assert.equal(binding.closeReason, "idle-timeout");
+      assert.ok(binding.closedAt);
+      assert.equal(await store.closeIdleRuntimeBindings(
+        new Date(Date.now() + 120_000).toISOString(),
+      ), 0);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("accepted UPDATE 会 fencing 活动调用且迟到回复零写", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const created = await store.createRun(createInput());
+      const waiting = await moveToWaitingAgent(store, created);
+      const runLease = await store.claimRunLease({
+        runId: waiting.id,
+        ownerId: "accepted-update",
+        ttlMs: 60_000,
+      });
+      const bindingLease = await prepareBindingLease(store, waiting);
+      const now = new Date().toISOString();
+      const database = new DatabaseSync(databasePath);
+      try {
+        database.prepare(`
+          INSERT INTO decisions (
+            id, topic_id, title, decision, rationale, alternatives_json,
+            status, created_by_actor_id, created_by_snapshot_json,
+            created_by_legacy, created_at, updated_at
+          ) VALUES (
+            'decision_accepted_update', ?, '候选决策', '待确认', '测试触发器',
+            '[]', 'proposed', 'human', ?, NULL, ?, ?
+          )
+        `).run(
+          TOPIC_ID,
+          JSON.stringify({ schemaVersion: 1, actorId: "human" }),
+          now,
+          now,
+        );
+        database.prepare(`
+          UPDATE decisions
+          SET status = 'accepted', updated_at = ?
+          WHERE id = 'decision_accepted_update'
+        `).run(new Date(Date.parse(now) + 1).toISOString());
+      } finally {
+        database.close();
+      }
+
+      const closing = await store.getRuntimeBinding(bindingLease.bindingId);
+      assert.equal(closing.status, "closing");
+      assert.equal(closing.closeReason, "decision-accepted");
+      await assert.rejects(
+        store.commitRound(nextRoundCommit(waiting, runLease, bindingLease)),
+        LeaseLostError,
+      );
+      assert.equal(countRows(databasePath, "messages"), 0);
+      assert.deepEqual(await store.getRun(waiting.id), waiting);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("RuntimeBinding 首轮全上下文，后续只读取稳定游标增量和当前 human 请求", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const database = new DatabaseSync(databasePath);
+      const humanSnapshot = JSON.stringify({
+        schemaVersion: 1,
+        actorId: "human",
+        slug: "human",
+        displayName: "User",
+        shortName: "U",
+        role: "决策者",
+      });
+      try {
+        database.prepare(`
+          UPDATE runtime_bindings
+          SET transport_kind = 'claude-resume'
+          WHERE id = 'binding_alpha'
+        `).run();
+        database.prepare(`
+          INSERT INTO messages (
+            id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+            kind, content, parent_message_id, created_at
+          ) VALUES (
+            'message_initial_request', ?, 'human', ?, NULL,
+            'note', '首轮请求', NULL, ?
+          )
+        `).run(TOPIC_ID, humanSnapshot, new Date(Date.now() - 10_000).toISOString());
+      } finally {
+        database.close();
+      }
+      const initial = await store.getRuntimeBindingInvocationContext(
+        "binding_alpha",
+        "message_initial_request",
+      );
+      assert.equal(initial.firstTurn, true);
+      assert.ok(initial.topic.messages.some((message) =>
+        message.id === "message_initial_request"
+      ));
+      assert.ok(initial.consumedCursor);
+
+      const duringCall = new Date(Date.parse(initial.consumedCursor.createdAt) + 1).toISOString();
+      const duringCallDatabase = new DatabaseSync(databasePath);
+      try {
+        duringCallDatabase.prepare(`
+          INSERT INTO messages (
+            id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+            kind, content, parent_message_id, created_at
+          ) VALUES ('message_during_call', ?, 'human', ?, NULL, 'note', ?, NULL, ?)
+        `).run(TOPIC_ID, humanSnapshot, "调用执行期间到达的新请求", duringCall);
+      } finally {
+        duringCallDatabase.close();
+      }
+
+      const runInput = createInput();
+      runInput.plan = runInput.plan.map((round) => ({
+        ...round,
+        requestMessageId: "message_initial_request",
+      }));
+      const created = await store.createRun(runInput);
+      const waiting = await moveToWaitingAgent(store, created);
+      const runLease = await store.claimRunLease({
+        runId: waiting.id,
+        ownerId: "cursor-test",
+        ttlMs: 60_000,
+      });
+      const bindingLease = await prepareBindingLease(store, waiting, "claude-resume");
+      const committed = await store.commitRound(
+        {
+          ...nextRoundCommit(waiting, runLease, bindingLease, initial.consumedCursor),
+          bindingSessionId: "session_cursor_test",
+        },
+      );
+      const committedBinding = await store.getRuntimeBinding(bindingLease.bindingId);
+      assert.deepEqual(committedBinding.cursor, initial.consumedCursor);
+
+      const later = new Date(Date.parse(committed.message.createdAt) + 1).toISOString();
+      const laterDatabase = new DatabaseSync(databasePath);
+      try {
+        const insert = laterDatabase.prepare(`
+          INSERT INTO messages (
+            id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+            kind, content, parent_message_id, created_at
+          ) VALUES (?, ?, 'human', ?, NULL, 'note', ?, NULL, ?)
+        `);
+        insert.run("message_delta_a", TOPIC_ID, humanSnapshot, "增量 A", later);
+        insert.run("message_delta_b", TOPIC_ID, humanSnapshot, "增量 B", later);
+      } finally {
+        laterDatabase.close();
+      }
+
+      const delta = await store.getRuntimeBindingInvocationContext(
+        bindingLease.bindingId,
+        "message_delta_b",
+      );
+      assert.equal(delta.firstTurn, false);
+      assert.ok(delta.topic.messages.some((message) => message.id === "message_during_call"));
+      assert.ok(delta.topic.messages.some((message) => message.id === "message_delta_b"));
+      await assert.rejects(
+        store.getRuntimeBindingInvocationContext(
+          bindingLease.bindingId,
+          "message_initial_request",
+        ),
+        InvalidRunStateError,
+      );
+
+      const crashedLease = await store.claimRuntimeBindingLease({
+        bindingId: bindingLease.bindingId,
+        ownerId: "crashed-worker",
+        ttlMs: 60_000,
+        processInstanceId: "crashed-process",
+      });
+      const beforeCrash = await store.getRuntimeBinding(bindingLease.bindingId);
+      await store.transitionRuntimeBinding({
+        lease: crashedLease,
+        expectedStateVersion: beforeCrash.stateVersion,
+        status: "thinking",
+        processInstanceId: "crashed-process",
+      });
+      assert.equal(await store.markRuntimeBindingsInterrupted("restarted-process"), 1);
+      const afterRestart = await store.getRuntimeBinding(bindingLease.bindingId);
+      assert.equal(afterRestart.status, "interrupted");
+      assert.equal(afterRestart.sessionId, "session_cursor_test");
+      assert.deepEqual(afterRestart.cursor, initial.consumedCursor);
+      const restartContext = await store.getRuntimeBindingInvocationContext(
+        bindingLease.bindingId,
+        "message_delta_b",
+      );
+      assert.equal(restartContext.firstTurn, false);
+
+      const resetLease = await store.claimRuntimeBindingLease({
+        bindingId: bindingLease.bindingId,
+        ownerId: "session-reset-test",
+        ttlMs: 60_000,
+        processInstanceId: "test-process",
+      });
+      const beforeReset = await store.getRuntimeBinding(bindingLease.bindingId);
+      const reset = await store.transitionRuntimeBinding({
+        lease: resetLease,
+        expectedStateVersion: beforeReset.stateVersion,
+        status: "interrupted",
+        clearSession: true,
+        processInstanceId: "test-process",
+      });
+      assert.equal(reset.sessionId, undefined);
+      assert.equal(reset.cursor, undefined);
+      const afterReset = await store.getRuntimeBindingInvocationContext(
+        bindingLease.bindingId,
+        "message_delta_b",
+      );
+      assert.equal(afterReset.firstTurn, true);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("逻辑请求账本跨 RuntimeBinding 关闭、删除和配置变更仍拒绝重复 human 请求", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = new DatabaseSync(databasePath);
+    const humanSnapshot = JSON.stringify({
+      schemaVersion: 1,
+      actorId: "human",
+      slug: "human",
+      displayName: "User",
+      shortName: "U",
+      role: "决策者",
+    });
+    try {
+      database.prepare(`
+        INSERT INTO messages (
+          id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+          kind, content, parent_message_id, created_at
+        ) VALUES ('message_sessionless_request', ?, 'human', ?, NULL, 'note', ?, NULL, ?)
+      `).run(TOPIC_ID, humanSnapshot, "只允许成功消费一次", new Date().toISOString());
+    } finally {
+      database.close();
+    }
+
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const context = await store.getRuntimeBindingInvocationContext(
+        "binding_alpha",
+        "message_sessionless_request",
+      );
+      const input = createInput();
+      input.plan = input.plan.map((round) => ({
+        ...round,
+        requestMessageId: "message_sessionless_request",
+      }));
+      const waiting = await moveToWaitingAgent(store, await store.createRun(input));
+      const runLease = await store.claimRunLease({
+        runId: waiting.id,
+        ownerId: "sessionless-idempotency",
+        ttlMs: 60_000,
+      });
+      const bindingLease = await prepareBindingLease(store, waiting);
+      await store.commitRound(
+        nextRoundCommit(waiting, runLease, bindingLease, context.consumedCursor),
+      );
+
+      await assert.rejects(
+        store.getRuntimeBindingInvocationContext(
+          bindingLease.bindingId,
+          "message_sessionless_request",
+        ),
+        InvalidRunStateError,
+      );
+      const closing = await store.requestRuntimeBindingClose(
+        bindingLease.bindingId,
+        "test-logical-ledger",
+      );
+      await store.finalizeRuntimeBindingClose({
+        bindingId: closing.id,
+        expectedStateVersion: closing.stateVersion,
+        closeReason: "test-logical-ledger",
+      });
+      const inspection = new DatabaseSync(databasePath);
+      try {
+        inspection.prepare("DELETE FROM runtime_bindings WHERE id = ?")
+          .run(bindingLease.bindingId);
+        const ledger = inspection.prepare(`
+          SELECT topic_id, agent_id, request_message_id
+          FROM runtime_binding_requests
+          WHERE topic_id = ? AND agent_id = ? AND request_message_id = ?
+        `).get(TOPIC_ID, "alpha", "message_sessionless_request") as unknown as
+          | { topic_id: unknown; agent_id: unknown; request_message_id: unknown }
+          | undefined;
+        assert.deepEqual({ ...ledger }, {
+          topic_id: TOPIC_ID,
+          agent_id: "alpha",
+          request_message_id: "message_sessionless_request",
+        });
+      } finally {
+        inspection.close();
+      }
+      const replacement = await store.ensureRuntimeBinding({
+        topicId: TOPIC_ID,
+        agentId: "alpha",
+        actorId: "claude",
+        providerId: "provider_test",
+        bindingRevision: "test-binding:alpha:v2",
+        agentConfigRevision: 2,
+        providerConfigRevision: 1,
+        transportKind: "openai-sessionless",
+        processInstanceId: "replacement-process",
+      });
+      assert.notEqual(replacement.id, bindingLease.bindingId);
+      await assert.rejects(
+        store.getRuntimeBindingInvocationContext(
+          replacement.id,
+          "message_sessionless_request",
+        ),
+        InvalidRunStateError,
+      );
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("已决议题拒绝新 Run 与 RuntimeBinding 创建或重开", async () => {
+  await withDatabase(async (databasePath) => {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare(`
+        UPDATE runtime_bindings
+        SET status = 'closed', closed_at = updated_at
+        WHERE id = 'binding_alpha'
+      `).run();
+      database.prepare("UPDATE topics SET status = 'decided' WHERE id = ?").run(TOPIC_ID);
+    } finally {
+      database.close();
+    }
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      await assert.rejects(store.createRun(createInput()), StoreConflictError);
+      await assert.rejects(
+        store.ensureRuntimeBinding({
+          topicId: TOPIC_ID,
+          agentId: "alpha",
+          actorId: "claude",
+          providerId: "provider_test",
+          bindingRevision: "test-binding:alpha:v1",
+          agentConfigRevision: 1,
+          providerConfigRevision: 1,
+          transportKind: "claude-resume",
+          processInstanceId: "test-process",
+        }),
+        StoreConflictError,
+      );
     } finally {
       store.close();
     }

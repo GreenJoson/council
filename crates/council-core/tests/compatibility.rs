@@ -1,5 +1,5 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3→v5 数据库、动态 Actor、分页、revision 与版本拒绝兼容性测试
+//! @output 导出：Node fresh/v2/v3/v5→v6、RuntimeBinding/逻辑请求唯一 schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -155,6 +155,86 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
     assert_eq!(page.count, 1);
     assert_eq!(page.topics[0].id, topic.id);
     assert!(!page.has_more);
+}
+
+#[test]
+fn opens_node_v6_runtime_binding_schema_and_preserves_cross_language_identity() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("node-v6.sqlite3");
+    prepare_node_schema(&database_path);
+    let raw = Connection::open(&database_path).expect("inspection connection");
+    let (user_version, binding_tables, binding_triggers): (i64, i64, i64) = (
+        raw.query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user version"),
+        raw.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table'
+               AND name IN (
+                 'runtime_bindings',
+                 'runtime_binding_leases',
+                 'runtime_binding_requests'
+               )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("binding tables"),
+        raw.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger' AND name LIKE 'trg_%runtime_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("binding triggers"),
+    );
+    assert_eq!(user_version, 6);
+    assert_eq!(binding_tables, 3);
+    assert_eq!(binding_triggers, 5);
+    drop(raw);
+
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v6");
+    let topic = store
+        .create_topic(topic_input(
+            "Node v6 到 Rust",
+            "/workspace/project-alpha",
+            HUMAN_ALIAS,
+        ))
+        .expect("Rust write");
+    let raw = Connection::open(&database_path).expect("Node-compatible read");
+    let (actor_id, snapshot_actor_id): (String, String) = raw
+        .query_row(
+            "SELECT created_by_actor_id,
+                    json_extract(created_by_snapshot_json, '$.actorId')
+             FROM topics WHERE id = ?1",
+            [&topic.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read Rust write");
+    assert_eq!(actor_id, "human");
+    assert_eq!(snapshot_actor_id, "human");
+}
+
+#[test]
+fn rejects_runtime_request_ledger_without_logical_uniqueness() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("invalid-request-ledger.sqlite3");
+    prepare_node_schema(&database_path);
+    Connection::open(&database_path)
+        .expect("inspection connection")
+        .execute_batch(
+            "DROP TABLE runtime_binding_requests;
+             CREATE TABLE runtime_binding_requests (
+               topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+               agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
+               request_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+               consumed_at TEXT NOT NULL
+             );",
+        )
+        .expect("corrupt logical request ledger");
+
+    assert!(matches!(
+        CouncilStore::open(&database_path, 5_000),
+        Err(CouncilError::InvalidData(_))
+    ));
 }
 
 #[test]
@@ -350,14 +430,14 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    assert_eq!(trigger_count, 12);
+    assert_eq!(trigger_count, 15);
 }
 
 #[test]
-fn opens_fresh_v2_and_v3_migrated_databases_created_by_node() {
+fn opens_fresh_v2_v3_and_v5_migrated_databases_created_by_node() {
     let directory = tempdir().expect("temp directory");
 
-    for mode in ["fresh", "v2-migrated", "v3-migrated"] {
+    for mode in ["fresh", "v2-migrated", "v3-migrated", "v5-migrated"] {
         let database_path = directory.path().join(format!("{mode}.sqlite3"));
         prepare_node_schema_with_mode(&database_path, mode);
         CouncilStore::open(&database_path, 5_000)
@@ -366,11 +446,11 @@ fn opens_fresh_v2_and_v3_migrated_databases_created_by_node() {
 }
 
 #[test]
-fn reads_v3_to_v5_dynamic_kimi_rebinding_created_by_node() {
+fn reads_v3_to_v6_dynamic_kimi_rebinding_created_by_node() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("v3-migrated.sqlite3");
     prepare_node_schema_with_mode(&database_path, "v3-migrated");
-    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v5 database");
+    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v6 database");
 
     let raw = Connection::open(&database_path).expect("inspection connection");
     let (actor_id, mention_alias, config_revision): (String, String, i64) = raw
@@ -431,8 +511,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (6, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 6;",
+             VALUES (7, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 7;",
         )
         .expect("future schema fixture");
     assert!(matches!(

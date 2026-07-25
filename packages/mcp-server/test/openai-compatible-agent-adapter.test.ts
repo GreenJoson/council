@@ -63,6 +63,8 @@ function invocation(): AgentInvocation {
     attempt: 1,
     adapterId: "remote-test",
     actorId: "deepseek",
+    runtimeBindingId: "binding_remote_test",
+    firstTurn: true,
     instruction: "给出可验证结论。",
     messageKind: "proposal",
     context: {

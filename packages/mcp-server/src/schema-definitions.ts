@@ -1,10 +1,12 @@
 /**
- * @input  依赖：无
- * @output 导出：Council v1-v3 required objects、冻结 DDL 与 canonical schema 常量
+ * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
+ * @output 导出：Council v1-v6 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+export { RUNTIME_BINDING_SCHEMA_SQL } from "council-orchestrator";
 
 export const REQUIRED_TABLES = [
   "topics",
@@ -18,6 +20,9 @@ export const REQUIRED_TABLES = [
   "brand_assets",
   "provider_profiles",
   "agent_definitions",
+  "runtime_bindings",
+  "runtime_binding_leases",
+  "runtime_binding_requests",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -34,6 +39,11 @@ export const REQUIRED_INDEXES = [
   "idx_agent_definitions_provider",
   "idx_agent_definitions_enabled_alias",
   "idx_agent_sessions_current",
+  "idx_runtime_bindings_topic_status",
+  "idx_runtime_bindings_idle",
+  "idx_runtime_bindings_one_open_agent",
+  "idx_runtime_bindings_active_session",
+  "idx_runtime_binding_leases_expiry",
   "idx_orchestration_runs_topic_updated",
   "idx_orchestration_runs_status_updated",
   "idx_orchestration_runs_one_active_topic",
@@ -97,6 +107,26 @@ export const FROZEN_LEGACY_V1_SCHEMA_SHA256 =
   "58ca9009ad42908be3d17391134f30650681d06d39b471a0921c08f57f409228";
 
 export const REQUIRED_REVISION_TRIGGERS = [
+  "trg_topics_revision_insert",
+  "trg_topics_revision_update",
+  "trg_topics_revision_delete",
+  "trg_messages_revision_insert",
+  "trg_messages_revision_update",
+  "trg_messages_revision_delete",
+  "trg_decisions_revision_insert",
+  "trg_decisions_revision_update",
+  "trg_decisions_revision_delete",
+  "trg_orchestration_runs_revision_insert",
+  "trg_orchestration_runs_revision_update",
+  "trg_orchestration_runs_revision_delete",
+  "trg_runtime_bindings_revision_insert",
+  "trg_runtime_bindings_revision_update",
+  "trg_runtime_bindings_revision_delete",
+  "trg_decisions_runtime_close_insert",
+  "trg_decisions_runtime_close_update",
+] as const;
+
+export const LEGACY_REQUIRED_REVISION_TRIGGERS = [
   "trg_topics_revision_insert",
   "trg_topics_revision_update",
   "trg_topics_revision_delete",

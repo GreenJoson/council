@@ -5,9 +5,9 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `constants.ts` | 协议 | 定义状态、公开作者、消息类型、失败原因和安全边界 |
-| `types.ts` | 模型 | 定义计划、状态候选分页、幂等批准、lease、运行快照和 Agent 输入输出 |
-| `ports.ts` | 边界 | 隔离消息传播、状态恢复查询、lease fencing 与 Agent 主动触发 |
+| `types.ts` | 模型 | 定义计划、RuntimeBinding、双 lease、状态分页、运行快照和带 session 的 Agent 输入输出 |
+| `ports.ts` | 边界 | 隔离消息传播、运行/绑定恢复查询、双 lease fencing 与 Agent 主动触发 |
 | `errors.ts` | 错误 | 提供可判定的配置、状态、冲突、lease、超时和调用错误；适配器只能通过显式 `publicMessage` 公开脱敏原因 |
-| `orchestrator.ts` | 核心 | 分离 begin/drive，执行 cleanup 屏障、人工门、取消和恢复；失败快照仅透传显式安全原因 |
+| `orchestrator.ts` | 核心 | 分离 begin/drive，执行双 lease、session 恢复、cleanup 屏障、人工门、取消和恢复 |
 | `index.ts` | 入口 | 汇总导出公开 API 及供 Node 单一迁移器消费的编排 schema 契约 |
-| `sqlite/` | 持久化 | 实现事务、CAS、单活动 run、lease fencing 和严格快照读取 |
+| `sqlite/` | 持久化 | 实现事务、CAS、单活动 run、RuntimeBinding、双 lease fencing 和稳定公开游标 |

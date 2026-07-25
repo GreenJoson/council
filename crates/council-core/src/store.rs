@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v5 Actor/Model Router SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v5 schema、查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v6 Actor/Model Router/RuntimeBinding SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v6 逻辑请求/session 唯一 schema、查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,7 +18,7 @@ use crate::types::{
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 5;
+const SUPPORTED_SCHEMA_VERSION: i64 = 6;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -31,6 +31,9 @@ const REQUIRED_TABLES: &[&str] = &[
     "brand_assets",
     "provider_profiles",
     "agent_definitions",
+    "runtime_bindings",
+    "runtime_binding_leases",
+    "runtime_binding_requests",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -43,6 +46,11 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_provider_profiles_status_slug",
     "idx_agent_definitions_provider",
     "idx_agent_definitions_enabled_alias",
+    "idx_runtime_bindings_topic_status",
+    "idx_runtime_bindings_idle",
+    "idx_runtime_bindings_one_open_agent",
+    "idx_runtime_bindings_active_session",
+    "idx_runtime_binding_leases_expiry",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_topics_revision_insert",
@@ -54,6 +62,11 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_decisions_revision_insert",
     "trg_decisions_revision_update",
     "trg_decisions_revision_delete",
+    "trg_runtime_bindings_revision_insert",
+    "trg_runtime_bindings_revision_update",
+    "trg_runtime_bindings_revision_delete",
+    "trg_decisions_runtime_close_insert",
+    "trg_decisions_runtime_close_update",
 ];
 const TOPIC_COLUMNS: &[&str] = &[
     "id",
@@ -142,6 +155,40 @@ const AGENT_DEFINITION_COLUMNS: &[&str] = &[
     "updated_at",
     "config_revision",
 ];
+const RUNTIME_BINDING_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "agent_id",
+    "actor_id",
+    "provider_id",
+    "binding_revision",
+    "agent_config_revision",
+    "provider_config_revision",
+    "project_path",
+    "transport_kind",
+    "session_id",
+    "cursor_created_at",
+    "cursor_message_id",
+    "status",
+    "state_version",
+    "epoch",
+    "process_instance_id",
+    "last_activity_at",
+    "close_reason",
+    "created_at",
+    "updated_at",
+    "closed_at",
+];
+const RUNTIME_BINDING_LEASE_COLUMNS: &[&str] = &[
+    "binding_id",
+    "owner_id",
+    "lease_token",
+    "epoch",
+    "expires_at_ms",
+    "updated_at",
+];
+const RUNTIME_BINDING_REQUEST_COLUMNS: &[&str] =
+    &["topic_id", "agent_id", "request_message_id", "consumed_at"];
 
 fn assert_schema_objects(
     connection: &Connection,
@@ -242,6 +289,25 @@ fn assert_index_columns(
     Ok(())
 }
 
+fn assert_index_sql_contains(
+    connection: &Connection,
+    index: &str,
+    required_fragment: &str,
+) -> CouncilResult<()> {
+    let sql: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        [index],
+        |row| row.get(0),
+    )?;
+    let canonical = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !canonical.contains(required_fragment) {
+        return Err(CouncilError::InvalidData(format!(
+            "Council SQLite 索引 {index} 缺少 canonical 约束。"
+        )));
+    }
+    Ok(())
+}
+
 fn read_database_instance_id(connection: &Connection) -> CouncilResult<String> {
     let mut statement =
         connection.prepare("SELECT instance_id FROM council_identity WHERE singleton = 1")?;
@@ -296,6 +362,17 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_table_columns(connection, "brand_assets", BRAND_COLUMNS)?;
     assert_table_columns(connection, "provider_profiles", PROVIDER_COLUMNS)?;
     assert_table_columns(connection, "agent_definitions", AGENT_DEFINITION_COLUMNS)?;
+    assert_table_columns(connection, "runtime_bindings", RUNTIME_BINDING_COLUMNS)?;
+    assert_table_columns(
+        connection,
+        "runtime_binding_leases",
+        RUNTIME_BINDING_LEASE_COLUMNS,
+    )?;
+    assert_table_columns(
+        connection,
+        "runtime_binding_requests",
+        RUNTIME_BINDING_REQUEST_COLUMNS,
+    )?;
     assert_table_columns(
         connection,
         "actor_identities",
@@ -323,6 +400,35 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     )?;
     assert_foreign_key(connection, "messages", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
+    assert_foreign_key(connection, "runtime_bindings", "topic_id", "topics", "id")?;
+    assert_foreign_key(
+        connection,
+        "runtime_binding_leases",
+        "binding_id",
+        "runtime_bindings",
+        "id",
+    )?;
+    assert_foreign_key(
+        connection,
+        "runtime_binding_requests",
+        "topic_id",
+        "topics",
+        "id",
+    )?;
+    assert_foreign_key(
+        connection,
+        "runtime_binding_requests",
+        "agent_id",
+        "agent_definitions",
+        "id",
+    )?;
+    assert_foreign_key(
+        connection,
+        "runtime_binding_requests",
+        "request_message_id",
+        "messages",
+        "id",
+    )?;
     assert_index_columns(
         connection,
         "idx_topics_project_updated",
@@ -364,6 +470,46 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "idx_agent_definitions_enabled_alias",
         &["enabled", "mention_alias"],
     )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_bindings_topic_status",
+        &["topic_id", "status", "updated_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_bindings_idle",
+        &["status", "last_activity_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_bindings_one_open_agent",
+        &["topic_id", "agent_id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_bindings_active_session",
+        &["provider_id", "agent_id", "transport_kind", "session_id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_binding_leases_expiry",
+        &["expires_at_ms"],
+    )?;
+    assert_index_sql_contains(
+        connection,
+        "idx_runtime_bindings_one_open_agent",
+        "WHERE status <> 'closed'",
+    )?;
+    assert_index_sql_contains(
+        connection,
+        "idx_runtime_bindings_active_session",
+        "WHERE session_id IS NOT NULL AND status <> 'closed' AND transport_kind IN ('claude-resume', 'codex-resume')",
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "runtime_binding_requests",
+        &["PRIMARY KEY (topic_id, agent_id, request_message_id)"],
+    )?;
     assert_table_sql_contains(
         connection,
         "provider_profiles",
@@ -383,6 +529,26 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
             "enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))",
             "CHECK ( (deleted_at IS NULL) OR (enabled = 0) )",
             "config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)",
+        ],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "runtime_bindings",
+        &[
+            "transport_kind IN ('claude-resume', 'codex-resume', 'openai-sessionless')",
+            "agent_config_revision INTEGER NOT NULL CHECK (agent_config_revision > 0)",
+            "provider_config_revision INTEGER NOT NULL CHECK (provider_config_revision > 0)",
+            "(cursor_created_at IS NULL AND cursor_message_id IS NULL)",
+            "(status = 'closed' AND closed_at IS NOT NULL)",
+        ],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "runtime_binding_leases",
+        &[
+            "binding_id TEXT PRIMARY KEY REFERENCES runtime_bindings(id) ON DELETE CASCADE",
+            "lease_token TEXT NOT NULL UNIQUE",
+            "epoch INTEGER NOT NULL CHECK (epoch > 0)",
         ],
     )?;
     let foreign_key_error_count: i64 =

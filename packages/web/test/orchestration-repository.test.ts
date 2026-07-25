@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpOrchestrationRepository 与可控 Fetch/SSE 替身
- * @output 导出：自动轮次协议、安全请求体和 revision 分流回归测试
+ * @output 导出：自动轮次、持久会话协议、安全请求体和 revision 分流回归测试
  * @pos    Web 自动轮次仓储的传输与实时校准验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,6 +13,7 @@ import type { EventStream } from "../src/data/http-repository";
 import type {
   OrchestrationRun,
   OrchestrationSnapshot,
+  RuntimeBinding,
 } from "../src/types/orchestration";
 
 function success(data: unknown): Response {
@@ -82,6 +83,24 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
   };
 }
 
+function createBinding(overrides: Partial<RuntimeBinding> = {}): RuntimeBinding {
+  return {
+    id: "binding-one",
+    topicId: "topic-one",
+    agentId: "claude-code",
+    actorId: "claude",
+    providerId: "provider-claude",
+    transportKind: "claude-resume",
+    status: "idle",
+    hasSession: true,
+    stateVersion: 2,
+    lastActivityAt: "2026-01-01T09:00:00.000Z",
+    createdAt: "2026-01-01T08:00:00.000Z",
+    updatedAt: "2026-01-01T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
 interface OrchestrationFixture {
   fetcher: Fetcher;
   requests: Array<{ url: URL; init?: RequestInit }>;
@@ -139,6 +158,9 @@ function createOrchestrationFixture(): OrchestrationFixture {
           confirmation: { beforeRounds: [], beforeCompletion: true },
         },
       });
+    }
+    if (/^\/api\/v1\/topics\/[^/]+\/runtime-bindings$/u.test(url.pathname)) {
+      return success([]);
     }
     if (url.pathname === "/api/v1/topics/topic-one/runs" && method === "GET") {
       return success({
@@ -365,6 +387,55 @@ describe("HttpOrchestrationRepository", () => {
       approvalId: "approval-stable",
     });
     expect(postBodies[2]).toEqual(postBodies[1]);
+  });
+
+  it("严格解析持久会话并把关闭与重开动作发送到独立端点", async () => {
+    const fixture = createOrchestrationFixture();
+    const initial = createBinding();
+    const closed = createBinding({
+      status: "closed",
+      closeReason: "manual-close",
+      closedAt: "2026-01-01T10:00:00.000Z",
+      stateVersion: 3,
+    });
+    const reopened = createBinding({
+      id: "binding-two",
+      status: "starting",
+      hasSession: false,
+      stateVersion: 1,
+      createdAt: "2026-01-01T11:00:00.000Z",
+      updatedAt: "2026-01-01T11:00:00.000Z",
+    });
+    const fetcher: Fetcher = async (input, init) => {
+      const url = input instanceof URL ? input : new URL(String(input));
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/v1/topics/topic-one/runtime-bindings") {
+        return success([initial]);
+      }
+      if (
+        url.pathname === "/api/v1/runtime-bindings/binding-one/actions/close"
+        && method === "POST"
+      ) {
+        return success(closed);
+      }
+      if (
+        url.pathname === "/api/v1/runtime-bindings/binding-one/actions/reopen"
+        && method === "POST"
+      ) {
+        return success(reopened);
+      }
+      return fixture.fetcher(input, init);
+    };
+    const repository = new HttpOrchestrationRepository({
+      ...OPTIONS,
+      fetcher,
+      eventStreamFactory: () => new FakeEventStream(),
+    });
+
+    const selected = await repository.selectTopic("topic-one");
+    expect(selected.runtimeBindings).toEqual([initial]);
+    await expect(repository.closeRuntimeBinding("binding-one")).resolves.toEqual(closed);
+    await expect(repository.reopenRuntimeBinding("binding-one")).resolves.toEqual(reopened);
   });
 
   it("丢弃已切题时迟到的旧议题 SSE runs 响应", async () => {

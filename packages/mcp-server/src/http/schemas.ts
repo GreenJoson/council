@@ -44,6 +44,15 @@ export const runIdSchema = z
 
 export const runParamsSchema = z.object({ runId: runIdSchema }).strict();
 
+export const runtimeBindingIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "bindingId 过长")
+  .regex(/^binding_[A-Za-z0-9-]+$/, "bindingId 格式无效");
+
+export const runtimeBindingParamsSchema = z
+  .object({ bindingId: runtimeBindingIdSchema })
+  .strict();
+
 const routerIdSchema = z
   .string()
   .max(100)
@@ -188,6 +197,15 @@ export const listRunsQuerySchema = z
   })
   .strict();
 
+export const listRuntimeBindingsQuerySchema = z
+  .object({
+    includeClosed: z
+      .enum(["true", "false"])
+      .transform((value) => value === "true")
+      .default(false),
+  })
+  .strict();
+
 export const createRunBodySchema = z
   .object({
     confirmationBeforeCompletion: z.boolean().optional(),
@@ -198,6 +216,11 @@ export const createRunBodySchema = z
             adapterId: z.string().trim().min(1).max(100),
             messageKind: z.enum(MESSAGE_KINDS),
             instruction: nonBlankString(MAX_INSTRUCTION_CHARS),
+            requestMessageId: z
+              .string()
+              .max(MAX_ID_CHARS)
+              .regex(/^message_[A-Za-z0-9-]+$/, "requestMessageId 格式无效")
+              .optional(),
           })
           .strict(),
       )

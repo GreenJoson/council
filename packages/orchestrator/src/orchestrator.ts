@@ -43,6 +43,8 @@ import type {
   RoundPlan,
   RunLease,
   RunFailure,
+  RuntimeBindingLease,
+  RuntimeBinding,
 } from "./types.js";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
@@ -142,6 +144,16 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
         `plan[${String(index)}].bindingRevision 格式无效。`,
       );
     }
+    const runtimeBindingId = round.runtimeBindingId?.trim();
+    if (runtimeBindingId !== undefined) {
+      assertAgentId(runtimeBindingId, `plan[${String(index)}].runtimeBindingId`);
+    }
+    const requestMessageId = round.requestMessageId?.trim();
+    if (round.requestMessageId !== undefined && !requestMessageId) {
+      throw new OrchestrationConfigError(
+        `plan[${String(index)}].requestMessageId 不能为空。`,
+      );
+    }
     if (!MESSAGE_KIND_SET.has(round.messageKind)) {
       throw new OrchestrationConfigError(`轮次 ${String(index + 1)} 的消息类型无效。`);
     }
@@ -153,6 +165,8 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
       adapterId,
       actorId,
       ...(bindingRevision ? { bindingRevision } : {}),
+      ...(runtimeBindingId ? { runtimeBindingId } : {}),
+      ...(requestMessageId ? { requestMessageId } : {}),
       messageKind: round.messageKind,
       instruction,
     };
@@ -263,6 +277,8 @@ function assertPersistedRun(run: OrchestrationRun): void {
         round.adapterId === persisted.adapterId &&
         round.actorId === persisted.actorId &&
         round.bindingRevision === persisted.bindingRevision &&
+        round.runtimeBindingId === persisted.runtimeBindingId &&
+        round.requestMessageId === persisted.requestMessageId &&
         round.messageKind === persisted.messageKind &&
         round.instruction === persisted.instruction,
       );
@@ -416,15 +432,23 @@ function isTerminal(run: OrchestrationRun): boolean {
 }
 
 function assertExecutionBindingsFrozen(run: OrchestrationRun): void {
-  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+  if (
+    run.plan.some((round) =>
+      !round.bindingRevision?.trim() || !round.runtimeBindingId?.trim()
+    )
+  ) {
     throw new RunStateConflictError(
-      "旧运行缺少冻结的 Agent bindingRevision，只允许读取或取消；请创建新运行。",
+      "旧运行缺少冻结的 Agent bindingRevision 或 runtimeBindingId，只允许读取或取消；请创建新运行。",
     );
   }
 }
 
 export function classifyRestartDisposition(run: OrchestrationRun): RestartDisposition {
-  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+  if (
+    run.plan.some((round) =>
+      !round.bindingRevision?.trim() || !round.runtimeBindingId?.trim()
+    )
+  ) {
     return "ignore";
   }
   if (run.status === "running") {
@@ -492,6 +516,7 @@ export class CouncilOrchestrator {
   readonly #processingRuns = new Set<string>();
   readonly #activeControllers = new Map<string, AbortController>();
   readonly #activeAdapterIds = new Map<string, string>();
+  readonly #activeBindingLeases = new Map<string, RuntimeBindingLease>();
   #adapterGeneration = 0;
 
   constructor(
@@ -537,6 +562,10 @@ export class CouncilOrchestrator {
     return Boolean(slot && slot.bindingRevision === bindingRevision);
   }
 
+  adapterBindingRevision(adapterId: string): string | undefined {
+    return this.#adapters.get(adapterId)?.bindingRevision;
+  }
+
   /**
    * 删除动态适配器并使已捕获的旧代次立即失效。活动调用会被中止；
    * 即使适配器忽略 AbortSignal 并迟到返回，提交前代次检查也会拒绝写入。
@@ -575,9 +604,13 @@ export class CouncilOrchestrator {
         ? { ...round, bindingRevision: slot.bindingRevision }
         : round;
     });
-    if (plan.some((round) => !round.bindingRevision)) {
+    if (
+      plan.some((round) =>
+        !round.bindingRevision || !round.runtimeBindingId
+      )
+    ) {
       throw new OrchestrationConfigError(
-        "每个新运行轮次都必须冻结已注册 Agent 的 bindingRevision。",
+        "每个新运行轮次都必须冻结 bindingRevision 与 runtimeBindingId。",
       );
     }
     const run = await this.store.createRun({ ...normalized, plan });
@@ -761,6 +794,16 @@ export class CouncilOrchestrator {
     return true;
   }
 
+  abortActiveBinding(bindingId: string, reason: Error): boolean {
+    let aborted = false;
+    for (const [runId, lease] of this.#activeBindingLeases) {
+      if (lease.bindingId === bindingId) {
+        aborted = this.abortActiveInvocation(runId, reason) || aborted;
+      }
+    }
+    return aborted;
+  }
+
   async #driveWithClaimedLease(
     runId: string,
     request: ExecutionLeaseRequest,
@@ -784,8 +827,9 @@ export class CouncilOrchestrator {
         return;
       }
       renewal = this.renewRunLease({ lease: currentLease, ttlMs: request.ttlMs })
-        .then((renewed) => {
+        .then(async (renewed) => {
           currentLease = renewed;
+          await this.#heartbeatActiveBinding(runId, request.ttlMs);
         })
         .catch((_error: unknown) => {
           renewalFailure = new LeaseLostError("执行 lease 续租失败或已失去执行所有权。");
@@ -821,6 +865,7 @@ export class CouncilOrchestrator {
     } finally {
       this.#processingRuns.delete(initialRun.id);
       this.#activeControllers.delete(initialRun.id);
+      this.#activeBindingLeases.delete(initialRun.id);
     }
   }
 
@@ -876,10 +921,37 @@ export class CouncilOrchestrator {
         return await this.#fail(run, lease, unavailableFailure());
       }
 
+      const runtimeBindingId = round.runtimeBindingId;
+      if (!runtimeBindingId) {
+        throw new InvalidRunStateError("当前轮次缺少 RuntimeBinding 冻结引用。");
+      }
+      let bindingLease: RuntimeBindingLease | undefined;
+      let binding: RuntimeBinding;
       let context;
       try {
-        context = await this.store.getTopicContext(run.topicId);
+        bindingLease = await this.store.claimRuntimeBindingLease({
+          bindingId: runtimeBindingId,
+          ownerId: `run:${run.id}`,
+          ttlMs: Math.max(1, lease.expiresAtMs - Date.now()),
+          processInstanceId: lease.ownerId,
+        });
+        this.#activeBindingLeases.set(run.id, bindingLease);
+        const invocationContext = await this.store.getRuntimeBindingInvocationContext(
+          runtimeBindingId,
+          round.requestMessageId,
+        );
+        binding = await this.store.transitionRuntimeBinding({
+          lease: bindingLease,
+          expectedStateVersion: invocationContext.binding.stateVersion,
+          status: "thinking",
+          processInstanceId: lease.ownerId,
+        });
+        context = invocationContext;
       } catch {
+        if (bindingLease) {
+          await this.store.releaseRuntimeBindingLease(bindingLease);
+          this.#activeBindingLeases.delete(run.id);
+        }
         return await this.#fail(run, lease, storeFailure("context"));
       }
 
@@ -901,12 +973,31 @@ export class CouncilOrchestrator {
         attempt: waiting.currentAttempt,
         adapterId: round.adapterId,
         actorId: round.actorId,
+        runtimeBindingId,
+        ...(round.requestMessageId ? { requestMessageId: round.requestMessageId } : {}),
+        ...(context.binding.sessionId ? { sessionId: context.binding.sessionId } : {}),
+        firstTurn: context.firstTurn,
         instruction: round.instruction,
         messageKind: round.messageKind,
-        context,
+        context: context.topic,
       };
 
       let content: string;
+      let resultSessionId: string | undefined;
+      let streamingTransition: Promise<void> | undefined;
+      const notifyStreaming = (): void => {
+        if (streamingTransition || binding.status === "streaming") {
+          return;
+        }
+        streamingTransition = this.store.transitionRuntimeBinding({
+          lease: bindingLease,
+          expectedStateVersion: binding.stateVersion,
+          status: "streaming",
+          processInstanceId: lease.ownerId,
+        }).then((updated) => {
+          binding = updated;
+        });
+      };
       try {
         const result = await this.#invoke(
           waiting.id,
@@ -914,8 +1005,11 @@ export class CouncilOrchestrator {
           invocation,
           waiting.policy.agentTimeoutMs,
           waiting.policy.agentCleanupTimeoutMs,
+          notifyStreaming,
         );
+        await streamingTransition;
         content = result.content.trim();
+        resultSessionId = result.sessionId;
         if (!content) {
           const message = "Agent 返回了空的公开回复。";
           throw new AgentInvocationError(message, false, message);
@@ -925,6 +1019,14 @@ export class CouncilOrchestrator {
           throw new AgentInvocationError(message, false, message);
         }
       } catch (error) {
+        await streamingTransition?.catch(() => undefined);
+        await this.#interruptRuntimeBinding(
+          run.id,
+          adapterSlot.adapter,
+          bindingLease,
+          binding.stateVersion,
+          lease.ownerId,
+        );
         if (error instanceof LeaseLostError) {
           throw error;
         }
@@ -975,6 +1077,11 @@ export class CouncilOrchestrator {
         const committed = await this.store.commitRound({
           expectedVersion: waiting.version,
           lease,
+          bindingLease,
+          ...(resultSessionId ? { bindingSessionId: resultSessionId } : {}),
+          ...(context.consumedCursor
+            ? { consumedCursor: context.consumedCursor }
+            : {}),
           run: nextRun,
           message: {
             topicId: waiting.topicId,
@@ -985,7 +1092,15 @@ export class CouncilOrchestrator {
         });
         assertPersistedRun(committed.run);
         run = committed.run;
+        this.#activeBindingLeases.delete(run.id);
       } catch (error) {
+        await this.#interruptRuntimeBinding(
+          run.id,
+          adapterSlot.adapter,
+          bindingLease,
+          binding.stateVersion,
+          lease.ownerId,
+        );
         if (error instanceof LeaseLostError) {
           throw error;
         }
@@ -1064,6 +1179,7 @@ export class CouncilOrchestrator {
     invocation: AgentInvocation,
     timeoutMs: number,
     cleanupTimeoutMs: number,
+    notifyStreaming: () => void,
   ) {
     const controller = new AbortController();
     this.#activeControllers.set(runId, controller);
@@ -1078,7 +1194,11 @@ export class CouncilOrchestrator {
       controller.signal.addEventListener("abort", abortListener, { once: true });
     });
     const invocationPromise = Promise.resolve().then(
-      async () => await adapter.invoke(invocation, { signal: controller.signal }),
+      async () =>
+        await adapter.invoke(invocation, {
+          signal: controller.signal,
+          notifyStreaming,
+        }),
     );
     try {
       return await Promise.race([invocationPromise, aborted]);
@@ -1104,6 +1224,50 @@ export class CouncilOrchestrator {
       if (this.#activeAdapterIds.get(runId) === adapter.adapterId) {
         this.#activeAdapterIds.delete(runId);
       }
+    }
+  }
+
+  async #heartbeatActiveBinding(runId: string, ttlMs: number): Promise<void> {
+    const bindingLease = this.#activeBindingLeases.get(runId);
+    if (!bindingLease) return;
+    try {
+      const renewed = await this.store.renewRuntimeBindingLease({
+        lease: bindingLease,
+        ttlMs,
+      });
+      this.#activeBindingLeases.set(runId, renewed);
+    } catch {
+      const lost = new LeaseLostError(
+        "RuntimeBinding 已关闭、过期或被其他执行者接管。",
+      );
+      this.abortActiveInvocation(runId, lost);
+      throw lost;
+    }
+  }
+
+  async #interruptRuntimeBinding(
+    runId: string,
+    adapter: AgentAdapter,
+    lease: RuntimeBindingLease,
+    expectedStateVersion: number,
+    processInstanceId: string,
+  ): Promise<void> {
+    try {
+      await adapter.closeBinding?.(lease.bindingId);
+    } finally {
+      try {
+        await this.store.transitionRuntimeBinding({
+          lease,
+          expectedStateVersion,
+          status: "interrupted",
+          processInstanceId,
+          clearSession: true,
+        });
+      } catch {
+        // accepted/cancel/config-close 会先删除 lease；此处只能清理本地运行时，禁止反写旧状态。
+      }
+      await this.store.releaseRuntimeBindingLease(lease);
+      this.#activeBindingLeases.delete(runId);
     }
   }
 }

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 独立自动轮次与临时草稿仓储
- * @pos    revision 变化时校准运行列表，并把 agent.output 直接归入对应议题
+ * @output 导出：HttpOrchestrationRepository 运行、持久会话与临时草稿仓储
+ * @pos    revision 变化时校准运行/会话列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,6 +12,7 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
   OrchestrationAgentOutput,
+  RuntimeBinding,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -32,6 +33,8 @@ import {
   parseOrchestrationRun,
   parseOrchestrationRunPage,
   parseAgentOutputEvent,
+  parseRuntimeBinding,
+  parseRuntimeBindings,
 } from "./orchestration-api";
 import {
   parseAgentConnectionTest,
@@ -170,8 +173,11 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     generation: number,
   ): Promise<OrchestrationSnapshot> {
     try {
-      const status = await this.#loadStatus();
-      const runs = await this.#loadAllRuns(topicId);
+      const [status, runs, runtimeBindings] = await Promise.all([
+        this.#loadStatus(),
+        this.#loadAllRuns(topicId),
+        this.#loadRuntimeBindings(topicId),
+      ]);
       if (generation !== this.#selectionGeneration) {
         return cloneSnapshot(this.#snapshot);
       }
@@ -182,6 +188,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         ...this.#snapshot,
         activeTopicId: topicId,
         runs,
+        runtimeBindings,
         agentOutputs: this.#outputsForTopic(topicId),
         sync: { status: "connected", label: "自动轮次已同步" },
       };
@@ -263,6 +270,14 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
 
   async recoverRun(runId: string): Promise<OrchestrationSnapshot> {
     return this.#runAction(runId, "recover");
+  }
+
+  async closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return await this.#bindingAction(bindingId, "close");
+  }
+
+  async reopenRuntimeBinding(bindingId: string): Promise<RuntimeBinding> {
+    return await this.#bindingAction(bindingId, "reopen");
   }
 
   async getModelRouter(): Promise<ModelRouterSnapshot> {
@@ -474,6 +489,37 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       offset = page.nextOffset ?? offset;
     }
     return runs;
+  }
+
+  async #loadRuntimeBindings(topicId: string): Promise<RuntimeBinding[]> {
+    return await requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/runtime-bindings`,
+        { includeClosed: "true" },
+      ),
+      parseRuntimeBindings,
+    );
+  }
+
+  async #bindingAction(
+    bindingId: string,
+    action: "close" | "reopen",
+  ): Promise<RuntimeBinding> {
+    const binding = await requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/runtime-bindings/${encodeURIComponent(bindingId)}/actions/${action}`,
+      ),
+      parseRuntimeBinding,
+      jsonRequest({}),
+    );
+    if (this.#snapshot.activeTopicId === binding.topicId) {
+      await this.selectTopic(binding.topicId);
+    }
+    return binding;
   }
 
   #openEventStream(): void {

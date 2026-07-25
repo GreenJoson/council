@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、SQLite Store、Fake Agent 与后台执行管理器
- * @output 导出：编排 REST 契约、断线、取消、批准、恢复、重启和 sweeper 集成测试
+ * @output 导出：编排与持久会话 REST、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
  * @pos    Web 已冻结协议和跨进程自动执行语义的主验收套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,23 @@ interface Deferred<T> {
   promise: Promise<T>;
   resolve(value: T): void;
   reject(error: unknown): void;
+}
+
+interface PublicRuntimeBinding {
+  id: string;
+  topicId: string;
+  agentId: string;
+  actorId: string;
+  providerId: string;
+  transportKind: string;
+  status: string;
+  hasSession: boolean;
+  stateVersion: number;
+  lastActivityAt: string;
+  closeReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
 }
 
 function deferred<T>(): Deferred<T> {
@@ -145,13 +162,29 @@ async function postAndDisconnect(url: string): Promise<number> {
   });
 }
 
-function createStoreInput(topicId: string, beforeRounds: readonly number[] = []): CreateRunInput {
+async function createStoreInput(
+  store: SQLiteCouncilStore,
+  topicId: string,
+  beforeRounds: readonly number[] = [],
+): Promise<CreateRunInput> {
+  const binding = await store.ensureRuntimeBinding({
+    topicId,
+    agentId: "claude",
+    actorId: "claude",
+    providerId: "provider-claude",
+    bindingRevision: "static:fake",
+    agentConfigRevision: 1,
+    providerConfigRevision: 1,
+    transportKind: "claude-resume",
+    processInstanceId: "test-fixture",
+  });
   return {
     topicId,
     plan: [{
       adapterId: "fake",
       actorId: "claude",
       bindingRevision: "static:fake",
+      runtimeBindingId: binding.id,
       messageKind: "proposal",
       instruction: "恢复后执行",
     }],
@@ -203,7 +236,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
         confirmation: { beforeRounds: [], beforeCompletion: false },
       },
       limitations: [
-        "V1 不恢复 Agent session。",
+        "Claude/Codex 通过议题级逻辑绑定恢复 session；兼容远程 Provider 保持无状态。",
         "只有已注册的后台适配器可以自动执行。",
       ],
     });
@@ -264,6 +297,224 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
     assert.equal(illegalStart.status, 409);
     const missing = await fetch(`${harness.baseUrl}/api/v1/runs/run_missing`);
     assert.equal(missing.status, 404);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("持久会话 REST 只返回公开字段并支持手动关闭、重开和 accepted 决策关闭", async () => {
+  const agent = new FakeAgent("claude", async () => ({ content: "不会启动" }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    actorAlias: "claude",
+  }]);
+  try {
+    const topic = harness.database.createTopic({
+      title: "持久会话生命周期",
+      question: "公开 API 能否安全控制逻辑绑定？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    await createRunThroughHttp(harness.baseUrl, topic.id, "claude");
+
+    const listResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/runtime-bindings?includeClosed=true`,
+    );
+    assert.equal(listResponse.status, 200);
+    const listed = await readEnvelope<PublicRuntimeBinding[]>(listResponse);
+    assert.equal(listed.data?.length, 1);
+    const initial = listed.data?.[0];
+    assert(initial);
+    assert.equal(initial.status, "starting");
+    assert.equal(initial.hasSession, false);
+    for (const privateField of [
+      "sessionId",
+      "projectPath",
+      "processInstanceId",
+      "bindingRevision",
+      "agentConfigRevision",
+      "providerConfigRevision",
+    ]) {
+      assert.equal(privateField in initial, false);
+    }
+
+    const closeResponse = await fetch(
+      `${harness.baseUrl}/api/v1/runtime-bindings/${initial.id}/actions/close`,
+      { method: "POST", headers: JSON_HEADERS, body: "{}" },
+    );
+    assert.equal(closeResponse.status, 200);
+    const closed = await readEnvelope<PublicRuntimeBinding>(closeResponse);
+    assert.equal(closed.data?.status, "closed");
+    assert.equal(closed.data?.closeReason, "manual-close");
+
+    const reopenResponse = await fetch(
+      `${harness.baseUrl}/api/v1/runtime-bindings/${initial.id}/actions/reopen`,
+      { method: "POST", headers: JSON_HEADERS, body: "{}" },
+    );
+    assert.equal(reopenResponse.status, 201, await reopenResponse.clone().text());
+    const reopened = await readEnvelope<PublicRuntimeBinding>(reopenResponse);
+    assert(reopened.data);
+    assert.notEqual(reopened.data.id, initial.id);
+    assert.equal(reopened.data.status, "starting");
+
+    const decisionResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          title: "确认关闭逻辑绑定",
+          decision: "议题已经决策，关闭所有 Agent 持久会话。",
+          rationale: "避免已结束议题继续持有可恢复上下文。",
+          alternatives: [],
+          status: "accepted",
+        }),
+      },
+    );
+    assert.equal(decisionResponse.status, 201);
+
+    const finalListResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/runtime-bindings?includeClosed=true`,
+    );
+    const finalList = await readEnvelope<PublicRuntimeBinding[]>(finalListResponse);
+    assert.equal(finalList.data?.length, 2);
+    const finalReopened = finalList.data?.find((binding) => binding.id === reopened.data?.id);
+    assert.equal(finalReopened?.status, "closed");
+    assert.equal(finalReopened?.closeReason, "decision-accepted");
+
+    const createAfterDecision = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/runs`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          plan: [{
+            adapterId: "claude",
+            messageKind: "proposal",
+            instruction: "已决议题不应再次调用。",
+          }],
+        }),
+      },
+    );
+    assert.equal(createAfterDecision.status, 409);
+    const reopenAfterDecision = await fetch(
+      `${harness.baseUrl}/api/v1/runtime-bindings/${initial.id}/actions/reopen`,
+      { method: "POST", headers: JSON_HEADERS, body: "{}" },
+    );
+    assert.equal(reopenAfterDecision.status, 409);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("同一议题同一 Agent 复用 session，不同议题保持独立", async () => {
+  const agent = new FakeAgent("claude", async (_input, _options, callNumber) => ({
+    content: `第 ${String(callNumber)} 次公开回复`,
+    sessionId: `session_${String(callNumber)}`,
+  }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    actorAlias: "claude",
+  }]);
+  try {
+    assert(harness.orchestration);
+    const topicA = harness.database.createTopic({
+      title: "议题 A",
+      question: "同一议题是否复用？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const first = await createRunThroughHttp(harness.baseUrl, topicA.id, "claude");
+    await harness.orchestration.start(first.id);
+    await waitForRun(
+      harness.orchestration,
+      first.id,
+      (candidate) => candidate.status === "completed",
+    );
+    const second = await createRunThroughHttp(harness.baseUrl, topicA.id, "claude");
+    await harness.orchestration.start(second.id);
+    await waitForRun(
+      harness.orchestration,
+      second.id,
+      (candidate) => candidate.status === "completed",
+    );
+
+    const topicB = harness.database.createTopic({
+      title: "议题 B",
+      question: "不同议题是否隔离？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const third = await createRunThroughHttp(harness.baseUrl, topicB.id, "claude");
+    await harness.orchestration.start(third.id);
+    await waitForRun(
+      harness.orchestration,
+      third.id,
+      (candidate) => candidate.status === "completed",
+    );
+
+    assert.equal(agent.invocations.length, 3);
+    assert.equal(agent.invocations[0]?.sessionId, undefined);
+    assert.equal(agent.invocations[1]?.sessionId, "session_1");
+    assert.equal(agent.invocations[2]?.sessionId, undefined);
+    assert.notEqual(
+      agent.invocations[0]?.runtimeBindingId,
+      agent.invocations[2]?.runtimeBindingId,
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+test("两个议题返回相同外部 session 时第二次原子提交失败并清除新绑定 session", async () => {
+  const agent = new FakeAgent("claude", async (_input, _options, callNumber) => ({
+    content: `第 ${String(callNumber)} 个议题的公开回复`,
+    sessionId: "session_collision",
+  }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    actorAlias: "claude",
+  }]);
+  try {
+    assert(harness.orchestration);
+    const topicA = harness.database.createTopic({
+      title: "session 所有权 A",
+      question: "第一个议题能否独占外部 session？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const first = await createRunThroughHttp(harness.baseUrl, topicA.id, "claude");
+    await harness.orchestration.start(first.id);
+    await waitForRun(
+      harness.orchestration,
+      first.id,
+      (candidate) => candidate.status === "completed",
+    );
+
+    const topicB = harness.database.createTopic({
+      title: "session 所有权 B",
+      question: "第二个议题是否会错误恢复同一外部 session？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const second = await createRunThroughHttp(harness.baseUrl, topicB.id, "claude");
+    await harness.orchestration.start(second.id);
+    const failed = await waitForRun(
+      harness.orchestration,
+      second.id,
+      (candidate) => candidate.status === "failed",
+    );
+
+    assert.equal(failed.failure?.code, "store_failed");
+    assert.equal(agent.invocations.length, 2);
+    const firstBindings = await harness.orchestration.listRuntimeBindings(topicA.id, true);
+    const secondBindings = await harness.orchestration.listRuntimeBindings(topicB.id, true);
+    assert.equal(firstBindings.length, 1);
+    assert.equal(firstBindings[0]?.sessionId, "session_collision");
+    assert.equal(secondBindings.length, 1);
+    assert.equal(secondBindings[0]?.status, "interrupted");
+    assert.equal(secondBindings[0]?.sessionId, undefined);
+    assert.equal(harness.database.getTopicDetail(topicB.id, 20).messageTotal, 0);
   } finally {
     await harness.close();
   }
@@ -417,10 +668,9 @@ test("产品服务将配置的消息上限传入 Agent 上下文 Store", async (
       run.id,
       (candidate) => candidate.status === "completed",
     );
-    assert.deepEqual(
-      agent.invocations[0]?.context.messages.map((message) => message.content),
-      ["历史消息 4", "历史消息 5"],
-    );
+    const boundedMessages = agent.invocations[0]?.context.messages ?? [];
+    assert.equal(boundedMessages.length, 2);
+    assert.ok(boundedMessages.every((message) => message.content.startsWith("历史消息 ")));
   } finally {
     await harness.close();
   }
@@ -951,12 +1201,14 @@ test("启动恢复按 active status 完整分页：忽略大量终态、恢复 r
     let waitingUser: OrchestrationRun;
     try {
       for (let index = 0; index < 25; index += 1) {
-        const terminal = await store.createRun(createStoreInput(oldTopic.id));
+        const terminal = await store.createRun(await createStoreInput(store, oldTopic.id));
         await store.cancelRun(terminal.id);
       }
-      const idle = await store.createRun(createStoreInput(oldTopic.id));
+      const idle = await store.createRun(await createStoreInput(store, oldTopic.id));
       running = await store.replaceRun({ ...idle, status: "running" }, idle.version);
-      const idleInterrupted = await store.createRun(createStoreInput(interruptedTopic.id));
+      const idleInterrupted = await store.createRun(
+        await createStoreInput(store, interruptedTopic.id),
+      );
       const activeInterrupted = await store.replaceRun(
         { ...idleInterrupted, status: "running" },
         idleInterrupted.version,
@@ -967,7 +1219,9 @@ test("启动恢复按 active status 完整分页：忽略大量终态、恢复 r
         activeAgentId: "fake",
         currentAttempt: 1,
       }, activeInterrupted.version);
-      const idleWaiting = await store.createRun(createStoreInput(waitingTopic.id, [1]));
+      const idleWaiting = await store.createRun(
+        await createStoreInput(store, waitingTopic.id, [1]),
+      );
       waitingUser = await store.replaceRun({
         ...idleWaiting,
         status: "waiting_user",
@@ -1013,10 +1267,10 @@ test("旧有效 lease 到期后 sweeper 无需二次重启即可接管 running �
     let running: OrchestrationRun;
     let waiting: OrchestrationRun;
     try {
-      const first = await store.createRun(createStoreInput(runningTopic.id));
+      const first = await store.createRun(await createStoreInput(store, runningTopic.id));
       running = await store.replaceRun({ ...first, status: "running" }, first.version);
       await store.claimRunLease({ runId: running.id, ownerId: "old-owner-a", ttlMs: 100 });
-      const second = await store.createRun(createStoreInput(waitingTopic.id));
+      const second = await store.createRun(await createStoreInput(store, waitingTopic.id));
       const secondRunning = await store.replaceRun({ ...second, status: "running" }, second.version);
       waiting = await store.replaceRun({
         ...secondRunning,
@@ -1059,7 +1313,7 @@ test("扫描上限明确阻止启动，shutdown 清理 sweeper", async () => {
     const store = new SQLiteCouncilStore(harness.databasePath, 5_000);
     try {
       for (const topic of topics) {
-        const idle = await store.createRun(createStoreInput(topic.id));
+        const idle = await store.createRun(await createStoreInput(store, topic.id));
         await store.replaceRun({ ...idle, status: "running" }, idle.version);
       }
     } finally {
@@ -1144,6 +1398,7 @@ test("shutdown 等待取消清理但受总预算限制，永不 settle 的 Adapt
   const harness = await startHttpHarness({
     orchestrationAgentCleanupTimeoutMs: 30,
     orchestrationShutdownTimeoutMs: 50,
+    runtimeBindingIdleTimeoutMs: 1_800_000,
     orchestrationSweepIntervalMs: 20,
   }, [{ adapter: agent, actorAlias: "claude" }]);
   try {

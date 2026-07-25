@@ -9,13 +9,14 @@
 | `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题、消息、proposed 决策和可传递请求取消的 Claude 工具 |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
-| `schema-definitions.ts` | Schema 正本 | 保存 v1/v2/v3 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
-| `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移和失败关闭 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1–v6 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移、备份与失败关闭 |
 | `schema-migration-values.ts` | 迁移值边界 | 严格读取历史行字段并映射旧作者/Agent 身份，不接触迁移事务 |
 | `schema-storage.ts` | 存储边界 | 提供迁移共用的 pragma/完整性/行数校验、schema 快照、在线备份验证和文件保护 |
 | `schema-v3-migration.ts` | 迁移步骤 | 将 v2 `agent_settings` 按证据原子升级为 Provider/Agent/BrandAsset，并删除旧表 |
 | `schema-v4-migration.ts` | 迁移步骤 | 增加 Provider/Agent 单调配置版本并扩展 v3 Run 快照容器；旧 v1/v2 Run 不猜补绑定 |
 | `schema-v5-migration.ts` | 迁移步骤 | 将当前 Kimi/DeepSeek Agent 重绑到新 UUID Actor，冻结旧种子供历史读取，并恢复 Claude/Codex 不可变身份 |
+| `schema-v6-migration.ts` | 迁移步骤 | 增加 RuntimeBinding、绑定 lease、议题级请求账本、活动 session 唯一约束、运行快照 v4、accepted fencing 与独立 revision 触发器 |
 | `database.ts` | 核心 | 验证已迁移 schema，区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
@@ -32,7 +33,7 @@
 | `keychain-secret-store.ts` | 安全边界 | 将远程 Provider API Key 隔离到 macOS Keychain，并区分凭据不存在与命令故障 |
 | `config.ts` | 配置 | 集中校验通用运行参数；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，HTTP 不受该必填项影响 |
 | `constants.ts` | 常量 | 定义协议枚举和输入边界 |
-| `types.ts` | 类型 | 定义共享领域模型 |
+| `types.ts` | 类型 | 定义共享领域模型与 RuntimeBinding HTTP 配置 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |
 | `http/` | 协议 | 提供 WebUI 使用的 REST、安全基线与跨进程 SSE |
 | `orchestration/` | 编排 | 接入本机/远程纯 Agent、显式传递安全失败原因、后台 lease 执行、周期恢复与浏览器安全策略 |

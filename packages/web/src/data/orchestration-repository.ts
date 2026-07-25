@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次领域类型
- * @output 导出：OrchestrationRepository 独立数据访问契约
+ * @output 导出：OrchestrationRepository 运行与持久会话数据访问契约
  * @pos    将运行状态与 TopicDetail 解耦的前端持久化边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,6 +11,7 @@ import type {
   CreateOrchestrationRunInput,
   OrchestrationRun,
   OrchestrationSnapshot,
+  RuntimeBinding,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -34,6 +35,8 @@ export interface OrchestrationRepository {
   approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot>;
   cancelRun(runId: string): Promise<OrchestrationSnapshot>;
   recoverRun(runId: string): Promise<OrchestrationSnapshot>;
+  closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;
+  reopenRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;
   getModelRouter(): Promise<ModelRouterSnapshot>;
   createProvider(input: CreateProviderInput): Promise<ProviderProfile>;
   updateProvider(input: UpdateProviderInput): Promise<ProviderProfile>;

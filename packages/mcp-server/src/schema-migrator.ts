@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v5、版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v6、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -33,6 +33,7 @@ import {
   LEGACY_V1_TABLES,
   LEGACY_V2_INDEXES,
   LEGACY_V2_TABLES,
+  LEGACY_REQUIRED_REVISION_TRIGGERS,
   MIGRATION_LEDGER_SQL,
   REQUIRED_INDEXES,
   REQUIRED_REVISION_TRIGGERS,
@@ -54,6 +55,10 @@ import {
   migrateVersionFive,
 } from "./schema-v5-migration.js";
 import {
+  assertVersionFiveMigrationSource,
+  migrateVersionSix,
+} from "./schema-v6-migration.js";
+import {
   assertCountsPreserved,
   assertDatabaseIntegrity,
   createVerifiedSchemaBackup,
@@ -65,7 +70,7 @@ import {
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 5;
+export const COUNCIL_SCHEMA_VERSION = 6;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -271,7 +276,7 @@ function canonicalLegacyV1RequiredSchemaObjects(): ReadonlyMap<string, string> {
 function assertLegacyV1Schema(database: DatabaseSync): void {
   assertNames(database, "table", LEGACY_V1_TABLES);
   assertNames(database, "index", LEGACY_V1_INDEXES);
-  assertNames(database, "trigger", REQUIRED_REVISION_TRIGGERS);
+  assertNames(database, "trigger", LEGACY_REQUIRED_REVISION_TRIGGERS);
   const reservedTable = database.prepare(`
     SELECT name
     FROM sqlite_master
@@ -322,7 +327,7 @@ function legacyV2RequiredSchemaObjects(database: DatabaseSync): Map<string, stri
   return selectedSchemaObjects(database, {
     table: LEGACY_V2_TABLES,
     index: LEGACY_V2_INDEXES,
-    trigger: REQUIRED_REVISION_TRIGGERS,
+    trigger: LEGACY_REQUIRED_REVISION_TRIGGERS,
   });
 }
 
@@ -351,7 +356,7 @@ function canonicalLegacyV2RequiredSchemaObjects(): ReadonlyMap<string, string> {
 function assertLegacyV2Schema(database: DatabaseSync): void {
   assertNames(database, "table", LEGACY_V2_TABLES);
   assertNames(database, "index", LEGACY_V2_INDEXES);
-  assertNames(database, "trigger", REQUIRED_REVISION_TRIGGERS);
+  assertNames(database, "trigger", LEGACY_REQUIRED_REVISION_TRIGGERS);
   const reserved = database.prepare(`
     SELECT name
     FROM sqlite_master
@@ -417,6 +422,7 @@ function canonicalRequiredSchemaObjects(): ReadonlyMap<string, string> {
     migrateVersionThree(canonical, false);
     migrateVersionFour(canonical, false);
     migrateVersionFive(canonical, false);
+    migrateVersionSix(canonical, false);
     canonicalSchemaObjects = requiredSchemaObjects(canonical);
     return canonicalSchemaObjects;
   } finally {
@@ -575,6 +581,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
     [3, "provider-agent-model-router"],
     [4, "frozen-run-bindings"],
     [5, "dynamic-provider-actors"],
+    [6, "topic-runtime-bindings"],
   ] as const;
   if (
     migrationRows.length !== expectedMigrations.length ||
@@ -582,7 +589,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
       migrationRows[index]?.version !== versionNumber ||
       migrationRows[index]?.name !== name)
   ) {
-    throw new Error("Council v5 迁移账本内容无效。");
+    throw new Error("Council v6 迁移账本内容无效。");
   }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
@@ -1139,6 +1146,13 @@ export async function migrateCouncilSchema(
         }
         migrateVersionFive(database);
         migratingVersion = 5;
+      }
+      if (migratingVersion === 5) {
+        if (initialVersion === 5) {
+          assertVersionFiveMigrationSource(database);
+        }
+        migrateVersionSix(database);
+        migratingVersion = 6;
       }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");

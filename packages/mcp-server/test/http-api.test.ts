@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import type { CouncilMessage, Decision, PaginatedTopics, Topic, TopicDetail } from "../src/types.js";
+import { COUNCIL_SCHEMA_VERSION } from "../src/schema-migrator.js";
 import {
   readEnvelope,
   startHttpHarness,
@@ -39,7 +40,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
       databaseInstanceId: string;
     }>(statusResponse);
     assert.equal(status.data?.ready, true);
-    assert.equal(status.data?.schemaVersion, 5);
+    assert.equal(status.data?.schemaVersion, COUNCIL_SCHEMA_VERSION);
     assert.match(status.data?.databaseInstanceId ?? "", /^[0-9a-f-]{36}$/u);
 
     const createResponse = await fetch(`${harness.baseUrl}/api/v1/topics`, {

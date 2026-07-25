@@ -1,6 +1,6 @@
 /**
- * @input  依赖：自动轮次快照、当前议题和受控运行操作
- * @output 导出：AutoRoundsPanel 单一当前调用卡、折叠历史与按需复核操作台
+ * @input  依赖：自动轮次快照、当前议题开放状态和受控运行操作
+ * @output 导出：AutoRoundsPanel 单一当前调用卡、折叠历史、已决禁用与按需复核操作台
  * @pos    Inspector 内创建、观察、批准、恢复和取消 Agent 调用的紧凑控制台
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,7 @@ import type {
   OrchestrationMessageKind,
   OrchestrationRun,
   OrchestrationSnapshot,
+  RuntimeBinding,
 } from "../types/orchestration";
 import { BrandGlyph } from "./BrandGlyph";
 
@@ -55,6 +56,32 @@ const CREATE_BLOCKING_STATUSES: ReadonlySet<OrchestrationRun["status"]> = new Se
   "waiting_user",
 ]);
 
+const BINDING_STATUS_LABELS: Readonly<Record<RuntimeBinding["status"], string>> = {
+  starting: "正在连接",
+  ready: "已连接",
+  thinking: "正在思考",
+  streaming: "正在回复",
+  idle: "会话待命",
+  interrupted: "连接中断",
+  closing: "正在关闭",
+  closed: "已关闭",
+};
+
+export function latestRuntimeBindings(
+  bindings: readonly RuntimeBinding[],
+): RuntimeBinding[] {
+  const latestByAgent = new Map<string, RuntimeBinding>();
+  for (const binding of bindings) {
+    const current = latestByAgent.get(binding.agentId);
+    if (!current || binding.createdAt > current.createdAt) {
+      latestByAgent.set(binding.agentId, binding);
+    }
+  }
+  return [...latestByAgent.values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
 export function getCreateRunBlockedReason(
   runs: readonly OrchestrationRun[],
   busyAction: string | null,
@@ -66,6 +93,12 @@ export function getCreateRunBlockedReason(
     return "当前已有 Agent 调用正在处理，请先等待、确认或取消。";
   }
   return undefined;
+}
+
+export function getTopicAgentCallBlockedReason(isTopicOpen: boolean): string | undefined {
+  return isTopicOpen
+    ? undefined
+    : "议题已经决策，不能再启动、重开或通过 @ 召唤 Agent。";
 }
 
 export function isRecoveryBudgetExhausted(run: OrchestrationRun): boolean {
@@ -99,6 +132,7 @@ export function partitionRunsForDisplay(
 
 export interface AutoRoundsPanelProps {
   topicId: string;
+  isTopicOpen: boolean;
   snapshot: OrchestrationSnapshot | null;
   busyAction: string | null;
   onCreateAndStart: (
@@ -111,10 +145,13 @@ export interface AutoRoundsPanelProps {
   onApprove: (run: OrchestrationRun) => Promise<void>;
   onCancel: (runId: string) => Promise<void>;
   onRecover: (runId: string) => Promise<void>;
+  onCloseBinding: (bindingId: string) => Promise<void>;
+  onReopenBinding: (bindingId: string) => Promise<void>;
 }
 
 export function AutoRoundsPanel({
   topicId,
+  isTopicOpen,
   snapshot,
   busyAction,
   onCreateAndStart,
@@ -122,6 +159,8 @@ export function AutoRoundsPanel({
   onApprove,
   onCancel,
   onRecover,
+  onCloseBinding,
+  onReopenBinding,
 }: AutoRoundsPanelProps) {
   const adapters = snapshot?.capabilities?.adapters ?? [];
   const availableAdapters = useMemo(
@@ -148,8 +187,12 @@ export function AutoRoundsPanel({
   }, [defaultConfirmation]);
 
   const runs = snapshot?.activeTopicId === topicId ? snapshot.runs : [];
+  const runtimeBindings = snapshot?.activeTopicId === topicId
+    ? latestRuntimeBindings(snapshot.runtimeBindings ?? [])
+    : [];
   const { primaryRun, historyRuns } = partitionRunsForDisplay(runs);
-  const createBlockedReason = getCreateRunBlockedReason(runs, busyAction);
+  const createBlockedReason = getTopicAgentCallBlockedReason(isTopicOpen)
+    ?? getCreateRunBlockedReason(runs, busyAction);
   const isCreateBlocked = createBlockedReason !== undefined;
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
@@ -208,6 +251,45 @@ export function AutoRoundsPanel({
           : adapters[0]?.limitation ?? "当前没有可主动调用的 Agent。"}
       </p>
 
+      {runtimeBindings.length > 0 ? (
+        <div className="runtime-binding-list" aria-label="当前议题持久会话">
+          {runtimeBindings.map((binding) => {
+            const adapter = adapters.find((candidate) => candidate.id === binding.agentId);
+            const isClosed = binding.status === "closed";
+            const isBusy = binding.status === "starting"
+              || binding.status === "thinking"
+              || binding.status === "streaming"
+              || binding.status === "closing";
+            return (
+              <article className={`runtime-binding-row runtime-binding-${binding.status}`} key={binding.id}>
+                <BrandGlyph brand={adapter?.brand} size={16} />
+                <span className="runtime-binding-main">
+                  <strong>{adapter?.label ?? binding.agentId}</strong>
+                  <small>
+                    {BINDING_STATUS_LABELS[binding.status]}
+                    {binding.hasSession ? " · 已复用上下文" : " · 首轮上下文"}
+                  </small>
+                </span>
+                <button
+                  type="button"
+                  className="runtime-binding-action"
+                  disabled={Boolean(busyAction) || isBusy || (isClosed && !isTopicOpen)}
+                  onClick={() => void (
+                    isClosed
+                      ? onReopenBinding(binding.id)
+                      : onCloseBinding(binding.id)
+                  )}
+                >
+                  {isClosed ? <RotateCcw size={12} /> : <CircleStop size={12} />}
+                  {isClosed ? "重开" : "关闭"}
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {isTopicOpen ? (
       <form className="auto-round-form" onSubmit={(event) => void handleSubmit(event)}>
         <div className="auto-round-fields">
           <label>
@@ -271,6 +353,9 @@ export function AutoRoundsPanel({
           {busyAction === "create" ? "正在启动 Agent…" : "启动 Agent"}
         </button>
       </form>
+      ) : (
+        <p className="auto-rounds-empty">议题已经决策，Agent 调用与会话重开已关闭。</p>
+      )}
 
       <div className="run-stack" aria-live="polite">
         {!primaryRun ? (

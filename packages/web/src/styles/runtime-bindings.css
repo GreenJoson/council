@@ -1,0 +1,86 @@
+/**
+ * @input  依赖：theme.css 与 AutoRoundsPanel 的 RuntimeBinding 语义类名
+ * @output 导出：议题级持久会话状态、复用提示与关闭/重开按钮视觉
+ * @pos    Agent 调用面板的持久会话增量样式层
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+.runtime-binding-list {
+  display: grid;
+  gap: 5px;
+}
+
+.runtime-binding-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface-raised) 58%, transparent);
+}
+
+.runtime-binding-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.runtime-binding-main strong,
+.runtime-binding-main small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-binding-main strong {
+  color: var(--color-text-secondary);
+  font-size: 9px;
+}
+
+.runtime-binding-main small {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 8px;
+}
+
+.runtime-binding-thinking,
+.runtime-binding-streaming {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-divider));
+}
+
+.runtime-binding-interrupted,
+.runtime-binding-closing {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-divider));
+}
+
+.runtime-binding-closed {
+  opacity: 0.72;
+}
+
+.runtime-binding-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: 25px;
+  padding: 0 7px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.runtime-binding-action:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.runtime-binding-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

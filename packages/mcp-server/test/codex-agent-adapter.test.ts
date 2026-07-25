@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 CodexRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、V1 无 session、失败重试与安全原因测试
+ * @output 导出：可信 prompt、历史裁剪、session 恢复、失败重试与安全原因测试
  * @pos    Codex Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -20,9 +20,9 @@ import { CodexAgentAdapter } from "../src/orchestration/codex-agent-adapter.js";
 class FakeRuntime {
   readonly calls: CodexRuntimeInput[] = [];
 
-  async generate(input: CodexRuntimeInput): Promise<{ content: string }> {
+  async generate(input: CodexRuntimeInput): Promise<{ content: string; sessionId: string }> {
     this.calls.push(input);
-    return { content: "公开回复" };
+    return { content: "公开回复", sessionId: "session_codex_test" };
   }
 }
 
@@ -42,6 +42,8 @@ function invocation(projectPath: string): AgentInvocation {
     attempt: 1,
     adapterId: "codex",
     actorId: "codex",
+    runtimeBindingId: "binding_codex",
+    firstTurn: true,
     instruction: "CURRENT_INSTRUCTION：评估方案并给出可验证结论。",
     messageKind: "critique",
     context: {
@@ -84,6 +86,7 @@ test("超大公开历史只裁旧记录，完整保留可信头、排版要求�
   });
 
   assert.equal(result.content, "公开回复");
+  assert.equal(result.sessionId, "session_codex_test");
   assert.equal(runtime.calls.length, 1);
   const call = runtime.calls[0];
   assert.ok(call);
@@ -100,6 +103,49 @@ test("超大公开历史只裁旧记录，完整保留可信头、排版要求�
   assert.doesNotMatch(call.prompt, /OLD_UNTRUSTED_/);
   assert.match(call.prompt, /LATEST_PUBLIC_CONTEXT/);
   assert.ok(call.prompt.length <= 1_100);
+});
+
+test("后续回合恢复 Codex session 且 prompt 只携带公开增量", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new CodexAgentAdapter(runtime as unknown as CodexRuntime, {
+    maxContextChars: 2_000,
+  });
+  const input = invocation(path.resolve("."));
+  input.firstTurn = false;
+  input.sessionId = "thread_existing";
+  input.requestMessageId = "message_request";
+  input.context.messages = [
+    {
+      id: "message_delta",
+      topicId: input.topicId,
+      actorId: "claude",
+      kind: "critique",
+      content: "DELTA_PUBLIC_CONTEXT",
+      createdAt: "2026-01-01T00:02:00.000Z",
+    },
+    {
+      id: "message_request",
+      topicId: input.topicId,
+      actorId: "human",
+      kind: "brief",
+      content: "DUPLICATE_CURRENT_REQUEST",
+      createdAt: "2026-01-01T00:03:00.000Z",
+    },
+  ];
+
+  const result = await adapter.invoke(input, {
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result.sessionId, "session_codex_test");
+  const call = runtime.calls[0];
+  assert.ok(call);
+  assert.equal(call.sessionId, "thread_existing");
+  assert.match(call.prompt, /继续议题：可信标题/);
+  assert.match(call.prompt, /既有上下文沿用当前 Codex session/);
+  assert.match(call.prompt, /DELTA_PUBLIC_CONTEXT/);
+  assert.doesNotMatch(call.prompt, /DUPLICATE_CURRENT_REQUEST/);
+  assert.doesNotMatch(call.prompt, /问题：可信问题/);
 });
 
 test("可信议题和当前 instruction 自身超限时拒绝调用运行时", async () => {

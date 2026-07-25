@@ -1,6 +1,6 @@
 /**
  * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
- *         （驱动时间线 Agent 回复动态，并透传给 Composer 支撑 @agent 召唤）
+ *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
  * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/元数据双 tab、
  *         卡片阶梯导航、活动 Agent 状态、引用回复发起）
  * @pos    Operator Console 的主要阅读、元数据核查和回复区域；过长议题问题默认收起
@@ -317,6 +317,7 @@ export function DiscussionPanel({
 
           <Composer
             isPublishing={isPublishing}
+            allowAgentCalls={topic.status !== "decided"}
             sync={sync}
             onPublish={onPublish}
             quoteSeed={quoteSeed}

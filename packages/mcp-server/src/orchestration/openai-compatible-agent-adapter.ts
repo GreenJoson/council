@@ -43,6 +43,7 @@ function buildPrompt(input: AgentInvocation, maximum: number): string {
     input.instruction,
   ].join("\n");
   const transcript = input.context.messages
+    .filter((message) => message.id !== input.requestMessageId)
     .map((message) => [
       `### ${message.actorId} / ${message.kind} / ${message.createdAt}`,
       message.content,
@@ -106,8 +107,10 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
           if (event.operation === "reset") {
             this.progress?.reset(progressMeta);
           } else if (event.operation === "append") {
+            options.notifyStreaming?.();
             this.progress?.append(progressMeta, event.content);
           } else {
+            options.notifyStreaming?.();
             this.progress?.replace(progressMeta, event.content);
           }
         },

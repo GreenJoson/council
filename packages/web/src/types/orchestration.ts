@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含 actorId 的 Capabilities、Run、Agent 临时草稿、计划输入和独立快照类型
+ * @output 导出：含 actorId 的 Capabilities、Run、持久会话状态、Agent 临时草稿和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -95,6 +95,38 @@ export interface OrchestrationAgentOutput {
   content: string;
 }
 
+export type RuntimeBindingStatus =
+  | "starting"
+  | "ready"
+  | "thinking"
+  | "streaming"
+  | "idle"
+  | "interrupted"
+  | "closing"
+  | "closed";
+
+export type RuntimeTransportKind =
+  | "claude-resume"
+  | "codex-resume"
+  | "openai-sessionless";
+
+export interface RuntimeBinding {
+  id: string;
+  topicId: string;
+  agentId: string;
+  actorId: string;
+  providerId: string;
+  transportKind: RuntimeTransportKind;
+  status: RuntimeBindingStatus;
+  hasSession: boolean;
+  stateVersion: number;
+  lastActivityAt: string;
+  closeReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+}
+
 export interface CreateOrchestrationRunInput {
   topicId: string;
   confirmationBeforeCompletion?: boolean;
@@ -102,6 +134,7 @@ export interface CreateOrchestrationRunInput {
     adapterId: string;
     messageKind: OrchestrationMessageKind;
     instruction: string;
+    requestMessageId?: string;
   }>;
 }
 
@@ -116,6 +149,7 @@ export interface OrchestrationSnapshot {
   capabilities?: OrchestrationCapabilities;
   activeTopicId?: string;
   runs: OrchestrationRun[];
+  runtimeBindings?: RuntimeBinding[];
   agentOutputs?: OrchestrationAgentOutput[];
   sync: {
     status: "connected" | "syncing" | "offline";

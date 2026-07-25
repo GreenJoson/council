@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 ClaudeRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、项目目录、V1 无 session 与安全失败原因测试
+ * @output 导出：可信 prompt、历史裁剪、项目目录、session 恢复与安全失败原因测试
  * @pos    Claude Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -20,9 +20,9 @@ import { ClaudeAgentAdapter } from "../src/orchestration/claude-agent-adapter.js
 class FakeRuntime {
   readonly calls: ClaudeRuntimeInput[] = [];
 
-  async generate(input: ClaudeRuntimeInput): Promise<{ content: string }> {
+  async generate(input: ClaudeRuntimeInput): Promise<{ content: string; sessionId: string }> {
     this.calls.push(input);
-    return { content: "公开回复" };
+    return { content: "公开回复", sessionId: "session_claude_test" };
   }
 }
 
@@ -34,6 +34,8 @@ function invocation(projectPath: string): AgentInvocation {
     attempt: 1,
     adapterId: "claude",
     actorId: "claude",
+    runtimeBindingId: "binding_claude",
+    firstTurn: true,
     instruction: "CURRENT_INSTRUCTION：评估方案并给出可验证结论。",
     messageKind: "critique",
     context: {
@@ -76,6 +78,7 @@ test("超大公开历史只裁旧记录，完整保留可信头与当前 instruc
   });
 
   assert.equal(result.content, "公开回复");
+  assert.equal(result.sessionId, "session_claude_test");
   assert.equal(runtime.calls.length, 1);
   const call = runtime.calls[0];
   assert.ok(call);
@@ -89,6 +92,49 @@ test("超大公开历史只裁旧记录，完整保留可信头与当前 instruc
   assert.doesNotMatch(call.prompt, /OLD_UNTRUSTED_/);
   assert.match(call.prompt, /LATEST_PUBLIC_CONTEXT/);
   assert.ok(call.prompt.length <= 900);
+});
+
+test("后续回合恢复 Claude session 且 prompt 只携带公开增量", async () => {
+  const runtime = new FakeRuntime();
+  const adapter = new ClaudeAgentAdapter(runtime as unknown as ClaudeRuntime, {
+    maxContextChars: 2_000,
+  });
+  const input = invocation(path.resolve("."));
+  input.firstTurn = false;
+  input.sessionId = "session_existing";
+  input.requestMessageId = "message_request";
+  input.context.messages = [
+    {
+      id: "message_delta",
+      topicId: input.topicId,
+      actorId: "codex",
+      kind: "critique",
+      content: "DELTA_PUBLIC_CONTEXT",
+      createdAt: "2026-01-01T00:02:00.000Z",
+    },
+    {
+      id: "message_request",
+      topicId: input.topicId,
+      actorId: "human",
+      kind: "brief",
+      content: "DUPLICATE_CURRENT_REQUEST",
+      createdAt: "2026-01-01T00:03:00.000Z",
+    },
+  ];
+
+  const result = await adapter.invoke(input, {
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result.sessionId, "session_claude_test");
+  const call = runtime.calls[0];
+  assert.ok(call);
+  assert.equal(call.sessionId, "session_existing");
+  assert.match(call.prompt, /继续议题：可信标题/);
+  assert.match(call.prompt, /既有上下文沿用当前 Claude session/);
+  assert.match(call.prompt, /DELTA_PUBLIC_CONTEXT/);
+  assert.doesNotMatch(call.prompt, /DUPLICATE_CURRENT_REQUEST/);
+  assert.doesNotMatch(call.prompt, /问题：可信问题/);
 });
 
 test("可信议题和当前 instruction 自身超限时拒绝调用运行时", async () => {

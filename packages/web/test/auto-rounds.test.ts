@@ -1,6 +1,6 @@
 /**
  * @input  依赖：AutoRoundsPanel 的纯控制状态函数与 Run 领域类型
- * @output 导出：创建互斥、人工恢复预算与当前/历史调用分区逻辑测试
+ * @output 导出：创建互斥、已决统一阻断、人工恢复预算、当前/历史调用及最新持久会话分区测试
  * @pos    Agent 调用控制卡不暴露无效动作或堆叠完整历史卡的回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,10 +9,15 @@
 import { describe, expect, it } from "vitest";
 import {
   getCreateRunBlockedReason,
+  getTopicAgentCallBlockedReason,
   isRecoveryBudgetExhausted,
+  latestRuntimeBindings,
   partitionRunsForDisplay,
 } from "../src/components/AutoRoundsPanel";
-import type { OrchestrationRun } from "../src/types/orchestration";
+import type {
+  OrchestrationRun,
+  RuntimeBinding,
+} from "../src/types/orchestration";
 
 function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun {
   return {
@@ -38,6 +43,24 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
   };
 }
 
+function createBinding(overrides: Partial<RuntimeBinding> = {}): RuntimeBinding {
+  return {
+    id: "binding-test",
+    topicId: "topic-test",
+    agentId: "claude",
+    actorId: "claude",
+    providerId: "provider-claude",
+    transportKind: "claude-resume",
+    status: "idle",
+    hasSession: true,
+    stateVersion: 2,
+    lastActivityAt: "2026-01-01T09:00:00.000Z",
+    createdAt: "2026-01-01T08:00:00.000Z",
+    updatedAt: "2026-01-01T09:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("自动轮次 UI 控制状态", () => {
   it("任一 busy action 或 idle/active Run 都阻止新建", () => {
     expect(getCreateRunBlockedReason([], "approve:run-test")).toContain("正在处理");
@@ -45,6 +68,13 @@ describe("自动轮次 UI 控制状态", () => {
       "Agent 调用正在处理",
     );
     expect(getCreateRunBlockedReason([createRun()], null)).toBeUndefined();
+  });
+
+  it("已决议题统一禁止启动、重开和 @Agent", () => {
+    expect(getTopicAgentCallBlockedReason(true)).toBeUndefined();
+    expect(getTopicAgentCallBlockedReason(false)).toContain(
+      "不能再启动、重开或通过 @ 召唤 Agent",
+    );
   });
 
   it("仅在 failed Run 用尽 policy 人工恢复预算时隐藏恢复入口", () => {
@@ -88,5 +118,27 @@ describe("自动轮次 UI 控制状态", () => {
       primaryRun: undefined,
       historyRuns: [],
     });
+  });
+
+  it("每个 Agent 只展示最新创建的持久会话", () => {
+    const olderClaude = createBinding({ id: "binding-claude-old" });
+    const codex = createBinding({
+      id: "binding-codex",
+      agentId: "codex",
+      actorId: "codex",
+      providerId: "provider-codex",
+      transportKind: "codex-resume",
+      createdAt: "2026-01-01T08:30:00.000Z",
+    });
+    const latestClaude = createBinding({
+      id: "binding-claude-new",
+      status: "starting",
+      hasSession: false,
+      createdAt: "2026-01-01T10:00:00.000Z",
+    });
+
+    expect(latestRuntimeBindings([latestClaude, olderClaude, codex]).map(
+      (binding) => binding.id,
+    )).toEqual(["binding-codex", "binding-claude-new"]);
   });
 });

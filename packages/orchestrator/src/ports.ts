@@ -12,23 +12,34 @@ import type {
   AgentResult,
   ApproveGateInput,
   ApproveGateResult,
+  ClaimRuntimeBindingLeaseInput,
   CouncilTopicContext,
   ClaimRunLeaseInput,
   CreateRunInput,
+  FinalizeRuntimeBindingCloseInput,
   ListRunsForTopicInput,
   ListRestartCandidatesInput,
+  ListRuntimeBindingsInput,
   OrchestrationRun,
   PaginatedRuns,
   RenewRunLeaseInput,
+  RenewRuntimeBindingLeaseInput,
   RoundCommitInput,
   RoundCommitResult,
   RunLease,
+  RuntimeBinding,
+  RuntimeBindingInvocationContext,
+  RuntimeBindingLease,
+  TransitionRuntimeBindingInput,
+  EnsureRuntimeBindingInput,
 } from "./types.js";
 
 /** 主动触发一个 Agent；实现可以调用模型，也可以桥接前台人工会话。 */
 export interface AgentAdapter {
   readonly adapterId: string;
   invoke(input: AgentInvocation, options: AgentInvocationOptions): Promise<AgentResult>;
+  /** 关闭该议题绑定的本地运行时；sessionless 适配器可以省略。 */
+  closeBinding?(bindingId: string): Promise<void>;
 }
 
 /**
@@ -57,6 +68,30 @@ export interface CouncilStore {
   cancelRun(runId: string): Promise<OrchestrationRun>;
   approveGate(input: ApproveGateInput): Promise<ApproveGateResult>;
   getTopicContext(topicId: string): Promise<CouncilTopicContext>;
+  ensureRuntimeBinding(input: EnsureRuntimeBindingInput): Promise<RuntimeBinding>;
+  getRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;
+  listRuntimeBindings(input: ListRuntimeBindingsInput): Promise<readonly RuntimeBinding[]>;
+  listOpenRuntimeBindings(): Promise<readonly RuntimeBinding[]>;
+  getRuntimeBindingInvocationContext(
+    bindingId: string,
+    requestMessageId?: string,
+  ): Promise<RuntimeBindingInvocationContext>;
+  claimRuntimeBindingLease(
+    input: ClaimRuntimeBindingLeaseInput,
+  ): Promise<RuntimeBindingLease>;
+  transitionRuntimeBinding(
+    input: TransitionRuntimeBindingInput,
+  ): Promise<RuntimeBinding>;
+  renewRuntimeBindingLease(
+    input: RenewRuntimeBindingLeaseInput,
+  ): Promise<RuntimeBindingLease>;
+  releaseRuntimeBindingLease(lease: RuntimeBindingLease): Promise<boolean>;
+  requestRuntimeBindingClose(bindingId: string, reason: string): Promise<RuntimeBinding>;
+  finalizeRuntimeBindingClose(
+    input: FinalizeRuntimeBindingCloseInput,
+  ): Promise<RuntimeBinding>;
+  markRuntimeBindingsInterrupted(processInstanceId: string): Promise<number>;
+  closeIdleRuntimeBindings(beforeIso: string): Promise<number>;
   commitRound(input: RoundCommitInput): Promise<RoundCommitResult>;
   claimRunLease(input: ClaimRunLeaseInput): Promise<RunLease>;
   renewRunLease(input: RenewRunLeaseInput): Promise<RunLease>;

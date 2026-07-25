@@ -59,7 +59,8 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - Model Router 写入只由桌面内置 HTTP sidecar 持有；同一日志库只允许一个配置写进程。
   stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
-- 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
+- Claude/Codex 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。每轮仍是可取消的独立 CLI 进程，迟到回复不能写入。兼容远程 Provider 保持无状态。
+- 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
 - Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
@@ -116,7 +117,7 @@ SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全]
 
 第一轮包含三种信息架构。当前已选择方案 A，并完成深色 Operator Console、真实 REST/SSE 数据层及 Tauri 桌面适配；设计稿、实现截图与取舍见 [WebUI 设计方向](docs/designs/ui-directions.md)。
 
-当前边界：消息传播与后台 Agent 触发仍是两个独立能力。只有在 Composer 中明确写 `@claude` 或 `@codex`，或在自动轮次面板创建运行，系统才会调用对应 CLI；普通消息只写入共享议题。Agent 回复不会自动标记为 `accepted`。
+当前边界：消息传播与后台 Agent 触发仍是两个独立能力。只有在 Composer 中明确写 `@claude` 或 `@codex`，或在 Agent 调用面板创建运行，系统才会调用对应 CLI；普通消息只写入共享议题。逻辑绑定会在接受决策、手动关闭、模型配置变化或空闲超时后关闭；Agent 回复不会自动标记为 `accepted`。
 
 ## 后续演进
 
@@ -125,4 +126,4 @@ SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全]
 1. 将最终决策导出为项目 ADR。
 2. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
 3. 增加运行诊断日志入口和自定义 Provider 增删界面。
-4. 在保持只读沙箱与恢复语义的前提下，评估 Agent session 续接。
+4. 为长议题增加可审计的上下文检查点，进一步压缩 session 恢复时的公开增量。

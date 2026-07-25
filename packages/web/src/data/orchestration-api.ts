@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
- * @output 导出：含动态 actorId 的 Capabilities、Run、分页与 Agent 增量事件严格解析函数
+ * @output 导出：含动态 actorId 的 Capabilities、Run、持久会话与 Agent 增量事件严格解析函数
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,9 @@ import type {
   OrchestrationRoundPlan,
   OrchestrationRun,
   OrchestrationStatus,
+  RuntimeBinding,
+  RuntimeBindingStatus,
+  RuntimeTransportKind,
 } from "../types/orchestration";
 
 export type AgentOutputOperation =
@@ -52,6 +55,12 @@ const MESSAGE_KINDS: readonly OrchestrationMessageKind[] = [
 ];
 const AGENT_OUTPUT_OPERATIONS: readonly AgentOutputOperation[] = [
   "snapshot", "reset", "append", "replace", "complete",
+];
+const RUNTIME_BINDING_STATUSES: readonly RuntimeBindingStatus[] = [
+  "starting", "ready", "thinking", "streaming", "idle", "interrupted", "closing", "closed",
+];
+const RUNTIME_TRANSPORT_KINDS: readonly RuntimeTransportKind[] = [
+  "claude-resume", "codex-resume", "openai-sessionless",
 ];
 
 function recordValue(value: unknown, path: string): Record<string, unknown> {
@@ -249,6 +258,35 @@ export function parseOrchestrationApprovalResult(
     run: parseOrchestrationRun(record.run),
     applied: booleanValue(record, "applied"),
   };
+}
+
+export function parseRuntimeBinding(value: unknown): RuntimeBinding {
+  const record = recordValue(value, "runtime binding");
+  const closeReason = optionalString(record, "closeReason");
+  const closedAt = optionalString(record, "closedAt");
+  return {
+    id: stringValue(record, "id"),
+    topicId: stringValue(record, "topicId"),
+    agentId: stringValue(record, "agentId"),
+    actorId: stringValue(record, "actorId"),
+    providerId: stringValue(record, "providerId"),
+    transportKind: enumValue(record, "transportKind", RUNTIME_TRANSPORT_KINDS),
+    status: enumValue(record, "status", RUNTIME_BINDING_STATUSES),
+    hasSession: booleanValue(record, "hasSession"),
+    stateVersion: integerValue(record, "stateVersion", 1),
+    lastActivityAt: stringValue(record, "lastActivityAt"),
+    ...(closeReason ? { closeReason } : {}),
+    createdAt: stringValue(record, "createdAt"),
+    updatedAt: stringValue(record, "updatedAt"),
+    ...(closedAt ? { closedAt } : {}),
+  };
+}
+
+export function parseRuntimeBindings(value: unknown): RuntimeBinding[] {
+  if (!Array.isArray(value)) {
+    throw new Error("runtime bindings 必须是数组");
+  }
+  return value.map((item) => parseRuntimeBinding(item));
 }
 
 export function parseAgentOutputEvent(event: Event): ApiAgentOutputEvent | undefined {

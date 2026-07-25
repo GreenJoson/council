@@ -6,7 +6,6 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { randomUUID } from "node:crypto";
 import {
   classifyRestartDisposition,
   CouncilOrchestrator,
@@ -20,6 +19,7 @@ import {
 import { logger } from "../logger.js";
 
 export interface RunExecutionManagerOptions {
+  ownerId: string;
   leaseTtlMs: number;
   leaseRenewMs: number;
   sweepIntervalMs: number;
@@ -47,7 +47,7 @@ function boundedWait(promise: Promise<unknown>, timeoutMs: number): Promise<void
 }
 
 export class RunExecutionManager {
-  readonly #ownerId = `council-runner-${String(process.pid)}-${randomUUID()}`;
+  readonly #ownerId: string;
   readonly #tasks = new Map<string, Promise<void>>();
   #shuttingDown = false;
   #sweepTimer?: NodeJS.Timeout;
@@ -56,7 +56,9 @@ export class RunExecutionManager {
   constructor(
     private readonly orchestrator: CouncilOrchestrator,
     private readonly options: RunExecutionManagerOptions,
-  ) {}
+  ) {
+    this.#ownerId = options.ownerId;
+  }
 
   async start(runId: string): Promise<OrchestrationRun> {
     const run = await this.orchestrator.begin(runId);

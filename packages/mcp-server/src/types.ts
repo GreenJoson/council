@@ -73,6 +73,7 @@ export interface CouncilHttpConfig {
   orchestrationRunPageLimit: number;
   orchestrationStartupScanLimit: number;
   orchestrationShutdownTimeoutMs: number;
+  runtimeBindingIdleTimeoutMs: number;
 }
 
 export interface Topic {

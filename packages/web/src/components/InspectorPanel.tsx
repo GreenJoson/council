@@ -1,6 +1,6 @@
 /**
  * @input  依赖：含 owner/备选冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、自动轮次和决策检查器
+ * @output 导出：InspectorPanel 议题摘要、按议题状态控制的 Agent 调用和决策检查器
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策 summary/rationale
  *         按 Markdown 渲染（含内嵌 mermaid 围栏）；决策状态徽章走 presentation.tsx 的
  *         DecisionStatusBadge，proposed/accepted/superseded 三态共用同一套文案
@@ -53,6 +53,8 @@ export interface InspectorPanelProps {
   onApproveRun: (run: OrchestrationRun) => Promise<void>;
   onCancelRun: (runId: string) => Promise<void>;
   onRecoverRun: (runId: string) => Promise<void>;
+  onCloseRuntimeBinding: (bindingId: string) => Promise<void>;
+  onReopenRuntimeBinding: (bindingId: string) => Promise<void>;
 }
 
 export function InspectorPanel({
@@ -69,6 +71,8 @@ export function InspectorPanel({
   onApproveRun,
   onCancelRun,
   onRecoverRun,
+  onCloseRuntimeBinding,
+  onReopenRuntimeBinding,
 }: InspectorPanelProps) {
   const owner = participantFromActorSnapshot(
     topic.ownerSnapshot,
@@ -120,6 +124,7 @@ export function InspectorPanel({
 
       <AutoRoundsPanel
         topicId={topic.id}
+        isTopicOpen={topic.status !== "decided"}
         snapshot={orchestration}
         busyAction={orchestrationBusyAction}
         onCreateAndStart={onCreateAndStartRun}
@@ -127,6 +132,8 @@ export function InspectorPanel({
         onApprove={onApproveRun}
         onCancel={onCancelRun}
         onRecover={onRecoverRun}
+        onCloseBinding={onCloseRuntimeBinding}
+        onReopenBinding={onReopenRuntimeBinding}
       />
 
       <InspectorSection title="约束条件" count={topic.constraints.length}>
