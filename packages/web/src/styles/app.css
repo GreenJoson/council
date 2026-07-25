@@ -125,7 +125,8 @@ textarea:focus-visible {
   position: relative;
   z-index: var(--z-header);
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(320px, 520px) minmax(420px, 1fr);
+  /* 左栏宽度对齐下方侧边栏（减去头部自身的 18px 内边距），让切换器与它作用的那一栏严丝合缝 */
+  grid-template-columns: calc(var(--sidebar-width) - 18px) minmax(320px, 520px) minmax(0, 1fr);
   align-items: center;
   gap: 24px;
   min-width: 0;
@@ -203,17 +204,25 @@ textarea:focus-visible {
     box-shadow var(--transition-fast);
 }
 
+/* 品牌标识是最重的元素，切换器是它的从属信息：默认无边框无底色，hover 才浮起来 */
 .project-switcher {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-width: 205px;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border-strong);
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid transparent;
   border-radius: var(--radius-small);
-  background: var(--color-surface);
+  background: transparent;
   color: var(--color-text);
+}
+
+/* 项目名可能很长，必须能省略，否则会把品牌标识挤出头部左栏 */
+.project-switcher > span:not(.project-mark) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-switcher-shell {
@@ -225,7 +234,12 @@ textarea:focus-visible {
   top: calc(100% + 8px);
   left: 0;
   z-index: var(--z-header);
+  display: flex;
+  flex-direction: column;
   width: 330px;
+  /* 最近项目上限 10 条时整菜单约 540px；上限按视口实际可用高度算（菜单顶边距视口约 58px，
+     底部留 30px 呼吸），常规窗口根本不触发滚动 */
+  max-height: min(calc(100vh - 88px), 620px);
   padding: 8px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-medium);
@@ -233,12 +247,20 @@ textarea:focus-visible {
   box-shadow: var(--shadow-large);
 }
 
+/* 只有项目列表滚动，下方操作区留在流外——窗口再矮也不会把「打开其他项目」推出可视区。
+   min-height: 0 是必需的：flex 子项默认最小高度为内容高度，不写就压不下来，滚动不会发生。 */
+.project-menu-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .project-menu-current {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 9px;
+  padding: 7px 9px;
   border-radius: var(--radius-small);
   background: var(--color-surface-selected);
   color: var(--color-text);
@@ -248,21 +270,29 @@ textarea:focus-visible {
   color: var(--color-positive);
 }
 
+/* 名称与路径同行：路径只是同名项目的消歧信息，不值得让每一行都占两行高度。
+   完整路径仍由行上的 title 提供悬停查看。 */
 .project-entry {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
 .project-entry-name {
-  display: block;
+  flex: 0 1 auto;
   overflow: hidden;
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* flex-basis 为 0：路径只吃名称占完后的剩余宽度，收缩时也先牺牲自己。
+   名称是主标识，只有它自己长到撑满整行时才轮到它截断。
+   direction: rtl 让省略号出现在开头，保留可区分的路径尾部。 */
 .project-entry-path {
-  display: block;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   color: var(--color-text-muted);
   font-family: var(--font-mono);
@@ -288,7 +318,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 9px;
+  padding: 7px 9px;
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
@@ -318,8 +348,8 @@ textarea:focus-visible {
 }
 
 .project-switcher:hover {
-  border-color: var(--color-primary);
-  background: var(--color-surface-raised);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
 }
 
 /* Web 模式没有项目切换能力：呈现为静态标签而非假按钮 */
@@ -328,8 +358,8 @@ textarea:focus-visible {
 }
 
 .project-switcher.is-static:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface);
+  border-color: transparent;
+  background: transparent;
 }
 
 .project-switcher svg {

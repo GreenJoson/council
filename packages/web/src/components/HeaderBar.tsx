@@ -171,41 +171,43 @@ export function HeaderBar({
           )}
           {desktopSettings && isProjectMenuOpen ? (
             <div className="project-menu" role="menu">
-              {currentProjectPath ? (
-                <>
-                  <div className="project-menu-label">当前项目</div>
-                  <div className="project-menu-current">
-                    <FolderOpen size={15} />
-                    <span className="project-entry">
-                      <span className="project-entry-name">{pathBasename(currentProjectPath)}</span>
-                      <code className="project-entry-path">{currentProjectPath}</code>
-                    </span>
-                    <Check size={15} className="project-current-check" />
-                  </div>
-                </>
-              ) : null}
-              {recentProjectPaths.length > 0 ? (
-                <>
-                  <div className="project-menu-label">最近项目</div>
-                  {recentProjectPaths.map((path) => (
-                    <button
-                      type="button"
-                      key={path}
-                      title={path}
-                      onClick={() => {
-                        setIsProjectMenuOpen(false);
-                        void onSelectRecentProject?.(path);
-                      }}
-                    >
+              <div className="project-menu-scroll">
+                {currentProjectPath ? (
+                  <>
+                    <div className="project-menu-label">当前项目</div>
+                    <div className="project-menu-current">
                       <FolderOpen size={15} />
                       <span className="project-entry">
-                        <span className="project-entry-name">{pathBasename(path)}</span>
-                        <code className="project-entry-path">{path}</code>
+                        <span className="project-entry-name">{pathBasename(currentProjectPath)}</span>
+                        <code className="project-entry-path">{currentProjectPath}</code>
                       </span>
-                    </button>
-                  ))}
-                </>
-              ) : null}
+                      <Check size={15} className="project-current-check" />
+                    </div>
+                  </>
+                ) : null}
+                {recentProjectPaths.length > 0 ? (
+                  <>
+                    <div className="project-menu-label">最近项目</div>
+                    {recentProjectPaths.map((path) => (
+                      <button
+                        type="button"
+                        key={path}
+                        title={path}
+                        onClick={() => {
+                          setIsProjectMenuOpen(false);
+                          void onSelectRecentProject?.(path);
+                        }}
+                      >
+                        <FolderOpen size={15} />
+                        <span className="project-entry">
+                          <span className="project-entry-name">{pathBasename(path)}</span>
+                          <code className="project-entry-path">{path}</code>
+                        </span>
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+              </div>
               <div className="project-menu-divider" />
               <button type="button" onClick={() => {
                 setIsProjectMenuOpen(false);
