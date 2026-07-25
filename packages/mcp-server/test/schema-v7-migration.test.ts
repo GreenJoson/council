@@ -107,6 +107,7 @@ function insertCycle(
     stage: "proposal",
     status: "active",
     participants_json: '["claude","codex"]',
+    turns_json: "[]",
     round_budget: 3,
     current_round: 1,
     resume_stage: null,

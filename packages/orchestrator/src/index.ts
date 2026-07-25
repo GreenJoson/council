@@ -8,6 +8,8 @@
 
 export * from "./constants.js";
 export * from "./cycle/convergence.js";
+export * from "./cycle/cycle-codec.js";
+export * from "./cycle/cycle-repository.js";
 export * from "./cycle/verdict.js";
 export * from "./errors.js";
 export * from "./orchestrator.js";

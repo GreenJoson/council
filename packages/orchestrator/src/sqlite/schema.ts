@@ -281,6 +281,8 @@ export const RUNTIME_BINDING_SCHEMA_SQL = `
  * 所以并发唯一性交给部分唯一索引，而不是应用层判断。
  * participants_json 在开局冻结，首位是提案人；中途改 Agent 名册会让"所有评审都发言了"
  * 这个推进条件在同一个 cycle 里前后不一致，所以名册和运行计划一样必须冻结。
+ * turns_json 记录已完成发言的 (agent, stage, round, stance, messageId)——轮次与立场
+ * 都不能从 messages 反推，沿用 orchestration_runs 的快照 JSON 惯例存在同一行里。
  * stage 是固定四段协议（proposal→critique→rebuttal→synthesis），不做通用 DAG：
  * 通用编排能表达一切流程，也就无法保证任何一次讨论会收敛。
  * accepted 决策同时终结 cycle 与未答问题——沿用 RuntimeBinding 的同一条 fencing，
@@ -302,6 +304,9 @@ export const DISCUSSION_CYCLE_SCHEMA_SQL = `
       json_valid(participants_json)
       AND json_type(participants_json) = 'array'
       AND json_array_length(participants_json) > 0
+    ),
+    turns_json TEXT NOT NULL CHECK (
+      json_valid(turns_json) AND json_type(turns_json) = 'array'
     ),
     round_budget INTEGER NOT NULL CHECK (round_budget > 0),
     current_round INTEGER NOT NULL CHECK (current_round >= 0),
