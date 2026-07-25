@@ -1,12 +1,15 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v6 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v7 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export { RUNTIME_BINDING_SCHEMA_SQL } from "council-orchestrator";
+export {
+  DISCUSSION_CYCLE_SCHEMA_SQL,
+  RUNTIME_BINDING_SCHEMA_SQL,
+} from "council-orchestrator";
 
 export const REQUIRED_TABLES = [
   "topics",
@@ -23,6 +26,8 @@ export const REQUIRED_TABLES = [
   "runtime_bindings",
   "runtime_binding_leases",
   "runtime_binding_requests",
+  "discussion_cycles",
+  "blocking_questions",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -44,6 +49,12 @@ export const REQUIRED_INDEXES = [
   "idx_runtime_bindings_one_open_agent",
   "idx_runtime_bindings_active_session",
   "idx_runtime_binding_leases_expiry",
+  "idx_discussion_cycles_one_active_topic",
+  "idx_discussion_cycles_topic_updated",
+  "idx_discussion_cycles_status_stage",
+  "idx_blocking_questions_one_open_cycle",
+  "idx_blocking_questions_cycle_created",
+  "idx_blocking_questions_status_created",
   "idx_orchestration_runs_topic_updated",
   "idx_orchestration_runs_status_updated",
   "idx_orchestration_runs_one_active_topic",
@@ -124,6 +135,14 @@ export const REQUIRED_REVISION_TRIGGERS = [
   "trg_runtime_bindings_revision_delete",
   "trg_decisions_runtime_close_insert",
   "trg_decisions_runtime_close_update",
+  "trg_discussion_cycles_revision_insert",
+  "trg_discussion_cycles_revision_update",
+  "trg_discussion_cycles_revision_delete",
+  "trg_blocking_questions_revision_insert",
+  "trg_blocking_questions_revision_update",
+  "trg_blocking_questions_revision_delete",
+  "trg_decisions_cycle_close_insert",
+  "trg_decisions_cycle_close_update",
 ] as const;
 
 export const LEGACY_REQUIRED_REVISION_TRIGGERS = [

@@ -13,6 +13,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
+  DISCUSSION_CYCLE_SCHEMA_SQL,
   InvalidRunStateError,
   LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
   LeaseConflictError,
@@ -124,6 +125,7 @@ function createBaseDatabase(databasePath: string): void {
     `);
     database.exec(ORCHESTRATION_SCHEMA_SQL);
     database.exec(RUNTIME_BINDING_SCHEMA_SQL);
+    database.exec(DISCUSSION_CYCLE_SCHEMA_SQL);
     const now = new Date().toISOString();
     const actorSeed = database.prepare(`
       INSERT INTO actor_identities (

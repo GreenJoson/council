@@ -10,6 +10,7 @@ export * from "./constants.js";
 export * from "./errors.js";
 export * from "./orchestrator.js";
 export {
+  DISCUSSION_CYCLE_SCHEMA_SQL,
   LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,
   ORCHESTRATION_SCHEMA_SQL,
   ORCHESTRATION_SCHEMA_VERSION,

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v6、版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v7、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -59,6 +59,10 @@ import {
   migrateVersionSix,
 } from "./schema-v6-migration.js";
 import {
+  assertVersionSixMigrationSource,
+  migrateVersionSeven,
+} from "./schema-v7-migration.js";
+import {
   assertCountsPreserved,
   assertDatabaseIntegrity,
   createVerifiedSchemaBackup,
@@ -70,7 +74,7 @@ import {
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 6;
+export const COUNCIL_SCHEMA_VERSION = 7;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -423,6 +427,7 @@ function canonicalRequiredSchemaObjects(): ReadonlyMap<string, string> {
     migrateVersionFour(canonical, false);
     migrateVersionFive(canonical, false);
     migrateVersionSix(canonical, false);
+    migrateVersionSeven(canonical, false);
     canonicalSchemaObjects = requiredSchemaObjects(canonical);
     return canonicalSchemaObjects;
   } finally {
@@ -582,6 +587,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
     [4, "frozen-run-bindings"],
     [5, "dynamic-provider-actors"],
     [6, "topic-runtime-bindings"],
+    [7, "discussion-cycles"],
   ] as const;
   if (
     migrationRows.length !== expectedMigrations.length ||
@@ -589,7 +595,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
       migrationRows[index]?.version !== versionNumber ||
       migrationRows[index]?.name !== name)
   ) {
-    throw new Error("Council v6 迁移账本内容无效。");
+    throw new Error("Council v7 迁移账本内容无效。");
   }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
@@ -1153,6 +1159,13 @@ export async function migrateCouncilSchema(
         }
         migrateVersionSix(database);
         migratingVersion = 6;
+      }
+      if (migratingVersion === 6) {
+        if (initialVersion === 6) {
+          assertVersionSixMigrationSource(database);
+        }
+        migrateVersionSeven(database);
+        migratingVersion = 7;
       }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");

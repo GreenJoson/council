@@ -288,6 +288,10 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER trg_decisions_cycle_close_update;
+      DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE blocking_questions;
+      DROP TABLE discussion_cycles;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_update;
       DROP TABLE runtime_binding_requests;
@@ -499,6 +503,10 @@ async function createCanonicalV4Database(databasePath: string): Promise<{
       UPDATE agent_definitions
       SET display_name = 'Codex CLI', mention_alias = 'codex-v4-custom'
       WHERE actor_id = 'codex';
+      DROP TRIGGER trg_decisions_cycle_close_update;
+      DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE blocking_questions;
+      DROP TABLE discussion_cycles;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_update;
       DROP TABLE runtime_binding_requests;
@@ -601,6 +609,10 @@ test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定",
     const downgrade = new DatabaseSync(fixture.databasePath);
     try {
       downgrade.exec(`
+        DROP TRIGGER trg_decisions_cycle_close_update;
+        DROP TRIGGER trg_decisions_cycle_close_insert;
+        DROP TABLE blocking_questions;
+        DROP TABLE discussion_cycles;
         DROP TRIGGER trg_decisions_runtime_close_update;
         DROP TRIGGER trg_decisions_runtime_close_insert;
         DROP TABLE runtime_binding_requests;
@@ -629,6 +641,14 @@ test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定",
         WHERE type = 'table' AND name LIKE 'runtime_binding%'
       `).get() as unknown as { count: number };
       assert.equal(bindingTables.count, 0);
+      // 回滚必须整链原子：v7 的圆桌收敛表也不能残留，否则重试会撞上"提前出现"守卫。
+      const cycleTables = rolledBack.prepare(`
+        SELECT COUNT(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('discussion_cycles', 'blocking_questions')
+      `).get() as unknown as { count: number };
+      assert.equal(cycleTables.count, 0);
     } finally {
       rolledBack.close();
     }
@@ -1415,8 +1435,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (4, 'frozen-run-bindings', '2026-01-04T00:00:00.000Z'),
         (5, 'dynamic-provider-actors', '2026-01-05T00:00:00.000Z'),
         (6, 'topic-runtime-bindings', '2026-01-06T00:00:00.000Z'),
-        (7, 'future', '2026-01-07T00:00:00.000Z');
-      PRAGMA user_version = 7;
+        (7, 'discussion-cycles', '2026-01-07T00:00:00.000Z'),
+        (8, 'future', '2026-01-08T00:00:00.000Z');
+      PRAGMA user_version = 8;
     `);
     futureDatabase.close();
     await assert.rejects(

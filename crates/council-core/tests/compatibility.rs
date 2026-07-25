@@ -186,7 +186,7 @@ fn opens_node_v6_runtime_binding_schema_and_preserves_cross_language_identity() 
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 6);
+    assert_eq!(user_version, 7);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 5);
     drop(raw);
@@ -430,7 +430,8 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    assert_eq!(trigger_count, 15);
+    // v7 为 discussion_cycles / blocking_questions 各加 3 个 revision 触发器。
+    assert_eq!(trigger_count, 21);
 }
 
 #[test]
@@ -511,8 +512,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (7, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 7;",
+             VALUES (8, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 8;",
         )
         .expect("future schema fixture");
     assert!(matches!(

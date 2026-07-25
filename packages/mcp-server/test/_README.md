@@ -5,6 +5,7 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `schema-migrator.test.ts` | 主安全验收 | 用完整生产 v1/v2 与精确 v4 fixture 验证迁移到 v5：当前 Kimi/DeepSeek 重绑 UUID Actor、旧种子冻结、Claude/Codex 身份恢复、Topic/Message/Decision 及 `orchestration_runs` 全列逐值不变，以及漂移拒绝、备份、回滚与 WAL 阻塞 |
+| `schema-v7-migration.test.ts` | 安全验收 | 验证 v7 收敛容器的存储级不变量：议题内 active cycle 唯一、轮次预算硬停止、终态必须带 completed_at 与 proposed 决策、awaiting_user 与 resume_stage 双向绑定、cycle 内单一未答问题与按提问消息幂等、revision 推进与议题级联清理 |
 | `database.test.ts` | 单元测试 | 验证动态 Actor alias、冻结快照与索引一致、Session 历史/current 语义、未知身份拒绝、revision 分域与 lease 零噪声 |
 | `agent-progress-hub.test.ts` | 单元测试 | 验证临时 Agent 草稿的顺序、有界追加、快照和完成清理 |
 | `claude-runtime.test.ts` | 单元测试 | 验证纯生成、公开 stream-json 增量、session 恢复、取消、超时、输出上限与脱敏错误 |

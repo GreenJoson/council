@@ -56,6 +56,10 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER trg_decisions_cycle_close_update;
+      DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE blocking_questions;
+      DROP TABLE discussion_cycles;
       DROP TRIGGER trg_decisions_runtime_close_update;
       DROP TRIGGER trg_decisions_runtime_close_insert;
       DROP TRIGGER trg_runtime_bindings_revision_delete;
@@ -120,6 +124,10 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER trg_decisions_cycle_close_update;
+      DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE blocking_questions;
+      DROP TABLE discussion_cycles;
       DROP TRIGGER trg_decisions_runtime_close_update;
       DROP TRIGGER trg_decisions_runtime_close_insert;
       DROP TABLE runtime_binding_requests;

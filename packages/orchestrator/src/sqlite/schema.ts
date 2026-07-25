@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已由 Council Node 迁移器准备的 SQLite 与 node:sqlite
- * @output 导出：编排 schema SQL 和只读兼容性验证
+ * @output 导出：编排 / RuntimeBinding / 圆桌收敛 schema SQL 和只读兼容性验证
  * @pos    Node 唯一迁移器与 SQLiteCouncilStore 共享的编排结构契约
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -27,6 +27,8 @@ const REQUIRED_COUNCIL_TABLES = [
   "agent_definitions",
   "runtime_bindings",
   "runtime_binding_leases",
+  "discussion_cycles",
+  "blocking_questions",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -269,6 +271,197 @@ export const RUNTIME_BINDING_SCHEMA_SQL = `
         SELECT id FROM runtime_bindings
         WHERE topic_id = NEW.topic_id AND status = 'closing'
       );
+    END;
+`;
+
+/**
+ * 圆桌收敛 DDL 的唯一正本；由 Node 迁移器执行，Store/Rust 只验证。
+ *
+ * 一个 Topic 同时只允许一个 active cycle——议题分裂正是圆桌出不了决策的根因，
+ * 所以并发唯一性交给部分唯一索引，而不是应用层判断。
+ * stage 是固定四段协议（proposal→critique→rebuttal→synthesis），不做通用 DAG：
+ * 通用编排能表达一切流程，也就无法保证任何一次讨论会收敛。
+ * accepted 决策同时终结 cycle 与未答问题——沿用 RuntimeBinding 的同一条 fencing，
+ * 否则自动交接会在已决议题上继续召唤 Agent。v6 的触发器文本是冻结的，
+ * 因此这里另立触发器而不是改写它们。
+ */
+export const DISCUSSION_CYCLE_SCHEMA_SQL = `
+  CREATE TABLE discussion_cycles (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL CHECK (
+      stage IN (
+        'proposal', 'critique', 'rebuttal', 'synthesis',
+        'awaiting_user', 'completed'
+      )
+    ),
+    status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'abandoned')),
+    round_budget INTEGER NOT NULL CHECK (round_budget > 0),
+    current_round INTEGER NOT NULL CHECK (current_round >= 0),
+    resume_stage TEXT CHECK (
+      resume_stage IS NULL
+      OR resume_stage IN ('proposal', 'critique', 'rebuttal', 'synthesis')
+    ),
+    context_cursor_message_id TEXT REFERENCES messages(id) ON DELETE RESTRICT,
+    context_cursor_created_at TEXT,
+    proposed_decision_id TEXT REFERENCES decisions(id) ON DELETE RESTRICT,
+    state_version INTEGER NOT NULL CHECK (state_version > 0),
+    epoch INTEGER NOT NULL CHECK (epoch >= 0),
+    stop_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK (current_round <= round_budget),
+    CHECK (
+      (context_cursor_message_id IS NULL AND context_cursor_created_at IS NULL)
+      OR (
+        context_cursor_message_id IS NOT NULL
+        AND context_cursor_created_at IS NOT NULL
+      )
+    ),
+    CHECK (
+      (status = 'active' AND completed_at IS NULL)
+      OR (status <> 'active' AND completed_at IS NOT NULL)
+    ),
+    CHECK (stage <> 'completed' OR status <> 'active'),
+    CHECK (status <> 'completed' OR stage = 'completed'),
+    CHECK (
+      (stage = 'awaiting_user' AND resume_stage IS NOT NULL)
+      OR (stage <> 'awaiting_user' AND resume_stage IS NULL)
+    ),
+    CHECK (
+      proposed_decision_id IS NULL
+      OR stage IN ('synthesis', 'completed')
+    ),
+    CHECK (status <> 'completed' OR proposed_decision_id IS NOT NULL)
+  );
+
+  CREATE TABLE blocking_questions (
+    id TEXT PRIMARY KEY,
+    cycle_id TEXT NOT NULL REFERENCES discussion_cycles(id) ON DELETE CASCADE,
+    asked_by_actor_id TEXT NOT NULL
+      REFERENCES actor_identities(id) ON DELETE RESTRICT,
+    asked_at_stage TEXT NOT NULL CHECK (
+      asked_at_stage IN ('proposal', 'critique', 'rebuttal', 'synthesis')
+    ),
+    question TEXT NOT NULL CHECK (length(trim(question)) > 0),
+    rationale TEXT NOT NULL CHECK (length(trim(rationale)) > 0),
+    options_json TEXT NOT NULL CHECK (
+      json_valid(options_json) AND json_type(options_json) = 'array'
+    ),
+    status TEXT NOT NULL CHECK (status IN ('open', 'answered', 'withdrawn')),
+    question_message_id TEXT NOT NULL UNIQUE
+      REFERENCES messages(id) ON DELETE RESTRICT,
+    answer_message_id TEXT REFERENCES messages(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    resolved_at TEXT,
+    CHECK (
+      (status = 'answered' AND answer_message_id IS NOT NULL)
+      OR (status <> 'answered' AND answer_message_id IS NULL)
+    ),
+    CHECK (
+      (status = 'open' AND resolved_at IS NULL)
+      OR (status <> 'open' AND resolved_at IS NOT NULL)
+    )
+  );
+
+  CREATE UNIQUE INDEX idx_discussion_cycles_one_active_topic
+    ON discussion_cycles(topic_id)
+    WHERE status = 'active';
+  CREATE INDEX idx_discussion_cycles_topic_updated
+    ON discussion_cycles(topic_id, updated_at DESC);
+  CREATE INDEX idx_discussion_cycles_status_stage
+    ON discussion_cycles(status, stage, updated_at DESC);
+  CREATE UNIQUE INDEX idx_blocking_questions_one_open_cycle
+    ON blocking_questions(cycle_id)
+    WHERE status = 'open';
+  CREATE INDEX idx_blocking_questions_cycle_created
+    ON blocking_questions(cycle_id, created_at);
+  CREATE INDEX idx_blocking_questions_status_created
+    ON blocking_questions(status, created_at);
+
+  CREATE TRIGGER trg_discussion_cycles_revision_insert
+    AFTER INSERT ON discussion_cycles BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_discussion_cycles_revision_update
+    AFTER UPDATE ON discussion_cycles BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_discussion_cycles_revision_delete
+    AFTER DELETE ON discussion_cycles BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_blocking_questions_revision_insert
+    AFTER INSERT ON blocking_questions BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_blocking_questions_revision_update
+    AFTER UPDATE ON blocking_questions BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+  CREATE TRIGGER trg_blocking_questions_revision_delete
+    AFTER DELETE ON blocking_questions BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
+    END;
+
+  CREATE TRIGGER trg_decisions_cycle_close_insert
+    AFTER INSERT ON decisions
+    WHEN NEW.status = 'accepted'
+    BEGIN
+      UPDATE blocking_questions
+      SET status = 'withdrawn',
+          resolved_at = NEW.updated_at,
+          updated_at = NEW.updated_at
+      WHERE status = 'open'
+        AND cycle_id IN (
+          SELECT id FROM discussion_cycles
+          WHERE topic_id = NEW.topic_id AND status = 'active'
+        );
+      UPDATE discussion_cycles
+      SET status = 'completed',
+          stage = 'completed',
+          resume_stage = NULL,
+          proposed_decision_id = NEW.id,
+          state_version = state_version + 1,
+          epoch = epoch + 1,
+          stop_reason = 'decision-accepted',
+          updated_at = NEW.updated_at,
+          completed_at = NEW.updated_at
+      WHERE topic_id = NEW.topic_id AND status = 'active';
+    END;
+
+  CREATE TRIGGER trg_decisions_cycle_close_update
+    AFTER UPDATE OF status ON decisions
+    WHEN OLD.status <> 'accepted' AND NEW.status = 'accepted'
+    BEGIN
+      UPDATE blocking_questions
+      SET status = 'withdrawn',
+          resolved_at = NEW.updated_at,
+          updated_at = NEW.updated_at
+      WHERE status = 'open'
+        AND cycle_id IN (
+          SELECT id FROM discussion_cycles
+          WHERE topic_id = NEW.topic_id AND status = 'active'
+        );
+      UPDATE discussion_cycles
+      SET status = 'completed',
+          stage = 'completed',
+          resume_stage = NULL,
+          proposed_decision_id = NEW.id,
+          state_version = state_version + 1,
+          epoch = epoch + 1,
+          stop_reason = 'decision-accepted',
+          updated_at = NEW.updated_at,
+          completed_at = NEW.updated_at
+      WHERE topic_id = NEW.topic_id AND status = 'active';
     END;
 `;
 

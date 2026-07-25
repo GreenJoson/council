@@ -18,7 +18,7 @@ use crate::types::{
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 6;
+const SUPPORTED_SCHEMA_VERSION: i64 = 7;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -34,6 +34,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "runtime_bindings",
     "runtime_binding_leases",
     "runtime_binding_requests",
+    "discussion_cycles",
+    "blocking_questions",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -51,6 +53,12 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_runtime_bindings_one_open_agent",
     "idx_runtime_bindings_active_session",
     "idx_runtime_binding_leases_expiry",
+    "idx_discussion_cycles_one_active_topic",
+    "idx_discussion_cycles_topic_updated",
+    "idx_discussion_cycles_status_stage",
+    "idx_blocking_questions_one_open_cycle",
+    "idx_blocking_questions_cycle_created",
+    "idx_blocking_questions_status_created",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_topics_revision_insert",
@@ -67,6 +75,14 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_runtime_bindings_revision_delete",
     "trg_decisions_runtime_close_insert",
     "trg_decisions_runtime_close_update",
+    "trg_discussion_cycles_revision_insert",
+    "trg_discussion_cycles_revision_update",
+    "trg_discussion_cycles_revision_delete",
+    "trg_blocking_questions_revision_insert",
+    "trg_blocking_questions_revision_update",
+    "trg_blocking_questions_revision_delete",
+    "trg_decisions_cycle_close_insert",
+    "trg_decisions_cycle_close_update",
 ];
 const TOPIC_COLUMNS: &[&str] = &[
     "id",
