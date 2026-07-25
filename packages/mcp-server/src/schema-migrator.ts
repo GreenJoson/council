@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v7、版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v7、逐版本 schema 指纹、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -341,15 +341,7 @@ function canonicalLegacyV2RequiredSchemaObjects(): ReadonlyMap<string, string> {
   }
   const canonical = new DatabaseSync(":memory:");
   try {
-    canonical.exec(LEGACY_BASE_SCHEMA_SQL);
-    canonical.exec(ACTOR_SCHEMA_SQL);
-    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
-    canonical.exec(MIGRATION_LEDGER_SQL);
-    canonical.exec(COUNCIL_IDENTITY_SQL);
-    seedActors(canonical, new Date(0).toISOString());
-    rebuildContentTablesForActors(canonical);
-    rebuildOrchestrationTablesForActors(canonical);
-    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    applyCanonicalVersionTwo(canonical);
     canonicalLegacyV2SchemaObjects = legacyV2RequiredSchemaObjects(canonical);
     return canonicalLegacyV2SchemaObjects;
   } finally {
@@ -408,26 +400,69 @@ function assertLegacyV2Schema(database: DatabaseSync): void {
   assertDatabaseIntegrity(database);
 }
 
+function applyCanonicalVersionTwo(database: DatabaseSync): void {
+  database.exec(LEGACY_BASE_SCHEMA_SQL);
+  database.exec(ACTOR_SCHEMA_SQL);
+  database.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+  database.exec(MIGRATION_LEDGER_SQL);
+  database.exec(COUNCIL_IDENTITY_SQL);
+  seedActors(database, new Date(0).toISOString());
+  rebuildContentTablesForActors(database);
+  rebuildOrchestrationTablesForActors(database);
+  database.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+}
+
+/**
+ * 权威 schema 的逐版本重放序列。v1 已由 FROZEN_LEGACY_V1_SCHEMA_SHA256 单独冻结，
+ * 这里从 v2 起按版本切片，让「已落库的迁移文本不可改」能被指纹测试机械校验，
+ * 而不是靠人记住。改动任一已发布切片都会让旧库的 schema 与新程序对不上——
+ * 那是一次现场事故，不是一次代码风格调整。
+ */
+const CANONICAL_MIGRATION_STEPS: readonly Readonly<{
+  version: number;
+  apply: (database: DatabaseSync) => void;
+}>[] = [
+  { version: 2, apply: applyCanonicalVersionTwo },
+  { version: 3, apply: (database) => { migrateVersionThree(database, false); } },
+  { version: 4, apply: (database) => { migrateVersionFour(database, false); } },
+  { version: 5, apply: (database) => { migrateVersionFive(database, false); } },
+  { version: 6, apply: (database) => { migrateVersionSix(database, false); } },
+  { version: 7, apply: (database) => { migrateVersionSeven(database, false); } },
+];
+
+/**
+ * 重放到指定版本，返回该版本必需 schema 对象的 SHA-256 指纹。
+ * 仅供冻结回归测试使用；生产路径读 canonicalRequiredSchemaObjects()。
+ */
+export function canonicalSchemaDigest(version: number): string {
+  const steps = CANONICAL_MIGRATION_STEPS.filter((step) => step.version <= version);
+  if (steps.length === 0) {
+    throw new Error(`Council 无 v${String(version)} 权威 schema 切片。`);
+  }
+  const canonical = new DatabaseSync(":memory:");
+  try {
+    for (const step of steps) {
+      step.apply(canonical);
+    }
+    const objects = [...requiredSchemaObjects(canonical)]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, sql]) => `${key}\n${sql}`)
+      .join("\n");
+    return createHash("sha256").update(objects, "utf8").digest("hex");
+  } finally {
+    canonical.close();
+  }
+}
+
 function canonicalRequiredSchemaObjects(): ReadonlyMap<string, string> {
   if (canonicalSchemaObjects) {
     return canonicalSchemaObjects;
   }
   const canonical = new DatabaseSync(":memory:");
   try {
-    canonical.exec(LEGACY_BASE_SCHEMA_SQL);
-    canonical.exec(ACTOR_SCHEMA_SQL);
-    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
-    canonical.exec(MIGRATION_LEDGER_SQL);
-    canonical.exec(COUNCIL_IDENTITY_SQL);
-    seedActors(canonical, new Date(0).toISOString());
-    rebuildContentTablesForActors(canonical);
-    rebuildOrchestrationTablesForActors(canonical);
-    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
-    migrateVersionThree(canonical, false);
-    migrateVersionFour(canonical, false);
-    migrateVersionFive(canonical, false);
-    migrateVersionSix(canonical, false);
-    migrateVersionSeven(canonical, false);
+    for (const step of CANONICAL_MIGRATION_STEPS) {
+      step.apply(canonical);
+    }
     canonicalSchemaObjects = requiredSchemaObjects(canonical);
     return canonicalSchemaObjects;
   } finally {

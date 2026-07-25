@@ -32,3 +32,4 @@
 | `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式 Chat Completions，用于远程 Provider/双 Agent E2E |
 | `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：点一次跑完全程、决策正文与 synthesis 逐字一致、提问处停住且回答后不重跑、重复作答幂等、名册不足两位拒绝开局、diff 互审带 commit 引用、Agent 反复失败时停住等人、运行度量与一致性核对 |
 | `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证自动交接：一次开局跑完提案/评审/收敛、阻塞自动触发反驳回环、提问处停住且回答后不重来、预算用尽放弃不写决策 |
+| `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |
