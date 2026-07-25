@@ -249,7 +249,11 @@ export function recordCycleTurn(
     ? stageAfterAction(action)
     : current.stage;
   const round = action.kind === "invoke" ? action.round : current.currentRound;
-  const cursor = input.contextCursor ?? current.contextCursor;
+  // 冻结游标只在阶段切换时重钉。同一阶段内重钉会让后发言的评审读到前一位的评审意见，
+  // 独立复审就退化成接龙——评审必须各自面对同一份材料。
+  const cursor = stage !== current.stage
+    ? input.contextCursor ?? current.contextCursor
+    : current.contextCursor;
   casUpdate(
     database,
     `turns_json = ?, stage = ?, resume_stage = NULL, current_round = ?,
