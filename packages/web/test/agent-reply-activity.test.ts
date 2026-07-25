@@ -50,7 +50,12 @@ function createSnapshot(runs: OrchestrationRun[]): OrchestrationSnapshot {
       adapters: [{
         id: "claude",
         actorId: "claude",
-        label: "Claude Code",
+        label: "Claude",
+        brand: {
+          glyphId: "simple-icons-claude",
+          colorToken: "brand-claude",
+          displayName: "Claude",
+        },
         available: true,
       }],
       defaultPolicy: createRun().policy,
@@ -69,7 +74,12 @@ describe("讨论时间线 Agent 回复状态", () => {
       runId: "run-active",
       adapterId: "claude",
       agent: "claude",
-      label: "Claude Code",
+      label: "Claude",
+      brand: {
+        glyphId: "simple-icons-claude",
+        colorToken: "brand-claude",
+        displayName: "Claude",
+      },
       phase: "replying",
       content: "",
     });

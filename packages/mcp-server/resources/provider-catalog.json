@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "brands": [
+    {
+      "id": "brand-claude",
+      "slug": "claude",
+      "displayName": "Claude",
+      "glyphId": "simple-icons-claude",
+      "colorToken": "brand-claude",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Simple Icons 16.27.0 · CC0-1.0"
+    },
+    {
+      "id": "brand-openai",
+      "slug": "openai",
+      "displayName": "OpenAI",
+      "glyphId": "simple-icons-openai",
+      "colorToken": "brand-openai",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Simple Icons 15.12.0 · CC0-1.0"
+    },
+    {
+      "id": "brand-kimi",
+      "slug": "kimi",
+      "displayName": "Kimi",
+      "glyphId": "simple-icons-kimi",
+      "colorToken": "brand-kimi",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Simple Icons 16.27.0 · CC0-1.0"
+    },
+    {
+      "id": "brand-deepseek",
+      "slug": "deepseek",
+      "displayName": "DeepSeek",
+      "glyphId": "simple-icons-deepseek",
+      "colorToken": "brand-deepseek",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Simple Icons 16.27.0 · CC0-1.0"
+    },
+    {
+      "id": "brand-grok",
+      "slug": "grok",
+      "displayName": "Grok",
+      "glyphId": "grok-feb-2025",
+      "colorToken": "brand-grok",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Grok February 2025 mark · X.AI Corp. via Wikimedia Commons · public domain (trademarked)"
+    },
+    {
+      "id": "brand-custom",
+      "slug": "custom",
+      "displayName": "Custom",
+      "glyphId": "generic-network",
+      "colorToken": "brand-custom",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Council generic provider glyph"
+    }
+  ],
+  "providers": [
+    {
+      "templateId": "claude-cli",
+      "slug": "claude",
+      "displayName": "Claude",
+      "protocol": "claude-cli",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-claude",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "codex-cli",
+      "slug": "openai-codex",
+      "displayName": "OpenAI Codex",
+      "protocol": "codex-cli",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-openai",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "openai",
+      "slug": "openai",
+      "displayName": "OpenAI",
+      "protocol": "openai-compatible",
+      "baseUrl": "https://api.openai.com/v1",
+      "requiresApiKey": true,
+      "brandAssetId": "brand-openai",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "kimi",
+      "slug": "kimi",
+      "displayName": "Kimi",
+      "protocol": "openai-compatible",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "requiresApiKey": true,
+      "brandAssetId": "brand-kimi",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "deepseek",
+      "slug": "deepseek",
+      "displayName": "DeepSeek",
+      "protocol": "openai-compatible",
+      "baseUrl": "https://api.deepseek.com",
+      "requiresApiKey": true,
+      "brandAssetId": "brand-deepseek",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "grok",
+      "slug": "grok",
+      "displayName": "Grok",
+      "protocol": "openai-compatible",
+      "baseUrl": "https://api.x.ai/v1",
+      "requiresApiKey": true,
+      "brandAssetId": "brand-grok",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "custom",
+      "slug": "custom",
+      "displayName": "Custom Provider",
+      "protocol": "openai-compatible",
+      "baseUrl": null,
+      "requiresApiKey": true,
+      "brandAssetId": "brand-custom",
+      "modelCandidates": []
+    }
+  ]
+}

@@ -11,11 +11,11 @@
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive/续租，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、允许单次覆盖完成复核、检查 Agent 可用性并组装生产依赖 |
 
-生产工厂注册 `claude`、`codex`、`deepseek` 与 `kimi` 四个后台适配器，并分别绑定同名
-动态 Actor；DeepSeek/Kimi 不再共享 `other` 身份。适配器不调用兼容层客户端，
-因此不会提前写消息；回复只能由 `SQLiteCouncilStore.commitRound` 在 lease 和
-运行版本校验通过后原子发布。V1 也不恢复任何 Agent session，避免把兼容层的
-双写语义带入编排。
+生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
+Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，
+不会共享 `other` 身份。适配器不调用兼容层客户端，因此不会提前写消息；回复只能由
+`SQLiteCouncilStore.commitRound` 在 lease 和运行版本校验通过后原子发布。M2 仍不持久化
+Agent session 或进程；同议题常驻 RuntimeBinding 属于后续里程碑。
 
 HTTP 请求断开不会取消后台执行。只有显式 cancel 会把运行改为 `cancelled` 并失效 lease；
 其他进程的续租会在一个 heartbeat 内失败并中止 Agent。进程关闭使用统一总预算；
@@ -31,10 +31,13 @@ Claude/Codex 非零退出按认证、额度、模型权限、回合耗尽、暂�
 未知退出不公开内部原因。日志只记录脱敏诊断码、retryable 标志和同一份安全原因，不记录
 prompt、项目路径或 CLI stderr。
 
-Claude/Codex 每次调用从 `AgentSettingsService` 读取当前模型。远程 Provider 只有在模型、
-HTTPS/loopback Base URL、Keychain API Key 与启用状态同时有效时才进入 capabilities；两个
-远程 Agent 共用有界流式 Chat Completions 运行时，并以各自 adapter ID 支持
-`@deepseek`、`@kimi`。
+Claude/Codex 与远程 Agent 每次调用都从 `ModelRouterService` 读取当前 Provider 和 Agent
+定义。远程 Provider 只有在 HTTPS/loopback Base URL、Keychain API Key、启用 Provider
+和启用 Agent 同时有效时才进入 capabilities；兼容 Agent 共用有界流式 Chat Completions
+运行时，并以各自 `mentionAlias` 参与 `@` 补全和召唤。路由变更会刷新临时适配器与
+capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允许中途修改或删除。
+重复读取 capabilities 会保留未变化绑定最近一次已验证的可用性；只有绑定 fingerprint
+变化时才清空状态并强制重检，避免 TTL 内把健康动态 Agent 错误重置为不可用。
 
 桌面默认在正式回复原子落库后自动完成运行。Composer 的 `@Agent` 调用也会显式关闭完成门；
 只有手动调用请求显式设置 `confirmationBeforeCompletion=true` 时才进入 `before_completion`

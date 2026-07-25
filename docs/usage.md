@@ -66,16 +66,27 @@ npm run build:desktop
 
 ## 模型与 Provider 设置
 
-点击顶栏齿轮打开“模型与 Provider”。设置分为两类：
+点击顶栏齿轮打开 Model Router。设置明确分为两层：
 
-- Claude Code、Codex CLI：复用本机登录，只填写模型 ID。Claude 可填写 `claude-opus-4-8`；Codex 留空时使用 CLI 默认模型。
-- DeepSeek、Kimi：填写 Provider 当前公布的模型 ID、API Base URL 和 API Key，打开“启用”，保存后再点“测试”。模型 ID 是自由输入，不把会频繁变化的型号写死在 Council 版本里。
+- Provider 连接：保存协议、API Base URL、Keychain 凭据、品牌和启用状态；Claude Code、
+  Codex CLI 复用本机登录，远程连接使用兼容 Chat Completions API。
+- Agent：在某个 Provider 下保存独立名称、模型 ID、`@mentionAlias` 和启用状态。同一个
+  Kimi、DeepSeek 或其他 Provider 可创建多个 Agent，每个 Agent 都拥有独立 Actor，
+  不会统一显示成 `Other`。
 
-保存后，后续调用和失败运行的显式恢复会读取新模型；已经在执行中的调用不会被中途切换。在 Claude Code 里执行 `/model` 只会修改 Claude 自身的新会话默认值，不会覆盖 Council 已保存的 Claude 模型。
+从 catalog 按需添加 Provider 后，再在该连接下创建 Agent。模型 ID 自由输入，不把会频繁
+变化的型号写死在 Council 版本里。保存后，后续调用和失败运行的显式恢复会读取新路由；
+已经在执行中的调用不会被中途切换。在 Claude Code 里执行 `/model` 只会修改 Claude
+自身的新会话默认值，不会覆盖 Council Agent 保存的模型。
 
 远程 Provider 使用 OpenAI Chat Completions 兼容协议。API Key 保存于 macOS Keychain，不进入 Council SQLite、源码或设置 API 响应；界面只显示“是否已保存”。远程 Provider 只收到议题标题、问题、约束、本轮指令和已公开消息，不能直接读取项目目录，因此需要代码证据的轮次仍建议交给本机 Claude/Codex。
 
-完成设置后，可在编辑器使用 `@deepseek` 或 `@kimi`，也可在右侧自动轮次选择对应 Agent。新 Provider 尚未提供增删界面；当前版本先提供 DeepSeek、Kimi 两个兼容槽位，后续可在同一运行时上扩展。
+Model Router 的配置写入由桌面应用内置 sidecar 独占。同一个日志库不能同时启动第二个配置写进程；Codex/Claude 的 stdio MCP 只能读取议题、发布公开结论和 proposed 决策，不能新增、修改或删除 Provider/Agent，也不能访问 Keychain。当前 HTTP 控制面只监听 loopback，并按本机单用户场景设计，没有实例令牌；不要端口转发或暴露给其他用户。未来若支持外部客户端，必须先增加每实例随机令牌和权限校验。
+
+完成设置后，编辑器的 `@` 补全和右侧 Agent 调用都会即时读取新的
+`mentionAlias`，无需重启服务。catalog 内置 Claude、Codex、OpenAI、Kimi、DeepSeek、
+Grok 与自定义兼容模板；模板未添加时不占路由列表空间。系统 Provider 不可删除，已知模板的供应商名称和品牌不可修改。删除远程 Provider 会同步清除其受管 Keychain 凭据；Provider/Agent 使用软删除，
+活动 Run 正在引用时会失败关闭。
 
 ## 模式一：两个桌面手动接力
 
@@ -303,7 +314,7 @@ codex login status
 
 ### `@claude` 已识别但运行失败
 
-先在模型设置中确认 Claude 模型，并点击“测试”。Council 保存的模型优先于 Claude Code 交互会话里的 `/model` 默认值。额度不足、模型无权限等确定性错误不会继续盲目重试；修改模型后可从失败卡片显式恢复。Claude 与编排单轮默认超时均为 10 分钟，避免代码分析在 3 分钟处被内部运行时提前终止。
+先在 Model Router 中确认 Claude Agent 的模型，并点击“测试”。Council 保存的模型优先于 Claude Code 交互会话里的 `/model` 默认值。额度不足、模型无权限等确定性错误不会继续盲目重试；修改模型后可从失败卡片显式恢复。Claude 与编排单轮默认超时均为 10 分钟，避免代码分析在 3 分钟处被内部运行时提前终止。
 
 ### `@codex` 已识别但运行失败
 

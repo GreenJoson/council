@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilOrchestrator、Fake Store、Fake Agent 与 Node 测试器
- * @output 导出：轮次、begin/drive、lease、超时、人工门、失败消息边界和恢复测试
- * @pos    自动编排状态机、续租与重启安全边界的主验证套件
+ * @output 导出：轮次、begin/drive、lease、适配器代次、超时、人工门、失败消息边界和恢复测试
+ * @pos    自动编排状态机、热配置 fencing、续租与重启安全边界的主验证套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -51,6 +51,13 @@ function input(
   policy: OrchestrationPolicy = BASE_POLICY,
 ): CreateRunInput {
   return { topicId: "topic_test", plan, policy };
+}
+
+function withoutBindingRevision(run: OrchestrationRun): OrchestrationRun {
+  return {
+    ...run,
+    plan: run.plan.map(({ bindingRevision: _bindingRevision, ...round }) => round),
+  };
 }
 
 test("按计划完成多 Agent 多消息类型轮次", async () => {
@@ -109,6 +116,87 @@ test("Agent 可重试失败在尝试上限后进入 failed", async () => {
   assert.equal(failed.failure?.code, "agent_failed");
   assert.doesNotMatch(failed.failure?.message ?? "", /测试 Agent 暂时失败/);
   assert.equal(failing.invocations.length, 2);
+  assert.equal(store.messages.length, 0);
+});
+
+test("适配器热替换后旧代次的迟到回复不能提交", async () => {
+  const store = new FakeCouncilStore();
+  const invocationStarted = deferred<void>();
+  const oldReply = deferred<{ content: string }>();
+  const oldAgent = new FakeAgentAdapter("alpha", async () => {
+    invocationStarted.resolve();
+    return await oldReply.promise;
+  });
+  const orchestrator = new CouncilOrchestrator(store, [oldAgent]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  const running = orchestrator.start(created.id, LEASE_REQUEST);
+  await invocationStarted.promise;
+  orchestrator.upsertAdapter(new FakeAgentAdapter(
+    "alpha",
+    async () => ({ content: "新代次回复" }),
+  ));
+  oldReply.resolve({ content: "旧代次迟到回复" });
+  const failed = await running;
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure?.code, "agent_unavailable");
+  assert.equal(store.messages.length, 0);
+});
+
+test("删除活动适配器会中止调用且永不提交迟到回复", async () => {
+  const store = new FakeCouncilStore();
+  const invocationStarted = deferred<void>();
+  const lateReply = deferred<{ content: string }>();
+  const agent = new FakeAgentAdapter("alpha", async () => {
+    invocationStarted.resolve();
+    return await lateReply.promise;
+  });
+  const orchestrator = new CouncilOrchestrator(store, [agent]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  const running = orchestrator.start(created.id, LEASE_REQUEST);
+  await invocationStarted.promise;
+  assert.equal(orchestrator.removeAdapter("alpha"), true);
+  lateReply.resolve({ content: "删除后的迟到回复" });
+  const failed = await running;
+
+  assert.equal(failed.status, "failed");
+  assert.equal(store.messages.length, 0);
+});
+
+test("旧 failed Run 冻结 binding revision，同 ID 新适配器不能接管恢复", async () => {
+  const store = new FakeCouncilStore();
+  const oldAgent = new FakeAgentAdapter("alpha", async () => {
+    throw new AgentInvocationError("旧绑定失败。", false);
+  });
+  const orchestrator = new CouncilOrchestrator(store, []);
+  orchestrator.upsertAdapter(oldAgent, "router:old-binding");
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.plan[0]?.bindingRevision, "router:old-binding");
+
+  orchestrator.upsertAdapter(
+    new FakeAgentAdapter("alpha", async () => ({ content: "新绑定回复" })),
+    "router:new-binding",
+  );
+  await assert.rejects(
+    orchestrator.recover(created.id, LEASE_REQUEST),
+    (error: unknown) =>
+      error instanceof InvalidRunStateError && /绑定已停用、删除或被新配置替换/u.test(
+        error.message,
+      ),
+  );
   assert.equal(store.messages.length, 0);
 });
 
@@ -477,7 +565,11 @@ test("commitRound 失败归类为 store_failed 且不重新调用 Agent", async 
 
 test("缺少 Store lease 时 running 和 waiting_agent 均禁止恢复", async () => {
   const runningStore = new FakeCouncilStore();
-  const runningOrchestrator = new CouncilOrchestrator(runningStore, []);
+  const passiveAgent = new FakeAgentAdapter(
+    "alpha",
+    async () => ({ content: "不应被调用" }),
+  );
+  const runningOrchestrator = new CouncilOrchestrator(runningStore, [passiveAgent]);
   const runningCreated = await runningOrchestrator.createRun(input(
     [{
       adapterId: "alpha",
@@ -536,7 +628,9 @@ test("公共入口拒绝 gate、index、attempt 和 activeAgent 不一致的持�
 
   for (const corrupt of corruptions) {
     const store = new FakeCouncilStore();
-    const orchestrator = new CouncilOrchestrator(store, []);
+    const orchestrator = new CouncilOrchestrator(store, [
+      new FakeAgentAdapter("alpha", async () => ({ content: "不应被调用" })),
+    ]);
     const created = await orchestrator.createRun(input(
       [{
         adapterId: "alpha",
@@ -597,7 +691,9 @@ test("同步便捷执行会按调用参数续租慢 Agent", async () => {
 
 test("重启分类不会自动重放 waiting_agent", async () => {
   const store = new FakeCouncilStore();
-  const orchestrator = new CouncilOrchestrator(store, []);
+  const orchestrator = new CouncilOrchestrator(store, [
+    new FakeAgentAdapter("alpha", async () => ({ content: "不应被调用" })),
+  ]);
   const created = await orchestrator.createRun(input(
     [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     { ...BASE_POLICY, allowedAgents: ["alpha"] },
@@ -629,7 +725,9 @@ test("重启分类不会自动重放 waiting_agent", async () => {
 
 test("人工确认门拒绝非 human 批准者", async () => {
   const store = new FakeCouncilStore();
-  const orchestrator = new CouncilOrchestrator(store, []);
+  const orchestrator = new CouncilOrchestrator(store, [
+    new FakeAgentAdapter("alpha", async () => ({ content: "不应被调用" })),
+  ]);
   const created = await orchestrator.createRun(input(
     [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
     {
@@ -669,7 +767,9 @@ test("持久化运行不能越过未确认的轮次门", async () => {
   ];
   for (const corrupt of corruptions) {
     const store = new FakeCouncilStore();
-    const orchestrator = new CouncilOrchestrator(store, []);
+    const orchestrator = new CouncilOrchestrator(store, [
+      new FakeAgentAdapter("alpha", async () => ({ content: "不应被调用" })),
+    ]);
     const created = await orchestrator.createRun(input(
       [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
       {
@@ -680,6 +780,100 @@ test("持久化运行不能越过未确认的轮次门", async () => {
     ));
     store.corruptRun(created.id, corrupt);
     await assert.rejects(orchestrator.getRun(created.id), InvalidRunStateError);
+  }
+});
+
+test("缺少 bindingRevision 的旧运行在所有执行入口均拒绝且重启扫描忽略", async () => {
+  async function legacyRun(
+    mutate: (run: OrchestrationRun) => OrchestrationRun,
+  ): Promise<{
+    orchestrator: CouncilOrchestrator;
+    store: FakeCouncilStore;
+    run: OrchestrationRun;
+  }> {
+    const store = new FakeCouncilStore();
+    const orchestrator = new CouncilOrchestrator(store, [
+      new FakeAgentAdapter("alpha", async () => ({ content: "不应被调用" })),
+    ]);
+    const created = await orchestrator.createRun(input(
+      [{
+        adapterId: "alpha",
+        actorId: "claude",
+        messageKind: "proposal",
+        instruction: "提出方案",
+      }],
+      {
+        ...BASE_POLICY,
+        allowedAgents: ["alpha"],
+        confirmation: { beforeRounds: [], beforeCompletion: false },
+      },
+    ));
+    store.corruptRun(created.id, (run) => mutate(withoutBindingRevision(run)));
+    return { orchestrator, store, run: await orchestrator.getRun(created.id) };
+  }
+
+  const idle = await legacyRun((run) => run);
+  await assert.rejects(
+    idle.orchestrator.begin(idle.run.id),
+    (error: unknown) =>
+      error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+  );
+
+  const failed = await legacyRun((run) => ({
+    ...run,
+    status: "failed",
+    failure: { code: "agent_failed", message: "旧失败。", retryable: true },
+  }));
+  await assert.rejects(
+    failed.orchestrator.prepareRecovery(failed.run.id),
+    (error: unknown) =>
+      error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+  );
+
+  const waitingUser = await legacyRun((run) => ({
+    ...run,
+    status: "waiting_user",
+    pendingGateId: "before_round:1",
+    policy: {
+      ...run.policy,
+      confirmation: { beforeRounds: [1], beforeCompletion: false },
+    },
+  }));
+  await assert.rejects(
+    waitingUser.orchestrator.applyApproval({
+      runId: waitingUser.run.id,
+      expectedGateId: "before_round:1",
+      expectedVersion: waitingUser.run.version,
+      approvalId: "approval_legacy_binding",
+      approvedByActorId: "human",
+    }),
+    (error: unknown) =>
+      error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+  );
+
+  for (const status of ["running", "waiting_agent"] as const) {
+    const active = await legacyRun((run) => status === "running"
+      ? { ...run, status }
+      : {
+          ...run,
+          status,
+          activeAgentId: "alpha",
+          currentAttempt: 1,
+        });
+    assert.equal(classifyRestartDisposition(active.run), "ignore");
+    const lease = await active.store.claimRunLease({
+      runId: active.run.id,
+      ownerId: `legacy-${status}`,
+      ttlMs: 60_000,
+    });
+    const operation = status === "running"
+      ? active.orchestrator.drive(active.run.id, lease)
+      : active.orchestrator.markInterruptedAgent(active.run.id, lease);
+    await assert.rejects(
+      operation,
+      (error: unknown) =>
+        error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+    );
   }
 });
 

@@ -12,11 +12,11 @@
 | `frozen-actor-rendering.test.tsx` | UI 回归 | 验证 Actor 改名后，旧议题所有者、决策提出者和备选作者仍显示写入时冻结快照 |
 | `configuration.test.ts` | 配置测试 | 验证 http 模式拒绝空值、相对路径和残缺 UNC 项目路径，以及 desktop 模式编排工厂的完整配置要求 |
 | `desktop-orchestration.test.ts` | 桌面编排 | 验证服务地址解析、离线降级与诚实文案、autostart 只拉起一次、服务恢复后自动转 LIVE 和健康轮询生命周期 |
-| `agent-settings.test.ts` | UI 逻辑 | 验证本机 Agent 常驻、未配置远程 Provider 按需隐藏及有状态 Provider 回到路由列表 |
+| `model-router.test.ts` | UI 逻辑 | 验证 Kimi/DeepSeek 名称与品牌、同 Provider 多 Agent、Claude/Codex 身份锁定、按需 catalog 及 API Key 不回显 |
 | `auto-rounds.test.ts` | UI 逻辑 | 验证创建互斥、当前/历史调用分区、全局 busy 锁定和人工恢复预算耗尽状态 |
 | `selectors.test.ts` | 查询测试 | 验证议题搜索的空值、中文和大小写行为，以及 groupTopicsByStatus 的固定分组顺序、组内保序与空数组场景 |
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
-| `mention-parser.test.ts` | 查询测试 | 验证统一 Actor ID 召唤解析、DeepSeek/Kimi 独立身份、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
-| `webui-smoke.py` | 浏览器测试 | 验证单一当前调用/折叠历史、默认免复核、时间线实时草稿、议题隔离、大屏讨论列、移动端抽屉、无横向滚动和控制台错误 |
-| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、按需 Provider 设置、外部 API 回帖经 SSE 自动出现、多适配器能力账本、Claude 子进程编排、人工门与 Web 回写 |
+| `mention-parser.test.ts` | 查询测试 | 验证动态 mentionAlias、同 Provider 多 Agent、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
+| `webui-smoke.py` | 浏览器测试 | 验证 Model Router 的 Claude/Codex Provider 与 Agent 身份只读、单一当前调用/折叠历史、默认免复核、时间线实时草稿、议题隔离、大屏讨论列、移动端抽屉、无横向滚动和控制台错误 |
+| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、远程 Provider 双 Agent 热加载、别名/停用/删除恢复边界、Provider 滚动、外部 API 回帖经 SSE 自动出现、Claude 子进程编排、人工门与 Web 回写 |

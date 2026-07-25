@@ -1,6 +1,6 @@
 /**
- * @input  依赖：已构建的 Council API/Web、显式迁移配置、Playwright 与测试 Claude 替身
- * @output 导出：隔离 schema 迁移、真实 HTTP/SSE/自动轮次及 mock 布局的浏览器验收
+ * @input  依赖：已构建的 Council API/Web、显式迁移配置、Playwright、测试 Claude/Keychain/远程 Provider 替身
+ * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、本机/远程 Agent 调用及 mock 布局的浏览器验收
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -24,6 +24,7 @@ const CHILD_STOP_TIMEOUT_MS = readPositiveInteger("COUNCIL_E2E_STOP_TIMEOUT_MS",
 const API_PORT = readPort("COUNCIL_E2E_API_PORT", 4_328);
 const HTTP_WEB_PORT = readPort("COUNCIL_E2E_HTTP_WEB_PORT", 4_184);
 const MOCK_WEB_PORT = readPort("COUNCIL_E2E_MOCK_WEB_PORT", 4_183);
+const REMOTE_PROVIDER_PORT = readPort("COUNCIL_E2E_REMOTE_PROVIDER_PORT", 4_329);
 const activeChildren = new Set();
 const SIGNAL_EXIT_CODES = new Map([
   ["SIGHUP", 129],
@@ -191,6 +192,11 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",
     COUNCIL_CLAUDE_MAX_TURNS: "3",
+    COUNCIL_KEYCHAIN_COMMAND: path.join(
+      ROOT,
+      "packages/mcp-server/test/fake-keychain.mjs",
+    ),
+    COUNCIL_FAKE_KEYCHAIN_FILE: path.join(dataDirectory, "e2e-keychain.json"),
     COUNCIL_SQLITE_BUSY_TIMEOUT_MS: "5000",
     COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS: "3",
     COUNCIL_MAX_CONTEXT_CHARS: "20000",
@@ -201,7 +207,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_HTTP_CORS_ORIGINS_JSON: JSON.stringify([webOrigin]),
     COUNCIL_HTTP_CORS_MAX_AGE_SECONDS: "600",
     COUNCIL_HTTP_RATE_LIMIT_WINDOW_MS: "60000",
-    COUNCIL_HTTP_RATE_LIMIT_MAX: "120",
+    COUNCIL_HTTP_RATE_LIMIT_MAX: "1000",
     COUNCIL_HTTP_BODY_LIMIT_BYTES: "65536",
     COUNCIL_HTTP_EVENT_POLL_MS: "100",
     COUNCIL_HTTP_EVENT_RETRY_MS: "300",
@@ -239,15 +245,30 @@ function httpWebEnvironment() {
 }
 
 async function runHttpBrowserE2E(dataDirectory) {
-  await Promise.all([assertPortFree(API_PORT), assertPortFree(HTTP_WEB_PORT)]);
-  const api = startChild(
-    "api",
+  await Promise.all([
+    assertPortFree(API_PORT),
+    assertPortFree(HTTP_WEB_PORT),
+    assertPortFree(REMOTE_PROVIDER_PORT),
+  ]);
+  const remoteProvider = startChild(
+    "remote-provider",
     process.execPath,
-    [path.join(ROOT, "packages/mcp-server/dist/src/http-index.js")],
-    apiEnvironment(dataDirectory),
+    [path.join(ROOT, "packages/mcp-server/test/fake-openai-provider.mjs")],
+    {
+      ...process.env,
+      COUNCIL_FAKE_PROVIDER_PORT: String(REMOTE_PROVIDER_PORT),
+    },
   );
-  const children = [api];
+  const children = [remoteProvider];
   try {
+    await waitForServer("Council 测试远程 Provider", remoteProvider, REMOTE_PROVIDER_PORT);
+    const api = startChild(
+      "api",
+      process.execPath,
+      [path.join(ROOT, "packages/mcp-server/dist/src/http-index.js")],
+      apiEnvironment(dataDirectory),
+    );
+    children.push(api);
     await waitForServer("Council API", api, API_PORT);
     const web = startChild(
       "http-web",
@@ -266,6 +287,7 @@ async function runHttpBrowserE2E(dataDirectory) {
         COUNCIL_WEB_URL: `http://localhost:${String(HTTP_WEB_PORT)}`,
         COUNCIL_API_URL: `http://localhost:${String(API_PORT)}`,
         COUNCIL_PROJECT_PATH: ROOT,
+        COUNCIL_FAKE_PROVIDER_URL: `http://localhost:${String(REMOTE_PROVIDER_PORT)}/v1`,
       },
     );
   } finally {

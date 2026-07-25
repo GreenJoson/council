@@ -15,9 +15,14 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
-  AgentSetting,
-  UpdateAgentSettingInput,
-} from "../types/agent-settings";
+  AgentDefinition,
+  CreateAgentInput,
+  CreateProviderInput,
+  ModelRouterSnapshot,
+  ProviderProfile,
+  UpdateAgentInput,
+  UpdateProviderInput,
+} from "../types/model-router";
 import { createApiUrl, jsonRequest, requestApiData, type Fetcher } from "./http-client";
 import type { EventStream, EventStreamFactory } from "./http-repository";
 import { parseCouncilChangedRevision } from "./http-repository";
@@ -30,9 +35,10 @@ import {
 } from "./orchestration-api";
 import {
   parseAgentConnectionTest,
-  parseAgentSetting,
-  parseAgentSettings,
-} from "./agent-settings-api";
+  parseAgentDefinition,
+  parseModelRouterSnapshot,
+  parseProviderProfile,
+} from "./model-router-api";
 import type {
   OrchestrationListener,
   OrchestrationRepository,
@@ -259,33 +265,108 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     return this.#runAction(runId, "recover");
   }
 
-  async listAgentSettings(): Promise<AgentSetting[]> {
+  async getModelRouter(): Promise<ModelRouterSnapshot> {
     return requestApiData(
       this.#fetcher,
-      createApiUrl(this.#baseUrl, "/api/v1/settings/agents"),
-      parseAgentSettings,
+      createApiUrl(this.#baseUrl, "/api/v1/settings/model-router"),
+      parseModelRouterSnapshot,
     );
   }
 
-  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
+  async createProvider(input: CreateProviderInput): Promise<ProviderProfile> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/settings/providers"),
+      parseProviderProfile,
+      jsonRequest({
+        templateId: input.templateId,
+        slug: input.slug,
+        displayName: input.displayName,
+        ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+        ...(input.brandAssetId ? { brandAssetId: input.brandAssetId } : {}),
+        ...(input.apiKey ? { apiKey: input.apiKey } : {}),
+        active: input.active,
+      }),
+    );
+  }
+
+  async updateProvider(input: UpdateProviderInput): Promise<ProviderProfile> {
     return requestApiData(
       this.#fetcher,
       createApiUrl(
         this.#baseUrl,
-        `/api/v1/settings/agents/${encodeURIComponent(input.agentId)}`,
+        `/api/v1/settings/providers/${encodeURIComponent(input.providerId)}`,
       ),
-      parseAgentSetting,
+      parseProviderProfile,
       jsonRequest({
-        model: input.model,
+        displayName: input.displayName,
         ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
-        enabled: input.enabled,
+        brandAssetId: input.brandAssetId,
+        active: input.active,
         ...(input.apiKey ? { apiKey: input.apiKey } : {}),
         ...(input.clearApiKey ? { clearApiKey: true } : {}),
       }, "PUT"),
     );
   }
 
-  async testAgentSetting(agentId: string): Promise<AgentConnectionTest> {
+  async removeProvider(providerId: string): Promise<ProviderProfile> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/settings/providers/${encodeURIComponent(providerId)}`,
+      ),
+      parseProviderProfile,
+      { method: "DELETE" },
+    );
+  }
+
+  async createAgent(input: CreateAgentInput): Promise<AgentDefinition> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/settings/agents"),
+      parseAgentDefinition,
+      jsonRequest({
+        providerId: input.providerId,
+        slug: input.slug,
+        displayName: input.displayName,
+        model: input.model,
+        mentionAlias: input.mentionAlias,
+        enabled: input.enabled,
+      }),
+    );
+  }
+
+  async updateAgent(input: UpdateAgentInput): Promise<AgentDefinition> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/settings/agents/${encodeURIComponent(input.agentId)}`,
+      ),
+      parseAgentDefinition,
+      jsonRequest({
+        displayName: input.displayName,
+        model: input.model,
+        mentionAlias: input.mentionAlias,
+        enabled: input.enabled,
+      }, "PUT"),
+    );
+  }
+
+  async removeAgent(agentId: string): Promise<AgentDefinition> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/settings/agents/${encodeURIComponent(agentId)}`,
+      ),
+      parseAgentDefinition,
+      { method: "DELETE" },
+    );
+  }
+
+  async testAgent(agentId: string): Promise<AgentConnectionTest> {
     return requestApiData(
       this.#fetcher,
       createApiUrl(

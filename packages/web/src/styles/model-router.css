@@ -1,7 +1,7 @@
 /**
  * @input  依赖：theme.css 语义变量、通用按钮与 Dialog 基础样式
- * @output 导出：按需添加模型路由台的紧凑列表、单项工作台和移动视觉
- * @pos    AgentSettingsDialog/AgentSettingEditor 的独立样式模块
+ * @output 导出：Provider/Agent 模型路由台、离线品牌图形与移动视觉
+ * @pos    ModelRouterDialog/ModelRouterEditor 的独立样式模块
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,7 +21,7 @@
   backdrop-filter: blur(6px);
 }
 
-.agent-settings-dialog {
+.model-router-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(960px, calc(100vw - 40px));
@@ -35,7 +35,7 @@
   animation: message-enter var(--transition-medium) both;
 }
 
-.agent-settings-header {
+.model-router-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -55,18 +55,18 @@
   letter-spacing: 0.16em;
 }
 
-.agent-settings-header h2 {
+.model-router-header h2 {
   margin: 5px 0 4px;
   font-size: 22px;
 }
 
-.agent-settings-header p {
+.model-router-header p {
   margin: 0;
   color: var(--color-text-muted);
   font-size: 12px;
 }
 
-.agent-settings-body {
+.model-router-body {
   display: grid;
   grid-template-columns: 310px minmax(0, 1fr);
   min-height: 0;
@@ -74,7 +74,7 @@
 }
 
 .settings-loading,
-.agent-settings-empty {
+.model-router-empty {
   display: flex;
   grid-column: 1 / -1;
   min-height: 260px;
@@ -88,7 +88,7 @@
  * 左侧：已添加模型列表与按需 Provider 目录
  * ============================================================ */
 
-.agent-settings-nav {
+.model-router-nav {
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -99,7 +99,7 @@
   background: color-mix(in srgb, var(--color-canvas) 72%, var(--color-surface));
 }
 
-.agent-settings-nav-summary {
+.model-router-nav-summary {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -107,19 +107,19 @@
   padding: 0 4px;
 }
 
-.agent-settings-nav-summary span {
+.model-router-nav-summary span {
   color: var(--color-text-secondary);
   font-size: 11px;
 }
 
-.agent-settings-nav-summary strong {
+.model-router-nav-summary strong {
   margin-right: 4px;
   color: var(--color-text);
   font-family: var(--font-mono);
   font-size: 19px;
 }
 
-.agent-settings-nav-summary small {
+.model-router-nav-summary small {
   max-width: 116px;
   color: var(--color-text-muted);
   font-size: 9px;
@@ -127,12 +127,12 @@
   text-align: right;
 }
 
-.agent-settings-nav-section {
+.model-router-nav-section {
   display: grid;
   gap: 7px;
 }
 
-.agent-settings-nav-label,
+.model-router-nav-label,
 .agent-provider-catalog-list > span {
   padding: 0 5px;
   color: var(--color-text-muted);
@@ -142,12 +142,12 @@
   letter-spacing: 0.13em;
 }
 
-.agent-settings-list {
+.model-router-list {
   display: grid;
   gap: 5px;
 }
 
-.agent-setting-list-item {
+.model-router-list-item {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
@@ -167,7 +167,7 @@
   transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
 }
 
-.agent-setting-list-item::before {
+.model-router-list-item::before {
   position: absolute;
   top: 10px;
   bottom: 10px;
@@ -178,31 +178,31 @@
   content: "";
 }
 
-.agent-setting-list-item:hover:not(:disabled) {
+.model-router-list-item:hover:not(:disabled) {
   border-color: var(--color-border);
   background: var(--color-surface-hover);
   transform: translateX(1px);
 }
 
-.agent-setting-list-item:focus-visible {
+.model-router-list-item:focus-visible {
   border-color: var(--color-focus);
 }
 
-.agent-setting-list-item.is-selected {
+.model-router-list-item.is-selected {
   border-color: color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
   background: var(--color-primary-soft);
 }
 
-.agent-setting-list-item.is-selected::before {
+.model-router-list-item.is-selected::before {
   background: var(--color-primary);
 }
 
-.agent-setting-list-item:disabled {
+.model-router-list-item:disabled {
   cursor: wait;
   opacity: 0.65;
 }
 
-.agent-setting-list-icon {
+.model-router-list-icon {
   display: grid;
   width: 31px;
   height: 31px;
@@ -213,20 +213,20 @@
   box-shadow: inset 0 0 0 1px var(--color-divider);
 }
 
-.agent-setting-list-copy {
+.model-router-list-copy {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.agent-setting-list-copy strong {
+.model-router-list-copy strong {
   overflow: hidden;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-setting-list-copy small {
+.model-router-list-copy small {
   overflow: hidden;
   color: var(--color-text-muted);
   font-family: var(--font-mono);
@@ -235,7 +235,7 @@
   white-space: nowrap;
 }
 
-.agent-setting-list-state {
+.model-router-list-state {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -244,28 +244,28 @@
   font-size: 8px;
 }
 
-.agent-setting-list-state i {
+.model-router-list-state i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--color-text-muted);
 }
 
-.agent-setting-list-state.is-enabled {
+.model-router-list-state.is-enabled {
   color: var(--color-positive);
 }
 
-.agent-setting-list-state.is-enabled i {
+.model-router-list-state.is-enabled i {
   background: var(--color-positive);
   box-shadow: 0 0 0 3px var(--color-positive-soft);
 }
 
-.agent-setting-list-chevron {
+.model-router-list-chevron {
   color: var(--color-text-muted);
   transition: transform var(--transition-fast);
 }
 
-.agent-setting-list-item.is-selected .agent-setting-list-chevron {
+.model-router-list-item.is-selected .model-router-list-chevron {
   transform: translateX(2px);
   color: var(--color-primary);
 }
@@ -371,7 +371,7 @@
   color: var(--color-primary);
 }
 
-.agent-settings-security-note {
+.model-router-security-note {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -386,7 +386,7 @@
  * 右侧：单个 Agent 编辑工作台
  * ============================================================ */
 
-.agent-settings-workbench {
+.model-router-workbench {
   min-width: 0;
   min-height: 0;
   padding: 24px 26px 28px;
@@ -396,7 +396,7 @@
     var(--color-surface);
 }
 
-.agent-setting-editor {
+.model-router-editor {
   display: grid;
   max-width: 620px;
   margin: 0 auto;
@@ -407,7 +407,7 @@
   box-shadow: var(--shadow-small);
 }
 
-.agent-setting-editor-head {
+.model-router-editor-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -417,7 +417,7 @@
   background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
 }
 
-.agent-setting-editor-icon {
+.model-router-editor-icon {
   display: grid;
   width: 39px;
   height: 39px;
@@ -427,23 +427,23 @@
   color: var(--color-primary);
 }
 
-.agent-setting-editor-title {
+.model-router-editor-title {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.agent-setting-editor-title > span {
+.model-router-editor-title > span {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.agent-setting-editor-title strong {
+.model-router-editor-title strong {
   font-size: 15px;
 }
 
-.agent-setting-editor-title em {
+.model-router-editor-title em {
   padding: 2px 5px;
   border: 1px solid color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
   border-radius: 999px;
@@ -454,7 +454,7 @@
   letter-spacing: 0.08em;
 }
 
-.agent-setting-editor-title small {
+.model-router-editor-title small {
   overflow: hidden;
   color: var(--color-text-muted);
   font-family: var(--font-mono);
@@ -521,13 +521,49 @@
   font-style: normal;
 }
 
-.agent-setting-editor-fields {
+.model-router-editor-fields {
   display: grid;
   gap: 17px;
   padding: 21px 20px 23px;
 }
 
-.agent-setting-editor-fields > label {
+.model-router-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.model-router-field-grid > label {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.model-router-field-grid > label > span {
+  font-weight: 650;
+}
+
+.model-router-field-grid > label > small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.model-router-field-grid input {
+  width: 100%;
+  min-width: 0;
+  margin-top: 2px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.model-router-editor-fields > label {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 12px;
@@ -535,20 +571,20 @@
   font-size: 11px;
 }
 
-.agent-setting-editor-fields > label > span {
+.model-router-editor-fields > label > span {
   font-weight: 650;
 }
 
-.agent-setting-editor-fields > label > small {
+.model-router-editor-fields > label > small {
   align-self: end;
   color: var(--color-text-muted);
   font-size: 9px;
   text-align: right;
 }
 
-.agent-setting-editor-fields input[type="text"],
-.agent-setting-editor-fields input[type="password"],
-.agent-setting-editor-fields > label > input:not([type]) {
+.model-router-editor-fields input[type="text"],
+.model-router-editor-fields input[type="password"],
+.model-router-editor-fields > label > input:not([type]) {
   grid-column: 1 / -1;
   width: 100%;
   min-width: 0;
@@ -563,7 +599,7 @@
   font-size: 11px;
 }
 
-.agent-setting-editor-fields input:focus {
+.model-router-editor-fields input:focus {
   border-color: var(--color-focus);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 18%, transparent);
 }
@@ -591,7 +627,7 @@
   color: var(--color-danger) !important;
 }
 
-.agent-setting-remove-confirm {
+.model-router-remove-confirm {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -603,14 +639,14 @@
   font-size: 10px;
 }
 
-.agent-setting-remove-confirm > span,
-.agent-setting-remove-confirm > div {
+.model-router-remove-confirm > span,
+.model-router-remove-confirm > div {
   display: flex;
   align-items: center;
   gap: 7px;
 }
 
-.agent-setting-editor-foot {
+.model-router-editor-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -620,7 +656,7 @@
   background: color-mix(in srgb, var(--color-surface) 76%, transparent);
 }
 
-.agent-setting-editor-actions {
+.model-router-editor-actions {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -696,66 +732,100 @@
   color: var(--color-positive);
 }
 
+.brand-glyph {
+  flex: none;
+  fill: currentColor;
+  color: var(--color-primary);
+}
+
+.brand-claude {
+  color: color-mix(in srgb, var(--color-warning) 76%, var(--color-text));
+}
+
+.brand-openai {
+  color: var(--color-positive);
+}
+
+.brand-kimi {
+  color: var(--color-primary);
+}
+
+.brand-deepseek {
+  color: color-mix(in srgb, var(--color-primary) 64%, var(--color-positive));
+}
+
+.brand-grok {
+  color: var(--color-text);
+}
+
+.brand-custom {
+  color: var(--color-text-secondary);
+}
+
 @media (max-width: 760px) {
   .settings-backdrop {
     padding: 10px;
   }
 
-  .agent-settings-dialog {
+  .model-router-dialog {
     width: calc(100vw - 20px);
     height: calc(100vh - 20px);
   }
 
-  .agent-settings-header {
+  .model-router-header {
     padding-right: 18px;
     padding-left: 18px;
   }
 
-  .agent-settings-body {
+  .model-router-body {
     display: block;
     overflow-y: auto;
   }
 
-  .agent-settings-nav {
+  .model-router-nav {
     max-height: 290px;
     overflow-y: auto;
     border-right: 0;
     border-bottom: 1px solid var(--color-divider);
   }
 
-  .agent-settings-security-note {
+  .model-router-security-note {
     display: none;
   }
 
-  .agent-settings-workbench {
+  .model-router-workbench {
     overflow: visible;
     padding: 18px;
   }
 }
 
 @media (max-width: 520px) {
-  .agent-settings-header p,
-  .agent-setting-editor-fields > label > small {
+  .model-router-header p,
+  .model-router-editor-fields > label > small {
     display: none;
   }
 
-  .agent-setting-editor-head {
+  .model-router-editor-head {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .agent-setting-editor-head .setting-switch {
+  .model-router-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-router-editor-head .setting-switch {
     grid-column: 1 / -1;
     justify-self: end;
   }
 
-  .agent-setting-editor-foot,
-  .agent-setting-remove-confirm {
+  .model-router-editor-foot,
+  .model-router-remove-confirm {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .agent-setting-editor-actions,
-  .agent-setting-remove-confirm > div {
+  .model-router-editor-actions,
+  .model-router-remove-confirm > div {
     justify-content: flex-end;
     flex-wrap: wrap;
   }

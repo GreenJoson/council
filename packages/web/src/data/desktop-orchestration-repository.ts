@@ -19,9 +19,14 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
-  AgentSetting,
-  UpdateAgentSettingInput,
-} from "../types/agent-settings";
+  AgentDefinition,
+  CreateAgentInput,
+  CreateProviderInput,
+  ModelRouterSnapshot,
+  ProviderProfile,
+  UpdateAgentInput,
+  UpdateProviderInput,
+} from "../types/model-router";
 import type {
   OrchestrationListener,
   OrchestrationRepository,
@@ -150,16 +155,36 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
     return (await this.#requireLive()).recoverRun(runId);
   }
 
-  async listAgentSettings(): Promise<AgentSetting[]> {
-    return (await this.#requireLive()).listAgentSettings();
+  async getModelRouter(): Promise<ModelRouterSnapshot> {
+    return (await this.#requireLive()).getModelRouter();
   }
 
-  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
-    return (await this.#requireLive()).updateAgentSetting(input);
+  async createProvider(input: CreateProviderInput): Promise<ProviderProfile> {
+    return (await this.#requireLive()).createProvider(input);
   }
 
-  async testAgentSetting(agentId: string): Promise<AgentConnectionTest> {
-    return (await this.#requireLive()).testAgentSetting(agentId);
+  async updateProvider(input: UpdateProviderInput): Promise<ProviderProfile> {
+    return (await this.#requireLive()).updateProvider(input);
+  }
+
+  async removeProvider(providerId: string): Promise<ProviderProfile> {
+    return (await this.#requireLive()).removeProvider(providerId);
+  }
+
+  async createAgent(input: CreateAgentInput): Promise<AgentDefinition> {
+    return (await this.#requireLive()).createAgent(input);
+  }
+
+  async updateAgent(input: UpdateAgentInput): Promise<AgentDefinition> {
+    return (await this.#requireLive()).updateAgent(input);
+  }
+
+  async removeAgent(agentId: string): Promise<AgentDefinition> {
+    return (await this.#requireLive()).removeAgent(agentId);
+  }
+
+  async testAgent(agentId: string): Promise<AgentConnectionTest> {
+    return (await this.#requireLive()).testAgent(agentId);
   }
 
   subscribe(listener: OrchestrationListener): () => void {

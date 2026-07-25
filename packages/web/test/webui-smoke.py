@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
+@output 导出：桌面交互、系统 Agent 身份只读、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -198,7 +198,7 @@ def verify_compact_run_history(page) -> None:
 
 
 def verify_agent_reply_activity(page) -> None:
-    activity = page.get_by_role("status", name="Claude Code 正在回复", exact=True)
+    activity = page.get_by_role("status", name="Claude 正在回复", exact=True)
     activity.wait_for()
     assert activity.locator(".agent-reply-dots i").count() == 3
     assert activity.locator(
@@ -209,6 +209,36 @@ def verify_agent_reply_activity(page) -> None:
     preview.wait_for()
     page.get_by_text("实时草稿 · 尚未发布", exact=True).wait_for()
     page.get_by_text("正在审查状态机边界", exact=False).wait_for()
+
+
+def verify_system_agent_identity_lock(page) -> None:
+    page.get_by_role("button", name="打开模型与 Provider 设置").click()
+    dialog = page.get_by_role("dialog", name="Provider 与 Agent")
+    dialog.wait_for()
+    assert dialog.get_by_label("Agent 名称").is_disabled()
+    assert dialog.get_by_label("召唤别名").is_disabled()
+    assert dialog.get_by_role("button", name="移除 Agent", exact=True).count() == 0
+    dialog.locator(".model-router-list-item", has_text="@codex").click()
+    assert dialog.get_by_label("Agent 名称").is_disabled()
+    assert dialog.get_by_label("召唤别名").is_disabled()
+    assert dialog.get_by_role("button", name="移除 Agent", exact=True).count() == 0
+
+    provider_section = dialog.locator(
+        ".model-router-nav-section",
+        has_text="PROVIDER CONNECTIONS",
+    )
+    for provider_name in ("Claude", "OpenAI Codex"):
+        provider_section.locator(
+            ".model-router-list-item",
+            has_text=provider_name,
+        ).click()
+        assert dialog.get_by_label("Provider 名称").is_disabled()
+        assert (
+            dialog.get_by_role("button", name="移除 Provider", exact=True).count()
+            == 0
+        )
+
+    dialog.get_by_role("button", name="关闭模型路由").click()
 
 
 def verify_media_preview_and_lightbox(page) -> None:
@@ -280,6 +310,7 @@ def verify_desktop(browser) -> list[str]:
 
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
     assert page.get_by_role("button", name="展开议题", exact=True).count() == 0
+    verify_system_agent_identity_lock(page)
     verify_fluid_discussion_width(page)
     verify_message_jump_rail(page)
     verify_card_bottom_collapse_control(page)

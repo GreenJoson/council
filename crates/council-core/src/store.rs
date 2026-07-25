@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的动态 Actor Council SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、schema、查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v5 Actor/Model Router SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v5 schema、查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,7 +18,7 @@ use crate::types::{
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 2;
+const SUPPORTED_SCHEMA_VERSION: i64 = 5;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -28,6 +28,9 @@ const REQUIRED_TABLES: &[&str] = &[
     "council_identity",
     "actor_identities",
     "actor_aliases",
+    "brand_assets",
+    "provider_profiles",
+    "agent_definitions",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -37,6 +40,9 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_actor_identities_status_slug",
     "idx_actor_aliases_actor",
     "idx_agent_sessions_current",
+    "idx_provider_profiles_status_slug",
+    "idx_agent_definitions_provider",
+    "idx_agent_definitions_enabled_alias",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_topics_revision_insert",
@@ -96,6 +102,46 @@ const SESSION_COLUMNS: &[&str] = &[
     "is_current",
     "updated_at",
 ];
+const BRAND_COLUMNS: &[&str] = &[
+    "id",
+    "slug",
+    "display_name",
+    "glyph_id",
+    "color_token",
+    "source_kind",
+    "source_label",
+    "status",
+    "created_at",
+    "updated_at",
+];
+const PROVIDER_COLUMNS: &[&str] = &[
+    "id",
+    "slug",
+    "display_name",
+    "protocol",
+    "base_url",
+    "requires_api_key",
+    "credential_ref",
+    "brand_asset_id",
+    "status",
+    "created_at",
+    "updated_at",
+    "config_revision",
+];
+const AGENT_DEFINITION_COLUMNS: &[&str] = &[
+    "id",
+    "actor_id",
+    "provider_id",
+    "slug",
+    "display_name",
+    "model",
+    "mention_alias",
+    "enabled",
+    "deleted_at",
+    "created_at",
+    "updated_at",
+    "config_revision",
+];
 
 fn assert_schema_objects(
     connection: &Connection,
@@ -113,6 +159,27 @@ fn assert_schema_objects(
         if !exists {
             return Err(CouncilError::InvalidData(format!(
                 "Council SQLite 缺少已迁移 {object_type}：{name}。"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn assert_table_sql_contains(
+    connection: &Connection,
+    table: &str,
+    required_fragments: &[&str],
+) -> CouncilResult<()> {
+    let sql: String = connection.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |row| row.get(0),
+    )?;
+    let canonical = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    for fragment in required_fragments {
+        if !canonical.contains(fragment) {
+            return Err(CouncilError::InvalidData(format!(
+                "Council SQLite 表 {table} 缺少 canonical 约束。"
             )));
         }
     }
@@ -226,6 +293,9 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_table_columns(connection, "messages", MESSAGE_COLUMNS)?;
     assert_table_columns(connection, "decisions", DECISION_COLUMNS)?;
     assert_table_columns(connection, "agent_sessions", SESSION_COLUMNS)?;
+    assert_table_columns(connection, "brand_assets", BRAND_COLUMNS)?;
+    assert_table_columns(connection, "provider_profiles", PROVIDER_COLUMNS)?;
+    assert_table_columns(connection, "agent_definitions", AGENT_DEFINITION_COLUMNS)?;
     assert_table_columns(
         connection,
         "actor_identities",
@@ -278,6 +348,42 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "idx_agent_sessions_current",
         &["topic_id", "actor_id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_provider_profiles_status_slug",
+        &["status", "slug"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_agent_definitions_provider",
+        &["provider_id", "deleted_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_agent_definitions_enabled_alias",
+        &["enabled", "mention_alias"],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "provider_profiles",
+        &[
+            "credential_ref TEXT UNIQUE",
+            "requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1))",
+            "status TEXT NOT NULL CHECK (status IN ('active', 'inactive', 'deleted'))",
+            "config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)",
+        ],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "agent_definitions",
+        &[
+            "actor_id TEXT NOT NULL UNIQUE",
+            "mention_alias TEXT NOT NULL COLLATE NOCASE UNIQUE",
+            "enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))",
+            "CHECK ( (deleted_at IS NULL) OR (enabled = 0) )",
+            "config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)",
+        ],
     )?;
     let foreign_key_error_count: i64 =
         connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -848,19 +954,46 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::Connection;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::OnceLock;
+
     use tempfile::tempdir;
 
     use super::CouncilStore;
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root")
+    }
+
+    fn create_node_database(database_path: &Path) {
+        static NODE_BUILD: OnceLock<()> = OnceLock::new();
+        NODE_BUILD.get_or_init(|| {
+            let status = Command::new("npm")
+                .args(["run", "build", "--prefix", "packages/mcp-server"])
+                .current_dir(workspace_root())
+                .status()
+                .expect("build Node migrator");
+            assert!(status.success(), "Node migrator build must succeed");
+        });
+        let status = Command::new("node")
+            .arg("packages/mcp-server/scripts/create-rust-test-database.mjs")
+            .arg("fresh")
+            .arg(database_path)
+            .current_dir(workspace_root())
+            .status()
+            .expect("run Node database generator");
+        assert!(status.success(), "Node database generator must succeed");
+    }
 
     #[test]
     fn configures_sqlite_connection_pragmas() {
         let directory = tempdir().expect("temp directory");
         let database_path = directory.path().join("council.sqlite3");
-        Connection::open(&database_path)
-            .expect("fixture database")
-            .execute_batch(include_str!("../tests/fixtures/node-schema-v2.sql"))
-            .expect("node schema fixture");
+        create_node_database(&database_path);
         let store = CouncilStore::open(database_path, 4_321).expect("store should open");
 
         let foreign_keys: i64 = store

@@ -24,6 +24,7 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
+import { BrandGlyph } from "./BrandGlyph";
 
 const KIND_OPTIONS: ReadonlyArray<{
   value: OrchestrationMessageKind;
@@ -183,7 +184,10 @@ export function AutoRoundsPanel({
       <div className="adapter-ledger" aria-label="Agent 主动调用能力">
         {adapters.length > 0 ? adapters.map((adapter) => (
           <div className="adapter-ledger-row" key={adapter.id}>
-            <span className={`adapter-light ${adapter.available ? "is-available" : "is-limited"}`} />
+            <span className="adapter-ledger-brand">
+              <BrandGlyph brand={adapter.brand} size={16} />
+              <i className={`adapter-light ${adapter.available ? "is-available" : "is-limited"}`} />
+            </span>
             <div>
               <strong>{adapter.label}</strong>
               <small>

@@ -5,4 +5,8 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `node-schema-v1.sql` | 历史结构 | 保留旧枚举作者 schema，供 Node 迁移器的向前迁移测试参考；不参与 Rust 当前结构验证 |
-| `node-schema-v2.sql` | 当前结构 | 显式创建含 ActorIdentity、Alias、快照、历史会话/current 唯一索引和数据库实例身份的 Node 当前 schema，供 Rust Store 兼容性测试使用；不参与生产迁移 |
+| `node-schema-v2.sql` | 历史结构 | 保留拆分 Provider/Agent 前的 Node v2 schema，供未来迁移回归参考；不参与 Rust 当前结构验证 |
+
+当前 v5 数据库不再维护手写 SQL 夹具。`compatibility.rs` 会调用
+`packages/mcp-server/scripts/create-rust-test-database.mjs`，分别通过真实 Node 迁移器生成
+fresh v5、v2→v5 与 v3→v5 数据库，再交给 Rust `CouncilStore::open` 验证。

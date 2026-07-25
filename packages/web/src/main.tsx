@@ -20,7 +20,7 @@ import "./styles/agent-activity.css";
 import "./styles/media.css";
 import "./styles/architecture.css";
 import "./styles/mentions.css";
-import "./styles/agent-settings.css";
+import "./styles/model-router.css";
 import "./styles/responsive.css";
 
 initTheme();

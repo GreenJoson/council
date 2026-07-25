@@ -8,8 +8,9 @@
 | `package-lock.json` | 锁定 | 固化依赖解析结果 |
 | `tsconfig.json` | 配置 | 启用严格 TypeScript 编译 |
 | `.env.example` | 配置 | 列出全部可配置运行参数，包括迁移重试上限 |
-| `src/` | 核心 | MCP、HTTP、Node 单一 schema 迁移器、数据库、模型设置与本机/远程 Agent 适配器源码 |
-| `test/` | 验证 | schema 迁移、数据库、适配器、MCP 协议和 HTTP/SSE 集成测试 |
+| `resources/` | 配置 | 保存不含密钥的 Provider catalog、默认连接模板与品牌来源元数据 |
+| `src/` | 核心 | MCP、HTTP、Node schema 迁移器、数据库、Model Router 与本机/远程 Agent 适配器源码 |
+| `test/` | 验证 | schema 迁移、Model Router、数据库、适配器、MCP 协议和 HTTP/SSE 集成测试 |
 
 ## Claude 运行边界
 
@@ -59,8 +60,11 @@ Actor；工具 schema 不接受作者覆盖。HTTP 入口不读取该配置，�
 | `POST` | `/api/v1/topics/:topicId/messages` | 新建 `CouncilMessage` |
 | `POST` | `/api/v1/topics/:topicId/decisions` | 新建 `Decision` |
 | `GET` | `/api/v1/orchestration/capabilities` | Agent 可用性与默认公开策略 |
-| `GET` | `/api/v1/settings/agents` | 不含密钥的模型与 Provider 设置 |
-| `PUT` | `/api/v1/settings/agents/:agentId` | 更新模型、地址、启用状态和 Keychain 凭据 |
+| `GET` | `/api/v1/settings/model-router` | Provider、Agent、BrandAsset 与可添加模板的公开快照 |
+| `POST` | `/api/v1/settings/providers` | 从 catalog 创建 Provider 连接并按需保存 Keychain 凭据 |
+| `PUT/DELETE` | `/api/v1/settings/providers/:providerId` | 更新或软删除 Provider；活动 Run 引用时失败关闭；同模板重新添加会事务复活原行并轮换凭据引用 |
+| `POST` | `/api/v1/settings/agents` | 在既有 Provider 下创建独立 Agent 与 Actor/alias |
+| `PUT/DELETE` | `/api/v1/settings/agents/:agentId` | 更新或软删除 Agent；Claude/Codex 只允许修改模型与启用状态，名称、alias 与删除操作失败关闭 |
 | `POST` | `/api/v1/settings/agents/:agentId/actions/test` | 有界连接测试 |
 | `GET/POST` | `/api/v1/topics/:topicId/runs` | 编排运行分页 / 创建运行（`201`，可选单次完成复核） |
 | `GET` | `/api/v1/runs/:runId` | 单个运行 |
@@ -99,7 +103,24 @@ revision 通知仍是全库级，客户端刷新时再按项目过滤。
 且不恢复 session。Store 读取 Agent 上下文前还会按 `COUNCIL_DEFAULT_MESSAGE_LIMIT`
 限制最新公开消息数，避免超大议题在 prompt 字符裁剪前放大内存。
 
-模型设置保存在共享 SQLite 的 `agent_settings` 表，Claude/Codex 适配器在每次调用时读取当前
-模型，因此切换无需重启服务。API Key 不写 SQLite，macOS 通过系统 Keychain 保存；设置 API
-只返回 `hasApiKey`。DeepSeek 与 Kimi 共用流式 OpenAI Chat Completions 兼容运行时，公开
-`delta.content` 与最终输出均有界；上游错误正文不会进入 HTTP 响应或日志。
+Model Router 以 `provider_profiles`、`agent_definitions` 与 `brand_assets` 为唯一正本：
+Provider 只负责连接协议、地址、凭据引用和品牌；每个 Agent 拥有独立模型、Actor 与
+`@mentionAlias`。同一个 Kimi 或 DeepSeek Provider 可以承载多个 Agent，不会退化为
+`other` 身份。运行前按 Agent 定义创建临时适配器，新增、修改和停用无需重启服务。
+
+schema v5 只保留 Human、Council、Claude、Codex 与 Legacy 五个永久 Actor。新建 Kimi、
+DeepSeek 或其他远程 Agent 时始终分配新的 UUID Actor；历史固定 Kimi/DeepSeek 种子只为
+冻结 Topic/Message/Decision/Run 快照继续可读，迁移后 inactive 且不再持有当前 alias。
+Claude/Codex 的名称、alias 与系统身份不可变，只允许修改模型和启用状态。
+
+API Key 不写 SQLite，macOS 通过系统 Keychain 保存；设置 API 只返回 `hasApiKey`。
+DeepSeek、Kimi、OpenAI、Grok 与自定义兼容 Provider 共用有界流式 Chat Completions
+运行时；上游错误正文不会进入 HTTP 响应或日志。删除远程 Provider 会先删除它明确
+持有的 Keychain 项，失败则保持数据库配置不变；系统 Provider 永不删除。再次添加同一
+已删除模板会事务复活原 Provider 行、推进配置 revision，并使用新的 credentialRef 与
+连接状态；若 Keychain 或数据库任一步失败，会执行补偿，不留下半复活配置。
+
+Model Router 写命令只开放在桌面 HTTP sidecar，同一日志库只支持一个配置写进程；
+stdio MCP 不注册 Provider/Agent/Keychain 修改工具。HTTP 仅监听 loopback，当前按本机
+单用户威胁模型运行且没有实例令牌，禁止端口转发或改成外部监听。未来若开放外部客户端，
+必须先加入每实例随机令牌、认证与权限分域。

@@ -39,17 +39,11 @@ export interface LeadingMentionChip {
  */
 const MENTION_PATTERN = /(^|\s)@([A-Za-z][\w-]*)/;
 
-const KNOWN_MENTION_TOKENS: ReadonlySet<string> = new Set([
-  "claude",
-  "codex",
-  "deepseek",
-  "kimi",
-]);
 const LEADING_MENTION_PATTERN = /^@([A-Za-z][\w-]*)(\s|$)/;
 
-/** 每个 Provider 使用自己解析后的稳定 Actor 标识，禁止退化成共享占位名。 */
+/** 召唤名来自 AgentDefinition.mentionAlias；旧能力快照回退 actorId。 */
 export function getMentionToken(adapter: OrchestrationAdapter): string {
-  return adapter.actorId;
+  return adapter.mentionAlias ?? adapter.actorId;
 }
 
 /**
@@ -193,12 +187,11 @@ export function findActiveMentionQuery(content: string, cursorIndex: number): Ac
 }
 
 /**
- * 消息流展示专用：只认正文最开头的已知召唤标识（大小写不敏感），用于 MessageCard
+ * 消息流展示专用：只认正文最开头的合法召唤标识（大小写不敏感），用于 MessageCard
  * 把它渲染成召唤芯片、正文其余部分照常交给 MarkdownContent。故意只认绝对开头这一种
  * 位置（比 parseMention 更严格）：消息中间提到 "...@claude 的方案..." 属于正常讨论文本，
- * 不该被当成召唤强行抠出来做成芯片。识别的身份是产品里固定的已知集合
- * （claude/codex/deepseek/kimi），
- * 不依赖动态编排能力列表——展示历史消息时不应该因为当前 adapters 是否可用而改变外观。
+ * 不该被当成召唤强行抠出来做成芯片。历史展示不依赖当前 adapters 列表，因此删除
+ * Agent 后旧消息的 @alias 仍保持原貌；未来新增供应商也不需要修改硬编码白名单。
  */
 export function extractLeadingMentionChip(content: string): LeadingMentionChip | null {
   const match = LEADING_MENTION_PATTERN.exec(content);
@@ -206,9 +199,6 @@ export function extractLeadingMentionChip(content: string): LeadingMentionChip |
     return null;
   }
   const token = (match[1] ?? "").toLowerCase();
-  if (!KNOWN_MENTION_TOKENS.has(token)) {
-    return null;
-  }
   return {
     token,
     remainder: content.slice(match[0].length).trimStart(),

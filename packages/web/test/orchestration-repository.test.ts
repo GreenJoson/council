@@ -127,7 +127,7 @@ function createOrchestrationFixture(): OrchestrationFixture {
           {
             id: "claude-code",
             actorId: "claude",
-            label: "Claude Code",
+            label: "Claude",
             available: true,
           },
         ],

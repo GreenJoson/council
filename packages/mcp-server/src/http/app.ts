@@ -1,7 +1,7 @@
 /**
- * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema version/ready/数据库身份状态的版本化 REST API 与 SSE 应用工厂
- * @pos    WebUI 与桌面壳确认迁移完成并访问 canonical 数据的 HTTP 协议入口
+ * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
+ * @output 导出：含 schema ready、模型路由、内容/编排 REST 与 SSE 的应用工厂
+ * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -32,6 +32,7 @@ import {
   CouncilValidationError,
 } from "../errors.js";
 import { logger } from "../logger.js";
+import { ModelRouterPublicError } from "../model-router-service.js";
 import { normalizeProjectPath } from "../project-path.js";
 import type { CouncilOrchestrationService } from "../orchestration/service.js";
 import { COUNCIL_SCHEMA_VERSION } from "../schema-migrator.js";
@@ -39,20 +40,24 @@ import type { CouncilHttpConfig } from "../types.js";
 import { HttpError, sendError, sendSuccess, validationIssues } from "./responses.js";
 import { RevisionEventStream } from "./revision-stream.js";
 import {
+  agentParamsSchema,
+  createAgentBodySchema,
   createDecisionBodySchema,
   createMessageBodySchema,
+  createProviderBodySchema,
   createTopicBodySchema,
   approveRunBodySchema,
   createRunBodySchema,
-  agentSettingParamsSchema,
   emptyActionBodySchema,
   eventsQuerySchema,
   listRunsQuerySchema,
   listTopicsQuerySchema,
+  providerParamsSchema,
   runParamsSchema,
   topicDetailQuerySchema,
   topicParamsSchema,
-  updateAgentSettingBodySchema,
+  updateAgentBodySchema,
+  updateProviderBodySchema,
 } from "./schemas.js";
 
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -61,6 +66,13 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
     throw new HttpError(400, "请求参数校验失败。", validationIssues(result.error.issues));
   }
   return result.data;
+}
+
+function rethrowModelRouterError(error: unknown): never {
+  if (error instanceof ModelRouterPublicError) {
+    throw new HttpError(error.status, error.message);
+  }
+  throw error;
 }
 
 function createCorsMiddleware(
@@ -82,7 +94,7 @@ function createCorsMiddleware(
     response.vary("Origin");
     response.set({
       "Access-Control-Allow-Headers": "Content-Type, Last-Event-ID",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Origin": parsedOrigin.data,
       "Access-Control-Max-Age": String(maxAgeSeconds),
     });
@@ -236,46 +248,95 @@ export function createCouncilHttpApp(
     );
   });
 
-  app.get("/api/v1/settings/agents", async (_request, response) => {
+  app.get("/api/v1/settings/model-router", async (_request, response) => {
     if (!orchestration) {
-      throw new HttpError(503, "模型设置服务未启用。");
+      throw new HttpError(503, "模型路由服务未启用。");
     }
-    sendSuccess(response, { agents: await orchestration.listAgentSettings() });
+    sendSuccess(response, await orchestration.getModelRouter());
+  });
+
+  app.post("/api/v1/settings/providers", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型路由服务未启用。");
+    }
+    const input = parse(createProviderBodySchema, request.body);
+    try {
+      sendSuccess(response, await orchestration.createProvider(input), "Provider 已添加。", 201);
+    } catch (error) {
+      rethrowModelRouterError(error);
+    }
+  });
+
+  app.put("/api/v1/settings/providers/:providerId", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型路由服务未启用。");
+    }
+    const params = parse(providerParamsSchema, request.params);
+    const input = parse(updateProviderBodySchema, request.body);
+    try {
+      sendSuccess(response, await orchestration.updateProvider(params.providerId, input), "Provider 已保存。");
+    } catch (error) {
+      rethrowModelRouterError(error);
+    }
+  });
+
+  app.delete("/api/v1/settings/providers/:providerId", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型路由服务未启用。");
+    }
+    const params = parse(providerParamsSchema, request.params);
+    try {
+      sendSuccess(response, await orchestration.removeProvider(params.providerId), "Provider 已移除。");
+    } catch (error) {
+      rethrowModelRouterError(error);
+    }
+  });
+
+  app.post("/api/v1/settings/agents", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型路由服务未启用。");
+    }
+    const input = parse(createAgentBodySchema, request.body);
+    try {
+      sendSuccess(response, await orchestration.createAgent(input), "Agent 已添加。", 201);
+    } catch (error) {
+      rethrowModelRouterError(error);
+    }
   });
 
   app.put("/api/v1/settings/agents/:agentId", async (request, response) => {
     if (!orchestration) {
-      throw new HttpError(503, "模型设置服务未启用。");
+      throw new HttpError(503, "模型路由服务未启用。");
     }
-    const params = parse(agentSettingParamsSchema, request.params);
-    const body: unknown = request.body;
-    const input = parse(updateAgentSettingBodySchema, body);
+    const params = parse(agentParamsSchema, request.params);
+    const input = parse(updateAgentBodySchema, request.body);
     try {
-      sendSuccess(
-        response,
-        await orchestration.updateAgentSetting(params.agentId, input),
-        "Agent 设置已保存。",
-      );
+      sendSuccess(response, await orchestration.updateAgent(params.agentId, input), "Agent 已保存。");
     } catch (error) {
-      throw new HttpError(
-        400,
-        error instanceof Error ? error.message : "Agent 设置无效。",
-      );
+      rethrowModelRouterError(error);
+    }
+  });
+
+  app.delete("/api/v1/settings/agents/:agentId", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "模型路由服务未启用。");
+    }
+    const params = parse(agentParamsSchema, request.params);
+    try {
+      sendSuccess(response, await orchestration.removeAgent(params.agentId), "Agent 已移除。");
+    } catch (error) {
+      rethrowModelRouterError(error);
     }
   });
 
   app.post("/api/v1/settings/agents/:agentId/actions/test", async (request, response) => {
     if (!orchestration) {
-      throw new HttpError(503, "模型设置服务未启用。");
+      throw new HttpError(503, "模型路由服务未启用。");
     }
-    const params = parse(agentSettingParamsSchema, request.params);
+    const params = parse(agentParamsSchema, request.params);
     parse(emptyActionBodySchema, request.body ?? {});
     try {
-      sendSuccess(
-        response,
-        await orchestration.testAgentSetting(params.agentId),
-        "连接测试通过。",
-      );
+      sendSuccess(response, await orchestration.testAgent(params.agentId), "连接测试通过。");
     } catch {
       throw new HttpError(502, "连接测试失败，请检查模型、额度、API 地址或凭据。");
     }

@@ -123,10 +123,26 @@ function arrayValue<T>(
 function parseAdapter(value: unknown): OrchestrationAdapter {
   const record = recordValue(value, "adapter");
   const limitation = optionalString(record, "limitation");
+  const mentionAlias = optionalString(record, "mentionAlias");
+  const providerId = optionalString(record, "providerId");
+  const providerName = optionalString(record, "providerName");
+  const brandRecord = record.brand === undefined
+    ? undefined
+    : recordValue(record.brand, "adapter.brand");
   return {
     id: stringValue(record, "id"),
     actorId: stringValue(record, "actorId"),
     label: stringValue(record, "label"),
+    ...(mentionAlias ? { mentionAlias } : {}),
+    ...(providerId ? { providerId } : {}),
+    ...(providerName ? { providerName } : {}),
+    ...(brandRecord ? {
+      brand: {
+        glyphId: stringValue(brandRecord, "glyphId"),
+        colorToken: stringValue(brandRecord, "colorToken"),
+        displayName: stringValue(brandRecord, "displayName"),
+      },
+    } : {}),
     available: booleanValue(record, "available"),
     ...(limitation ? { limitation } : {}),
   };

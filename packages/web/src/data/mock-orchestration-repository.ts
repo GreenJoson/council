@@ -15,9 +15,14 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
-  AgentSetting,
-  UpdateAgentSettingInput,
-} from "../types/agent-settings";
+  AgentDefinition,
+  CreateAgentInput,
+  CreateProviderInput,
+  ModelRouterSnapshot,
+  ProviderProfile,
+  UpdateAgentInput,
+  UpdateProviderInput,
+} from "../types/model-router";
 import type {
   OrchestrationListener,
   OrchestrationRepository,
@@ -30,7 +35,7 @@ const CAPABILITIES: OrchestrationCapabilities = {
     {
       id: "claude-code",
       actorId: "claude",
-      label: "Claude Code",
+      label: "Claude",
       available: true,
     },
     {
@@ -50,48 +55,97 @@ const CAPABILITIES: OrchestrationCapabilities = {
   },
 };
 
-const MOCK_AGENT_SETTINGS: AgentSetting[] = [
-  {
-    id: "claude",
-    label: "Claude Code",
-    kind: "claude-cli",
-    model: "claude-opus-4-8",
-    enabled: true,
-    requiresApiKey: false,
-    hasApiKey: false,
-    updatedAt: new Date(0).toISOString(),
+const MOCK_TIME = new Date(0).toISOString();
+const MOCK_MODEL_ROUTER: ModelRouterSnapshot = {
+  brands: [
+    ["brand-claude", "claude", "Claude", "simple-icons-claude", "brand-claude"],
+    ["brand-openai", "openai", "OpenAI", "simple-icons-openai", "brand-openai"],
+    ["brand-kimi", "kimi", "Kimi", "simple-icons-kimi", "brand-kimi"],
+    ["brand-deepseek", "deepseek", "DeepSeek", "simple-icons-deepseek", "brand-deepseek"],
+    ["brand-grok", "grok", "Grok", "grok-feb-2025", "brand-grok"],
+    ["brand-custom", "custom", "Custom", "generic-network", "brand-custom"],
+  ].map(([id, slug, displayName, glyphId, colorToken]) => ({
+    id: id as string,
+    slug: slug as string,
+    displayName: displayName as string,
+    glyphId: glyphId as string,
+    colorToken: colorToken as string,
+    sourceKind: "project-curated" as const,
+    sourceLabel: "Mock catalog",
+    status: "active" as const,
+    createdAt: MOCK_TIME,
+    updatedAt: MOCK_TIME,
+  })),
+  providers: [
+    {
+      id: "provider-claude",
+      slug: "claude",
+      displayName: "Claude",
+      protocol: "claude-cli",
+      requiresApiKey: false,
+      hasApiKey: false,
+      brandAssetId: "brand-claude",
+      status: "active",
+      createdAt: MOCK_TIME,
+      updatedAt: MOCK_TIME,
+    },
+    {
+      id: "provider-codex",
+      slug: "openai-codex",
+      displayName: "OpenAI Codex",
+      protocol: "codex-cli",
+      requiresApiKey: false,
+      hasApiKey: false,
+      brandAssetId: "brand-openai",
+      status: "active",
+      createdAt: MOCK_TIME,
+      updatedAt: MOCK_TIME,
+    },
+  ],
+  agents: [
+    {
+      id: "claude-code",
+      actorId: "claude",
+      providerId: "provider-claude",
+      slug: "claude-code",
+      displayName: "Claude",
+      model: "claude-opus-4-8",
+      mentionAlias: "claude",
+      enabled: true,
+      createdAt: MOCK_TIME,
+      updatedAt: MOCK_TIME,
+    },
+    {
+      id: "codex-shared",
+      actorId: "codex",
+      providerId: "provider-codex",
+      slug: "codex-shared",
+      displayName: "Codex",
+      model: "",
+      mentionAlias: "codex",
+      enabled: true,
+      createdAt: MOCK_TIME,
+      updatedAt: MOCK_TIME,
+    },
+  ],
+  catalog: {
+    providers: [
+      ["openai", "openai", "OpenAI", "brand-openai"],
+      ["kimi", "kimi", "Kimi", "brand-kimi"],
+      ["deepseek", "deepseek", "DeepSeek", "brand-deepseek"],
+      ["grok", "grok", "Grok", "brand-grok"],
+      ["custom", "custom", "Custom Provider", "brand-custom"],
+    ].map(([templateId, slug, displayName, brandAssetId]) => ({
+      templateId: templateId as string,
+      slug: slug as string,
+      displayName: displayName as string,
+      protocol: "openai-compatible" as const,
+      requiresApiKey: true,
+      brandAssetId: brandAssetId as string,
+      modelCandidates: [],
+    })),
   },
-  {
-    id: "codex",
-    label: "Codex CLI",
-    kind: "codex-cli",
-    model: "",
-    enabled: true,
-    requiresApiKey: false,
-    hasApiKey: false,
-    updatedAt: new Date(0).toISOString(),
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    kind: "openai-compatible",
-    model: "",
-    enabled: false,
-    requiresApiKey: true,
-    hasApiKey: false,
-    updatedAt: new Date(0).toISOString(),
-  },
-  {
-    id: "kimi",
-    label: "Kimi",
-    kind: "openai-compatible",
-    model: "",
-    enabled: false,
-    requiresApiKey: true,
-    hasApiKey: false,
-    updatedAt: new Date(0).toISOString(),
-  },
-];
+};
 
 function cloneSnapshot(snapshot: OrchestrationSnapshot): OrchestrationSnapshot {
   return structuredClone(snapshot);
@@ -104,7 +158,7 @@ function waitForMock(): Promise<void> {
 export class MockOrchestrationRepository implements OrchestrationRepository {
   readonly #listeners = new Set<OrchestrationListener>();
   readonly #runs: OrchestrationRun[] = [];
-  readonly #agentSettings = structuredClone(MOCK_AGENT_SETTINGS);
+  readonly #modelRouter = structuredClone(MOCK_MODEL_ROUTER);
   #snapshot: OrchestrationSnapshot = {
     capabilities: structuredClone(CAPABILITIES),
     activeTopicId: "topic-idempotency",
@@ -248,26 +302,113 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     return this.#publish();
   }
 
-  async listAgentSettings(): Promise<AgentSetting[]> {
+  async getModelRouter(): Promise<ModelRouterSnapshot> {
     await waitForMock();
-    return structuredClone(this.#agentSettings);
+    return structuredClone(this.#modelRouter);
   }
 
-  async updateAgentSetting(input: UpdateAgentSettingInput): Promise<AgentSetting> {
+  async createProvider(input: CreateProviderInput): Promise<ProviderProfile> {
     await waitForMock();
-    const setting = this.#agentSettings.find((candidate) => candidate.id === input.agentId);
-    if (!setting) {
-      throw new Error("Agent 设置不存在");
+    const template = this.#modelRouter.catalog.providers.find(
+      (candidate) => candidate.templateId === input.templateId,
+    );
+    if (!template) throw new Error("Provider 模板不存在");
+    const provider: ProviderProfile = {
+      id: `provider-${crypto.randomUUID()}`,
+      slug: input.slug,
+      displayName: input.displayName,
+      protocol: template.protocol,
+      ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+      requiresApiKey: template.requiresApiKey,
+      hasApiKey: Boolean(input.apiKey),
+      brandAssetId: input.brandAssetId ?? template.brandAssetId,
+      status: input.active ? "active" : "inactive",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.#modelRouter.providers.push(provider);
+    return structuredClone(provider);
+  }
+
+  async updateProvider(input: UpdateProviderInput): Promise<ProviderProfile> {
+    await waitForMock();
+    const provider = this.#findProvider(input.providerId);
+    provider.displayName = input.displayName;
+    provider.baseUrl = input.baseUrl;
+    provider.brandAssetId = input.brandAssetId;
+    provider.status = input.active ? "active" : "inactive";
+    provider.hasApiKey = input.clearApiKey ? false : Boolean(input.apiKey) || provider.hasApiKey;
+    provider.updatedAt = new Date().toISOString();
+    return structuredClone(provider);
+  }
+
+  async removeProvider(providerId: string): Promise<ProviderProfile> {
+    await waitForMock();
+    const provider = this.#findProvider(providerId);
+    provider.status = "deleted";
+    provider.updatedAt = new Date().toISOString();
+    for (const agent of this.#modelRouter.agents) {
+      if (agent.providerId === providerId) {
+        agent.enabled = false;
+        agent.deletedAt = provider.updatedAt;
+      }
     }
-    setting.model = input.model;
-    setting.baseUrl = input.baseUrl;
-    setting.enabled = input.enabled;
-    setting.hasApiKey = input.clearApiKey ? false : Boolean(input.apiKey) || setting.hasApiKey;
-    setting.updatedAt = new Date().toISOString();
-    return structuredClone(setting);
+    return structuredClone(provider);
   }
 
-  async testAgentSetting(_agentId: string): Promise<AgentConnectionTest> {
+  async createAgent(input: CreateAgentInput): Promise<AgentDefinition> {
+    await waitForMock();
+    this.#findProvider(input.providerId);
+    const now = new Date().toISOString();
+    const agent: AgentDefinition = {
+      id: `agent-${crypto.randomUUID()}`,
+      actorId: `actor-${crypto.randomUUID()}`,
+      providerId: input.providerId,
+      slug: input.slug,
+      displayName: input.displayName,
+      model: input.model,
+      mentionAlias: input.mentionAlias,
+      enabled: input.enabled,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#modelRouter.agents.push(agent);
+    return structuredClone(agent);
+  }
+
+  async updateAgent(input: UpdateAgentInput): Promise<AgentDefinition> {
+    await waitForMock();
+    const agent = this.#findAgent(input.agentId);
+    if (
+      (agent.actorId === "claude" || agent.actorId === "codex") &&
+      (
+        input.displayName !== agent.displayName ||
+        input.mentionAlias !== agent.mentionAlias
+      )
+    ) {
+      throw new Error("Claude/Codex 系统 Agent 的名称与 @alias 不能修改");
+    }
+    agent.displayName = input.displayName;
+    agent.model = input.model;
+    agent.mentionAlias = input.mentionAlias;
+    agent.enabled = input.enabled;
+    agent.updatedAt = new Date().toISOString();
+    return structuredClone(agent);
+  }
+
+  async removeAgent(agentId: string): Promise<AgentDefinition> {
+    await waitForMock();
+    const agent = this.#findAgent(agentId);
+    if (agent.actorId === "claude" || agent.actorId === "codex") {
+      throw new Error("Claude/Codex 系统 Agent 不能删除");
+    }
+    agent.enabled = false;
+    agent.deletedAt = new Date().toISOString();
+    agent.updatedAt = agent.deletedAt;
+    return structuredClone(agent);
+  }
+
+  async testAgent(_agentId: string): Promise<AgentConnectionTest> {
     await waitForMock();
     return { ok: true, latencyMs: MOCK_DELAY_MS };
   }
@@ -283,6 +424,20 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       throw new Error("自动轮次运行不存在");
     }
     return run;
+  }
+
+  #findProvider(providerId: string): ProviderProfile {
+    const provider = this.#modelRouter.providers.find(
+      (candidate) => candidate.id === providerId,
+    );
+    if (!provider) throw new Error("Provider 不存在");
+    return provider;
+  }
+
+  #findAgent(agentId: string): AgentDefinition {
+    const agent = this.#modelRouter.agents.find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error("Agent 不存在");
+    return agent;
   }
 
   #advance(run: OrchestrationRun): void {

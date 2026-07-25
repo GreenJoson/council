@@ -1,6 +1,6 @@
 /**
- * @input  依赖：含动态 Actor 的 Council SQLite、编排端口、严格 v1/v2 codec 与随机 ID
- * @output 导出：含 Actor 校验、v1 状态写升级、分页、单活动约束与 lease fencing 的 Store
+ * @input  依赖：含动态 Actor 的 Council SQLite、编排端口、v1/v2 兼容与 v3 codec
+ * @output 导出：旧 Run 只读/取消、v3 Actor/绑定校验、分页、单活动约束与 lease fencing 的 Store
  * @pos    以 SQLite CAS、冻结身份和 token/epoch 保证跨进程执行、历史 Run 与消息原子一致性
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -108,6 +108,14 @@ const APPROVAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const GATE_ID_PATTERN = /^before_(?:completion|round:[1-9][0-9]*)$/;
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 1_000;
 
+function assertExecutableSnapshot(run: OrchestrationRun): void {
+  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+    throw new InvalidRunStateError(
+      "旧运行缺少冻结的 Agent bindingRevision，只允许读取或取消；请创建新运行。",
+    );
+  }
+}
+
 function nonEmptyString(value: unknown, path: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new InvalidRunStateError(`${path} 必须是非空字符串。`);
@@ -183,7 +191,11 @@ function decodeRunRow(
     row.snapshot_schema_version,
     "orchestration_runs.snapshot_schema_version",
   );
-  if (snapshotSchemaVersion !== 1 && snapshotSchemaVersion !== 2) {
+  if (
+    snapshotSchemaVersion !== 1 &&
+    snapshotSchemaVersion !== 2 &&
+    snapshotSchemaVersion !== 3
+  ) {
     throw new InvalidRunStateError("不支持的运行快照结构版本。");
   }
   const snapshot = decodeRunSnapshot(
@@ -387,6 +399,25 @@ export class SQLiteCouncilStore implements CouncilStore {
     return nonEmptyString(row.id, "actor.id");
   }
 
+  #snapshotSchemaVersion(runId: string): number {
+    const row = this.#database.prepare(`
+      SELECT snapshot_schema_version
+      FROM orchestration_runs
+      WHERE id = ?
+    `).get(runId) as unknown as Pick<RunRow, "snapshot_schema_version"> | undefined;
+    if (!row) {
+      throw new RunNotFoundError(`运行 ${runId} 不存在。`);
+    }
+    const version = positiveInteger(
+      row.snapshot_schema_version,
+      "orchestration_runs.snapshot_schema_version",
+    );
+    if (version !== 1 && version !== 2 && version !== 3) {
+      throw new InvalidRunStateError("不支持的运行快照结构版本。");
+    }
+    return version;
+  }
+
   #saveRun(
     current: OrchestrationRun,
     desired: OrchestrationRun,
@@ -397,23 +428,25 @@ export class SQLiteCouncilStore implements CouncilStore {
       throw new StoreConflictError("运行版本与 CAS 前置条件不一致。");
     }
     assertSameImmutableFields(current, desired);
+    const snapshotSchemaVersion = this.#snapshotSchemaVersion(current.id);
     const saved = validateRunSnapshot({
       ...desired,
       version: expectedVersion + 1,
       updatedAt: now,
-    });
+    }, snapshotSchemaVersion === 3 ? 3 : 2);
     let result;
     try {
       result = this.#database.prepare(`
         UPDATE orchestration_runs
-        SET topic_id = ?, status = ?, snapshot_schema_version = 2,
+        SET topic_id = ?, status = ?, snapshot_schema_version = ?,
             snapshot_json = ?, version = ?,
             created_at = ?, updated_at = ?
         WHERE id = ? AND version = ?
       `).run(
         saved.topicId,
         saved.status,
-        encodeRunSnapshot(saved),
+        snapshotSchemaVersion,
+        encodeRunSnapshot(saved, snapshotSchemaVersion),
         saved.version,
         saved.createdAt,
         saved.updatedAt,
@@ -447,7 +480,7 @@ export class SQLiteCouncilStore implements CouncilStore {
       version: 1,
       createdAt: now,
       updatedAt: now,
-    });
+    }, 3);
     return this.#transaction(() => {
       this.#assertTopicExists(run.topicId);
       for (const round of run.plan) {
@@ -458,12 +491,12 @@ export class SQLiteCouncilStore implements CouncilStore {
           INSERT INTO orchestration_runs (
             id, topic_id, status, snapshot_schema_version, snapshot_json,
             version, created_at, updated_at
-          ) VALUES (?, ?, ?, 2, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, 3, ?, ?, ?, ?)
         `).run(
           run.id,
           run.topicId,
           run.status,
-          encodeRunSnapshot(run),
+          encodeRunSnapshot(run, 3),
           run.version,
           run.createdAt,
           run.updatedAt,
@@ -557,7 +590,8 @@ export class SQLiteCouncilStore implements CouncilStore {
     expectedVersion: number,
   ): Promise<OrchestrationRun> {
     positiveInteger(expectedVersion, "expectedVersion");
-    const desired = validateRunSnapshot(run);
+    const desired = validateRunSnapshot(run, 3);
+    assertExecutableSnapshot(desired);
     return this.#transaction(() => {
       const current = this.#getRun(desired.id);
       if (current.version !== expectedVersion) {
@@ -578,7 +612,8 @@ export class SQLiteCouncilStore implements CouncilStore {
     lease: RunLease,
   ): Promise<OrchestrationRun> {
     positiveInteger(expectedVersion, "expectedVersion");
-    const desired = validateRunSnapshot(run);
+    const desired = validateRunSnapshot(run, 3);
+    assertExecutableSnapshot(desired);
     return this.#transaction(() => {
       const nowMs = this.#now();
       this.#assertLease(lease, nowMs);
@@ -646,6 +681,8 @@ export class SQLiteCouncilStore implements CouncilStore {
     this.#activeActorRow(input.approvedByActorId);
 
     return this.#transaction(() => {
+      const current = this.#getRun(runId);
+      assertExecutableSnapshot(current);
       const existing = this.#database
         .prepare(`
           SELECT gate_id, expected_version, approved_by_actor_id
@@ -661,10 +698,9 @@ export class SQLiteCouncilStore implements CouncilStore {
         ) {
           throw new StoreConflictError("同一个 approvalId 不能表示不同的批准操作。");
         }
-        return { run: this.#getRun(runId), applied: false };
+        return { run: current, applied: false };
       }
 
-      const current = this.#getRun(runId);
       if (
         current.version !== expectedVersion ||
         current.status !== "waiting_user" ||
@@ -761,7 +797,8 @@ export class SQLiteCouncilStore implements CouncilStore {
 
   async commitRound(input: RoundCommitInput): Promise<RoundCommitResult> {
     const expectedVersion = positiveInteger(input.expectedVersion, "commitRound.expectedVersion");
-    const desired = validateRunSnapshot(input.run);
+    const desired = validateRunSnapshot(input.run, 3);
+    assertExecutableSnapshot(desired);
     const messageTopicId = nonEmptyString(input.message.topicId, "commitRound.message.topicId");
     const content = nonEmptyString(input.message.content, "commitRound.message.content");
     assertActorId(input.message.actorId, "commitRound.message.actorId");
@@ -844,6 +881,7 @@ export class SQLiteCouncilStore implements CouncilStore {
     const ttlMs = positiveInteger(input.ttlMs, "claimRunLease.ttlMs");
     return this.#transaction(() => {
       const run = this.#getRun(runId);
+      assertExecutableSnapshot(run);
       if (!LEASABLE_STATUSES.has(run.status)) {
         throw new LeaseConflictError(`状态 ${run.status} 不允许获取执行 lease。`);
       }
@@ -930,6 +968,7 @@ export class SQLiteCouncilStore implements CouncilStore {
   async renewRunLease(input: RenewRunLeaseInput): Promise<RunLease> {
     const ttlMs = positiveInteger(input.ttlMs, "renewRunLease.ttlMs");
     return this.#transaction(() => {
+      assertExecutableSnapshot(this.#getRun(input.lease.runId));
       const nowMs = this.#now();
       const current = this.#assertLease(input.lease, nowMs);
       const renewed: RunLease = {

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：假远程运行时、假设置服务、公开编排上下文与 AbortSignal
+ * @input  依赖：假远程运行时、假模型路由服务、公开编排上下文与 AbortSignal
  * @output 导出：兼容 Provider 安全失败原因与未知异常隔离测试
  * @pos    远程 Agent 适配器公开诊断边界的回归验证
  *
@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
-import type { AgentSettingsService } from "../src/agent-settings-service.js";
+import type { ModelRouterService } from "../src/model-router-service.js";
 import {
   OpenAICompatibleRuntime,
   OpenAICompatibleRuntimeError,
@@ -26,18 +26,34 @@ class FailingRuntime {
 }
 
 const settings = {
-  get: () => ({
+  getAgent: () => ({
     id: "remote-test",
-    label: "Remote Test",
-    kind: "openai-compatible",
+    actorId: "actor-remote-test",
+    providerId: "provider-remote-test",
+    slug: "remote-test",
+    displayName: "Remote Test",
     model: "test-model",
-    baseUrl: "https://example.com/v1",
+    mentionAlias: "remote-test",
     enabled: true,
-    requiresApiKey: true,
+    deletedAt: undefined,
+    createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   }),
-  getApiKey: async () => "test-key",
-} as unknown as AgentSettingsService;
+  getProvider: () => ({
+    id: "provider-remote-test",
+    slug: "remote-test",
+    displayName: "Remote Test",
+    protocol: "openai-compatible",
+    baseUrl: "https://example.com/v1",
+    requiresApiKey: true,
+    credentialRef: "provider-remote-test",
+    brandAssetId: "brand-remote-test",
+    status: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  }),
+  getApiKeyForAgent: async () => "test-key",
+} as unknown as ModelRouterService;
 
 function invocation(): AgentInvocation {
   return {

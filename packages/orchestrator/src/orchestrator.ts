@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilStore、AgentAdapter、状态类型与可判定错误
- * @output 导出：可分离 begin/drive、显式安全失败消息的 CouncilOrchestrator 与重启分类
- * @pos    人工门、lease、超时、重试、取消和失败恢复的唯一领域实现
+ * @output 导出：可分离 begin/drive、适配器代次 fencing、显式安全失败消息的 CouncilOrchestrator 与重启分类
+ * @pos    人工门、lease、适配器热替换、超时、重试、取消和失败恢复的唯一领域实现
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -51,6 +51,7 @@ const FAILURE_CODE_SET = new Set<string>(FAILURE_CODES);
 const MESSAGE_KIND_SET = new Set<string>(MESSAGE_KINDS);
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const APPROVAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const BINDING_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 function isPositiveInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
@@ -135,6 +136,12 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
     }
     const actorId = round.actorId.trim();
     assertAgentId(actorId, `plan[${String(index)}].actorId`);
+    const bindingRevision = round.bindingRevision?.trim();
+    if (bindingRevision && !BINDING_REVISION_PATTERN.test(bindingRevision)) {
+      throw new OrchestrationConfigError(
+        `plan[${String(index)}].bindingRevision 格式无效。`,
+      );
+    }
     if (!MESSAGE_KIND_SET.has(round.messageKind)) {
       throw new OrchestrationConfigError(`轮次 ${String(index + 1)} 的消息类型无效。`);
     }
@@ -145,6 +152,7 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
     return {
       adapterId,
       actorId,
+      ...(bindingRevision ? { bindingRevision } : {}),
       messageKind: round.messageKind,
       instruction,
     };
@@ -254,6 +262,7 @@ function assertPersistedRun(run: OrchestrationRun): void {
         persisted &&
         round.adapterId === persisted.adapterId &&
         round.actorId === persisted.actorId &&
+        round.bindingRevision === persisted.bindingRevision &&
         round.messageKind === persisted.messageKind &&
         round.instruction === persisted.instruction,
       );
@@ -406,7 +415,18 @@ function isTerminal(run: OrchestrationRun): boolean {
   return TERMINAL_STATUSES.has(run.status);
 }
 
+function assertExecutionBindingsFrozen(run: OrchestrationRun): void {
+  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+    throw new RunStateConflictError(
+      "旧运行缺少冻结的 Agent bindingRevision，只允许读取或取消；请创建新运行。",
+    );
+  }
+}
+
 export function classifyRestartDisposition(run: OrchestrationRun): RestartDisposition {
+  if (run.plan.some((round) => !round.bindingRevision?.trim())) {
+    return "ignore";
+  }
   if (run.status === "running") {
     return "resume_running";
   }
@@ -461,10 +481,18 @@ function storeFailure(operation: "context" | "commit"): RunFailure {
   };
 }
 
+interface AdapterSlot {
+  adapter: AgentAdapter;
+  generation: number;
+  bindingRevision: string;
+}
+
 export class CouncilOrchestrator {
-  readonly #adapters = new Map<string, AgentAdapter>();
+  readonly #adapters = new Map<string, AdapterSlot>();
   readonly #processingRuns = new Set<string>();
   readonly #activeControllers = new Map<string, AbortController>();
+  readonly #activeAdapterIds = new Map<string, string>();
+  #adapterGeneration = 0;
 
   constructor(
     private readonly store: CouncilStore,
@@ -475,12 +503,84 @@ export class CouncilOrchestrator {
       if (this.#adapters.has(adapter.adapterId)) {
         throw new OrchestrationConfigError(`AgentAdapter ${adapter.adapterId} 重复注册。`);
       }
-      this.#adapters.set(adapter.adapterId, adapter);
+      this.#adapters.set(adapter.adapterId, {
+        adapter,
+        generation: ++this.#adapterGeneration,
+        bindingRevision: `static:${adapter.adapterId}`,
+      });
     }
   }
 
+  /**
+   * M2 配置面刷新使用的临时适配器入口。只替换内存调用实现，
+   * 不创建 RuntimeBinding、session、进程或 lease 持久记录。
+   */
+  upsertAdapter(adapter: AgentAdapter, bindingRevision?: string): void {
+    assertAgentId(adapter.adapterId, "AgentAdapter.adapterId");
+    const generation = ++this.#adapterGeneration;
+    const normalizedRevision = bindingRevision?.trim() || `runtime:${String(generation)}`;
+    if (!BINDING_REVISION_PATTERN.test(normalizedRevision)) {
+      throw new OrchestrationConfigError("AgentAdapter bindingRevision 格式无效。");
+    }
+    this.#adapters.set(adapter.adapterId, {
+      adapter,
+      generation,
+      bindingRevision: normalizedRevision,
+    });
+  }
+
+  isAdapterBindingCurrent(adapterId: string, bindingRevision?: string): boolean {
+    if (!bindingRevision) {
+      return false;
+    }
+    const slot = this.#adapters.get(adapterId);
+    return Boolean(slot && slot.bindingRevision === bindingRevision);
+  }
+
+  /**
+   * 删除动态适配器并使已捕获的旧代次立即失效。活动调用会被中止；
+   * 即使适配器忽略 AbortSignal 并迟到返回，提交前代次检查也会拒绝写入。
+   */
+  removeAdapter(adapterId: string): boolean {
+    assertAgentId(adapterId, "AgentAdapter.adapterId");
+    const removed = this.#adapters.delete(adapterId);
+    if (!removed) {
+      return false;
+    }
+    this.#adapterGeneration += 1;
+    for (const [runId, activeAdapterId] of this.#activeAdapterIds) {
+      if (activeAdapterId !== adapterId) {
+        continue;
+      }
+      this.abortActiveInvocation(
+        runId,
+        new AgentInvocationError(
+          "Agent 配置已在调用期间变更。",
+          false,
+          "Agent 已停用或删除，本次迟到回复不会写入议题。",
+        ),
+      );
+    }
+    return true;
+  }
+
   async createRun(input: CreateRunInput): Promise<OrchestrationRun> {
-    const run = await this.store.createRun(normalizeInput(input));
+    const normalized = normalizeInput(input);
+    const plan = normalized.plan.map((round) => {
+      if (round.bindingRevision) {
+        return round;
+      }
+      const slot = this.#adapters.get(round.adapterId);
+      return slot
+        ? { ...round, bindingRevision: slot.bindingRevision }
+        : round;
+    });
+    if (plan.some((round) => !round.bindingRevision)) {
+      throw new OrchestrationConfigError(
+        "每个新运行轮次都必须冻结已注册 Agent 的 bindingRevision。",
+      );
+    }
+    const run = await this.store.createRun({ ...normalized, plan });
     assertPersistedRun(run);
     return run;
   }
@@ -515,6 +615,8 @@ export class CouncilOrchestrator {
 
   async begin(runId: string): Promise<OrchestrationRun> {
     const run = await this.#loadRun(runId);
+    assertExecutionBindingsFrozen(run);
+    this.#assertRunBindingsCurrent(run);
     if (isTerminal(run)) {
       throw new RunStateConflictError(`终态 ${run.status} 运行不能再次启动。`);
     }
@@ -541,7 +643,9 @@ export class CouncilOrchestrator {
 
   async applyApproval(input: ApproveGateInput): Promise<ApproveGateResult> {
     const normalized = normalizeApprovalInput(input);
-    await this.#loadRun(normalized.runId);
+    const current = await this.#loadRun(normalized.runId);
+    assertExecutionBindingsFrozen(current);
+    this.#assertRunBindingsCurrent(current);
     const result = await this.store.approveGate(normalized);
     assertPersistedRun(result.run);
     if (!result.applied) {
@@ -580,6 +684,8 @@ export class CouncilOrchestrator {
       throw new RunBusyError("当前进程仍在处理该运行，不能并发恢复。");
     }
     const run = await this.#loadRun(runId);
+    assertExecutionBindingsFrozen(run);
+    this.#assertRunBindingsCurrent(run);
     if (run.status !== "failed") {
       throw new RunStateConflictError(
         `只有 failed 运行可以显式恢复，当前状态为 ${run.status}。缺少 Store lease 时禁止恢复活动或中断状态。`,
@@ -613,6 +719,7 @@ export class CouncilOrchestrator {
 
   async drive(runId: string, lease: RunLease): Promise<OrchestrationRun> {
     const run = await this.#loadRun(runId);
+    assertExecutionBindingsFrozen(run);
     if (lease.runId !== run.id) {
       throw new LeaseLostError("执行 lease 不属于当前运行。");
     }
@@ -624,11 +731,15 @@ export class CouncilOrchestrator {
     if (run.status !== "running") {
       throw new InvalidRunStateError(`只有 running 运行可以 drive，当前状态为 ${run.status}。`);
     }
+    if (this.#hasStaleBinding(run)) {
+      return await this.#fail(run, lease, unavailableFailure());
+    }
     return await this.#process(run, lease);
   }
 
   async markInterruptedAgent(runId: string, lease: RunLease): Promise<OrchestrationRun> {
     const run = await this.#loadRun(runId);
+    assertExecutionBindingsFrozen(run);
     if (run.status !== "waiting_agent") {
       throw new InvalidRunStateError(
         `只有 waiting_agent 可标记为执行中断，当前状态为 ${run.status}。`,
@@ -756,8 +867,12 @@ export class CouncilOrchestrator {
       if (!round) {
         throw new InvalidRunStateError("运行的轮次索引越界，持久化数据已损坏。");
       }
-      const adapter = this.#adapters.get(round.adapterId);
-      if (!adapter) {
+      const adapterSlot = this.#adapters.get(round.adapterId);
+      if (
+        !adapterSlot ||
+        (round.bindingRevision &&
+          adapterSlot.bindingRevision !== round.bindingRevision)
+      ) {
         return await this.#fail(run, lease, unavailableFailure());
       }
 
@@ -795,7 +910,7 @@ export class CouncilOrchestrator {
       try {
         const result = await this.#invoke(
           waiting.id,
-          adapter,
+          adapterSlot.adapter,
           invocation,
           waiting.policy.agentTimeoutMs,
           waiting.policy.agentCleanupTimeoutMs,
@@ -838,6 +953,14 @@ export class CouncilOrchestrator {
           continue;
         }
         return await this.#fail(waiting, lease, failure);
+      }
+
+      const currentAdapterSlot = this.#adapters.get(round.adapterId);
+      if (
+        !currentAdapterSlot ||
+        currentAdapterSlot.generation !== adapterSlot.generation
+      ) {
+        return await this.#fail(waiting, lease, unavailableFailure());
       }
 
       const nextRun: OrchestrationRun = {
@@ -900,6 +1023,20 @@ export class CouncilOrchestrator {
     return run;
   }
 
+  #hasStaleBinding(run: OrchestrationRun): boolean {
+    return run.plan.some(
+      (round) => !this.isAdapterBindingCurrent(round.adapterId, round.bindingRevision),
+    );
+  }
+
+  #assertRunBindingsCurrent(run: OrchestrationRun): void {
+    if (this.#hasStaleBinding(run)) {
+      throw new RunStateConflictError(
+        "运行引用的 Agent 绑定已停用、删除或被新配置替换。",
+      );
+    }
+  }
+
   async #replaceRun(
     run: OrchestrationRun,
     expectedVersion: number,
@@ -930,6 +1067,7 @@ export class CouncilOrchestrator {
   ) {
     const controller = new AbortController();
     this.#activeControllers.set(runId, controller);
+    this.#activeAdapterIds.set(runId, adapter.adapterId);
     const timeout = setTimeout(() => controller.abort(new AgentTimeoutError()), timeoutMs);
     let abortListener: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
@@ -962,6 +1100,9 @@ export class CouncilOrchestrator {
       }
       if (this.#activeControllers.get(runId) === controller) {
         this.#activeControllers.delete(runId);
+      }
+      if (this.#activeAdapterIds.get(runId) === adapter.adapterId) {
+        this.#activeAdapterIds.delete(runId);
       }
     }
   }

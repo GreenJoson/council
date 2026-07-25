@@ -52,8 +52,12 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
 - 消息图片和 Mermaid 图以固定缩略尺寸展示，点击后进入支持缩放与滚动的全视口大图浏览；长卡片在正文底部展开或收起。
 - 讨论区左侧按消息卡数量显示一一对应的阶梯节点，可直接跳转到任意卡片并跟随滚动高亮当前位置。
-- 顶栏模型路由台可即时切换 Claude/Codex 模型；DeepSeek、Kimi 等兼容 Provider 按需添加，右侧一次只编辑一项，候选数量不会撑高设置窗口。
+- 顶栏 Model Router 将 Provider 连接与 Agent 身份分层：同一 Provider 可创建多个独立
+  Agent/Actor/`@alias`；OpenAI、Claude、Kimi、DeepSeek、Grok 等名称与离线品牌保持原样，
+  未知 Provider 使用通用 glyph，不退化为 `Other`。
 - 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
+- Model Router 写入只由桌面内置 HTTP sidecar 持有；同一日志库只允许一个配置写进程。
+  stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 自动轮次使用无 session 的公开上下文；取消、超时和 lease 丢失会终止后台 CLI，迟到回复不能写入。
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
@@ -89,6 +93,8 @@ API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 使用同一目录；Web
 Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP 配置应调用 MCP 构建产物，并通过环境变量注入数据目录和运行参数。
 
 桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。两条命令都会先生成内置 Agent Service sidecar；构建配置固定在 `packages/desktop/sidecar-build.json`，下载的官方 Node 运行时必须通过锁定的 SHA-256 校验。安装后的 Council.app 打开即自动启动 sidecar，不需要 Node/npm。首次启动时只需选择日志库和项目目录；MCP 客户端仍应把 `COUNCIL_DATA_DIR` 指向同一日志库。
+
+当前 HTTP 控制面仅监听 loopback，按本机单用户桌面应用建模，尚未使用实例令牌；因此不能转发端口、暴露给其他用户会话或改为非 loopback 监听。后续若支持多用户或外部客户端，必须先加入每实例随机令牌、请求认证与权限分域。
 
 ## 使用方式
 

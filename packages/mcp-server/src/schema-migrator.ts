@@ -1,21 +1,16 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/canonical v2/版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v5、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
-  chmodSync,
-  rmSync,
-} from "node:fs";
-import path from "node:path";
-import { backup, DatabaseSync } from "node:sqlite";
-import {
-  ORCHESTRATION_SCHEMA_SQL,
-  ORCHESTRATION_SCHEMA_VERSION,
+  LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,
   assertOrchestrationSchema,
 } from "council-orchestrator";
 import {
@@ -23,6 +18,7 @@ import {
   ACTOR_SNAPSHOT_SCHEMA_VERSION,
   serializeActorSnapshot,
 } from "./actor-identity.js";
+import { seedReferencedLegacyDynamicActors } from "./legacy-dynamic-actors.js";
 import {
   ACTOR_SCHEMA_SQL,
   COUNCIL_IDENTITY_SQL,
@@ -35,15 +31,41 @@ import {
   LEGACY_V1_INDEXES,
   LEGACY_V1_ORCHESTRATION_SCHEMA_SQL,
   LEGACY_V1_TABLES,
+  LEGACY_V2_INDEXES,
+  LEGACY_V2_TABLES,
   MIGRATION_LEDGER_SQL,
   REQUIRED_INDEXES,
   REQUIRED_REVISION_TRIGGERS,
   REQUIRED_TABLES,
 } from "./schema-definitions.js";
+import { migrateVersionThree } from "./schema-v3-migration.js";
+import {
+  legacyActorId,
+  migrationInteger,
+  migrationNullableString,
+  migrationString,
+} from "./schema-migration-values.js";
+import {
+  assertVersionThreeMigrationSource,
+  migrateVersionFour,
+} from "./schema-v4-migration.js";
+import {
+  assertVersionFourMigrationSource,
+  migrateVersionFive,
+} from "./schema-v5-migration.js";
+import {
+  assertCountsPreserved,
+  assertDatabaseIntegrity,
+  createVerifiedSchemaBackup,
+  integerPragma,
+  protectSqliteFile,
+  readCouncilSchemaObjects,
+  type SchemaObjectRow,
+} from "./schema-storage.js";
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 2;
+export const COUNCIL_SCHEMA_VERSION = 5;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -54,12 +76,6 @@ interface ScalarRow {
 
 interface NameRow {
   name: unknown;
-}
-
-interface SchemaObjectRow {
-  type: unknown;
-  name: unknown;
-  sql: unknown;
 }
 
 export type MigrationFaultPoint = "before-commit";
@@ -97,15 +113,6 @@ function singleIntegerRow(row: unknown, label: string): number {
     throw new Error(`Council SQLite ${label} 无效。`);
   }
   return value;
-}
-
-function integerPragma(database: DatabaseSync, name: "data_version" | "user_version"): number {
-  const row = database.prepare(`PRAGMA ${name}`).get();
-  try {
-    return singleIntegerRow(row, name);
-  } catch {
-    throw new Error(`Council SQLite ${name} 无效。`);
-  }
 }
 
 function hasTable(database: DatabaseSync, table: string): boolean {
@@ -186,6 +193,10 @@ function normalizeSchemaSql(sql: string): string {
     .trim();
 }
 
+function normalizeLegacyV2SchemaSql(sql: string): string {
+  return sql.replace(/\s*([(),])\s*/gu, "$1");
+}
+
 function selectedSchemaObjects(
   database: DatabaseSync,
   requiredByType: Readonly<Record<string, readonly string[]>>,
@@ -226,10 +237,11 @@ function requiredSchemaObjects(database: DatabaseSync): Map<string, string> {
 
 let canonicalSchemaObjects: ReadonlyMap<string, string> | undefined;
 let canonicalLegacyV1SchemaObjects: ReadonlyMap<string, string> | undefined;
+let canonicalLegacyV2SchemaObjects: ReadonlyMap<string, string> | undefined;
 
 function legacyV1SchemaObjects(database: DatabaseSync): Map<string, string> {
   return new Map(
-    schemaObjects(database).map((row) => [
+    readCouncilSchemaObjects(database).map((row) => [
       `${String(row.type)}:${String(row.name)}`,
       normalizeSchemaSql(String(row.sql)),
     ]),
@@ -263,7 +275,10 @@ function assertLegacyV1Schema(database: DatabaseSync): void {
   const reservedTable = database.prepare(`
     SELECT name
     FROM sqlite_master
-    WHERE type = 'table' AND name IN ('actor_identities', 'actor_aliases')
+    WHERE type = 'table' AND name IN (
+      'actor_identities', 'actor_aliases',
+      'brand_assets', 'provider_profiles', 'agent_definitions'
+    )
     LIMIT 1
   `).get() as unknown as NameRow | undefined;
   if (typeof reservedTable?.name === "string") {
@@ -303,6 +318,87 @@ function assertLegacyV1Schema(database: DatabaseSync): void {
   assertDatabaseIntegrity(database);
 }
 
+function legacyV2RequiredSchemaObjects(database: DatabaseSync): Map<string, string> {
+  return selectedSchemaObjects(database, {
+    table: LEGACY_V2_TABLES,
+    index: LEGACY_V2_INDEXES,
+    trigger: REQUIRED_REVISION_TRIGGERS,
+  });
+}
+
+function canonicalLegacyV2RequiredSchemaObjects(): ReadonlyMap<string, string> {
+  if (canonicalLegacyV2SchemaObjects) {
+    return canonicalLegacyV2SchemaObjects;
+  }
+  const canonical = new DatabaseSync(":memory:");
+  try {
+    canonical.exec(LEGACY_BASE_SCHEMA_SQL);
+    canonical.exec(ACTOR_SCHEMA_SQL);
+    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    canonical.exec(MIGRATION_LEDGER_SQL);
+    canonical.exec(COUNCIL_IDENTITY_SQL);
+    seedActors(canonical, new Date(0).toISOString());
+    rebuildContentTablesForActors(canonical);
+    rebuildOrchestrationTablesForActors(canonical);
+    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    canonicalLegacyV2SchemaObjects = legacyV2RequiredSchemaObjects(canonical);
+    return canonicalLegacyV2SchemaObjects;
+  } finally {
+    canonical.close();
+  }
+}
+
+function assertLegacyV2Schema(database: DatabaseSync): void {
+  assertNames(database, "table", LEGACY_V2_TABLES);
+  assertNames(database, "index", LEGACY_V2_INDEXES);
+  assertNames(database, "trigger", REQUIRED_REVISION_TRIGGERS);
+  const reserved = database.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name IN ('brand_assets', 'provider_profiles', 'agent_definitions')
+    LIMIT 1
+  `).get() as unknown as NameRow | undefined;
+  if (typeof reserved?.name === "string") {
+    throw new Error("Council v2 数据库包含保留模型路由表，拒绝继续迁移。");
+  }
+  const expected = canonicalLegacyV2RequiredSchemaObjects();
+  const actual = legacyV2RequiredSchemaObjects(database);
+  for (const [key, expectedSql] of expected) {
+    const actualSql = actual.get(key);
+    if (
+      actualSql === undefined ||
+      normalizeLegacyV2SchemaSql(actualSql) !== normalizeLegacyV2SchemaSql(expectedSql)
+    ) {
+      throw new Error(`Council v2 schema 定义不兼容：${key}。`);
+    }
+  }
+  if (actual.size !== expected.size) {
+    throw new Error("Council v2 schema 必需对象集合不兼容。");
+  }
+  const migrationRows = database.prepare(`
+    SELECT version, name FROM schema_migrations ORDER BY version
+  `).all() as unknown as Array<{ version?: unknown; name?: unknown }>;
+  if (
+    migrationRows.length !== 2 ||
+    migrationRows[0]?.version !== 1 ||
+    migrationRows[0]?.name !== "initial-unified-schema" ||
+    migrationRows[1]?.version !== 2 ||
+    migrationRows[1]?.name !== "dynamic-actor-identities"
+  ) {
+    throw new Error("Council v2 迁移账本内容无效。");
+  }
+  const orchestrationVersion = database.prepare(`
+    SELECT value FROM council_meta WHERE key = 'orchestration_schema_version'
+  `).get() as unknown as ScalarRow | undefined;
+  if (orchestrationVersion?.value !== 2) {
+    throw new Error("Council v2 编排 schema 版本无效。");
+  }
+  assertReservedActorMappings(database);
+  readCouncilDatabaseInstanceId(database);
+  assertDatabaseIntegrity(database);
+}
+
 function canonicalRequiredSchemaObjects(): ReadonlyMap<string, string> {
   if (canonicalSchemaObjects) {
     return canonicalSchemaObjects;
@@ -311,13 +407,16 @@ function canonicalRequiredSchemaObjects(): ReadonlyMap<string, string> {
   try {
     canonical.exec(LEGACY_BASE_SCHEMA_SQL);
     canonical.exec(ACTOR_SCHEMA_SQL);
-    canonical.exec(ORCHESTRATION_SCHEMA_SQL);
+    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
     canonical.exec(MIGRATION_LEDGER_SQL);
     canonical.exec(COUNCIL_IDENTITY_SQL);
     seedActors(canonical, new Date(0).toISOString());
     rebuildContentTablesForActors(canonical);
     rebuildOrchestrationTablesForActors(canonical);
-    canonical.exec(ORCHESTRATION_SCHEMA_SQL);
+    canonical.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    migrateVersionThree(canonical, false);
+    migrateVersionFour(canonical, false);
+    migrateVersionFive(canonical, false);
     canonicalSchemaObjects = requiredSchemaObjects(canonical);
     return canonicalSchemaObjects;
   } finally {
@@ -456,22 +555,6 @@ function assertRevisionBehavior(database: DatabaseSync): void {
   }
 }
 
-function assertDatabaseIntegrity(database: DatabaseSync): void {
-  const quickCheck = database.prepare("PRAGMA quick_check").get();
-  if (
-    typeof quickCheck !== "object" ||
-    quickCheck === null ||
-    Object.values(quickCheck).length !== 1 ||
-    Object.values(quickCheck)[0] !== "ok"
-  ) {
-    throw new Error("Council SQLite 完整性检查失败。");
-  }
-  const foreignKeyRows = database.prepare("PRAGMA foreign_key_check").all();
-  if (foreignKeyRows.length > 0) {
-    throw new Error("Council SQLite 外键检查失败。");
-  }
-}
-
 export function assertCouncilSchema(database: DatabaseSync): void {
   const version = assertVersionMirror(database);
   if (version !== COUNCIL_SCHEMA_VERSION) {
@@ -483,6 +566,24 @@ export function assertCouncilSchema(database: DatabaseSync): void {
   assertCanonicalSchema(database);
   assertOrchestrationSchema(database);
   assertReservedActorMappings(database);
+  const migrationRows = database.prepare(`
+    SELECT version, name FROM schema_migrations ORDER BY version
+  `).all() as unknown as Array<{ version?: unknown; name?: unknown }>;
+  const expectedMigrations = [
+    [1, "initial-unified-schema"],
+    [2, "dynamic-actor-identities"],
+    [3, "provider-agent-model-router"],
+    [4, "frozen-run-bindings"],
+    [5, "dynamic-provider-actors"],
+  ] as const;
+  if (
+    migrationRows.length !== expectedMigrations.length ||
+    expectedMigrations.some(([versionNumber, name], index) =>
+      migrationRows[index]?.version !== versionNumber ||
+      migrationRows[index]?.name !== name)
+  ) {
+    throw new Error("Council v5 迁移账本内容无效。");
+  }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
   assertRevisionBehavior(database);
@@ -618,65 +719,12 @@ function snapshotJsonForActor(database: DatabaseSync, actorId: string): string {
   });
 }
 
-function legacyActorId(value: string): string {
-  switch (value.toLocaleLowerCase("en-US")) {
-    case "human":
-    case "user":
-      return "human";
-    case "chair":
-    case "council":
-      return "council";
-    case "claude":
-    case "claude-code":
-      return "claude";
-    case "codex":
-    case "codex-cli":
-      return "codex";
-    case "deepseek":
-      return "deepseek";
-    case "kimi":
-      return "kimi";
-    default:
-      return "legacy-unknown";
-  }
-}
-
-function migrationString(row: Readonly<Record<string, unknown>>, key: string): string {
-  const value = row[key];
-  if (typeof value !== "string") {
-    throw new Error(`Council 迁移源字段 ${key} 无效。`);
-  }
-  return value;
-}
-
-function migrationNullableString(
-  row: Readonly<Record<string, unknown>>,
-  key: string,
-): string | null {
-  const value = row[key];
-  if (value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Council 迁移源字段 ${key} 无效。`);
-  }
-  return value;
-}
-
 function legacySessionStableId(topicId: string, legacyAgent: string): string {
   const digest = createHash("sha256")
     .update(JSON.stringify([topicId, legacyAgent]))
     .digest("hex")
     .slice(0, 32);
   return `session_legacy_${digest}`;
-}
-
-function migrationInteger(row: Readonly<Record<string, unknown>>, key: string): number {
-  const value = row[key];
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new Error(`Council 迁移源字段 ${key} 无效。`);
-  }
-  return value;
 }
 
 function rebuildContentTablesForActors(database: DatabaseSync): void {
@@ -908,104 +956,22 @@ function rebuildOrchestrationTablesForActors(database: DatabaseSync): void {
 
 function migrateVersionTwo(database: DatabaseSync): void {
   database.exec(ACTOR_SCHEMA_SQL);
-  seedActors(database, new Date().toISOString());
+  const now = new Date().toISOString();
+  seedActors(database, now);
+  seedReferencedLegacyDynamicActors(database, now);
   rebuildContentTablesForActors(database);
   rebuildOrchestrationTablesForActors(database);
-  database.exec(ORCHESTRATION_SCHEMA_SQL);
+  database.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
   database.prepare(`
     UPDATE council_meta
     SET value = ?
     WHERE key = 'orchestration_schema_version'
-  `).run(ORCHESTRATION_SCHEMA_VERSION);
+  `).run(2);
   database.prepare(`
     INSERT INTO schema_migrations (version, name, applied_at)
     VALUES (?, ?, ?)
   `).run(2, "dynamic-actor-identities", new Date().toISOString());
   database.exec("PRAGMA user_version = 2;");
-}
-
-function assertCountsPreserved(database: DatabaseSync, before: ReadonlyMap<string, number>): void {
-  for (const [table, expected] of before) {
-    const row = database
-      .prepare(`SELECT COUNT(*) AS value FROM ${table}`)
-      .get() as unknown as ScalarRow;
-    if (row.value !== expected) {
-      throw new Error(`Council ${table} 行数在迁移中发生变化。`);
-    }
-  }
-}
-
-function backupPathFor(databasePath: string, sourceVersion: number): string {
-  const parsed = path.parse(databasePath);
-  return path.join(
-    parsed.dir,
-    `${parsed.name}.schema-v${sourceVersion.toString()}-${Date.now().toString()}-${randomUUID()}${parsed.ext}.backup`,
-  );
-}
-
-function schemaObjects(database: DatabaseSync): SchemaObjectRow[] {
-  const rows = database
-    .prepare(`
-      SELECT type, name, sql FROM sqlite_master
-      WHERE type IN ('table', 'index', 'trigger')
-        AND name NOT LIKE 'sqlite_%'
-        AND sql IS NOT NULL
-      ORDER BY type, name
-    `)
-    .all() as unknown as SchemaObjectRow[];
-  return rows.map((row) => {
-    if (
-      typeof row.type !== "string" ||
-      typeof row.name !== "string" ||
-      typeof row.sql !== "string"
-    ) {
-      throw new Error("Council SQLite schema 元数据无效。");
-    }
-    return row;
-  });
-}
-
-function sameSchemaObjects(
-  left: readonly SchemaObjectRow[],
-  right: readonly SchemaObjectRow[],
-): boolean {
-  return left.length === right.length && left.every((item, index) => {
-    const other = right[index];
-    return (
-      other !== undefined &&
-      item.type === other.type &&
-      item.name === other.name &&
-      item.sql === other.sql
-    );
-  });
-}
-
-function assertBackup(
-  backupPath: string,
-  expectedSchema: readonly SchemaObjectRow[],
-  expectedCounts: ReadonlyMap<string, number>,
-  expectedUserVersion: number,
-): void {
-  const database = new DatabaseSync(backupPath, { readOnly: true });
-  try {
-    assertDatabaseIntegrity(database);
-    if (integerPragma(database, "user_version") !== expectedUserVersion) {
-      throw new Error("Council schema 备份版本与源库不一致。");
-    }
-    const actualSchema = schemaObjects(database);
-    if (!sameSchemaObjects(actualSchema, expectedSchema)) {
-      throw new Error("Council schema 备份表结构与源库不一致。");
-    }
-    assertCountsPreserved(database, expectedCounts);
-  } finally {
-    database.close();
-  }
-}
-
-function protectFile(filePath: string): void {
-  if (process.platform !== "win32") {
-    chmodSync(filePath, 0o600);
-  }
 }
 
 /**
@@ -1046,6 +1012,8 @@ export async function migrateCouncilSchema(
       }
       if (initialVersion === 1) {
         assertLegacyV1Schema(database);
+      } else if (initialVersion === 2) {
+        assertLegacyV2Schema(database);
       }
 
       const checkpoint = database.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
@@ -1069,7 +1037,7 @@ export async function migrateCouncilSchema(
 
       const dataVersionBeforeSnapshot = integerPragma(database, "data_version");
       const counts = existingCounts(database);
-      const sourceSchema = schemaObjects(database);
+      const sourceSchema = readCouncilSchemaObjects(database);
       const backedUpDataVersion = integerPragma(database, "data_version");
       if (dataVersionBeforeSnapshot !== backedUpDataVersion) {
         if (attempt === options.maxAttempts) {
@@ -1078,15 +1046,21 @@ export async function migrateCouncilSchema(
         continue;
       }
       if (sourceSchema.length > 0) {
-        backupPath = backupPathFor(databasePath, initialVersion);
         try {
-          await backup(database, backupPath);
-          protectFile(backupPath);
-          assertBackup(backupPath, sourceSchema, counts, initialUserVersion);
+          backupPath = await createVerifiedSchemaBackup(
+            database,
+            databasePath,
+            initialVersion,
+            sourceSchema,
+            counts,
+            initialUserVersion,
+          );
           backupVerified = true;
         } catch (error) {
           const changed = integerPragma(database, "data_version") !== backedUpDataVersion;
-          rmSync(backupPath, { force: true });
+          if (backupPath) {
+            rmSync(backupPath, { force: true });
+          }
           backupPath = undefined;
           if (changed && attempt < options.maxAttempts) {
             continue;
@@ -1145,6 +1119,27 @@ export async function migrateCouncilSchema(
         migrateVersionTwo(database);
         migratingVersion = 2;
       }
+      if (migratingVersion === 2) {
+        if (initialVersion === 2) {
+          assertLegacyV2Schema(database);
+        }
+        migrateVersionThree(database);
+        migratingVersion = 3;
+      }
+      if (migratingVersion === 3) {
+        if (initialVersion === 3) {
+          assertVersionThreeMigrationSource(database);
+        }
+        migrateVersionFour(database);
+        migratingVersion = 4;
+      }
+      if (migratingVersion === 4) {
+        if (initialVersion === 4) {
+          assertVersionFourMigrationSource(database);
+        }
+        migrateVersionFive(database);
+        migratingVersion = 5;
+      }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");
       }
@@ -1156,7 +1151,7 @@ export async function migrateCouncilSchema(
       database.exec("COMMIT;");
       transactionOpen = false;
       assertCouncilSchema(database);
-      protectFile(databasePath);
+      protectSqliteFile(databasePath);
       return {
         migrated: true,
         version: COUNCIL_SCHEMA_VERSION,

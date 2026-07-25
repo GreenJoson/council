@@ -543,6 +543,36 @@ mod tests {
     use crate::orchestration::ReadyService;
     use rusqlite::Connection;
     use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .expect("workspace root")
+    }
+
+    fn create_node_database(database_path: &Path) {
+        static NODE_BUILD: OnceLock<()> = OnceLock::new();
+        NODE_BUILD.get_or_init(|| {
+            let status = Command::new("npm")
+                .args(["run", "build", "--prefix", "packages/mcp-server"])
+                .current_dir(workspace_root())
+                .status()
+                .expect("build Node migrator");
+            assert!(status.success(), "Node migrator build must succeed");
+        });
+        let status = Command::new("node")
+            .arg("packages/mcp-server/scripts/create-rust-test-database.mjs")
+            .arg("fresh")
+            .arg(database_path)
+            .current_dir(workspace_root())
+            .status()
+            .expect("run Node database generator");
+        assert!(status.success(), "Node database generator must succeed");
+    }
 
     #[test]
     fn refuses_rust_store_before_sidecar_reports_ready() {
@@ -580,12 +610,8 @@ mod tests {
             (&database_a, "00000000-0000-4000-8000-00000000000a"),
             (&database_b, "00000000-0000-4000-8000-00000000000b"),
         ] {
+            create_node_database(path);
             let connection = Connection::open(path).expect("open fixture database");
-            connection
-                .execute_batch(include_str!(
-                    "../../../../crates/council-core/tests/fixtures/node-schema-v2.sql"
-                ))
-                .expect("create fixture schema");
             connection
                 .execute(
                     "UPDATE council_identity SET instance_id = ?1 WHERE singleton = 1",

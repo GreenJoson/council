@@ -219,6 +219,7 @@ test("content/orchestration revision 隔离且 lease 心跳不推进任何 revis
       plan: [{
         adapterId: "fake",
         actorId: "claude",
+        bindingRevision: "test-binding:fake:v1",
         messageKind: "proposal",
         instruction: "测试 revision",
       }],

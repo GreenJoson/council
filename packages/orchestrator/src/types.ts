@@ -22,6 +22,8 @@ export type FailureCode = (typeof FAILURE_CODES)[number];
 export interface RoundPlan {
   adapterId: string;
   actorId: ActorId;
+  /** v3 Run 必须冻结；仅旧 v1/v2 快照可缺省并进入只读/可取消兼容态。 */
+  bindingRevision?: string;
   messageKind: MessageKind;
   instruction: string;
 }

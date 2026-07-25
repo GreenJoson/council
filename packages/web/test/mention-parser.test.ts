@@ -17,16 +17,35 @@ import {
 import type { OrchestrationAdapter } from "../src/types/orchestration";
 
 const ADAPTERS: OrchestrationAdapter[] = [
-  { id: "claude-code", actorId: "claude", label: "Claude Code", available: true },
+  {
+    id: "claude-code",
+    actorId: "claude",
+    mentionAlias: "claude",
+    label: "Claude",
+    available: true,
+  },
   {
     id: "codex-shared",
     actorId: "codex",
+    mentionAlias: "codex",
     label: "Codex",
     available: false,
     limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
   },
-  { id: "deepseek", actorId: "deepseek", label: "DeepSeek", available: true },
-  { id: "kimi", actorId: "kimi", label: "Kimi", available: true },
+  {
+    id: "agent-deepseek",
+    actorId: "actor-deepseek",
+    mentionAlias: "deepseek",
+    label: "DeepSeek",
+    available: true,
+  },
+  {
+    id: "agent-kimi",
+    actorId: "actor-kimi",
+    mentionAlias: "kimi",
+    label: "Kimi",
+    available: true,
+  },
 ];
 
 describe("parseMention", () => {
@@ -59,10 +78,10 @@ describe("parseMention", () => {
 
   it("远程 Provider 使用自己的独立 Actor 标识召唤", () => {
     expect(parseMention("@deepseek 复核并发风险", ADAPTERS)).toEqual({
-      adapterId: "deepseek",
+      adapterId: "agent-deepseek",
       instruction: "复核并发风险",
     });
-    expect(parseMention("@kimi 给出替代方案", ADAPTERS)?.adapterId).toBe("kimi");
+    expect(parseMention("@kimi 给出替代方案", ADAPTERS)?.adapterId).toBe("agent-kimi");
     expect(parseMention("@other 无歧义目标", ADAPTERS)).toBeNull();
   });
 
@@ -154,8 +173,11 @@ describe("extractLeadingMentionChip", () => {
     expect(extractLeadingMentionChip("辛苦 @claude 帮忙看一下")).toBeNull();
   });
 
-  it("开头是未知名时不提取", () => {
-    expect(extractLeadingMentionChip("@bob 帮我看看")).toBeNull();
+  it("历史消息的动态 @alias 不依赖当前能力白名单", () => {
+    expect(extractLeadingMentionChip("@future-agent 帮我看看")).toEqual({
+      token: "future-agent",
+      remainder: "帮我看看",
+    });
   });
 
   it("只有召唤标记、没有其余正文时仍能提取（remainder 为空字符串）", () => {

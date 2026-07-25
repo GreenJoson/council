@@ -46,16 +46,20 @@ const REQUIRED_ORCHESTRATION_TRIGGERS = [
   "trg_orchestration_runs_revision_delete",
 ] as const;
 
-export const ORCHESTRATION_SCHEMA_VERSION = 2;
+export const ORCHESTRATION_SCHEMA_VERSION = 3;
 
-export const ORCHESTRATION_SCHEMA_SQL = `
+function orchestrationSchemaSql(
+  schemaVersion: number,
+  snapshotVersions: string,
+): string {
+  return `
   INSERT OR IGNORE INTO council_meta (key, value) VALUES ('revision', 0);
   INSERT OR IGNORE INTO council_meta (key, value)
     VALUES ('content_revision', 0);
   INSERT OR IGNORE INTO council_meta (key, value)
     VALUES ('orchestration_revision', 0);
   INSERT OR IGNORE INTO council_meta (key, value)
-    VALUES ('orchestration_schema_version', ${String(ORCHESTRATION_SCHEMA_VERSION)});
+    VALUES ('orchestration_schema_version', ${String(schemaVersion)});
 
   CREATE TABLE IF NOT EXISTS orchestration_runs (
     id TEXT PRIMARY KEY,
@@ -63,7 +67,9 @@ export const ORCHESTRATION_SCHEMA_SQL = `
     status TEXT NOT NULL CHECK (
       status IN ('idle', 'running', 'waiting_agent', 'waiting_user', 'completed', 'failed', 'cancelled')
     ),
-    snapshot_schema_version INTEGER NOT NULL CHECK (snapshot_schema_version IN (1, 2)),
+    snapshot_schema_version INTEGER NOT NULL CHECK (
+      snapshot_schema_version IN (${snapshotVersions})
+    ),
     snapshot_json TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version > 0),
     created_at TEXT NOT NULL,
@@ -121,6 +127,14 @@ export const ORCHESTRATION_SCHEMA_SQL = `
       UPDATE council_meta SET value = value + 1 WHERE key = 'orchestration_revision';
     END;
 `;
+}
+
+/** 只用于构造/验证历史 Council v2/v3 数据库，禁止新 Run 写入。 */
+export const LEGACY_ORCHESTRATION_SCHEMA_V2_SQL = orchestrationSchemaSql(2, "1, 2");
+export const ORCHESTRATION_SCHEMA_SQL = orchestrationSchemaSql(
+  ORCHESTRATION_SCHEMA_VERSION,
+  "1, 2, 3",
+);
 
 interface SchemaObjectRow {
   type: unknown;

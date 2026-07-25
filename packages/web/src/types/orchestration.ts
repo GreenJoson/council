@@ -27,6 +27,14 @@ export interface OrchestrationAdapter {
   id: string;
   actorId: string;
   label: string;
+  mentionAlias?: string;
+  providerId?: string;
+  providerName?: string;
+  brand?: {
+    glyphId: string;
+    colorToken: string;
+    displayName: string;
+  };
   available: boolean;
   limitation?: string;
 }

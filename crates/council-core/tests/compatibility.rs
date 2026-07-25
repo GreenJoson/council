@@ -1,6 +1,6 @@
-//! @input 依赖：临时 SQLite 文件、CouncilStore 和 Node schema v2 夹具
-//! @output 导出：动态 Actor、行快照一致、分页、revision 与版本拒绝兼容性集成测试
-//! @pos Rust 内容核心只消费 Node 已迁移 council.sqlite3 的回归证据
+//! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
+//! @output 导出：Node fresh/v2/v3→v5 数据库、动态 Actor、分页、revision 与版本拒绝兼容性测试
+//! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
@@ -9,19 +9,48 @@ use council_core::{
     PostMessageInput, RecordDecisionInput, TopicStatus,
 };
 use rusqlite::{Connection, params};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
 use tempfile::tempdir;
 
 const HUMAN_ALIAS: &str = "human";
 const CLAUDE_ALIAS: &str = "claude";
 const CODEX_ALIAS: &str = "codex";
-const KIMI_ALIAS: &str = "kimi";
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root")
+}
+
+fn ensure_node_migrator_built() {
+    static NODE_BUILD: OnceLock<()> = OnceLock::new();
+    NODE_BUILD.get_or_init(|| {
+        let status = Command::new("npm")
+            .args(["run", "build", "--prefix", "packages/mcp-server"])
+            .current_dir(workspace_root())
+            .status()
+            .expect("build Node migrator");
+        assert!(status.success(), "Node migrator build must succeed");
+    });
+}
+
+fn prepare_node_schema_with_mode(database_path: &Path, mode: &str) {
+    ensure_node_migrator_built();
+    let status = Command::new("node")
+        .arg("packages/mcp-server/scripts/create-rust-test-database.mjs")
+        .arg(mode)
+        .arg(database_path)
+        .current_dir(workspace_root())
+        .status()
+        .expect("run Node database generator");
+    assert!(status.success(), "Node database generator must succeed");
+}
 
 fn prepare_node_schema(database_path: &Path) {
-    Connection::open(database_path)
-        .expect("fixture database")
-        .execute_batch(include_str!("fixtures/node-schema-v2.sql"))
-        .expect("node schema fixture");
+    prepare_node_schema_with_mode(database_path, "fresh");
 }
 
 fn topic_input(title: &str, project_path: &str, created_by_alias: &str) -> CreateTopicInput {
@@ -115,10 +144,10 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
         .create_topic(topic_input(
             "其他项目",
             "/workspace/project-beta",
-            KIMI_ALIAS,
+            CLAUDE_ALIAS,
         ))
         .expect("Kimi topic");
-    assert_eq!(kimi_topic.created_by_actor_id, "kimi");
+    assert_eq!(kimi_topic.created_by_actor_id, "claude");
     let page = store
         .list_topics(Some("/workspace/project-alpha"), 10, 0)
         .expect("filtered topics");
@@ -254,9 +283,8 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("council.sqlite3");
     let topic_id = "topic_existing_typescript_fixture";
+    prepare_node_schema_with_mode(&database_path, "v2-migrated");
     let raw = Connection::open(&database_path).expect("raw connection");
-    raw.execute_batch(include_str!("fixtures/node-schema-v2.sql"))
-        .expect("create Node-compatible schema fixture");
     let snapshot = r#"{"schemaVersion":1,"actorId":"human","slug":"human","displayName":"User","shortName":"U","role":"决策者"}"#;
     raw.execute(
         "INSERT INTO topics (
@@ -326,6 +354,65 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
 }
 
 #[test]
+fn opens_fresh_v2_and_v3_migrated_databases_created_by_node() {
+    let directory = tempdir().expect("temp directory");
+
+    for mode in ["fresh", "v2-migrated", "v3-migrated"] {
+        let database_path = directory.path().join(format!("{mode}.sqlite3"));
+        prepare_node_schema_with_mode(&database_path, mode);
+        CouncilStore::open(&database_path, 5_000)
+            .unwrap_or_else(|error| panic!("Rust must open Node {mode} database: {error}"));
+    }
+}
+
+#[test]
+fn reads_v3_to_v5_dynamic_kimi_rebinding_created_by_node() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("v3-migrated.sqlite3");
+    prepare_node_schema_with_mode(&database_path, "v3-migrated");
+    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v5 database");
+
+    let raw = Connection::open(&database_path).expect("inspection connection");
+    let (actor_id, mention_alias, config_revision): (String, String, i64) = raw
+        .query_row(
+            "SELECT actor_id, mention_alias, config_revision
+             FROM agent_definitions
+             WHERE id = 'agent-kimi-v3'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("migrated Kimi agent");
+    assert!(actor_id.starts_with("actor-"));
+    assert_ne!(actor_id, "kimi");
+    assert_eq!(mention_alias, "kimi");
+    assert_eq!(config_revision, 2);
+    let alias_owner: String = raw
+        .query_row(
+            "SELECT actor_id FROM actor_aliases WHERE alias = 'kimi'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("current Kimi alias");
+    assert_eq!(alias_owner, actor_id);
+    let old_status: String = raw
+        .query_row(
+            "SELECT status FROM actor_identities WHERE id = 'kimi'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("historical Kimi seed");
+    assert_eq!(old_status, "inactive");
+    let old_alias_count: i64 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM actor_aliases WHERE actor_id = 'kimi'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("historical Kimi aliases");
+    assert_eq!(old_alias_count, 0);
+}
+
+#[test]
 fn rejects_unmigrated_and_future_schema_versions() {
     let directory = tempdir().expect("temp directory");
     let unmigrated = directory.path().join("unmigrated.sqlite3");
@@ -344,8 +431,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (3, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 3;",
+             VALUES (6, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 6;",
         )
         .expect("future schema fixture");
     assert!(matches!(

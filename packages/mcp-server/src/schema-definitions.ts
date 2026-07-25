@@ -1,6 +1,6 @@
 /**
  * @input  依赖：无
- * @output 导出：Council v1/v2 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v3 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,7 +15,9 @@ export const REQUIRED_TABLES = [
   "council_identity",
   "actor_identities",
   "actor_aliases",
-  "agent_settings",
+  "brand_assets",
+  "provider_profiles",
+  "agent_definitions",
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
@@ -28,6 +30,9 @@ export const REQUIRED_INDEXES = [
   "idx_decisions_topic_created",
   "idx_actor_identities_status_slug",
   "idx_actor_aliases_actor",
+  "idx_provider_profiles_status_slug",
+  "idx_agent_definitions_provider",
+  "idx_agent_definitions_enabled_alias",
   "idx_agent_sessions_current",
   "idx_orchestration_runs_topic_updated",
   "idx_orchestration_runs_status_updated",
@@ -53,6 +58,35 @@ export const LEGACY_V1_INDEXES = [
   "idx_topics_project_updated",
   "idx_messages_topic_created",
   "idx_decisions_topic_created",
+  "idx_orchestration_runs_topic_updated",
+  "idx_orchestration_runs_status_updated",
+  "idx_orchestration_runs_one_active_topic",
+  "idx_orchestration_run_leases_expiry",
+] as const;
+
+export const LEGACY_V2_TABLES = [
+  "topics",
+  "messages",
+  "decisions",
+  "agent_sessions",
+  "council_meta",
+  "council_identity",
+  "actor_identities",
+  "actor_aliases",
+  "agent_settings",
+  "orchestration_runs",
+  "orchestration_approvals",
+  "orchestration_run_leases",
+  "schema_migrations",
+] as const;
+
+export const LEGACY_V2_INDEXES = [
+  "idx_topics_project_updated",
+  "idx_messages_topic_created",
+  "idx_decisions_topic_created",
+  "idx_actor_identities_status_slug",
+  "idx_actor_aliases_actor",
+  "idx_agent_sessions_current",
   "idx_orchestration_runs_topic_updated",
   "idx_orchestration_runs_status_updated",
   "idx_orchestration_runs_one_active_topic",
@@ -312,6 +346,61 @@ export const ACTOR_SCHEMA_SQL = `
     ON actor_identities(status, slug);
   CREATE INDEX IF NOT EXISTS idx_actor_aliases_actor
     ON actor_aliases(actor_id);
+`;
+
+export const MODEL_ROUTER_SCHEMA_SQL = `
+  CREATE TABLE brand_assets (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    display_name TEXT NOT NULL,
+    glyph_id TEXT NOT NULL,
+    color_token TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('project-curated', 'user-custom')),
+    source_label TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE provider_profiles (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    display_name TEXT NOT NULL,
+    protocol TEXT NOT NULL CHECK (
+      protocol IN ('claude-cli', 'codex-cli', 'openai-compatible')
+    ),
+    base_url TEXT,
+    requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1)),
+    credential_ref TEXT UNIQUE,
+    brand_asset_id TEXT NOT NULL REFERENCES brand_assets(id),
+    status TEXT NOT NULL CHECK (status IN ('active', 'inactive', 'deleted')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE agent_definitions (
+    id TEXT PRIMARY KEY,
+    actor_id TEXT NOT NULL UNIQUE REFERENCES actor_identities(id),
+    provider_id TEXT NOT NULL REFERENCES provider_profiles(id),
+    slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    display_name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    mention_alias TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    deleted_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+      (deleted_at IS NULL) OR (enabled = 0)
+    )
+  );
+
+  CREATE INDEX idx_provider_profiles_status_slug
+    ON provider_profiles(status, slug);
+  CREATE INDEX idx_agent_definitions_provider
+    ON agent_definitions(provider_id, deleted_at);
+  CREATE INDEX idx_agent_definitions_enabled_alias
+    ON agent_definitions(enabled, mention_alias);
 `;
 
 export const FINAL_CONTENT_SCHEMA_SQL = `

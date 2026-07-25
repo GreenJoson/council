@@ -1,7 +1,7 @@
 /**
  * @input  依赖：系统 Keychain 命令、Provider 标识与用户提交的 API Key
- * @output 导出：只在进程内返回密钥的 SecretStore 与 macOS Keychain 实现
- * @pos    远程模型凭据的唯一持久化边界；密钥不写 SQLite、配置文件或日志
+ * @output 导出：区分凭据缺失与命令故障、只在进程内返回密钥的 SecretStore 与 macOS Keychain 实现
+ * @pos    远程模型凭据的失败关闭持久化边界；密钥不写 SQLite、配置文件或日志
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -11,6 +11,7 @@ import { runBoundedProcess } from "./process-utils.js";
 const KEYCHAIN_SERVICE = "com.council.agent-provider";
 const KEYCHAIN_TIMEOUT_MS = 10_000;
 const KEYCHAIN_OUTPUT_LIMIT = 8_192;
+const KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE = 44;
 
 export interface SecretStore {
   has(account: string): Promise<boolean>;
@@ -71,8 +72,11 @@ export class MacOsKeychainSecretStore implements SecretStore {
       KEYCHAIN_SERVICE,
       "-w",
     ]);
-    if (result.exitCode !== 0) {
+    if (result.exitCode === KEYCHAIN_ITEM_NOT_FOUND_EXIT_CODE) {
       return undefined;
+    }
+    if (result.exitCode !== 0) {
+      throw new Error("系统 Keychain 读取失败，无法确认 API Key 是否存在。");
     }
     const secret = result.stdout.trim();
     return secret || undefined;

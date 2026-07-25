@@ -39,7 +39,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
       databaseInstanceId: string;
     }>(statusResponse);
     assert.equal(status.data?.ready, true);
-    assert.equal(status.data?.schemaVersion, 2);
+    assert.equal(status.data?.schemaVersion, 5);
     assert.match(status.data?.databaseInstanceId ?? "", /^[0-9a-f-]{36}$/u);
 
     const createResponse = await fetch(`${harness.baseUrl}/api/v1/topics`, {

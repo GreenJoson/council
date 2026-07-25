@@ -44,19 +44,66 @@ export const runIdSchema = z
 
 export const runParamsSchema = z.object({ runId: runIdSchema }).strict();
 
-export const agentSettingParamsSchema = z
+const routerIdSchema = z
+  .string()
+  .max(100)
+  .regex(/^[a-z][a-z0-9-]*$/, "标识格式无效");
+const routerSlugSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9-]{0,63}$/, "slug 格式无效");
+
+export const agentParamsSchema = z
   .object({
-    agentId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/, "agentId 格式无效"),
+    agentId: routerIdSchema,
   })
   .strict();
 
-export const updateAgentSettingBodySchema = z
+export const providerParamsSchema = z
   .object({
-    model: z.string().max(200),
+    providerId: routerIdSchema,
+  })
+  .strict();
+
+export const createProviderBodySchema = z
+  .object({
+    templateId: routerSlugSchema,
+    slug: routerSlugSchema,
+    displayName: nonBlankString(120),
     baseUrl: z.string().max(2_048).optional(),
-    enabled: z.boolean(),
+    brandAssetId: routerIdSchema.optional(),
+    apiKey: z.string().min(1).max(4_096).optional(),
+    active: z.boolean(),
+  })
+  .strict();
+
+export const updateProviderBodySchema = z
+  .object({
+    displayName: nonBlankString(120),
+    baseUrl: z.string().max(2_048).optional(),
+    brandAssetId: routerIdSchema,
+    active: z.boolean(),
     apiKey: z.string().min(1).max(4_096).optional(),
     clearApiKey: z.boolean().optional(),
+  })
+  .strict();
+
+export const createAgentBodySchema = z
+  .object({
+    providerId: routerIdSchema,
+    slug: routerSlugSchema,
+    displayName: nonBlankString(120),
+    model: z.string().max(200),
+    mentionAlias: routerSlugSchema,
+    enabled: z.boolean(),
+  })
+  .strict();
+
+export const updateAgentBodySchema = z
+  .object({
+    displayName: nonBlankString(120),
+    model: z.string().max(200),
+    mentionAlias: routerSlugSchema,
+    enabled: z.boolean(),
   })
   .strict();
 

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：公开 Council 上下文、AgentSettingsService、远程兼容运行时、草稿流与 AbortSignal
+ * @input  依赖：公开 Council 上下文、ModelRouterService、远程兼容运行时、草稿流与 AbortSignal
  * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、流式、脱敏失败 AgentAdapter
  * @pos    编排核心、远程模型 API 与临时草稿流之间的安全桥梁
  *
@@ -13,7 +13,7 @@ import {
   type AgentInvocationOptions,
   type AgentResult,
 } from "council-orchestrator";
-import type { AgentSettingsService } from "../agent-settings-service.js";
+import type { ModelRouterService } from "../model-router-service.js";
 import { logger } from "../logger.js";
 import {
   OpenAICompatibleRuntime,
@@ -65,7 +65,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
   constructor(
     readonly adapterId: string,
     private readonly runtime: OpenAICompatibleRuntime,
-    private readonly settings: AgentSettingsService,
+    private readonly router: ModelRouterService,
     private readonly maxContextChars: number,
     private readonly progress?: AgentProgressPublisher,
   ) {}
@@ -74,13 +74,16 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
     input: AgentInvocation,
     options: AgentInvocationOptions,
   ): Promise<AgentResult> {
-    const setting = this.settings.get(this.adapterId);
-    const apiKey = await this.settings.getApiKey(this.adapterId);
+    const agent = this.router.getAgent(this.adapterId);
+    const provider = agent ? this.router.getProvider(agent.providerId) : undefined;
+    const apiKey = await this.router.getApiKeyForAgent(this.adapterId);
     if (
-      !setting?.enabled
-      || setting.kind !== "openai-compatible"
-      || !setting.model
-      || !setting.baseUrl
+      !agent?.enabled
+      || agent.deletedAt
+      || provider?.status !== "active"
+      || provider.protocol !== "openai-compatible"
+      || !agent.model
+      || !provider.baseUrl
       || !apiKey
     ) {
       const message = "远程 Agent 配置不完整。";
@@ -94,8 +97,8 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
     this.progress?.reset(progressMeta);
     try {
       const content = await this.runtime.generate({
-        baseUrl: setting.baseUrl,
-        model: setting.model,
+        baseUrl: provider.baseUrl,
+        model: agent.model,
         apiKey,
         prompt: buildPrompt(input, this.maxContextChars),
         signal: options.signal,
@@ -110,7 +113,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         },
       });
       return {
-        content: `> Provider: **${setting.label}** · \`${setting.model}\`\n\n${content}`,
+        content: `> Provider: **${provider.displayName}** · Agent: **${agent.displayName}** · \`${agent.model}\`\n\n${content}`,
       };
     } catch (error) {
       if (options.signal.aborted && options.signal.reason instanceof Error) {

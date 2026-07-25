@@ -23,6 +23,7 @@ import type {
 } from "./agent-progress-hub.js";
 
 export interface ClaudeAgentAdapterOptions {
+  adapterId?: string;
   maxContextChars: number;
   model?: string;
   getModel?: () => string | undefined;
@@ -97,12 +98,13 @@ function safeInvocationError(error: unknown): AgentInvocationError {
 }
 
 export class ClaudeAgentAdapter implements AgentAdapter {
-  readonly adapterId = "claude";
+  readonly adapterId: string;
 
   constructor(
     private readonly runtime: ClaudeRuntime,
     private readonly options: ClaudeAgentAdapterOptions,
   ) {
+    this.adapterId = options.adapterId ?? "claude";
     if (
       !Number.isSafeInteger(options.maxContextChars) ||
       options.maxContextChars <= 100

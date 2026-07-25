@@ -12,6 +12,7 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
+import { BrandGlyph } from "./BrandGlyph";
 import { AgentAvatar } from "./presentation";
 
 export interface AgentReplyActivityState {
@@ -19,6 +20,11 @@ export interface AgentReplyActivityState {
   adapterId: string;
   agent: AgentId;
   label: string;
+  brand?: {
+    glyphId: string;
+    colorToken: string;
+    displayName: string;
+  };
   phase: "preparing" | "replying";
   content: string;
 }
@@ -73,6 +79,7 @@ export function selectAgentReplyActivity(
     adapterId,
     agent: actorId,
     label: adapter?.label ?? actorId,
+    ...(adapter?.brand ? { brand: adapter.brand } : {}),
     phase: run.status === "waiting_agent" ? "replying" : "preparing",
     content: output?.content ?? "",
   };
@@ -100,7 +107,9 @@ export function AgentReplyActivity({ activity }: AgentReplyActivityProps) {
       data-adapter-id={activity.adapterId}
     >
       <div className="agent-reply-avatar">
-        <AgentAvatar agent={activity.agent} />
+        {activity.brand
+          ? <span className="agent-avatar agent-avatar-medium"><BrandGlyph brand={activity.brand} size={19} /></span>
+          : <AgentAvatar agent={activity.agent} />}
         <span className="agent-reply-presence" aria-hidden="true" />
       </div>
       <div className="agent-reply-surface">

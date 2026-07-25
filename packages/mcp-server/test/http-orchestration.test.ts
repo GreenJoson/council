@@ -21,6 +21,12 @@ import {
   type CreateRunInput,
   type OrchestrationRun,
 } from "council-orchestrator";
+import type { SecretStore } from "../src/keychain-secret-store.js";
+import { ModelRouterService } from "../src/model-router-service.js";
+import {
+  type AgentDefinition,
+  ModelRouterStore,
+} from "../src/model-router-store.js";
 import { CouncilOrchestrationService } from "../src/orchestration/service.js";
 import { readEnvelope, startHttpHarness } from "./http-harness.js";
 
@@ -61,6 +67,26 @@ class FakeAgent implements AgentAdapter {
   async invoke(input: AgentInvocation, options: AgentInvocationOptions): Promise<AgentResult> {
     this.invocations.push(structuredClone(input));
     return await this.handler(input, options, this.invocations.length);
+  }
+}
+
+class MemorySecretStore implements SecretStore {
+  readonly values = new Map<string, string>();
+
+  async has(account: string): Promise<boolean> {
+    return this.values.has(account);
+  }
+
+  async get(account: string): Promise<string | undefined> {
+    return this.values.get(account);
+  }
+
+  async set(account: string, secret: string): Promise<void> {
+    this.values.set(account, secret);
+  }
+
+  async delete(account: string): Promise<boolean> {
+    return this.values.delete(account);
   }
 }
 
@@ -125,6 +151,7 @@ function createStoreInput(topicId: string, beforeRounds: readonly number[] = [])
     plan: [{
       adapterId: "fake",
       actorId: "claude",
+      bindingRevision: "static:fake",
       messageKind: "proposal",
       instruction: "恢复后执行",
     }],
@@ -633,6 +660,241 @@ test("recover 路由只恢复 failed 并异步完成，非法恢复返回 409", 
       method: "POST", headers: JSON_HEADERS, body: "{}",
     });
     assert.equal(illegal.status, 409);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("createRun 与配置修改共享互斥边界，停用 Agent 后失败 Run 恢复返回 409", async () => {
+  let dynamicAgent: AgentDefinition | undefined;
+  const harness = await startHttpHarness({}, undefined, async (config) => {
+    const router = new ModelRouterService(
+      new ModelRouterStore(config.databasePath, config.sqliteBusyTimeoutMs),
+      new MemorySecretStore(),
+    );
+    const provider = await router.createProvider({
+      templateId: "deepseek",
+      slug: "deepseek",
+      displayName: "DeepSeek",
+      baseUrl: "https://api.example.com/v1",
+      apiKey: "test-key",
+      active: true,
+    });
+    dynamicAgent = router.createAgent({
+      providerId: provider.id,
+      slug: "deepseek-reviewer",
+      displayName: "DeepSeek Reviewer",
+      model: "fixture-model",
+      mentionAlias: "deepseek",
+      enabled: true,
+    });
+    return new CouncilOrchestrationService(
+      config,
+      [],
+      router,
+      undefined,
+      (agent) => ({
+        adapter: new FakeAgent(agent.id, async () => {
+          throw new AgentInvocationError("测试动态 Agent 失败。", false);
+        }),
+        checkAvailability: async () => true,
+      }),
+    );
+  });
+  try {
+    assert(harness.orchestration);
+    assert(dynamicAgent);
+    for (let read = 0; read < 2; read += 1) {
+      const capabilities = await harness.orchestration.capabilitiesFresh() as {
+        adapters: Array<{ id: string; available: boolean }>;
+      };
+      assert.equal(
+        capabilities.adapters.find((adapter) => adapter.id === dynamicAgent?.id)?.available,
+        true,
+      );
+    }
+    const barrierTopic = harness.database.createTopic({
+      title: "配置互斥",
+      question: "创建运行和停用是否可能穿透？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const [createdResult, updateResult] = await Promise.allSettled([
+      harness.orchestration.createRun(barrierTopic.id, [{
+        adapterId: dynamicAgent.id,
+        messageKind: "proposal",
+        instruction: "验证配置屏障。",
+      }]),
+      harness.orchestration.updateAgent(dynamicAgent.id, {
+        displayName: dynamicAgent.displayName,
+        model: dynamicAgent.model,
+        mentionAlias: dynamicAgent.mentionAlias,
+        enabled: false,
+      }),
+    ]);
+    assert.equal(createdResult.status, "fulfilled");
+    assert.equal(updateResult.status, "rejected");
+    assert.match(
+      updateResult.status === "rejected" && updateResult.reason instanceof Error
+        ? updateResult.reason.message
+        : "",
+      /活动 Run/u,
+    );
+    if (createdResult.status !== "fulfilled") {
+      throw new Error("createRun 应先在共享互斥边界内完成。");
+    }
+    await harness.orchestration.cancel(createdResult.value.id);
+
+    const failedTopic = harness.database.createTopic({
+      title: "停用恢复",
+      question: "停用后的失败运行能否恢复？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const failedRun = await harness.orchestration.createRun(failedTopic.id, [{
+      adapterId: dynamicAgent.id,
+      messageKind: "proposal",
+      instruction: "制造可观察失败。",
+    }]);
+    await harness.orchestration.start(failedRun.id);
+    await waitForRun(
+      harness.orchestration,
+      failedRun.id,
+      (candidate) => candidate.status === "failed",
+    );
+    await harness.orchestration.updateAgent(dynamicAgent.id, {
+      displayName: dynamicAgent.displayName,
+      model: dynamicAgent.model,
+      mentionAlias: dynamicAgent.mentionAlias,
+      enabled: false,
+    });
+    const recover = await fetch(
+      `${harness.baseUrl}/api/v1/runs/${failedRun.id}/actions/recover`,
+      { method: "POST", headers: JSON_HEADERS, body: "{}" },
+    );
+    assert.equal(recover.status, 409);
+    assert.match((await readEnvelope(recover)).message, /已停用或删除/u);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("Model Router DTO 拒绝 credentialRef，未知设置异常只返回通用 500", async () => {
+  const agent = new FakeAgent("fake", async () => ({ content: "不执行" }));
+  const harness = await startHttpHarness({}, [{ adapter: agent, actorAlias: "claude" }]);
+  const validBody = {
+    templateId: "openai",
+    slug: "openai",
+    displayName: "OpenAI",
+    baseUrl: "https://api.example.com/v1",
+    apiKey: "test-key",
+    active: true,
+  };
+  try {
+    assert(harness.orchestration);
+    const forged = await fetch(`${harness.baseUrl}/api/v1/settings/providers`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        ...validBody,
+        credentialRef: "forged-keychain-reference",
+      }),
+    });
+    assert.equal(forged.status, 400);
+
+    Object.defineProperty(harness.orchestration, "createProvider", {
+      configurable: true,
+      value: async () => {
+        throw new Error("sensitive internal settings failure");
+      },
+    });
+    const failed = await fetch(`${harness.baseUrl}/api/v1/settings/providers`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(validBody),
+    });
+    assert.equal(failed.status, 500);
+    const envelope = await readEnvelope(failed);
+    assert.equal(envelope.message, "服务器内部错误。");
+    assert.doesNotMatch(JSON.stringify(envelope), /sensitive internal settings failure/u);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("Model Router REST 拒绝修改或删除 Claude/Codex 系统身份", async () => {
+  const harness = await startHttpHarness({}, undefined, async (config) => {
+    const router = new ModelRouterService(
+      new ModelRouterStore(config.databasePath, config.sqliteBusyTimeoutMs),
+      new MemorySecretStore(),
+    );
+    return new CouncilOrchestrationService(
+      config,
+      [],
+      router,
+      undefined,
+      (agent) => ({
+        adapter: new FakeAgent(agent.id, async () => ({ content: "不执行" })),
+        checkAvailability: async () => true,
+      }),
+    );
+  });
+  try {
+    const snapshotResponse = await fetch(
+      `${harness.baseUrl}/api/v1/settings/model-router`,
+    );
+    const snapshot = await readEnvelope<{
+      agents: AgentDefinition[];
+    }>(snapshotResponse);
+    assert.equal(snapshotResponse.status, 200);
+    assert(snapshot.data);
+    for (const expected of [
+      { actorId: "claude", displayName: "Claude", mentionAlias: "claude" },
+      { actorId: "codex", displayName: "Codex", mentionAlias: "codex" },
+    ]) {
+      const systemAgent: AgentDefinition | undefined = snapshot.data.agents.find(
+        (candidate) => candidate.actorId === expected.actorId,
+      );
+      assert(systemAgent);
+      const renamed = await fetch(
+        `${harness.baseUrl}/api/v1/settings/agents/${systemAgent.id}`,
+        {
+          method: "PUT",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            displayName: `${expected.displayName} Custom`,
+            model: systemAgent.model,
+            mentionAlias: expected.mentionAlias,
+            enabled: systemAgent.enabled,
+          }),
+        },
+      );
+      assert.equal(renamed.status, 400);
+      assert.match((await readEnvelope(renamed)).message, /名称与 @alias 不能修改/u);
+
+      const realiased = await fetch(
+        `${harness.baseUrl}/api/v1/settings/agents/${systemAgent.id}`,
+        {
+          method: "PUT",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            displayName: expected.displayName,
+            model: systemAgent.model,
+            mentionAlias: `${expected.mentionAlias}-custom`,
+            enabled: systemAgent.enabled,
+          }),
+        },
+      );
+      assert.equal(realiased.status, 400);
+      assert.match((await readEnvelope(realiased)).message, /名称与 @alias 不能修改/u);
+
+      const removed = await fetch(
+        `${harness.baseUrl}/api/v1/settings/agents/${systemAgent.id}`,
+        { method: "DELETE" },
+      );
+      assert.equal(removed.status, 409);
+      assert.match((await readEnvelope(removed)).message, /系统 Agent 不能删除/u);
+    }
   } finally {
     await harness.close();
   }

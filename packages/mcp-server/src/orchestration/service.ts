@@ -1,16 +1,18 @@
 /**
- * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型设置、Agent 注册、
+ * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
  *         增量草稿中心与 ExecutionManager
- * @output 导出：编排产品服务、安全模型设置入口及临时 Agent 草稿流
- * @pos    REST/SSE 契约使用的编排聚合根与生产依赖工厂
+ * @output 导出：带配置互斥的编排产品服务、安全 Model Router 入口及临时 Agent 草稿流
+ * @pos    REST/SSE 契约使用的编排与模型配置一致性聚合根、生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { createHash } from "node:crypto";
 import {
   CouncilOrchestrator,
   OrchestrationConfigError,
   RunNotFoundError,
+  RunStateConflictError,
   SQLiteCouncilStore,
   type AgentAdapter,
   type ApproveGateResult,
@@ -19,11 +21,19 @@ import {
   type PaginatedRuns,
 } from "council-orchestrator";
 import {
-  AgentSettingsService,
-  type PublicAgentSetting,
-  type UpdateAgentSettingInput,
-} from "../agent-settings-service.js";
-import { AgentSettingsStore } from "../agent-settings-store.js";
+  type CreateAgentInput,
+  type CreateProviderInput,
+  ModelRouterService,
+  type ModelRouterSnapshot,
+  type PublicProviderProfile,
+  type UpdateAgentDefinitionInput,
+  type UpdateProviderInput,
+} from "../model-router-service.js";
+import {
+  type AgentDefinition,
+  ModelRouterStore,
+  type ProviderProfile,
+} from "../model-router-store.js";
 import { MAX_MESSAGE_CHARS } from "../constants.js";
 import { ClaudeRuntime } from "../claude-runtime.js";
 import { CodexRuntime } from "../codex-runtime.js";
@@ -51,6 +61,17 @@ export interface RegisteredAgentAdapter {
   checkAvailability?: () => Promise<boolean>;
 }
 
+export interface EphemeralAgentBinding {
+  adapter: AgentAdapter;
+  checkAvailability: () => Promise<boolean>;
+  limitationWhenUnavailable?: string;
+}
+
+export type EphemeralAgentFactory = (
+  agent: AgentDefinition,
+  provider: ProviderProfile,
+) => EphemeralAgentBinding;
+
 export interface PublicRoundInput {
   adapterId: string;
   messageKind: MessageKind;
@@ -67,6 +88,22 @@ export interface PublicApprovalInput {
   approvalId: string;
 }
 
+export interface PublicAgentCapability {
+  id: string;
+  label: string;
+  available: boolean;
+  actorId: string;
+  limitation?: string;
+  mentionAlias?: string;
+  providerId?: string;
+  providerName?: string;
+  brand?: {
+    glyphId: string;
+    colorToken: string;
+    displayName: string;
+  };
+}
+
 function missingRun(error: unknown): boolean {
   return error instanceof RunNotFoundError;
 }
@@ -79,24 +116,22 @@ export class CouncilOrchestrationService {
   readonly manager: RunExecutionManager;
   readonly #store: SQLiteCouncilStore;
   readonly #actors = new Map<string, string>();
-  readonly #capabilities: Array<{
-    id: string;
-    label: string;
-    available: boolean;
-    actorId: string;
-    limitation?: string;
-  }> = [];
+  readonly #capabilities: PublicAgentCapability[] = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
   readonly #unavailableLimitations = new Map<string, string>();
   readonly #baseLimitations = new Map<string, string | undefined>();
+  readonly #staticAdapterIds = new Set<string>();
+  readonly #dynamicAdapterFingerprints = new Map<string, string>();
   #availabilityCheckedAt = 0;
   #availabilityRefresh: Promise<void> | null = null;
+  #configurationTail = Promise.resolve();
 
   constructor(
     private readonly config: CouncilHttpConfig,
     registrations: readonly RegisteredAgentAdapter[],
-    readonly agentSettings?: AgentSettingsService,
+    readonly modelRouter?: ModelRouterService,
     readonly progressHub = new AgentProgressHub(MAX_MESSAGE_CHARS),
+    private readonly ephemeralAgentFactory?: EphemeralAgentFactory,
   ) {
     this.#store = new SQLiteCouncilStore(
       config.databasePath,
@@ -111,6 +146,7 @@ export class CouncilOrchestrationService {
       }
       const actorId = this.#store.resolveActorAlias(registration.actorAlias);
       this.#actors.set(registration.adapter.adapterId, actorId);
+      this.#staticAdapterIds.add(registration.adapter.adapterId);
       this.#capabilities.push({
         id: registration.adapter.adapterId,
         label: registration.label ?? registration.adapter.adapterId,
@@ -171,6 +207,16 @@ export class CouncilOrchestrationService {
     plan: readonly PublicRoundInput[],
     options: CreateRunOptions = {},
   ): Promise<OrchestrationRun> {
+    return await this.#withConfigurationLock(async () =>
+      await this.#createRunLocked(topicId, plan, options));
+  }
+
+  async #createRunLocked(
+    topicId: string,
+    plan: readonly PublicRoundInput[],
+    options: CreateRunOptions,
+  ): Promise<OrchestrationRun> {
+    await this.#syncDynamicAgents();
     const hasUnavailableTarget = plan.some((round) => {
       const capability = this.#capabilities.find((item) => item.id === round.adapterId);
       return capability !== undefined && !capability.available;
@@ -210,6 +256,20 @@ export class CouncilOrchestrationService {
     });
   }
 
+  async #withConfigurationLock<T>(operation: () => Promise<T> | T): Promise<T> {
+    const previous = this.#configurationTail;
+    let release: (() => void) | undefined;
+    this.#configurationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release?.();
+    }
+  }
+
   async getRun(runId: string): Promise<OrchestrationRun> {
     try {
       return await this.orchestrator.getRun(runId);
@@ -226,6 +286,8 @@ export class CouncilOrchestrationService {
   }
 
   async start(runId: string): Promise<OrchestrationRun> {
+    await this.#syncDynamicAgents();
+    await this.#assertRunAgentsConfigured(runId);
     return await this.manager.start(runId);
   }
 
@@ -244,43 +306,143 @@ export class CouncilOrchestrationService {
   }
 
   async recover(runId: string): Promise<OrchestrationRun> {
-    return await this.manager.recover(runId);
+    return await this.#withConfigurationLock(async () => {
+      await this.#syncDynamicAgents();
+      await this.#assertRunAgentsConfigured(runId);
+      return await this.manager.recover(runId);
+    });
   }
 
-  async listAgentSettings(): Promise<PublicAgentSetting[]> {
-    if (!this.agentSettings) {
-      return [];
+  async #assertRunAgentsConfigured(runId: string): Promise<void> {
+    const run = await this.getRun(runId);
+    const unavailable = run.plan.find(
+      (round) =>
+        !this.#actors.has(round.adapterId) ||
+        !this.orchestrator.isAdapterBindingCurrent(
+          round.adapterId,
+          round.bindingRevision,
+        ),
+    );
+    if (unavailable) {
+      throw new RunStateConflictError(
+        "运行引用的 Agent 已停用或删除，不能继续启动或恢复。",
+      );
     }
-    return await this.agentSettings.list();
   }
 
-  async updateAgentSetting(
-    id: string,
-    input: UpdateAgentSettingInput,
-  ): Promise<PublicAgentSetting> {
-    if (!this.agentSettings) {
-      throw new OrchestrationConfigError("模型设置服务未启用。");
+  async getModelRouter(): Promise<ModelRouterSnapshot> {
+    if (!this.modelRouter) {
+      return { providers: [], agents: [], brands: [], catalog: { providers: [] } };
     }
-    const setting = await this.agentSettings.update(id, input);
+    return await this.modelRouter.snapshot();
+  }
+
+  async createProvider(input: CreateProviderInput): Promise<PublicProviderProfile> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const provider = await this.modelRouter?.createProvider(input);
+      if (!provider) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return provider;
+    });
+  }
+
+  async updateProvider(id: string, input: UpdateProviderInput): Promise<PublicProviderProfile> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const provider = await this.modelRouter?.updateProvider(id, input);
+      if (!provider) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return provider;
+    });
+  }
+
+  async removeProvider(id: string): Promise<PublicProviderProfile> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const provider = await this.modelRouter?.removeProvider(id);
+      if (!provider) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return provider;
+    });
+  }
+
+  async createAgent(input: CreateAgentInput): Promise<AgentDefinition> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const agent = this.modelRouter?.createAgent(input);
+      if (!agent) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return agent;
+    });
+  }
+
+  async updateAgent(id: string, input: UpdateAgentDefinitionInput): Promise<AgentDefinition> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const agent = this.modelRouter?.updateAgent(id, input);
+      if (!agent) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return agent;
+    });
+  }
+
+  async removeAgent(id: string): Promise<AgentDefinition> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
+    }
+    return await this.#withConfigurationLock(async () => {
+      const agent = this.modelRouter?.removeAgent(id);
+      if (!agent) {
+        throw new OrchestrationConfigError("模型路由服务未启用。");
+      }
+      await this.#settingsChanged();
+      return agent;
+    });
+  }
+
+  async #settingsChanged(): Promise<void> {
     this.#availabilityCheckedAt = 0;
+    await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability(true);
-    return setting;
   }
 
-  async testAgentSetting(id: string): Promise<{ ok: true; latencyMs: number }> {
-    if (!this.agentSettings) {
-      throw new OrchestrationConfigError("模型设置服务未启用。");
+  async testAgent(id: string): Promise<{ ok: true; latencyMs: number }> {
+    if (!this.modelRouter) {
+      throw new OrchestrationConfigError("模型路由服务未启用。");
     }
-    return await this.agentSettings.test(id);
+    return await this.modelRouter.testAgent(id);
   }
 
   async initialize(): Promise<void> {
+    await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability(true);
     await this.manager.recoverOnStartup();
   }
 
   /** 返回 capabilities 前按 TTL 重新检测可用性，让 CLI 登录状态变化无需重启即可生效。 */
   async capabilitiesFresh(): Promise<object> {
+    await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability();
     return this.capabilities();
   }
@@ -323,13 +485,103 @@ export class CouncilOrchestrationService {
     this.#availabilityCheckedAt = Date.now();
   }
 
+  async #syncDynamicAgents(): Promise<void> {
+    if (!this.modelRouter || !this.ephemeralAgentFactory) {
+      return;
+    }
+    const snapshot = await this.modelRouter.snapshot();
+    const providers = new Map(snapshot.providers.map((provider) => [provider.id, provider]));
+    const enabledIds = new Set<string>();
+    for (const agent of snapshot.agents) {
+      const provider = providers.get(agent.providerId);
+      if (
+        !agent.enabled ||
+        agent.deletedAt ||
+        !provider ||
+        provider.status !== "active"
+      ) {
+        continue;
+      }
+      enabledIds.add(agent.id);
+      const fingerprintSource = JSON.stringify({
+        agent: {
+          id: agent.id,
+          actorId: agent.actorId,
+          providerId: agent.providerId,
+          model: agent.model,
+          mentionAlias: agent.mentionAlias,
+          enabled: agent.enabled,
+          configRevision: agent.configRevision,
+        },
+        provider: {
+          id: provider.id,
+          protocol: provider.protocol,
+          baseUrl: provider.baseUrl,
+          status: provider.status,
+          configRevision: provider.configRevision,
+        },
+      });
+      const fingerprint = `router:${createHash("sha256")
+        .update(fingerprintSource)
+        .digest("hex")}`;
+      let binding: EphemeralAgentBinding | undefined;
+      if (this.#dynamicAdapterFingerprints.get(agent.id) !== fingerprint) {
+        binding = this.ephemeralAgentFactory(agent, provider);
+        this.orchestrator.upsertAdapter(binding.adapter, fingerprint);
+        this.#dynamicAdapterFingerprints.set(agent.id, fingerprint);
+        this.#availabilityCheckedAt = 0;
+      }
+      this.#actors.set(agent.id, agent.actorId);
+      const existing = this.#capabilities.find((item) => item.id === agent.id);
+      const brand = snapshot.brands.find((item) => item.id === provider.brandAssetId);
+      const next = {
+        id: agent.id,
+        label: agent.displayName,
+        available: binding ? false : existing?.available ?? false,
+        actorId: agent.actorId,
+        mentionAlias: agent.mentionAlias,
+        providerId: provider.id,
+        providerName: provider.displayName,
+        brand: brand ? {
+          glyphId: brand.glyphId,
+          colorToken: brand.colorToken,
+          displayName: brand.displayName,
+        } : undefined,
+      };
+      if (existing) {
+        Object.assign(existing, next);
+      } else {
+        this.#capabilities.push(next);
+      }
+      if (binding) {
+        this.#availabilityChecks.set(agent.id, binding.checkAvailability);
+      }
+      this.#baseLimitations.set(agent.id, undefined);
+      if (binding?.limitationWhenUnavailable) {
+        this.#unavailableLimitations.set(agent.id, binding.limitationWhenUnavailable);
+      }
+    }
+    for (const capability of [...this.#capabilities]) {
+      if (this.#staticAdapterIds.has(capability.id) || enabledIds.has(capability.id)) {
+        continue;
+      }
+      this.#capabilities.splice(this.#capabilities.indexOf(capability), 1);
+      this.orchestrator.removeAdapter(capability.id);
+      this.#actors.delete(capability.id);
+      this.#dynamicAdapterFingerprints.delete(capability.id);
+      this.#availabilityChecks.delete(capability.id);
+      this.#baseLimitations.delete(capability.id);
+      this.#unavailableLimitations.delete(capability.id);
+    }
+  }
+
   async shutdown(): Promise<void> {
     await this.manager.shutdown();
   }
 
   close(): void {
     this.#store.close();
-    this.agentSettings?.close();
+    this.modelRouter?.close();
   }
 }
 
@@ -338,151 +590,109 @@ export function createProductionOrchestrationService(
   councilConfig: CouncilConfig,
 ): CouncilOrchestrationService {
   const progressHub = new AgentProgressHub(MAX_MESSAGE_CHARS);
-  const settingsStore = new AgentSettingsStore(
+  const routerStore = new ModelRouterStore(
     httpConfig.databasePath,
     httpConfig.sqliteBusyTimeoutMs,
-    [
-      {
-        id: "claude",
-        label: "Claude Code",
-        kind: "claude-cli",
-        model: councilConfig.claudeModel ?? "",
-        enabled: true,
-        requiresApiKey: false,
-      },
-      {
-        id: "codex",
-        label: "Codex CLI",
-        kind: "codex-cli",
-        model: councilConfig.codexModel ?? "",
-        enabled: true,
-        requiresApiKey: false,
-      },
-      {
-        id: "deepseek",
-        label: "DeepSeek",
-        kind: "openai-compatible",
-        model: "",
-        enabled: false,
-        requiresApiKey: true,
-      },
-      {
-        id: "kimi",
-        label: "Kimi",
-        kind: "openai-compatible",
-        model: "",
-        enabled: false,
-        requiresApiKey: true,
-      },
-    ],
   );
   const secretStore = councilConfig.keychainCommand
     ? new MacOsKeychainSecretStore(councilConfig.keychainCommand)
     : new UnavailableSecretStore();
-  const agentSettings = new AgentSettingsService(settingsStore, secretStore);
+  const modelRouter = new ModelRouterService(routerStore, secretStore);
   const claudeRuntime = new ClaudeRuntime(councilConfig);
-  const claude = new ClaudeAgentAdapter(claudeRuntime, {
-    maxContextChars: councilConfig.maxContextChars,
-    getModel: () => agentSettings.get("claude")?.model || undefined,
-    progress: progressHub,
-  });
   const codexRuntime = new CodexRuntime(councilConfig);
-  const codex = new CodexAgentAdapter(codexRuntime, {
-    maxContextChars: councilConfig.maxContextChars,
-    getModel: () => agentSettings.get("codex")?.model || undefined,
-    progress: progressHub,
-  });
   const remoteRuntime = new OpenAICompatibleRuntime(
     councilConfig.maxOutputChars,
     httpConfig.orchestrationDefaultAgentTimeoutMs,
   );
-  const deepseek = new OpenAICompatibleAgentAdapter(
-    "deepseek",
-    remoteRuntime,
-    agentSettings,
-    councilConfig.maxContextChars,
-    progressHub,
-  );
-  const kimi = new OpenAICompatibleAgentAdapter(
-    "kimi",
-    remoteRuntime,
-    agentSettings,
-    councilConfig.maxContextChars,
-    progressHub,
-  );
 
-  agentSettings.registerTester("claude", async () => {
-    await claudeRuntime.generate({
-      prompt: "只回复 OK",
-      cwd: process.cwd(),
-      ...(agentSettings.get("claude")?.model
-        ? { model: agentSettings.get("claude")?.model }
-        : {}),
-    });
-  });
-  agentSettings.registerTester("codex", async () => {
-    await codexRuntime.generate({
-      prompt: "只回复 OK",
-      cwd: process.cwd(),
-      ...(agentSettings.get("codex")?.model
-        ? { model: agentSettings.get("codex")?.model }
-        : {}),
-    });
-  });
-  for (const id of ["deepseek", "kimi"] as const) {
-    agentSettings.registerTester(id, async () => {
-      const setting = agentSettings.get(id);
-      const apiKey = await agentSettings.getApiKey(id);
-      if (!setting?.baseUrl || !setting.model || !apiKey) {
-        throw new Error("远程 Provider 配置不完整。");
-      }
+  modelRouter.registerTester(async (agent, provider, apiKey) => {
+    if (provider.protocol === "claude-cli") {
+      await claudeRuntime.generate({
+        prompt: "只回复 OK",
+        cwd: process.cwd(),
+        ...(agent.model || councilConfig.claudeModel
+          ? { model: agent.model || councilConfig.claudeModel }
+          : {}),
+      });
+      return;
+    }
+    if (provider.protocol === "codex-cli") {
+      await codexRuntime.generate({
+        prompt: "只回复 OK",
+        cwd: process.cwd(),
+        ...(agent.model || councilConfig.codexModel
+          ? { model: agent.model || councilConfig.codexModel }
+          : {}),
+      });
+      return;
+    }
+    if (!provider.baseUrl || !apiKey) {
+      throw new Error("远程 Provider 配置不完整。");
+    }
       await remoteRuntime.generate({
-        baseUrl: setting.baseUrl,
-        model: setting.model,
+        baseUrl: provider.baseUrl,
+        model: agent.model,
         apiKey,
         prompt: "只回复 OK",
       });
-    });
-  }
+  });
 
-  return new CouncilOrchestrationService(httpConfig, [
-    {
-      adapter: claude,
-      actorAlias: "claude",
-      label: "Claude Code",
-      checkAvailability: async () => {
-        const availability = await claudeRuntime.checkAvailability();
-        return await agentSettings.isReady("claude")
-          && availability.available
-          && availability.authenticated;
-      },
-    },
-    {
-      adapter: codex,
-      actorAlias: "codex",
-      label: "Codex CLI",
+  const factory: EphemeralAgentFactory = (agent, provider) => {
+    if (provider.protocol === "claude-cli") {
+      return {
+        adapter: new ClaudeAgentAdapter(claudeRuntime, {
+          adapterId: agent.id,
+          maxContextChars: councilConfig.maxContextChars,
+          getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.claudeModel,
+          progress: progressHub,
+        }),
+        checkAvailability: async () => {
+          const availability = await claudeRuntime.checkAvailability();
+          return await modelRouter.isAgentReady(agent.id)
+            && availability.available
+            && availability.authenticated;
+        },
+        limitationWhenUnavailable:
+          "Claude CLI 当前不可用或未登录；请检查本机安装和登录状态。",
+      };
+    }
+    if (provider.protocol === "codex-cli") {
+      return {
+        adapter: new CodexAgentAdapter(codexRuntime, {
+          adapterId: agent.id,
+          maxContextChars: councilConfig.maxContextChars,
+          getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.codexModel,
+          progress: progressHub,
+        }),
+        checkAvailability: async () => {
+          const availability = await codexRuntime.checkAvailability();
+          return await modelRouter.isAgentReady(agent.id)
+            && availability.available
+            && availability.authenticated;
+        },
+        limitationWhenUnavailable:
+          "Codex CLI 当前不可用或未登录；请检查本机安装和登录状态。",
+      };
+    }
+    return {
+      adapter: new OpenAICompatibleAgentAdapter(
+        agent.id,
+        remoteRuntime,
+        modelRouter,
+        councilConfig.maxContextChars,
+        progressHub,
+      ),
+      checkAvailability: async () => await modelRouter.isAgentReady(agent.id),
       limitationWhenUnavailable:
-        "Codex CLI 当前不可用或未登录；请安装 codex 并运行 codex login 后重试。",
-      checkAvailability: async () => {
-        const availability = await codexRuntime.checkAvailability();
-        return await agentSettings.isReady("codex")
-          && availability.available
-          && availability.authenticated;
-      },
-    },
-    {
-      adapter: deepseek,
-      actorAlias: "deepseek",
-      label: "DeepSeek",
-      limitationWhenUnavailable: "请在设置中配置 DeepSeek 的模型、API 地址和 API Key。",
-      checkAvailability: async () => await agentSettings.isReady("deepseek"),
-    },
-    {
-      adapter: kimi,
-      actorAlias: "kimi",
-      label: "Kimi",
-      limitationWhenUnavailable: "请在设置中配置 Kimi 的模型、API 地址和 API Key。",
-      checkAvailability: async () => await agentSettings.isReady("kimi"),
-    },
-  ], agentSettings, progressHub);
+        `请在设置中完成 ${provider.displayName} 的连接与 Agent 模型配置。`,
+    };
+  };
+
+  return new CouncilOrchestrationService(
+    httpConfig,
+    [],
+    modelRouter,
+    progressHub,
+    factory,
+  );
 }

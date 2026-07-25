@@ -1,7 +1,7 @@
 /**
  * @input  依赖：SQLite actor identity/alias 行与冻结快照 JSON
- * @output 导出：ActorId、ActorSnapshot、种子与严格解析/序列化函数
- * @pos    Council 动态参与者身份的唯一领域正本；品牌元数据不属于本层
+ * @output 导出：ActorId、ActorSnapshot、永久系统种子与严格解析/序列化函数
+ * @pos    Council 参与者身份的唯一领域正本；远程供应商 Agent 必须动态创建，品牌元数据不属于本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -93,26 +93,6 @@ export const ACTOR_SEEDS: readonly ActorSeed[] = [
       { alias: "codex", kind: "canonical" },
       { alias: "codex-cli", kind: "adapter" },
     ],
-  },
-  {
-    id: "deepseek",
-    slug: "deepseek",
-    displayName: "DeepSeek",
-    shortName: "DS",
-    role: "模型顾问",
-    actorType: "agent",
-    status: "active",
-    aliases: [{ alias: "deepseek", kind: "canonical" }],
-  },
-  {
-    id: "kimi",
-    slug: "kimi",
-    displayName: "Kimi",
-    shortName: "KI",
-    role: "模型顾问",
-    actorType: "agent",
-    status: "active",
-    aliases: [{ alias: "kimi", kind: "canonical" }],
   },
   {
     id: "legacy-unknown",

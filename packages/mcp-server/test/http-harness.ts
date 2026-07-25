@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时目录、CouncilDatabase 与 HTTP 应用工厂
- * @output 导出：隔离的本地集成测试服务和 JSON envelope 读取器
+ * @output 导出：支持自定义编排工厂的隔离本地集成测试服务和 JSON envelope 读取器
  * @pos    REST 与 SSE 测试共用的生命周期夹具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -54,6 +54,9 @@ function closeServer(server: Server): Promise<void> {
 export async function startHttpHarness(
   overrides: Partial<CouncilHttpConfig> = {},
   registrations?: readonly RegisteredAgentAdapter[],
+  orchestrationFactory?: (
+    config: CouncilHttpConfig,
+  ) => CouncilOrchestrationService | Promise<CouncilOrchestrationService>,
 ): Promise<HttpHarness> {
   const directory = mkdtempSync(path.join(tmpdir(), "council-http-test-"));
   const databasePath = path.join(directory, "council.sqlite3");
@@ -92,9 +95,11 @@ export async function startHttpHarness(
     config.sqliteBusyTimeoutMs,
     { maxAttempts: config.schemaMigrationMaxAttempts },
   );
-  const orchestration = registrations
-    ? new CouncilOrchestrationService(config, registrations)
-    : undefined;
+  const orchestration = orchestrationFactory
+    ? await orchestrationFactory(config)
+    : registrations
+      ? new CouncilOrchestrationService(config, registrations)
+      : undefined;
   await orchestration?.initialize();
   const bundle = createCouncilHttpApp(config, database, orchestration);
   const server = createServer(bundle.app);

@@ -23,6 +23,7 @@ import type {
 } from "./agent-progress-hub.js";
 
 export interface CodexAgentAdapterOptions {
+  adapterId?: string;
   maxContextChars: number;
   model?: string;
   getModel?: () => string | undefined;
@@ -101,12 +102,13 @@ function safeInvocationError(error: unknown): AgentInvocationError {
 }
 
 export class CodexAgentAdapter implements AgentAdapter {
-  readonly adapterId = "codex";
+  readonly adapterId: string;
 
   constructor(
     private readonly runtime: CodexRuntime,
     private readonly options: CodexAgentAdapterOptions,
   ) {
+    this.adapterId = options.adapterId ?? "codex";
     if (
       !Number.isSafeInteger(options.maxContextChars) ||
       options.maxContextChars <= 100

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排协议枚举与未知 JSON 快照
- * @output 导出：v1/v2 运行快照严格解码、动态 Actor 编码与历史身份映射
+ * @output 导出：v1/v2 只读兼容与 v3 强制 binding revision 的严格运行快照编解码
  * @pos    阻止损坏或非规范持久化数据进入编排核心
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -185,7 +185,7 @@ function legacyAuthorActorId(
 
 export function decodeRunSnapshot(
   snapshotJson: string,
-  snapshotSchemaVersion = 2,
+  snapshotSchemaVersion = 3,
 ): OrchestrationRun {
   let parsed: unknown;
   try {
@@ -198,7 +198,7 @@ export function decodeRunSnapshot(
 
 export function validateRunSnapshot(
   value: unknown,
-  snapshotSchemaVersion = 2,
+  snapshotSchemaVersion = 3,
 ): OrchestrationRun {
   if (!isRecord(value)) {
     fail("根节点必须是对象。");
@@ -224,6 +224,13 @@ export function validateRunSnapshot(
       assertExactKeys(
         item,
         ["adapterId", "actorId", "messageKind", "instruction"],
+        ["bindingRevision"],
+        planPath,
+      );
+    } else if (snapshotSchemaVersion === 3) {
+      assertExactKeys(
+        item,
+        ["adapterId", "actorId", "bindingRevision", "messageKind", "instruction"],
         [],
         planPath,
       );
@@ -239,6 +246,9 @@ export function validateRunSnapshot(
     return {
       adapterId,
       actorId,
+      ...(item.bindingRevision === undefined
+        ? {}
+        : { bindingRevision: stringValue(item.bindingRevision, `${planPath}.bindingRevision`) }),
       messageKind: item.messageKind,
       instruction: stringValue(item.instruction, `snapshot.plan[${String(index)}].instruction`),
     };
@@ -497,6 +507,34 @@ export function validateRunSnapshot(
   return run;
 }
 
-export function encodeRunSnapshot(run: OrchestrationRun): string {
-  return JSON.stringify(validateRunSnapshot(run, 2));
+function legacyPublicAuthor(actorId: string): string {
+  switch (actorId) {
+    case "human":
+    case "claude":
+    case "codex":
+      return actorId;
+    case "council":
+      return "chair";
+    default:
+      return "other";
+  }
+}
+
+export function encodeRunSnapshot(
+  run: OrchestrationRun,
+  snapshotSchemaVersion = 3,
+): string {
+  if (snapshotSchemaVersion === 1) {
+    const normalized = validateRunSnapshot(run, 2);
+    return JSON.stringify({
+      ...normalized,
+      plan: normalized.plan.map((round) => ({
+        adapterId: round.adapterId,
+        publicAuthor: legacyPublicAuthor(round.actorId),
+        messageKind: round.messageKind,
+        instruction: round.instruction,
+      })),
+    });
+  }
+  return JSON.stringify(validateRunSnapshot(run, snapshotSchemaVersion));
 }

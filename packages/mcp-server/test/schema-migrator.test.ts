@@ -1,6 +1,6 @@
 /**
- * @input  依赖：临时 v1/fresh SQLite、Node online backup 与 schema 迁移故障注入
- * @output 验证：动态 Actor 映射、Session 无损归并、连续账本、canonical schema、备份、回滚和 revision
+ * @input  依赖：临时 v1/v2/v4/fresh SQLite、Node online backup 与 schema 迁移故障注入
+ * @output 验证：动态 Actor、Provider/Agent 路由、Session 无损归并、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,7 +12,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { SQLiteCouncilStore } from "council-orchestrator";
+import {
+  LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,
+  SQLiteCouncilStore,
+} from "council-orchestrator";
 import {
   COUNCIL_SCHEMA_VERSION,
   FROZEN_LEGACY_V1_SCHEMA_SQL,
@@ -280,6 +283,247 @@ function createProductionV1Database(databasePath: string): void {
   }
 }
 
+async function createCanonicalV2Database(databasePath: string): Promise<void> {
+  await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.exec(`
+      DROP TABLE agent_definitions;
+      DROP TABLE provider_profiles;
+      DROP TABLE brand_assets;
+      DROP TABLE orchestration_run_leases;
+      DROP TABLE orchestration_approvals;
+      DROP TABLE orchestration_runs;
+      CREATE TABLE agent_settings (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('claude-cli', 'codex-cli', 'openai-compatible')),
+        model TEXT NOT NULL,
+        base_url TEXT,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1)),
+        updated_at TEXT NOT NULL
+      );
+      DELETE FROM schema_migrations WHERE version >= 3;
+      UPDATE council_meta SET value = 2 WHERE key = 'orchestration_schema_version';
+      PRAGMA user_version = 2;
+    `);
+    database.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    const insert = database.prepare(`
+      INSERT INTO agent_settings (
+        id, label, kind, model, base_url, enabled, requires_api_key, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      "claude",
+      "Claude Code",
+      "claude-cli",
+      "claude-model",
+      null,
+      1,
+      0,
+      "2026-01-01T00:00:00.000Z",
+    );
+    insert.run(
+      "codex",
+      "Codex CLI",
+      "codex-cli",
+      "",
+      null,
+      1,
+      0,
+      "2026-01-01T00:00:00.000Z",
+    );
+    insert.run(
+      "deepseek",
+      "DeepSeek",
+      "openai-compatible",
+      "deepseek-model",
+      "https://api.example.com/v1",
+      1,
+      1,
+      "2026-01-01T00:00:00.000Z",
+    );
+    insert.run(
+      "kimi",
+      "Kimi",
+      "openai-compatible",
+      "",
+      null,
+      0,
+      1,
+      "2026-01-01T00:00:00.000Z",
+    );
+  } finally {
+    database.close();
+  }
+}
+
+async function createCanonicalV4Database(databasePath: string): Promise<{
+  historicalRows: Record<string, unknown[]>;
+}> {
+  await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
+  const database = new DatabaseSync(databasePath);
+  try {
+    const now = "2026-01-01T00:00:00.000Z";
+    const insertActor = database.prepare(`
+      INSERT INTO actor_identities (
+        id, slug, display_name, short_name, role,
+        actor_type, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, '模型顾问', 'agent', 'active', ?, ?)
+    `);
+    const insertAlias = database.prepare(`
+      INSERT INTO actor_aliases (alias, actor_id, alias_kind, created_at)
+      VALUES (?, ?, 'canonical', ?)
+    `);
+    const insertProvider = database.prepare(`
+      INSERT INTO provider_profiles (
+        id, slug, display_name, protocol, base_url, requires_api_key,
+        credential_ref, brand_asset_id, status, config_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, 'openai-compatible', ?, 1, ?, ?, 'active', 4, ?, ?)
+    `);
+    const insertAgent = database.prepare(`
+      INSERT INTO agent_definitions (
+        id, actor_id, provider_id, slug, display_name, model,
+        mention_alias, enabled, config_revision, deleted_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 7, NULL, ?, ?)
+    `);
+    for (const actor of [
+      {
+        id: "kimi",
+        displayName: "Kimi",
+        shortName: "KI",
+        baseUrl: "https://api.example.com/kimi",
+        brandAssetId: "brand-kimi",
+      },
+      {
+        id: "deepseek",
+        displayName: "DeepSeek",
+        shortName: "DS",
+        baseUrl: "https://api.example.com/deepseek",
+        brandAssetId: "brand-deepseek",
+      },
+    ]) {
+      insertActor.run(actor.id, actor.id, actor.displayName, actor.shortName, now, now);
+      insertAlias.run(actor.id, actor.id, now);
+      insertProvider.run(
+        `provider-${actor.id}`,
+        actor.id,
+        actor.displayName,
+        actor.baseUrl,
+        `credential-${actor.id}`,
+        actor.brandAssetId,
+        now,
+        now,
+      );
+      insertAgent.run(
+        `agent-${actor.id}`,
+        actor.id,
+        `provider-${actor.id}`,
+        actor.id,
+        actor.displayName,
+        `${actor.id}-model`,
+        actor.id,
+        now,
+        now,
+      );
+    }
+    const kimiSnapshot = JSON.stringify({
+      schemaVersion: 1,
+      actorId: "kimi",
+      slug: "kimi",
+      displayName: "Kimi",
+      shortName: "KI",
+      role: "模型顾问",
+    });
+    database.prepare(`
+      INSERT INTO topics (
+        id, title, question, constraints_json, project_path,
+        status, created_by_actor_id, created_by_snapshot_json,
+        created_by_legacy, created_at, updated_at
+      ) VALUES (
+        'topic_v4_kimi', 'v4 Kimi', '保留历史身份', '[]', NULL,
+        'open', 'kimi', ?, 'other', ?, ?
+      )
+    `).run(kimiSnapshot, now, now);
+    database.prepare(`
+      INSERT INTO orchestration_runs (
+        id, topic_id, status, snapshot_schema_version, snapshot_json,
+        version, created_at, updated_at
+      ) VALUES (
+        'run_v4_kimi', 'topic_v4_kimi', 'completed', 1, ?,
+        9, '2026-01-01T00:04:00.000Z', '2026-01-01T00:05:00.000Z'
+      )
+    `).run(JSON.stringify(legacyRunSnapshot({
+      id: "run_v4_kimi",
+      topicId: "topic_v4_kimi",
+      adapterId: "kimi",
+      publicAuthor: "other",
+      status: "completed",
+    })));
+    database.prepare(`
+      INSERT INTO messages (
+        id, topic_id, author_actor_id, author_snapshot_json,
+        author_legacy, kind, content, parent_message_id, created_at
+      ) VALUES (
+        'message_v4_kimi', 'topic_v4_kimi', 'kimi', ?, 'other',
+        'proposal', 'v4 历史消息', NULL, ?
+      )
+    `).run(kimiSnapshot, now);
+    database.prepare(`
+      INSERT INTO decisions (
+        id, topic_id, title, decision, rationale, alternatives_json,
+        status, created_by_actor_id, created_by_snapshot_json,
+        created_by_legacy, created_at, updated_at
+      ) VALUES (
+        'decision_v4_kimi', 'topic_v4_kimi', 'v4 历史决策',
+        '保持快照', '迁移不得改写', '[]', 'proposed',
+        'kimi', ?, 'other', ?, ?
+      )
+    `).run(kimiSnapshot, now, now);
+    database.exec(`
+      DELETE FROM actor_aliases
+      WHERE actor_id IN ('claude', 'codex');
+      INSERT INTO actor_aliases (alias, actor_id, alias_kind, created_at)
+      VALUES
+        ('claude-v4-custom', 'claude', 'adapter', '${now}'),
+        ('codex-v4-custom', 'codex', 'adapter', '${now}');
+      UPDATE agent_definitions
+      SET display_name = 'Claude Code', mention_alias = 'claude-v4-custom'
+      WHERE actor_id = 'claude';
+      UPDATE agent_definitions
+      SET display_name = 'Codex CLI', mention_alias = 'codex-v4-custom'
+      WHERE actor_id = 'codex';
+      DELETE FROM schema_migrations WHERE version = 5;
+      PRAGMA user_version = 4;
+    `);
+    return {
+      historicalRows: {
+        topics: plainSqlValue(database.prepare(`
+          SELECT id, created_by_actor_id, created_by_snapshot_json, created_by_legacy
+          FROM topics WHERE id = 'topic_v4_kimi'
+        `).all()),
+        messages: plainSqlValue(database.prepare(`
+          SELECT id, author_actor_id, author_snapshot_json, author_legacy, content
+          FROM messages WHERE id = 'message_v4_kimi'
+        `).all()),
+        decisions: plainSqlValue(database.prepare(`
+          SELECT id, created_by_actor_id, created_by_snapshot_json,
+                 created_by_legacy, decision
+          FROM decisions WHERE id = 'decision_v4_kimi'
+        `).all()),
+        orchestrationRuns: plainSqlValue(database.prepare(`
+          SELECT *
+          FROM orchestration_runs
+          WHERE id = 'run_v4_kimi'
+        `).all()),
+      },
+    };
+  } finally {
+    database.close();
+  }
+}
+
 function pragmaInteger(database: DatabaseSync, name: string): number {
   const row = database.prepare(`PRAGMA ${name}`).get();
   assert.ok(row && typeof row === "object");
@@ -334,6 +578,155 @@ test("fresh DB 由 Node 创建版本账本且 revision trigger 可工作", async
       assert.equal(after.value, before.value + 1);
     } finally {
       database.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("canonical v4 迁移为动态远程 Actor，冻结快照与重启均保持稳定", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    const before = await createCanonicalV4Database(fixture.databasePath);
+    const migrated = await migrateCouncilSchema(fixture.databasePath, 5_000, {
+      maxAttempts: 3,
+    });
+    assert.equal(migrated.migrated, true);
+    assert.equal(migrated.version, 5);
+
+    const database = new DatabaseSync(fixture.databasePath);
+    let currentActors: Array<{
+      id: string;
+      actor_id: string;
+      mention_alias: string;
+      config_revision: number;
+    }> = [];
+    try {
+      assertCouncilSchema(database);
+      currentActors = plainSqlValue(database.prepare(`
+        SELECT id, actor_id, mention_alias, config_revision
+        FROM agent_definitions
+        WHERE id IN ('agent-kimi', 'agent-deepseek')
+        ORDER BY id
+      `).all()) as unknown as typeof currentActors;
+      assert.equal(currentActors.length, 2);
+      for (const agent of currentActors) {
+        assert.match(agent.actor_id, /^actor-[0-9a-f-]{36}$/u);
+        assert.notEqual(agent.actor_id, agent.id.replace(/^agent-/u, ""));
+        assert.equal(agent.config_revision, 8);
+        assert.equal(
+          (
+            database.prepare(`
+              SELECT actor_id
+              FROM actor_aliases
+              WHERE alias = ? COLLATE NOCASE
+            `).get(agent.mention_alias) as { actor_id: string }
+          ).actor_id,
+          agent.actor_id,
+        );
+      }
+      assert.deepEqual(
+        plainSqlValue(database.prepare(`
+          SELECT id, status
+          FROM actor_identities
+          WHERE id IN ('deepseek', 'kimi')
+          ORDER BY id
+        `).all()),
+        [
+          { id: "deepseek", status: "inactive" },
+          { id: "kimi", status: "inactive" },
+        ],
+      );
+      assert.equal(
+        (
+          database.prepare(`
+            SELECT COUNT(*) AS count
+            FROM actor_aliases
+            WHERE actor_id IN ('deepseek', 'kimi')
+          `).get() as { count: number }
+        ).count,
+        0,
+      );
+      assert.deepEqual(
+        plainSqlValue(database.prepare(`
+          SELECT id, display_name, mention_alias
+          FROM agent_definitions
+          WHERE actor_id IN ('claude', 'codex')
+          ORDER BY id
+        `).all()),
+        [
+          { id: "claude", display_name: "Claude", mention_alias: "claude" },
+          { id: "codex", display_name: "Codex", mention_alias: "codex" },
+        ],
+      );
+      assert.deepEqual(
+        {
+          topics: plainSqlValue(database.prepare(`
+            SELECT id, created_by_actor_id, created_by_snapshot_json, created_by_legacy
+            FROM topics WHERE id = 'topic_v4_kimi'
+          `).all()),
+          messages: plainSqlValue(database.prepare(`
+            SELECT id, author_actor_id, author_snapshot_json, author_legacy, content
+            FROM messages WHERE id = 'message_v4_kimi'
+          `).all()),
+          decisions: plainSqlValue(database.prepare(`
+            SELECT id, created_by_actor_id, created_by_snapshot_json,
+                   created_by_legacy, decision
+            FROM decisions WHERE id = 'decision_v4_kimi'
+          `).all()),
+          orchestrationRuns: plainSqlValue(database.prepare(`
+            SELECT *
+            FROM orchestration_runs
+            WHERE id = 'run_v4_kimi'
+          `).all()),
+        },
+        before.historicalRows,
+      );
+      assert.deepEqual(
+        Object.fromEntries(Object.entries(before.historicalRows).map(
+          ([table, rows]) => [table, rows.length],
+        )),
+        { topics: 1, messages: 1, decisions: 1, orchestrationRuns: 1 },
+      );
+    } finally {
+      database.close();
+    }
+
+    assert.deepEqual(
+      await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 }),
+      { migrated: false, version: 5 },
+    );
+    const reopened = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.deepEqual(
+        plainSqlValue(reopened.prepare(`
+          SELECT id, actor_id, mention_alias, config_revision
+          FROM agent_definitions
+          WHERE id IN ('agent-kimi', 'agent-deepseek')
+          ORDER BY id
+        `).all()),
+        currentActors,
+      );
+      assert.equal(
+        (
+          reopened.prepare(`
+            SELECT COUNT(*) AS count
+            FROM actor_aliases
+            WHERE actor_id IN ('deepseek', 'kimi')
+          `).get() as { count: number }
+        ).count,
+        0,
+      );
+      assert.deepEqual(
+        plainSqlValue(reopened.prepare(`
+          SELECT *
+          FROM orchestration_runs
+          WHERE id = 'run_v4_kimi'
+        `).all()),
+        before.historicalRows.orchestrationRuns,
+      );
+    } finally {
+      reopened.close();
     }
   } finally {
     fixture.cleanup();
@@ -548,7 +941,7 @@ test("legacy Session 多别名归并不丢行且只选择一个 current", async 
   }
 });
 
-test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无损", async () => {
+test("完整生产 v1 fixture 值级迁移、旧运行冻结与重复打开均无损", async () => {
   const fixture = temporaryDatabase();
   createProductionV1Database(fixture.databasePath);
   try {
@@ -604,18 +997,50 @@ test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无�
           alternatives_json: '["保留替代方案"]',
         },
       );
+      const migratedDeepSeek = plainSqlValue(database.prepare(`
+          SELECT
+            agent.id,
+            agent.actor_id,
+            agent.display_name,
+            agent.model,
+            agent.mention_alias,
+            agent.enabled,
+            provider.display_name AS provider_name,
+            provider.credential_ref,
+            brand.glyph_id
+          FROM agent_definitions AS agent
+          JOIN provider_profiles AS provider ON provider.id = agent.provider_id
+          JOIN brand_assets AS brand ON brand.id = provider.brand_asset_id
+          WHERE agent.id = 'deepseek'
+        `).get()) as {
+          id: string;
+          actor_id: string;
+          display_name: string;
+          model: string;
+          mention_alias: string;
+          enabled: number;
+          provider_name: string;
+          credential_ref: string;
+          glyph_id: string;
+        };
+      assert.match(migratedDeepSeek.actor_id, /^actor-[0-9a-f-]{36}$/u);
       assert.deepEqual(
-        plainSqlValue(database.prepare(`
-          SELECT id, label, model, enabled, requires_api_key
-          FROM agent_settings WHERE id = 'deepseek'
-        `).get()),
+        { ...migratedDeepSeek, actor_id: "<dynamic>" },
         {
           id: "deepseek",
-          label: "DeepSeek",
+          actor_id: "<dynamic>",
+          display_name: "DeepSeek",
           model: "model-v1",
+          mention_alias: "deepseek",
           enabled: 1,
-          requires_api_key: 1,
+          provider_name: "DeepSeek",
+          credential_ref: "deepseek",
+          glyph_id: "simple-icons-deepseek",
         },
+      );
+      assert.throws(
+        () => database.prepare("SELECT * FROM agent_settings").all(),
+        /no such table/u,
       );
       assert.equal(
         (database.prepare("SELECT COUNT(*) AS count FROM agent_sessions").get() as { count: number })
@@ -666,14 +1091,17 @@ test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无�
     assert.equal(deepseek.plan[0]?.actorId, "deepseek");
     assert.equal(kimi.plan[0]?.actorId, "kimi");
     assert.equal(unknown.plan[0]?.actorId, "legacy-unknown");
-    const recoveredKimi = await store.replaceRun(
-      {
-        ...kimi,
-        status: "running",
-        currentAttempt: 0,
-        failure: undefined,
-      },
-      kimi.version,
+    await assert.rejects(
+      store.replaceRun(
+        {
+          ...kimi,
+          status: "running",
+          currentAttempt: 0,
+          failure: undefined,
+        },
+        kimi.version,
+      ),
+      /bindingRevision/u,
     );
     store.close();
 
@@ -686,7 +1114,7 @@ test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无�
             FROM orchestration_runs WHERE id = 'run_v1_kimi'
           `).get() as { snapshot_schema_version: number }
         ).snapshot_schema_version,
-        2,
+        1,
       );
     } finally {
       inspection.close();
@@ -694,7 +1122,7 @@ test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无�
 
     const reopenedStore = new SQLiteCouncilStore(fixture.databasePath, 5_000);
     try {
-      assert.deepEqual(await reopenedStore.getRun("run_v1_kimi"), recoveredKimi);
+      assert.deepEqual(await reopenedStore.getRun("run_v1_kimi"), kimi);
     } finally {
       reopenedStore.close();
     }
@@ -707,6 +1135,95 @@ test("完整生产 v1 fixture 值级迁移、运行升级与重复打开均无�
       migrated: false,
       version: COUNCIL_SCHEMA_VERSION,
     });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("canonical v2 直迁当前版本：按证据迁移远程配置、故障回滚且重复打开稳定", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    await createCanonicalV2Database(fixture.databasePath);
+    await assert.rejects(
+      migrateCouncilSchema(fixture.databasePath, 5_000, {
+        maxAttempts: 1,
+        faultPoint: "before-commit",
+      }),
+      /故障注入/u,
+    );
+    const rolledBack = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.equal(pragmaInteger(rolledBack, "user_version"), 2);
+      assert.equal(
+        (rolledBack.prepare("SELECT COUNT(*) AS count FROM agent_settings").get() as { count: number }).count,
+        4,
+      );
+      assert.throws(
+        () => rolledBack.prepare("SELECT * FROM provider_profiles").all(),
+        /no such table/u,
+      );
+    } finally {
+      rolledBack.close();
+    }
+
+    const migrated = await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
+    assert.equal(migrated.version, COUNCIL_SCHEMA_VERSION);
+    const database = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.deepEqual(
+        plainSqlValue(database.prepare(`
+          SELECT id, display_name, credential_ref
+          FROM provider_profiles ORDER BY id
+        `).all()),
+        [
+          { id: "provider-claude", display_name: "Claude", credential_ref: null },
+          { id: "provider-codex", display_name: "OpenAI Codex", credential_ref: null },
+          { id: "provider-deepseek", display_name: "DeepSeek", credential_ref: "deepseek" },
+        ],
+      );
+      const migratedAgents = plainSqlValue(database.prepare(`
+          SELECT id, actor_id, mention_alias FROM agent_definitions ORDER BY id
+        `).all()) as Array<{
+          id: string;
+          actor_id: string;
+          mention_alias: string;
+        }>;
+      assert.deepEqual(migratedAgents.slice(0, 2), [
+        { id: "claude", actor_id: "claude", mention_alias: "claude" },
+        { id: "codex", actor_id: "codex", mention_alias: "codex" },
+      ]);
+      assert.equal(migratedAgents[2]?.id, "deepseek");
+      assert.match(migratedAgents[2]?.actor_id ?? "", /^actor-[0-9a-f-]{36}$/u);
+      assert.equal(migratedAgents[2]?.mention_alias, "deepseek");
+      assert.equal(
+        (database.prepare("SELECT COUNT(*) AS count FROM provider_profiles WHERE slug = 'kimi'").get() as { count: number }).count,
+        0,
+      );
+      assert.deepEqual(
+        plainSqlValue(database.prepare(`
+          SELECT
+            MIN(config_revision) AS minimum,
+            MAX(config_revision) AS maximum
+          FROM provider_profiles
+        `).get()),
+        { minimum: 1, maximum: 1 },
+      );
+      assert.deepEqual(
+        plainSqlValue(database.prepare(`
+          SELECT
+            MIN(config_revision) AS minimum,
+            MAX(config_revision) AS maximum
+          FROM agent_definitions
+        `).get()),
+        { minimum: 2, maximum: 2 },
+      );
+    } finally {
+      database.close();
+    }
+    assert.deepEqual(
+      await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 }),
+      { migrated: false, version: COUNCIL_SCHEMA_VERSION },
+    );
   } finally {
     fixture.cleanup();
   }
@@ -826,8 +1343,11 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
       VALUES
         (1, 'initial', '2026-01-01T00:00:00.000Z'),
         (2, 'dynamic-actors', '2026-01-02T00:00:00.000Z'),
-        (3, 'future', '2026-01-03T00:00:00.000Z');
-      PRAGMA user_version = 3;
+        (3, 'provider-agent-model-router', '2026-01-03T00:00:00.000Z'),
+        (4, 'frozen-run-bindings', '2026-01-04T00:00:00.000Z'),
+        (5, 'dynamic-provider-actors', '2026-01-05T00:00:00.000Z'),
+        (6, 'future', '2026-01-06T00:00:00.000Z');
+      PRAGMA user_version = 6;
     `);
     futureDatabase.close();
     await assert.rejects(
@@ -845,8 +1365,8 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES
         (1, 'initial', '2026-01-01T00:00:00.000Z'),
-        (4, 'gap', '2026-01-04T00:00:00.000Z');
-      PRAGMA user_version = 4;
+        (6, 'gap', '2026-01-06T00:00:00.000Z');
+      PRAGMA user_version = 6;
     `);
     gapDatabase.close();
     await assert.rejects(

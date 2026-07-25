@@ -176,6 +176,7 @@ function createInput(options?: {
     plan: Array.from({ length: rounds }, (_value, index) => ({
       adapterId: "alpha",
       actorId: index % 2 === 0 ? "claude" : "codex",
+      bindingRevision: "test-binding:alpha:v1",
       messageKind: index % 2 === 0 ? "proposal" : "critique",
       instruction: `执行第 ${String(index + 1)} 轮`,
     })),
@@ -197,6 +198,7 @@ function createInput(options?: {
 interface LegacyRunRound {
   adapterId: string;
   actorId?: string;
+  bindingRevision?: string;
   publicAuthor?: string;
   messageKind: string;
   instruction: string;
@@ -221,7 +223,11 @@ function convertRunToV1(
         agentCleanupTimeoutMs?: number;
       };
     };
-    snapshot.plan = snapshot.plan.map(({ actorId: _actorId, ...round }) => ({
+    snapshot.plan = snapshot.plan.map(({
+      actorId: _actorId,
+      bindingRevision: _bindingRevision,
+      ...round
+    }) => ({
       ...round,
       adapterId,
       publicAuthor,
@@ -234,6 +240,32 @@ function convertRunToV1(
     database.prepare(`
       UPDATE orchestration_runs
       SET snapshot_schema_version = 1, snapshot_json = ?
+      WHERE id = ?
+    `).run(JSON.stringify(snapshot), runId);
+  } finally {
+    database.close();
+  }
+}
+
+function convertRunToV2WithoutBindingRevision(
+  databasePath: string,
+  runId: string,
+): void {
+  const database = new DatabaseSync(databasePath);
+  try {
+    const row = database.prepare(
+      "SELECT snapshot_json FROM orchestration_runs WHERE id = ?",
+    ).get(runId) as unknown as { snapshot_json: string };
+    const snapshot = JSON.parse(row.snapshot_json) as {
+      plan: LegacyRunRound[];
+    };
+    snapshot.plan = snapshot.plan.map(({
+      bindingRevision: _bindingRevision,
+      ...round
+    }) => round);
+    database.prepare(`
+      UPDATE orchestration_runs
+      SET snapshot_schema_version = 2, snapshot_json = ?
       WHERE id = ?
     `).run(JSON.stringify(snapshot), runId);
   } finally {
@@ -360,7 +392,7 @@ test("运行快照可在 Store 重启后严格读取且状态变化推进 revisi
       const row = raw.prepare(
         "SELECT snapshot_schema_version FROM orchestration_runs WHERE id = ?",
       ).get(created.id) as unknown as { snapshot_schema_version: unknown };
-      assert.equal(row.snapshot_schema_version, 2);
+      assert.equal(row.snapshot_schema_version, 3);
     } finally {
       raw.close();
     }
@@ -399,7 +431,29 @@ test("旧 v1 作者快照映射为 Actor 且缺少清理时限时只用协议常
   });
 });
 
-test("v1 waiting_user 批准时原子升级 v2 并按 adapter 恢复 DeepSeek", async () => {
+test("旧 v2 缺少 bindingRevision 时只允许读取和取消", async () => {
+  await withDatabase(async (databasePath) => {
+    const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
+    try {
+      const created = await store.createRun(createInput());
+      convertRunToV2WithoutBindingRevision(databasePath, created.id);
+      const legacy = await store.getRun(created.id);
+      assert.equal(legacy.plan[0]?.bindingRevision, undefined);
+      await assert.rejects(
+        store.replaceRun({ ...legacy, status: "running" }, legacy.version),
+        (error: unknown) =>
+          error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+      );
+      const cancelled = await store.cancelRun(legacy.id);
+      assert.equal(cancelled.status, "cancelled");
+      assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("v1 waiting_user 可读但批准被拒绝，取消后仍保持旧快照版本", async () => {
   await withDatabase(async (databasePath) => {
     const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     const created = await store.createRun(createInput({ beforeRounds: [1] }));
@@ -415,27 +469,29 @@ test("v1 waiting_user 批准时原子升级 v2 并按 adapter 恢复 DeepSeek", 
 
     const legacy = await store.getRun(waiting.id);
     assert.equal(legacy.plan[0]?.actorId, "deepseek");
-    const approved = await store.approveGate({
-      runId: legacy.id,
-      expectedGateId: "before_round:1",
-      expectedVersion: legacy.version,
-      approvalId: "approval_v1_deepseek",
-      approvedByActorId: "human",
-    });
-    assert.equal(approved.run.plan[0]?.actorId, "deepseek");
-    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
-    store.close();
-
-    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     try {
-      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "deepseek");
+      await assert.rejects(
+        store.approveGate({
+          runId: legacy.id,
+          expectedGateId: "before_round:1",
+          expectedVersion: legacy.version,
+          approvalId: "approval_v1_deepseek",
+          approvedByActorId: "human",
+        }),
+        (error: unknown) =>
+          error instanceof InvalidRunStateError && /只允许读取或取消/.test(error.message),
+      );
+      const cancelled = await store.cancelRun(legacy.id);
+      assert.equal(cancelled.status, "cancelled");
+      assert.equal(cancelled.plan[0]?.actorId, "deepseek");
+      assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 1);
     } finally {
-      reopened.close();
+      store.close();
     }
   });
 });
 
-test("v1 failed 恢复状态时原子升级 v2 并按 adapter 恢复 Kimi", async () => {
+test("v1 failed 可读但恢复状态被拒绝且终态取消为幂等读取", async () => {
   await withDatabase(async (databasePath) => {
     const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     const created = await store.createRun(createInput());
@@ -455,25 +511,26 @@ test("v1 failed 恢复状态时原子升级 v2 并按 adapter 恢复 Kimi", asyn
 
     const legacy = await store.getRun(failed.id);
     assert.equal(legacy.plan[0]?.actorId, "kimi");
-    const { failure: _failure, ...recovering } = legacy;
-    const recovered = await store.replaceRun(
-      { ...recovering, status: "running" },
-      legacy.version,
-    );
-    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
-    assert.equal(recovered.plan[0]?.actorId, "kimi");
-    store.close();
-
-    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     try {
-      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "kimi");
+      const { failure: _failure, ...recovering } = legacy;
+      await assert.rejects(
+        store.replaceRun(
+          { ...recovering, status: "running" },
+          legacy.version,
+        ),
+        (error: unknown) =>
+          error instanceof InvalidRunStateError && /bindingRevision/.test(error.message),
+      );
+      const unchanged = await store.cancelRun(legacy.id);
+      assert.equal(unchanged.status, "failed");
+      assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 1);
     } finally {
-      reopened.close();
+      store.close();
     }
   });
 });
 
-test("v1 active 未知 other 提交回复后升级 v2 且保留 legacy Actor", async () => {
+test("v1 waiting_agent 可读但 claim/commit 被拒绝，取消不写公开消息", async () => {
   await withDatabase(async (databasePath) => {
     const store = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     const created = await store.createRun(createInput());
@@ -481,40 +538,22 @@ test("v1 active 未知 other 提交回复后升级 v2 且保留 legacy Actor", a
     convertRunToV1(databasePath, waiting.id, "unknown-legacy-adapter", "other");
     const legacy = await store.getRun(waiting.id);
     assert.equal(legacy.plan[0]?.actorId, "legacy-unknown");
-    const lease = await store.claimRunLease({
-      runId: legacy.id,
-      ownerId: "legacy-worker",
-      ttlMs: 2_000,
-    });
-    const { activeAgentId: _activeAgentId, ...stable } = legacy;
-    await store.commitRound({
-      expectedVersion: legacy.version,
-      lease,
-      run: {
-        ...stable,
-        status: "running",
-        nextRoundIndex: 1,
-        currentAttempt: 0,
-      },
-      message: {
-        topicId: legacy.topicId,
-        actorId: "legacy-unknown",
-        kind: "proposal",
-        content: "历史未知 Agent 的公开回复。",
-      },
-    });
-    assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 2);
-    store.close();
-
-    const reopened = new SQLiteCouncilStore(databasePath, BUSY_TIMEOUT_MS);
     try {
-      assert.equal((await reopened.getRun(legacy.id)).plan[0]?.actorId, "legacy-unknown");
-      assert.equal(
-        (await reopened.getTopicContext(TOPIC_ID)).messages.at(-1)?.actorId,
-        "legacy-unknown",
+      await assert.rejects(
+        store.claimRunLease({
+          runId: legacy.id,
+          ownerId: "legacy-worker",
+          ttlMs: 2_000,
+        }),
+        (error: unknown) =>
+          error instanceof InvalidRunStateError && /只允许读取或取消/.test(error.message),
       );
+      const cancelled = await store.cancelRun(legacy.id);
+      assert.equal(cancelled.status, "cancelled");
+      assert.equal(readSnapshotSchemaVersion(databasePath, legacy.id), 1);
+      assert.equal((await store.getTopicContext(TOPIC_ID)).messages.length, 0);
     } finally {
-      reopened.close();
+      store.close();
     }
   });
 });
