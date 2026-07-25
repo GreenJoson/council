@@ -1,6 +1,6 @@
 /**
  * @input  依赖：收敛阶段枚举与结构化尾块契约
- * @output 导出：四段协议下发给 Agent 的阶段指令与尾块格式说明
+ * @output 导出：四段协议下发给 Agent 的阶段指令、diff 互审要求与尾块格式说明
  * @pos    Agent 侧协议契约的唯一正本；改这里就等于改协议，必须同步 verdict.ts 的解析
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,13 @@ export interface StageInstructionInput {
   reviewers: readonly string[];
   /** 提案人 Agent id；反驳与收敛阶段由它执行。 */
   proposer: string;
+  /**
+   * 被复审的那次发言自述的 commit 引用。存在就说明这一轮是 diff 互审，
+   * 复审者必须去读真实改动而不是读描述。
+   */
+  reviewedCommitRef?: string;
+  /** 本轮是不是 bug 修复互审；决定要不要给会动代码的阶段下发 commit 引用规格。 */
+  requiresCommitRef?: boolean;
 }
 
 /**
@@ -47,6 +54,41 @@ const TRAILER_SPEC = [
   "只在答案会实质改变方案时提问；纯技术取舍应当由你自己基于证据判断。",
 ].join("\n");
 
+/**
+ * 修复者的自述格式。要求 commit 引用而不是"我改好了"：
+ * 复审者只有拿到不可变的对象名，才能确定自己读的就是被审的那份改动。
+ */
+const FIX_SPEC = [
+  "## 这是一次 bug 修复互审",
+  "",
+  "先自审并提交，再回帖。正文之后必须附上改动尾块：",
+  "",
+  "```council-fix",
+  '{"commit":"<已提交的 commit sha>","summary":"这次改动解决了什么"}',
+  "```",
+  "",
+  "commit 必须是已经提交到本仓库的对象名（7 位以上十六进制），不能填分支名或 tag——",
+  "它们会移动，复审者读到的就不再是被审的那份 diff。",
+  "尾块缺失或引用非法时，复审者会直接判定 `blocking`，本轮不算完成。",
+].join("\n");
+
+function reviewBody(input: StageInstructionInput): readonly string[] {
+  if (input.reviewedCommitRef) {
+    return [
+      "",
+      `本轮复审的改动：\`${input.reviewedCommitRef}\``,
+      "",
+      "先读真实 diff 再下判断——",
+      `\`git show ${input.reviewedCommitRef}\` 和必要的上下文文件都要看过。`,
+      "不要凭提交说明或对方的描述判断改动是否正确。",
+      "",
+      "你是只读复审：不要修改任何文件、不要提交、不要部署。",
+      "发现问题就写清楚在哪一行、什么输入会触发、期望行为是什么，交回给修复者。",
+    ];
+  }
+  return [];
+}
+
 function reviewerList(reviewers: readonly string[]): string {
   return reviewers.length > 0 ? reviewers.join("、") : "（无其他参与者）";
 }
@@ -71,6 +113,10 @@ function stageBody(input: StageInstructionInput): readonly string[] {
         "",
         "把「必须先解决」和「记录即可」分清楚：只有会让方案失败或不可回滚的问题",
         "才标 `blocking`。为了显得严谨而滥用 `blocking` 会让讨论永远收敛不了。",
+        "",
+        "永远不要放行你验证不了的改动：对方声称改了或提交了代码，却没给出",
+        "`council-fix` 尾块里的 commit 引用时，直接判 `blocking` 并要求补上。",
+        ...reviewBody(input),
       ];
     case "rebuttal":
       return [
@@ -93,11 +139,15 @@ function stageBody(input: StageInstructionInput): readonly string[] {
 
 /** 组装某一阶段下发给 Agent 的完整指令。 */
 export function buildStageInstruction(input: StageInstructionInput): string {
+  // 只有会动代码的阶段才下发 FIX_SPEC；评审是只读的，给它这段只会诱导它去提交。
+  const wantsFixSpec = input.requiresCommitRef
+    && (input.stage === "proposal" || input.stage === "rebuttal");
   return [
     `# 当前阶段：${input.stage}（第 ${String(input.round)}/${String(input.roundBudget)} 轮）`,
     "",
     ...stageBody(input),
     "",
+    ...(wantsFixSpec ? [FIX_SPEC, ""] : []),
     TRAILER_SPEC,
   ].join("\n");
 }

@@ -10,6 +10,7 @@ import type {
   AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  CycleMetrics,
   DiscussionCycleView,
   OrchestrationRun,
   OrchestrationSnapshot,
@@ -31,6 +32,7 @@ import { createApiUrl, jsonRequest, requestApiData, type Fetcher } from "./http-
 import type { EventStream, EventStreamFactory } from "./http-repository";
 import { parseCouncilChangedRevision } from "./http-repository";
 import {
+  parseCycleMetrics,
   parseDiscussionCycleView,
   parseOrchestrationCapabilities,
   parseOrchestrationApprovalResult,
@@ -177,11 +179,12 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     generation: number,
   ): Promise<OrchestrationSnapshot> {
     try {
-      const [status, runs, runtimeBindings, cycle] = await Promise.all([
+      const [status, runs, runtimeBindings, cycle, cycleMetrics] = await Promise.all([
         this.#loadStatus(),
         this.#loadAllRuns(topicId),
         this.#loadRuntimeBindings(topicId),
         this.#loadCycle(topicId),
+        this.#loadCycleMetrics(),
       ]);
       if (generation !== this.#selectionGeneration) {
         return cloneSnapshot(this.#snapshot);
@@ -195,6 +198,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         runs,
         runtimeBindings,
         cycle,
+        cycleMetrics,
         agentOutputs: this.#outputsForTopic(topicId),
         sync: { status: "connected", label: "自动轮次已同步" },
       };
@@ -277,6 +281,9 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       {
         participants: input.participants,
         ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
+        ...(input.requiresCommitRef === undefined
+          ? {}
+          : { requiresCommitRef: input.requiresCommitRef }),
       },
     );
   }
@@ -567,6 +574,14 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         `/api/v1/topics/${encodeURIComponent(topicId)}/cycle`,
       ),
       parseDiscussionCycleView,
+    );
+  }
+
+  async #loadCycleMetrics(): Promise<CycleMetrics> {
+    return await requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/orchestration/cycle-metrics"),
+      parseCycleMetrics,
     );
   }
 

@@ -33,6 +33,11 @@ export type CycleStatus = (typeof CYCLE_STATUSES)[number];
 /** 已完成发言，附带公开消息 id，使状态可以回溯到公开记录。 */
 export interface RecordedTurn extends CycleTurn {
   messageId: string;
+  /**
+   * 这次发言自述的 commit 引用（如果有）。存在 turns_json 里而不是新开列：
+   * 该列的 CHECK 只约束"是 JSON 数组"，加字段不动 DDL，也就不用再抬 schema 版本。
+   */
+  commitRef?: string;
 }
 
 export interface CycleCursor {
@@ -178,6 +183,9 @@ function decodeTurn(value: unknown, label: string): RecordedTurn {
       `${label}.stance`,
     ) as VerdictStance,
     messageId: text(record.messageId, `${label}.messageId`),
+    ...(record.commitRef === undefined || record.commitRef === null
+      ? {}
+      : { commitRef: text(record.commitRef, `${label}.commitRef`) }),
   };
 }
 

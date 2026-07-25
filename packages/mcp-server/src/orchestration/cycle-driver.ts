@@ -21,6 +21,13 @@ export interface StartCycleInput {
   /** 首位是提案人；由用户在开局时勾选并冻结。 */
   participants: readonly string[];
   roundBudget?: number;
+  /**
+   * 这是一次 bug 修复互审：修复者必须先提交并附上 commit 引用，复审者只读 diff。
+   *
+   * 不落库是有意的——它只影响提案阶段的指令，而指令在创建 Run 时就冻结进了
+   * 计划里；之后的阶段改从 turns 里已声明的 commit 引用推断，重启也不会丢。
+   */
+  requiresCommitRef?: boolean;
 }
 
 export interface CycleRunner {
@@ -73,7 +80,7 @@ export class CycleDriver {
       roundBudget: input.roundBudget ?? DEFAULT_ROUND_BUDGET,
       now: this.#now(),
     });
-    await this.advance(input.topicId);
+    await this.advance(input.topicId, input.requiresCommitRef ?? false);
     return this.#store.readActiveDiscussionCycle(input.topicId) ?? opened;
   }
 
@@ -83,19 +90,25 @@ export class CycleDriver {
    * 只推进一步，不循环。下一步由 Run 提交后再次调用触发——发言是在提交事务里
    * 记上的，所以「提交完成」本身就是可以继续的信号，驱动器不需要自己轮询。
    */
-  async advance(topicId: string): Promise<DiscussionCycleView | undefined> {
+  async advance(
+    topicId: string,
+    requiresCommitRef = false,
+  ): Promise<DiscussionCycleView | undefined> {
     const pending = this.#inFlight.get(topicId);
     if (pending) {
       return await pending;
     }
-    const running = this.#advanceOnce(topicId).finally(() => {
+    const running = this.#advanceOnce(topicId, requiresCommitRef).finally(() => {
       this.#inFlight.delete(topicId);
     });
     this.#inFlight.set(topicId, running);
     return await running;
   }
 
-  async #advanceOnce(topicId: string): Promise<DiscussionCycleView | undefined> {
+  async #advanceOnce(
+    topicId: string,
+    requiresCommitRef: boolean,
+  ): Promise<DiscussionCycleView | undefined> {
     const view = this.#store.readActiveDiscussionCycle(topicId);
     if (!view) {
       return undefined;
@@ -112,6 +125,14 @@ export class CycleDriver {
           (participant) => participant !== action.agentId,
         );
         const proposer = cycle.participants[0] ?? action.agentId;
+        // 一旦有人声明过 commit 引用，这个 cycle 就是 diff 互审，重启后也认得出来。
+        const isFixCycle = requiresCommitRef
+          || cycle.turns.some((turn) => turn.commitRef !== undefined);
+        const reviewed = action.stage === "critique"
+          ? [...cycle.turns]
+            .reverse()
+            .find((turn) => turn.stage === "proposal" || turn.stage === "rebuttal")
+          : undefined;
         const run = await this.#runner.createRun(topicId, [{
           adapterId: action.agentId,
           messageKind: action.stage,
@@ -121,6 +142,8 @@ export class CycleDriver {
             roundBudget: cycle.roundBudget,
             reviewers,
             proposer,
+            ...(isFixCycle ? { requiresCommitRef: true } : {}),
+            ...(reviewed?.commitRef ? { reviewedCommitRef: reviewed.commitRef } : {}),
           }),
         }]);
         await this.#runner.startRun(run.id);

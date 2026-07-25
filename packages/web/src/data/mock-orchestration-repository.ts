@@ -306,7 +306,9 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       plan: [{
         adapterId: proposer,
         messageKind: "proposal",
-        instruction: "给出可执行方案，并说明失败条件与验证方式。",
+        instruction: input.requiresCommitRef
+          ? "先自审并提交，回帖时附上 commit 引用。"
+          : "给出可执行方案，并说明失败条件与验证方式。",
       }],
     });
     return await this.startRun(run.id);

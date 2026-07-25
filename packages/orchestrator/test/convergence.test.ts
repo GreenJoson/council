@@ -313,3 +313,86 @@ test("提问尾块越界时整体丢弃，不产出半个问题", () => {
     assert.equal(parseAgentReply(content).question, undefined, content.slice(0, 40));
   }
 });
+
+test("修复自述必须给出像 commit 的引用，分支名和残缺尾块一律不认", () => {
+  const good = parseAgentReply([
+    "已修复越界读。",
+    "",
+    "```council-fix",
+    '{"commit":"A1B2C3D4E5F6","summary":"修正边界判断"}',
+    "```",
+    "",
+    "```council-verdict",
+    '{"stance":"agree","summary":"已提交待复审"}',
+    "```",
+  ].join("\n"));
+  // 大小写归一化：git 对象名是小写，复审者要能直接把它拼进 git show。
+  assert.deepEqual(good.fix, { commit: "a1b2c3d4e5f6", summary: "修正边界判断" });
+
+  for (const raw of [
+    '{"commit":"main","summary":"修好了"}',
+    '{"commit":"v1.2.0","summary":"修好了"}',
+    '{"commit":"abc123","summary":"太短不足以定位"}',
+    '{"commit":"a1b2c3d4","summary":"   "}',
+    '{"summary":"没给引用"}',
+  ]) {
+    const reply = parseAgentReply([
+      "```council-fix",
+      raw,
+      "```",
+      "",
+      "```council-verdict",
+      '{"stance":"agree","summary":"立场"}',
+      "```",
+    ].join("\n"));
+    assert.equal(reply.fix, undefined, raw);
+  }
+});
+
+test("互审指令带上被审 commit，并且始终禁止放行读不到的改动", () => {
+  const withDiff = buildStageInstruction({
+    stage: "critique",
+    round: 2,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+    reviewedCommitRef: "a1b2c3d4e5f6",
+  });
+  assert.ok(withDiff.includes("git show a1b2c3d4e5f6"), "复审者必须拿到可执行的读 diff 指令");
+  assert.ok(withDiff.includes("只读复审"), "复审者不得改代码");
+
+  // 对方没按协议给引用时，这条规则仍要在——否则"互审"会退化成互相看描述。
+  const withoutDiff = buildStageInstruction({
+    stage: "critique",
+    round: 1,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+  });
+  for (const instruction of [withDiff, withoutDiff]) {
+    assert.ok(instruction.includes("council-fix"), "评审必须知道该向对方要什么");
+    assert.ok(instruction.includes("验证不了的改动"), "缺引用时的判定规则必须无条件下发");
+  }
+
+  // 只有会动代码的阶段才被要求提交；评审阶段拿到 FIX_SPEC 只会诱导它去写文件。
+  const fixer = buildStageInstruction({
+    stage: "rebuttal",
+    round: 2,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+    requiresCommitRef: true,
+  });
+  assert.ok(fixer.includes("```council-fix\n"), "修复者必须拿到 commit 尾块规格");
+  assert.ok(
+    !buildStageInstruction({
+      stage: "critique",
+      round: 2,
+      roundBudget: 3,
+      reviewers: ["codex"],
+      proposer: "claude",
+      requiresCommitRef: true,
+    }).includes("先自审并提交"),
+    "评审阶段不得被要求提交",
+  );
+});

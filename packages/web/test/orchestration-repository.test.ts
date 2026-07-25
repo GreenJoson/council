@@ -165,6 +165,15 @@ function createOrchestrationFixture(): OrchestrationFixture {
     if (/^\/api\/v1\/topics\/[^/]+\/cycle$/u.test(url.pathname)) {
       return success(null);
     }
+    if (url.pathname === "/api/v1/orchestration/cycle-metrics") {
+      return success({
+        cycles: { total: 0, converged: 0, abandoned: 0, active: 0, awaitingUser: 0 },
+        rounds: { count: 0, mean: 0, median: 0, max: 0 },
+        wallClockMs: { count: 0, mean: 0, median: 0, max: 0 },
+        questions: { total: 0, open: 0, perCycle: 0 },
+        decisionConsistency: { checked: 0, divergedCycleIds: [] },
+      });
+    }
     if (url.pathname === "/api/v1/topics/topic-one/runs" && method === "GET") {
       return success({
         total: runs.length,

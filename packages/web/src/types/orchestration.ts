@@ -193,6 +193,8 @@ export interface StartCycleInput {
   topicId: string;
   participants: string[];
   roundBudget?: number;
+  /** bug 修复互审：修复者先提交并给出 commit 引用，复审者只读 diff。 */
+  requiresCommitRef?: boolean;
 }
 
 export interface AnswerCycleQuestionInput {
@@ -202,12 +204,29 @@ export interface AnswerCycleQuestionInput {
   content: string;
 }
 
+export interface CycleMetrics {
+  cycles: {
+    total: number;
+    converged: number;
+    abandoned: number;
+    active: number;
+    awaitingUser: number;
+  };
+  rounds: { count: number; mean: number; median: number; max: number };
+  wallClockMs: { count: number; mean: number; median: number; max: number };
+  questions: { total: number; open: number; perCycle: number };
+  /** `divergedCycleIds` 非空即为决策与讨论对不上，属于要立刻查的事故。 */
+  decisionConsistency: { checked: number; divergedCycleIds: string[] };
+}
+
 export interface OrchestrationSnapshot {
   capabilities?: OrchestrationCapabilities;
   activeTopicId?: string;
   runs: OrchestrationRun[];
   /** 当前议题的活动圆桌；null 表示确认过没有，undefined 表示还没读到。 */
   cycle?: DiscussionCycleView | null;
+  /** 全局累计的圆桌运行度量，用来判断这套流程到底有没有比手工搬运快。 */
+  cycleMetrics?: CycleMetrics;
   runtimeBindings?: RuntimeBinding[];
   agentOutputs?: OrchestrationAgentOutput[];
   sync: {

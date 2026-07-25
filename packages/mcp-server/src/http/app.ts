@@ -512,6 +512,10 @@ export function createCouncilHttpApp(
     sendSuccess(response, run, "编排运行已创建。", 201);
   });
 
+  app.get("/api/v1/orchestration/cycle-metrics", (_request, response) => {
+    sendSuccess(response, database.getCycleMetrics());
+  });
+
   app.get("/api/v1/topics/:topicId/cycle", (request, response) => {
     if (!orchestration) {
       throw new HttpError(503, "编排服务未启用。");
@@ -531,6 +535,9 @@ export function createCouncilHttpApp(
       topicId: params.topicId,
       participants: input.participants,
       ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
+      ...(input.requiresCommitRef === undefined
+        ? {}
+        : { requiresCommitRef: input.requiresCommitRef }),
     });
     sendSuccess(response, view, "圆桌讨论已开始，提案人正在发言。", 201);
   });

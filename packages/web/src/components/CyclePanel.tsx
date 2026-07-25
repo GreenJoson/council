@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排快照里的活动圆桌、可用 Agent 名册与受控的开局/回答操作
- * @output 导出：CyclePanel 开局名册勾选、阶段进度、发言立场与阻塞提问作答台
+ * @output 导出：CyclePanel 开局名册勾选、阶段进度、发言立场、阻塞提问作答台与累计度量
  * @pos    Inspector 内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
 import type {
+  CycleMetrics,
   CycleStage,
   CycleTurn,
   DiscussionCycleView,
@@ -48,7 +49,11 @@ export interface CyclePanelProps {
   isTopicOpen: boolean;
   snapshot: OrchestrationSnapshot | null;
   busyAction: string | null;
-  onStart: (participants: string[], roundBudget: number) => Promise<boolean>;
+  onStart: (
+    participants: string[],
+    roundBudget: number,
+    requiresCommitRef: boolean,
+  ) => Promise<boolean>;
   onAnswer: (questionMessageId: string, content: string) => Promise<boolean>;
 }
 
@@ -101,6 +106,7 @@ function CycleStarter({
   // 勾选顺序即发言顺序：第一位是提案人，其余是评审。用数组而非 Set 就是为了留住顺序。
   const [roster, setRoster] = useState<string[]>([]);
   const [roundBudget, setRoundBudget] = useState(DEFAULT_ROUND_BUDGET);
+  const [isFixReview, setIsFixReview] = useState(false);
 
   const toggle = (adapterId: string): void => {
     setRoster((current) =>
@@ -146,6 +152,16 @@ function CycleStarter({
           可用 Agent 不足两位，无法互审。请先在设置里连接第二个 Provider。
         </p>
       ) : null}
+      <label className="cycle-roster-item cycle-mode">
+        <input
+          type="checkbox"
+          checked={isFixReview}
+          disabled={!isTopicOpen || busy}
+          onChange={() => { setIsFixReview((current) => !current); }}
+        />
+        <span className="cycle-roster-name">bug 修复互审</span>
+        <span className="cycle-hint-inline">修复者先提交并给出 commit，复审者只读 diff</span>
+      </label>
       <label className="cycle-budget">
         轮次预算
         <input
@@ -166,7 +182,7 @@ function CycleStarter({
         className="primary-button"
         disabled={!canStart}
         onClick={() => {
-          void onStart(roster, roundBudget);
+          void onStart(roster, roundBudget, isFixReview);
         }}
       >
         {busy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
@@ -245,6 +261,55 @@ function BlockingQuestion({
   );
 }
 
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 60_000) {
+    return `${String(Math.round(milliseconds / 1_000))} 秒`;
+  }
+  return `${String(Math.round(milliseconds / 60_000))} 分`;
+}
+
+/** 累计度量：这套流程到底有没有比手工来回搬运快，只能靠这几个数说话。 */
+function MetricsLedger({ metrics }: { metrics: CycleMetrics }): ReactElement | null {
+  if (metrics.cycles.total === 0) {
+    return null;
+  }
+  const diverged = metrics.decisionConsistency.divergedCycleIds.length;
+  return (
+    <dl className="cycle-metrics">
+      <div>
+        <dt>收敛 / 放弃</dt>
+        <dd>
+          {metrics.cycles.converged} / {metrics.cycles.abandoned}
+        </dd>
+      </div>
+      <div>
+        <dt>轮次中位数</dt>
+        <dd>{metrics.rounds.count > 0 ? metrics.rounds.median : "—"}</dd>
+      </div>
+      <div>
+        <dt>耗时中位数</dt>
+        <dd>
+          {metrics.wallClockMs.count > 0
+            ? formatDuration(metrics.wallClockMs.median)
+            : "—"}
+        </dd>
+      </div>
+      <div>
+        <dt>平均打断</dt>
+        <dd>{metrics.questions.perCycle} 次</dd>
+      </div>
+      <div className={diverged > 0 ? "cycle-metric-alert" : undefined}>
+        <dt>决策一致性</dt>
+        <dd>
+          {diverged > 0
+            ? `${String(diverged)} 条与讨论不符`
+            : `${String(metrics.decisionConsistency.checked)} 条全部一致`}
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
 export function CyclePanel({
   topicId,
   isTopicOpen,
@@ -306,6 +371,9 @@ export function CyclePanel({
           onStart={onStart}
         />
       )}
+      {snapshot.cycleMetrics ? (
+        <MetricsLedger metrics={snapshot.cycleMetrics} />
+      ) : null}
     </section>
   );
 }

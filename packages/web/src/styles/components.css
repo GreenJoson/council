@@ -2086,3 +2086,37 @@
   font-size: 9px;
   letter-spacing: 0.06em;
 }
+
+.cycle-mode {
+  margin-top: 10px;
+}
+
+.cycle-mode .cycle-hint-inline {
+  color: var(--color-text-muted);
+}
+
+.cycle-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin: 13px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.cycle-metrics dt {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.cycle-metrics dd {
+  margin: 3px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.cycle-metric-alert dt,
+.cycle-metric-alert dd {
+  color: var(--color-danger);
+}

@@ -10,6 +10,10 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { CouncilConflictError, CouncilNotFoundError } from "./errors.js";
 import {
+  computeCycleMetrics,
+  type CycleMetrics,
+} from "./orchestration/cycle-metrics.js";
+import {
   parseActorSnapshot,
   serializeActorSnapshot,
   toActorSnapshot,
@@ -621,6 +625,11 @@ export class CouncilDatabase {
 
   getRevision(): number {
     return this.getRevisions().total;
+  }
+
+  /** 圆桌运行度量；SQL 细节在 orchestration/cycle-metrics.ts，这里只借出连接。 */
+  getCycleMetrics(): CycleMetrics {
+    return computeCycleMetrics(this.#database);
   }
 
   getRevisions(): CouncilRevisions {

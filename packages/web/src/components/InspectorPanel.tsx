@@ -50,7 +50,11 @@ export interface InspectorPanelProps {
     instruction: string,
     confirmationBeforeCompletion: boolean,
   ) => Promise<boolean>;
-  onStartCycle: (participants: string[], roundBudget: number) => Promise<boolean>;
+  onStartCycle: (
+    participants: string[],
+    roundBudget: number,
+    requiresCommitRef: boolean,
+  ) => Promise<boolean>;
   onAnswerCycleQuestion: (
     questionMessageId: string,
     content: string,

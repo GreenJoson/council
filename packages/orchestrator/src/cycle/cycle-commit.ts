@@ -70,6 +70,7 @@ export function commitCycleTurn(
       round: action.round,
       stance: reply.verdict.stance,
       messageId: input.messageId,
+      ...(reply.fix ? { commitRef: reply.fix.commit } : {}),
     },
     contextCursor: cursor,
     now: input.now,

@@ -240,6 +240,7 @@ export class CouncilOrchestrationService {
     topicId: string;
     participants: readonly string[];
     roundBudget?: number;
+    requiresCommitRef?: boolean;
   }): Promise<DiscussionCycleView> {
     if (!this.#decisions) {
       throw new OrchestrationConfigError("决策写入器未挂载，无法开始圆桌讨论。");

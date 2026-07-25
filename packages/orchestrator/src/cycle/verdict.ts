@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Agent 提交的公开消息正文
- * @output 导出：立场/阻塞提问的结构化尾块解析与失败关闭判定
+ * @output 导出：立场/阻塞提问/修复 commit 引用的结构化尾块解析与失败关闭判定
  * @pos    自然语言回复与收敛状态机之间唯一的结构化边界；解析不了一律按最保守立场处理
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -20,6 +20,7 @@ export const MAX_VERDICT_SUMMARY_CHARS = 400;
 export const MAX_QUESTION_CHARS = 1_000;
 export const MAX_QUESTION_OPTIONS = 6;
 export const MAX_QUESTION_OPTION_CHARS = 200;
+export const MAX_FIX_SUMMARY_CHARS = 400;
 
 export interface AgentVerdict {
   stance: VerdictStance;
@@ -32,9 +33,21 @@ export interface AgentQuestion {
   options: readonly string[];
 }
 
+/**
+ * 修复者对自己改动的自述。复审者据此读 diff——
+ * 没有 commit 引用，"互审"就退化成互相看对方讲故事。
+ */
+export interface AgentFixClaim {
+  /** 已提交的 commit 引用；复审者用它 git show 出真实 diff。 */
+  commit: string;
+  /** 这次改动想解决什么，一句话。 */
+  summary: string;
+}
+
 export interface ParsedAgentReply {
   verdict: AgentVerdict;
   question?: AgentQuestion;
+  fix?: AgentFixClaim;
   /**
    * 立场是从尾块读出来的还是兜底推定的。推定意味着 Agent 没按协议回复，
    * 调用方应当把它当作协议违例记录下来，而不是当作正常的 blocking。
@@ -44,6 +57,13 @@ export interface ParsedAgentReply {
 
 const VERDICT_FENCE = "council-verdict";
 const QUESTION_FENCE = "council-question";
+const FIX_FENCE = "council-fix";
+
+/**
+ * 只接受看起来像 git 对象名的引用：40 位全 sha，或 7 位以上的缩写。
+ * 分支名和 tag 会随时间移动，复审者过几分钟读到的就不是被审的那份 diff。
+ */
+const COMMIT_REF_PATTERN = /^[0-9a-f]{7,40}$/u;
 
 /**
  * 只接受行首围栏，避免正文里引用协议示例时被误判。
@@ -69,7 +89,7 @@ function extractFencedBlock(content: string, fence: string): string | undefined 
  */
 export function stripProtocolTrailers(content: string): string {
   let stripped = content;
-  for (const fence of [VERDICT_FENCE, QUESTION_FENCE]) {
+  for (const fence of [VERDICT_FENCE, QUESTION_FENCE, FIX_FENCE]) {
     stripped = stripped.replace(
       new RegExp(
         `^\`\`\`${fence}[ \\t]*\\r?\\n[\\s\\S]*?\\r?\\n?^\`\`\`[ \\t]*$`,
@@ -154,6 +174,25 @@ function parseQuestion(content: string): AgentQuestion | undefined {
   return { question, rationale, options };
 }
 
+function parseFix(content: string): AgentFixClaim | undefined {
+  const raw = extractFencedBlock(content, FIX_FENCE);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const record = parseJsonObject(raw);
+  if (!record) {
+    return undefined;
+  }
+  const commit = typeof record.commit === "string"
+    ? record.commit.trim().toLowerCase()
+    : "";
+  const summary = boundedText(record.summary, MAX_FIX_SUMMARY_CHARS);
+  if (!COMMIT_REF_PATTERN.test(commit) || summary === undefined) {
+    return undefined;
+  }
+  return { commit, summary };
+}
+
 /**
  * 失败关闭：尾块缺失、JSON 非法、字段越界都推定为 `blocking`。
  *
@@ -163,6 +202,7 @@ function parseQuestion(content: string): AgentQuestion | undefined {
 export function parseAgentReply(content: string): ParsedAgentReply {
   const verdict = parseVerdict(content);
   const question = parseQuestion(content);
+  const fix = parseFix(content);
   if (!verdict) {
     return {
       verdict: {
@@ -170,12 +210,14 @@ export function parseAgentReply(content: string): ParsedAgentReply {
         summary: "未按协议给出 council-verdict 尾块，按最保守立场处理。",
       },
       ...(question ? { question } : {}),
+      ...(fix ? { fix } : {}),
       verdictDeclared: false,
     };
   }
   return {
     verdict,
     ...(question ? { question } : {}),
+    ...(fix ? { fix } : {}),
     verdictDeclared: true,
   };
 }

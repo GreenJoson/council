@@ -249,6 +249,8 @@ export const startCycleBodySchema = z
         { message: "参与名册不能重复" },
       ),
     roundBudget: z.number().int().positive().max(MAX_CYCLE_ROUND_BUDGET).optional(),
+    /** bug 修复互审：修复者必须先提交并附上 commit 引用，复审者只读 diff。 */
+    requiresCommitRef: z.boolean().optional(),
   })
   .strict();
 

@@ -7,6 +7,7 @@
  */
 
 import type {
+  CycleMetrics,
   CycleStage,
   CycleTurn,
   DiscussionCycle,
@@ -109,6 +110,14 @@ function integerValue(record: Record<string, unknown>, key: string, minimum = 0)
   const value = record[key];
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
     throw new Error(`${key} 必须是不小于 ${String(minimum)} 的安全整数`);
+  }
+  return value;
+}
+
+function numberValue(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${key} 必须是非负有限数`);
   }
   return value;
 }
@@ -303,6 +312,48 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
         return item;
       }),
       questionMessageId: stringValue(questionRecord, "questionMessageId"),
+    },
+  };
+}
+
+function parseDistribution(value: unknown, path: string): CycleMetrics["rounds"] {
+  const record = recordValue(value, path);
+  return {
+    count: integerValue(record, "count"),
+    mean: integerValue(record, "mean"),
+    median: integerValue(record, "median"),
+    max: integerValue(record, "max"),
+  };
+}
+
+export function parseCycleMetrics(value: unknown): CycleMetrics {
+  const record = recordValue(value, "cycle metrics");
+  const cycles = recordValue(record.cycles, "cycles");
+  const questions = recordValue(record.questions, "questions");
+  const consistency = recordValue(record.decisionConsistency, "decisionConsistency");
+  return {
+    cycles: {
+      total: integerValue(cycles, "total"),
+      converged: integerValue(cycles, "converged"),
+      abandoned: integerValue(cycles, "abandoned"),
+      active: integerValue(cycles, "active"),
+      awaitingUser: integerValue(cycles, "awaitingUser"),
+    },
+    rounds: parseDistribution(record.rounds, "rounds"),
+    wallClockMs: parseDistribution(record.wallClockMs, "wallClockMs"),
+    questions: {
+      total: integerValue(questions, "total"),
+      open: integerValue(questions, "open"),
+      perCycle: numberValue(questions, "perCycle"),
+    },
+    decisionConsistency: {
+      checked: integerValue(consistency, "checked"),
+      divergedCycleIds: arrayValue(consistency, "divergedCycleIds", (item, index) => {
+        if (typeof item !== "string" || item.length === 0) {
+          throw new Error(`divergedCycleIds[${String(index)}] 必须是非空字符串`);
+        }
+        return item;
+      }),
     },
   };
 }
