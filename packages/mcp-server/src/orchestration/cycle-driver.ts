@@ -84,6 +84,21 @@ export class CycleDriver {
     return this.#store.readActiveDiscussionCycle(input.topicId) ?? opened;
   }
 
+  /** 用户主动放弃圆桌；失败卡住时这是把议题解锁的唯一出口。 */
+  abandon(topicId: string): DiscussionCycleView | undefined {
+    const view = this.#store.readActiveDiscussionCycle(topicId);
+    if (!view) {
+      return undefined;
+    }
+    this.#store.abandonDiscussionCycle({
+      cycleId: view.cycle.id,
+      expectedVersion: view.cycle.stateVersion,
+      reason: "cancelled",
+      now: this.#now(),
+    });
+    return view;
+  }
+
   /**
    * 推进一步：读当前状态，按状态机的判定决定召唤谁或如何结算。
    *

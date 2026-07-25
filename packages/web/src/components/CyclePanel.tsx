@@ -8,6 +8,7 @@
 
 import {
   CircleHelp,
+  CircleStop,
   Gavel,
   LoaderCircle,
   MessagesSquare,
@@ -55,6 +56,7 @@ export interface CyclePanelProps {
     requiresCommitRef: boolean,
   ) => Promise<boolean>;
   onAnswer: (questionMessageId: string, content: string) => Promise<boolean>;
+  onAbandon: () => Promise<void>;
 }
 
 function adapterLabel(
@@ -317,6 +319,7 @@ export function CyclePanel({
   busyAction,
   onStart,
   onAnswer,
+  onAbandon,
 }: CyclePanelProps): ReactElement | null {
   const adapters = snapshot?.capabilities?.adapters ?? [];
   const view = snapshot?.activeTopicId === topicId ? snapshot.cycle : undefined;
@@ -362,6 +365,15 @@ export function CyclePanel({
               </li>
             ))}
           </ol>
+          <button
+            type="button"
+            className="ghost-button cycle-abandon"
+            disabled={busy}
+            onClick={() => { void onAbandon(); }}
+          >
+            <CircleStop size={14} />
+            放弃这次圆桌
+          </button>
         </>
       ) : (
         <CycleStarter

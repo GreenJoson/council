@@ -2120,3 +2120,7 @@
 .cycle-metric-alert dd {
   color: var(--color-danger);
 }
+
+.cycle-abandon {
+  margin-top: 11px;
+}

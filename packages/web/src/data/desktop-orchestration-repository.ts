@@ -160,6 +160,10 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
     return (await this.#requireLive()).answerCycleQuestion(input);
   }
 
+  async abandonCycle(topicId: string): Promise<OrchestrationSnapshot> {
+    return (await this.#requireLive()).abandonCycle(topicId);
+  }
+
   async cancelRun(runId: string): Promise<OrchestrationSnapshot> {
     return (await this.#requireLive()).cancelRun(runId);
   }

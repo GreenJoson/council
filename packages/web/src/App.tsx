@@ -569,6 +569,19 @@ export default function App() {
     }
   }
 
+  async function handleAbandonCycle(): Promise<void> {
+    setOrchestrationBusyAction("cycle");
+    setRunsErrorMessage(null);
+    try {
+      setOrchestration(await orchestrationRepository.abandonCycle(activeTopicId));
+      setToastMessage("圆桌已放弃，议题可以重新开局");
+    } catch (error: unknown) {
+      setRunsErrorMessage(getErrorMessage(error));
+    } finally {
+      setOrchestrationBusyAction(null);
+    }
+  }
+
   async function handleRunAction(
     action: "start" | "cancel" | "recover",
     runId: string,
@@ -718,6 +731,7 @@ export default function App() {
               onCreateAndStartRun={handleCreateAndStartRun}
               onStartCycle={handleStartCycle}
               onAnswerCycleQuestion={handleAnswerCycleQuestion}
+              onAbandonCycle={handleAbandonCycle}
               onStartRun={(runId) => handleRunAction("start", runId)}
               onApproveRun={handleApproveRun}
               onCancelRun={(runId) => handleRunAction("cancel", runId)}

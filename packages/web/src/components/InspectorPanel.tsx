@@ -59,6 +59,7 @@ export interface InspectorPanelProps {
     questionMessageId: string,
     content: string,
   ) => Promise<boolean>;
+  onAbandonCycle: () => Promise<void>;
   onStartRun: (runId: string) => Promise<void>;
   onApproveRun: (run: OrchestrationRun) => Promise<void>;
   onCancelRun: (runId: string) => Promise<void>;
@@ -79,6 +80,7 @@ export function InspectorPanel({
   onCreateAndStartRun,
   onStartCycle,
   onAnswerCycleQuestion,
+  onAbandonCycle,
   onStartRun,
   onApproveRun,
   onCancelRun,
@@ -141,6 +143,7 @@ export function InspectorPanel({
         busyAction={orchestrationBusyAction}
         onStart={onStartCycle}
         onAnswer={onAnswerCycleQuestion}
+        onAbandon={onAbandonCycle}
       />
 
       <AutoRoundsPanel

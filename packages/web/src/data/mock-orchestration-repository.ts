@@ -326,6 +326,12 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     return this.#publish();
   }
 
+  async abandonCycle(_topicId: string): Promise<OrchestrationSnapshot> {
+    await waitForMock();
+    delete this.#snapshot.cycle;
+    return this.#publish();
+  }
+
   async cancelRun(runId: string): Promise<OrchestrationSnapshot> {
     await waitForMock();
     const run = this.#findRun(runId);

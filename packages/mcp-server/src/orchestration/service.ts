@@ -280,11 +280,26 @@ export class CouncilOrchestrationService {
     return await this.#cycles.advance(input.topicId);
   }
 
+  /** 用户主动放弃当前圆桌；Run 失败卡住时靠它把议题解锁。 */
+  abandonCycle(topicId: string): DiscussionCycleView | undefined {
+    return this.#cycles.abandon(topicId);
+  }
+
   /** Run 落地后接着推进对应议题；这一步失败只记日志，不能反过来打断执行面。 */
   #advanceCycleAfterRun(runId: string): void {
     void (async () => {
       try {
         const run = await this.orchestrator.getRun(runId);
+        if (run.status === "failed" || run.status === "cancelled") {
+          // 失败的 Run 没有提交发言，状态机看到的还是"轮到同一个人"。此时继续推进
+          // 就是对同一阶段无限重召唤——真实 Provider 上等于无上限烧钱。
+          // 停在这里，把 cycle 留成活动状态：用户可以恢复该 Run 接着走，也可以放弃圆桌。
+          logger.warn(
+            "orchestration",
+            `圆桌暂停：run=${runId} 以 ${run.status} 结束，等待人工恢复或放弃`,
+          );
+          return;
+        }
         await this.#cycles.advance(run.topicId);
       } catch (error) {
         if (!missingRun(error)) {

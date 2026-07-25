@@ -542,6 +542,15 @@ export function createCouncilHttpApp(
     sendSuccess(response, view, "圆桌讨论已开始，提案人正在发言。", 201);
   });
 
+  app.delete("/api/v1/topics/:topicId/cycle", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const view = orchestration.abandonCycle(params.topicId);
+    sendSuccess(response, view ?? null, "圆桌讨论已放弃。");
+  });
+
   app.post("/api/v1/topics/:topicId/cycle/answers", async (request, response) => {
     if (!orchestration) {
       throw new HttpError(503, "编排服务未启用。");

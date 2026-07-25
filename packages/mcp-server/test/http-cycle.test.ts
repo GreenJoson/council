@@ -9,10 +9,11 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import type {
-  AgentAdapter,
-  AgentInvocation,
-  AgentResult,
+import {
+  AgentInvocationError,
+  type AgentAdapter,
+  type AgentInvocation,
+  type AgentResult,
 } from "council-orchestrator";
 import { readEnvelope, startHttpHarness } from "./http-harness.js";
 
@@ -433,6 +434,51 @@ test("决策正文被事后改写时，一致性核对必须报出来而不是�
     }>(response)).data;
     assert.equal(metrics?.decisionConsistency.checked, 1);
     assert.equal(metrics?.decisionConsistency.divergedCycleIds.length, 1);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("Agent 反复失败时圆桌停住等人，不对同一阶段无限重召唤", async () => {
+  class AlwaysFails implements AgentAdapter {
+    calls = 0;
+    constructor(readonly adapterId: string) {}
+    invoke(): Promise<AgentResult> {
+      this.calls += 1;
+      return Promise.reject(new AgentInvocationError("假失败", true, "Agent 调用失败"));
+    }
+  }
+  const proposer = new AlwaysFails("claude");
+  const reviewer = new AlwaysFails("codex");
+  const harness = await startHttpHarness({}, [
+    { adapter: proposer, actorAlias: "claude", label: "Claude" },
+    { adapter: reviewer, actorAlias: "codex", label: "Codex" },
+  ]);
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ participants: ["claude", "codex"] }),
+    });
+    await delay(600);
+
+    // Run 自身的 maxAttemptsPerRound 允许有限重试；不设防时这里会是几十次。
+    assert.ok(
+      proposer.calls <= 2,
+      `提案人被召唤了 ${String(proposer.calls)} 次，说明失败后仍在自动重召唤`,
+    );
+    assert.equal(reviewer.calls, 0, "提案没成功就不该往下交接");
+
+    // 卡住的圆桌必须留有出口，否则这个议题再也开不了新圆桌。
+    const view = await readCycle(harness.baseUrl, topicId);
+    assert.equal(view?.cycle.status, "active");
+    const abandoned = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topicId}/cycle`,
+      { method: "DELETE" },
+    );
+    assert.equal(abandoned.status, 200);
+    assert.equal(await readCycle(harness.baseUrl, topicId), null);
   } finally {
     await harness.close();
   }

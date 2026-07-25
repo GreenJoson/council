@@ -297,6 +297,28 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     });
   }
 
+  async abandonCycle(topicId: string): Promise<OrchestrationSnapshot> {
+    const selectionGeneration = this.#selectionGeneration;
+    const activeTopicId = this.#snapshot.activeTopicId;
+    try {
+      await requestApiData(
+        this.#fetcher,
+        createApiUrl(
+          this.#baseUrl,
+          `/api/v1/topics/${encodeURIComponent(topicId)}/cycle`,
+        ),
+        parseDiscussionCycleView,
+        { method: "DELETE" },
+      );
+    } catch (error: unknown) {
+      this.#publishSync("offline", "圆桌操作失败 · 状态未假定成功");
+      throw error;
+    }
+    return this.#canRefreshMutation(selectionGeneration, activeTopicId, topicId)
+      ? await this.selectTopic(topicId)
+      : cloneSnapshot(this.#snapshot);
+  }
+
   /**
    * 圆桌写操作统一走这里：成功后立刻重读该议题，让面板看到的是服务端真实状态
    * 而不是本地猜测——自动交接是异步的，乐观更新只会显示一个不存在的阶段。

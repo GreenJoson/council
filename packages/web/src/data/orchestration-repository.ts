@@ -38,6 +38,8 @@ export interface OrchestrationRepository {
   /** 开始圆桌：冻结名册后由编排层自动交接，用户此后只在被提问时介入。 */
   startCycle(input: StartCycleInput): Promise<OrchestrationSnapshot>;
   answerCycleQuestion(input: AnswerCycleQuestionInput): Promise<OrchestrationSnapshot>;
+  /** 放弃当前圆桌；Run 失败卡住时用它解锁议题。 */
+  abandonCycle(topicId: string): Promise<OrchestrationSnapshot>;
   cancelRun(runId: string): Promise<OrchestrationSnapshot>;
   recoverRun(runId: string): Promise<OrchestrationSnapshot>;
   closeRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;
