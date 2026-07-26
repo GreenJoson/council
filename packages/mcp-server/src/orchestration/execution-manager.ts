@@ -177,9 +177,19 @@ export class RunExecutionManager {
     }
     const task = this.#execute(runId, mode)
       .catch((error: unknown) => {
-        if (!(error instanceof LeaseConflictError || error instanceof LeaseLostError)) {
-          logger.error("orchestration", "后台运行执行失败", error);
+        if (error instanceof LeaseConflictError) {
+          // 另一个执行者正拿着这次运行，本进程放手即可，属正常并发结果。
+          return;
         }
+        if (error instanceof LeaseLostError) {
+          // 关闭途中是预期的；不在关闭时丢掉租约意味着这次运行会被判中断，
+          // 必须留痕，否则失败在日志里完全不存在。
+          if (!this.#shuttingDown) {
+            logger.warn("orchestration", `运行因失去执行 lease 中止：run=${runId}`, error);
+          }
+          return;
+        }
+        logger.error("orchestration", "后台运行执行失败", error);
       })
       .finally(() => {
         this.#tasks.delete(runId);
@@ -212,8 +222,28 @@ export class RunExecutionManager {
         .then((renewed) => {
           lease = renewed;
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          // 只有「租约确实归了别人」才是终局。其余都是瞬时故障（SQLITE_BUSY、
+          // 写锁竞争等），下一拍继续续。此前一次失败就永久停续，租约必然过期，
+          // 于是一个还在正常思考的调用被时钟判成「执行进程中断」——用户看到的
+          // 就是流式输出到一半凭空消失。
+          const surrendered = error instanceof LeaseLostError
+            || error instanceof LeaseConflictError;
+          if (!surrendered && Date.now() < lease.expiresAtMs - this.options.leaseRenewMs) {
+            logger.warn(
+              "orchestration",
+              `执行 lease 续租失败，本拍重试：run=${runId}`,
+              error,
+            );
+            return;
+          }
           renewalFailed = true;
+          // 原因只有这一处能取到，丢掉它就再也查不出来。
+          logger.error(
+            "orchestration",
+            `执行 lease 已失去，运行将被判为中断：run=${runId}`,
+            error,
+          );
           this.orchestrator.abortActiveInvocation(
             runId,
             new LeaseLostError("执行 lease 续租失败或已被显式取消。"),

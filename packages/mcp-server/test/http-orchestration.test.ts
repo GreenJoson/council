@@ -1425,3 +1425,60 @@ test("shutdown 等待取消清理但受总预算限制，永不 settle 的 Adapt
     await harness.close();
   }
 });
+
+test("瞬时续租失败会重试，不把还在运行的调用判成中断", async () => {
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const agent = new FakeAgent("fake", async () => {
+    started.resolve();
+    // 模拟一次长思考：调用期间必然跨过多个续约拍。
+    await release.promise;
+    return { content: "长思考后的公开结论。" } satisfies AgentResult;
+  });
+  const harness = await startHttpHarness({
+    orchestrationLeaseTtlMs: 400,
+    orchestrationLeaseRenewMs: 20,
+    orchestrationSweepIntervalMs: 20,
+  }, [{ adapter: agent, actorAlias: "claude" }]);
+  try {
+    assert(harness.orchestration);
+    const topic = harness.database.createTopic({
+      title: "瞬时续租失败",
+      question: "一次瞬时故障会不会杀死健康调用？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const run = await createRunThroughHttp(harness.baseUrl, topic.id);
+    const orchestrator = harness.orchestration.orchestrator;
+    const original = orchestrator.renewRunLease.bind(orchestrator);
+    let injected = 0;
+    // 前两拍续约抛瞬时故障（既不是 LeaseLost 也不是 LeaseConflict）。
+    orchestrator.renewRunLease = async (input) => {
+      if (injected < 2) {
+        injected += 1;
+        throw new Error("database is locked");
+      }
+      return await original(input);
+    };
+    await fetch(`${harness.baseUrl}/api/v1/runs/${run.id}/actions/start`, {
+      method: "POST", headers: JSON_HEADERS, body: "{}",
+    });
+    await started.promise;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    orchestrator.renewRunLease = original;
+    release.resolve();
+
+    const settled = await waitForRun(
+      harness.orchestration,
+      run.id,
+      (candidate) => candidate.status === "completed" || candidate.status === "failed",
+      3_000,
+    );
+    assert.equal(injected, 2);
+    assert.equal(settled.status, "completed");
+    assert.equal(settled.failure, undefined);
+  } finally {
+    release.resolve();
+    await harness.close();
+  }
+});

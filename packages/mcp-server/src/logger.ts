@@ -13,6 +13,10 @@ function serializeError(error: unknown): string {
   return String(error);
 }
 
+function withCause(message: string, error: unknown): string {
+  return error === undefined ? message : `${message}: ${serializeError(error)}`;
+}
+
 function write(level: "INFO" | "WARN" | "ERROR", module: string, message: string): void {
   process.stderr.write(`[${new Date().toISOString()}] [${level}] [${module}] ${message}\n`);
 }
@@ -21,11 +25,11 @@ export const logger = {
   info(module: string, message: string): void {
     write("INFO", module, message);
   },
-  warn(module: string, message: string): void {
-    write("WARN", module, message);
+  // warn 同样接受起因：一条不带原因的警告，等于把现场丢了一半。
+  warn(module: string, message: string, error?: unknown): void {
+    write("WARN", module, withCause(message, error));
   },
   error(module: string, message: string, error?: unknown): void {
-    const details = error === undefined ? message : `${message}: ${serializeError(error)}`;
-    write("ERROR", module, details);
+    write("ERROR", module, withCause(message, error));
   },
 };
