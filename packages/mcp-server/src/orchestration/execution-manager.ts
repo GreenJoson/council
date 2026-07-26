@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilOrchestrator、lease/sweeper 配置与进程生命周期
- * @output 导出：后台 claim/drive/renew/release、周期恢复与有界关闭管理器
- * @pos    快速 REST 控制面与长期 Agent 执行面之间的进程级调度器
+ * @output 导出：后台 claim/drive、Run 与 RuntimeBinding 双续租、周期恢复及有界关闭管理器
+ * @pos    快速 REST 控制面与长期 Agent 执行面之间的双 lease 调度器
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -219,8 +219,12 @@ export class RunExecutionManager {
       }
       renewal = this.orchestrator
         .renewRunLease({ lease, ttlMs: this.options.leaseTtlMs })
-        .then((renewed) => {
+        .then(async (renewed) => {
           lease = renewed;
+          await this.orchestrator.renewActiveRuntimeBindingLease(
+            runId,
+            this.options.leaseTtlMs,
+          );
         })
         .catch((error: unknown) => {
           // 只有「租约确实归了别人」才是终局。其余都是瞬时故障（SQLITE_BUSY、

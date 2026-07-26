@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilStore、AgentAdapter、状态类型与可判定错误
- * @output 导出：可分离 begin/drive、适配器代次 fencing、显式安全失败消息的 CouncilOrchestrator 与重启分类
- * @pos    人工门、lease、适配器热替换、超时、重试、取消和失败恢复的唯一领域实现
+ * @output 导出：可分离 begin/drive、双 lease 心跳、适配器代次 fencing、显式安全失败消息的 CouncilOrchestrator 与重启分类
+ * @pos    人工门、双 lease、适配器热替换、超时、重试、取消和失败恢复的唯一领域实现
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -663,6 +663,18 @@ export class CouncilOrchestrator {
     return await this.store.renewRunLease(input);
   }
 
+  async renewActiveRuntimeBindingLease(runId: string, ttlMs: number): Promise<void> {
+    const bindingLease = this.#activeBindingLeases.get(runId);
+    if (!bindingLease) {
+      return;
+    }
+    const renewed = await this.store.renewRuntimeBindingLease({
+      lease: bindingLease,
+      ttlMs,
+    });
+    this.#activeBindingLeases.set(runId, renewed);
+  }
+
   async releaseRunLease(lease: RunLease): Promise<boolean> {
     return await this.store.releaseRunLease(lease);
   }
@@ -850,7 +862,7 @@ export class CouncilOrchestrator {
       renewal = this.renewRunLease({ lease: currentLease, ttlMs: request.ttlMs })
         .then(async (renewed) => {
           currentLease = renewed;
-          await this.#heartbeatActiveBinding(runId, request.ttlMs);
+          await this.renewActiveRuntimeBindingLease(runId, request.ttlMs);
         })
         .catch((_error: unknown) => {
           renewalFailure = new LeaseLostError("执行 lease 续租失败或已失去执行所有权。");
@@ -1252,24 +1264,6 @@ export class CouncilOrchestrator {
       if (this.#activeAdapterIds.get(runId) === adapter.adapterId) {
         this.#activeAdapterIds.delete(runId);
       }
-    }
-  }
-
-  async #heartbeatActiveBinding(runId: string, ttlMs: number): Promise<void> {
-    const bindingLease = this.#activeBindingLeases.get(runId);
-    if (!bindingLease) return;
-    try {
-      const renewed = await this.store.renewRuntimeBindingLease({
-        lease: bindingLease,
-        ttlMs,
-      });
-      this.#activeBindingLeases.set(runId, renewed);
-    } catch {
-      const lost = new LeaseLostError(
-        "RuntimeBinding 已关闭、过期或被其他执行者接管。",
-      );
-      this.abortActiveInvocation(runId, lost);
-      throw lost;
     }
   }
 

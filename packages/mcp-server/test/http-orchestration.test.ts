@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、SQLite Store、Fake Agent 与后台执行管理器
- * @output 导出：编排与持久会话 REST、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
+ * @output 导出：编排与持久会话 REST、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
  * @pos    Web 已冻结协议和跨进程自动执行语义的主验收套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1426,12 +1426,12 @@ test("shutdown 等待取消清理但受总预算限制，永不 settle 的 Adapt
   }
 });
 
-test("瞬时续租失败会重试，不把还在运行的调用判成中断", async () => {
+test("长调用跨越 RuntimeBinding TTL 且瞬时续租失败时仍能提交", async () => {
   const started = deferred<void>();
   const release = deferred<void>();
   const agent = new FakeAgent("fake", async () => {
     started.resolve();
-    // 模拟一次长思考：调用期间必然跨过多个续约拍。
+    // 模拟一次长思考：调用期间必须真正跨过初始 RuntimeBinding TTL。
     await release.promise;
     return { content: "长思考后的公开结论。" } satisfies AgentResult;
   });
@@ -1464,7 +1464,7 @@ test("瞬时续租失败会重试，不把还在运行的调用判成中断", as
       method: "POST", headers: JSON_HEADERS, body: "{}",
     });
     await started.promise;
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 650));
     orchestrator.renewRunLease = original;
     release.resolve();
 
@@ -1477,6 +1477,9 @@ test("瞬时续租失败会重试，不把还在运行的调用判成中断", as
     assert.equal(injected, 2);
     assert.equal(settled.status, "completed");
     assert.equal(settled.failure, undefined);
+    assert.equal(harness.database.getTopicDetail(topic.id, 20).messageTotal, 1);
+    const [binding] = await harness.orchestration.listRuntimeBindings(topic.id, true);
+    assert.equal(binding?.status, "idle");
   } finally {
     release.resolve();
     await harness.close();
