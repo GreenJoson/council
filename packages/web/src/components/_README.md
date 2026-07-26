@@ -25,4 +25,5 @@
 | `ArchitectureView.tsx` | 视图 | 项目架构档案：从讨论决策聚合生成的架构沉淀页（项目概览/演进时间线/不变量/图集四区块，拆分在 `architecture/` 子目录），经 `useTopicDetails` 一次性加载全部议题详情，内容区块见 `architecture/_README.md` |
 | `DecisionRecordsView.tsx` | 视图 | 左列表右详情的 ADR 归档；owner、决策提出者和备选作者优先使用历史行冻结快照，详情按需加载并支持失败重试与定位 |
 | `presentation.tsx` | 基础 | 统一品牌 logo、冻结 Actor 快照到 Participant 的转换、动态头像回退、议题状态与决策状态标签/徽章 |
+| `StatusBar.tsx` | 基础 | 底部状态条：右下角显示构建身份（版本 · commit · 构建时间），由 vite.config 在构建期注入；semver 不随重建变化，靠 commit 与时间区分手上跑的是哪个包 |
 | `architecture/` | 视图 | ArchitectureView 的四个内容区块子组件，见 `architecture/_README.md` |

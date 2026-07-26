@@ -115,10 +115,39 @@ textarea:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-rows: var(--header-height) minmax(0, 1fr);
+  grid-template-rows: var(--header-height) minmax(0, 1fr) var(--status-bar-height);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+}
+
+/* 状态条只占一行高度；对话框、scrim 和 toast 都是 fixed，不参与栅格排布。 */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 12px;
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-canvas) 96%, transparent);
+}
+
+.status-build {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  cursor: default;
+}
+
+.status-build-commit {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.status-build-sep {
+  opacity: 0.5;
 }
 
 .header-bar {

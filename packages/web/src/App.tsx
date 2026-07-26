@@ -28,6 +28,7 @@ import type { MentionPublishRequest } from "./components/Composer";
 import { DiscussionPanel } from "./components/DiscussionPanel";
 import { HeaderBar } from "./components/HeaderBar";
 import { InspectorPanel } from "./components/InspectorPanel";
+import { StatusBar } from "./components/StatusBar";
 import { TopicSidebar, type WorkspaceView } from "./components/TopicSidebar";
 import { createCouncilRepository } from "./data/create-repository";
 import { createOrchestrationRepository } from "./data/create-orchestration-repository";
@@ -790,6 +791,7 @@ export default function App() {
         />
       ) : null}
       {toastMessage ? <div className="toast" role="status">{toastMessage}</div> : null}
+      <StatusBar />
     </div>
   );
 }

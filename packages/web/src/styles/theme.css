@@ -22,6 +22,7 @@
   --radius-medium: 11px;
   --radius-large: 16px;
   --header-height: 64px;
+  --status-bar-height: 24px;
   --sidebar-width: 296px;
   /* 下限保持 340px：窄屏不挤讨论区；宽屏按视口增长，概要里的长值不再折行。 */
   --inspector-width: clamp(340px, 26vw, 440px);
