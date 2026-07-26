@@ -193,6 +193,16 @@ export class CouncilOrchestrationService {
     this.orchestrator = new CouncilOrchestrator(
       this.#store,
       registrations.map((registration) => registration.adapter),
+      {
+        // 未被适配器分类的异常此前会静默消失，运行里只剩一句无信息量的兜底文案。
+        onUnclassifiedError: ({ runId, adapterId }, error) => {
+          logger.error(
+            "orchestration",
+            `Agent 调用抛出未分类异常：run=${runId} adapter=${adapterId}`,
+            error,
+          );
+        },
+      },
     );
     this.manager = new RunExecutionManager(this.orchestrator, {
       ownerId: this.#processInstanceId,

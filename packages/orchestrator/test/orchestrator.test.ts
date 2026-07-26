@@ -911,3 +911,55 @@ test("续租失败按 lease 丢失中断，不归因 Agent 且不提交迟到消
   assert.equal(persisted.failure, undefined);
   assert.equal(store.messages.length, 0);
 });
+
+test("未分类异常必须报给宿主，公开文案仍不带原文", async () => {
+  const store = new FakeCouncilStore();
+  // 适配器抛出未经分类的原始异常：生产上正是这条路径把失败原因整个吞掉，
+  // 运行里只剩一句「适配器未提供可公开的错误分类」，日志里一行都没有。
+  const raw = new TypeError("内部细节不得外泄");
+  const failing = new FakeAgentAdapter("alpha", async () => {
+    throw raw;
+  });
+  const reported: Array<{ runId: string; adapterId: string; error: unknown }> = [];
+  const orchestrator = new CouncilOrchestrator(store, [failing], {
+    onUnclassifiedError: (context, error) => {
+      reported.push({ ...context, error });
+    },
+  });
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"], maxAttemptsPerRound: 1 },
+  ));
+
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure?.code, "agent_failed");
+  assert.doesNotMatch(failed.failure?.message ?? "", /内部细节/);
+  assert.equal(reported.length, 1);
+  assert.equal(reported[0]?.adapterId, "alpha");
+  assert.equal(reported[0]?.runId, created.id);
+  assert.equal(reported[0]?.error, raw);
+});
+
+test("已分类的失败不重复报给宿主", async () => {
+  const store = new FakeCouncilStore();
+  const failing = new FakeAgentAdapter("alpha", async () => {
+    throw new AgentInvocationError("已分类失败。", false, "已分类失败。");
+  });
+  const reported: unknown[] = [];
+  const orchestrator = new CouncilOrchestrator(store, [failing], {
+    onUnclassifiedError: (_context, error) => {
+      reported.push(error);
+    },
+  });
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"], maxAttemptsPerRound: 1 },
+  ));
+
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(reported.length, 0);
+});

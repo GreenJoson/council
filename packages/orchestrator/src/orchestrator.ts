@@ -463,6 +463,23 @@ export function classifyRestartDisposition(run: OrchestrationRun): RestartDispos
   return "ignore";
 }
 
+/** 宿主接收未分类异常的出口；实现方只应写本地日志，不得把内容回流到公开消息。 */
+export type UnclassifiedErrorReporter = (
+  context: Readonly<{ runId: string; adapterId: string }>,
+  error: unknown,
+) => void;
+
+/**
+ * 能被翻译成可公开失败文案的异常类型。不属于这些类型的异常会退化成一句
+ * 「适配器未提供可公开的错误分类」——那句话对排查毫无价值，所以未分类的
+ * 原始异常必须交给宿主日志，否则现场就只剩一次无声的失败。
+ */
+function isClassifiedInvocationError(error: unknown): boolean {
+  return error instanceof AgentCleanupTimeoutError
+    || error instanceof AgentTimeoutError
+    || error instanceof AgentInvocationError;
+}
+
 function invocationFailure(error: unknown): RunFailure {
   if (error instanceof AgentCleanupTimeoutError) {
     return { code: "agent_cleanup_timeout", message: error.message, retryable: false };
@@ -519,10 +536,14 @@ export class CouncilOrchestrator {
   readonly #activeBindingLeases = new Map<string, RuntimeBindingLease>();
   #adapterGeneration = 0;
 
+  readonly #onUnclassifiedError?: UnclassifiedErrorReporter;
+
   constructor(
     private readonly store: CouncilStore,
     adapters: readonly AgentAdapter[],
+    options?: Readonly<{ onUnclassifiedError?: UnclassifiedErrorReporter }>,
   ) {
+    this.#onUnclassifiedError = options?.onUnclassifiedError;
     for (const adapter of adapters) {
       assertAgentId(adapter.adapterId, "AgentAdapter.adapterId");
       if (this.#adapters.has(adapter.adapterId)) {
@@ -1036,6 +1057,13 @@ export class CouncilOrchestrator {
         }
         if (error instanceof InvocationCancelledError) {
           return await this.cancel(waiting.id);
+        }
+        if (!isClassifiedInvocationError(error)) {
+          // 只报给宿主日志，不写进 RunFailure：后者会成为公开文案。
+          this.#onUnclassifiedError?.(
+            { runId: waiting.id, adapterId: round.adapterId },
+            error,
+          );
         }
         const failure = invocationFailure(error);
         if (
