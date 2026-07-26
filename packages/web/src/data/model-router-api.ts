@@ -19,6 +19,7 @@ import type {
 const PROTOCOLS: readonly ProviderProtocol[] = [
   "claude-cli",
   "codex-cli",
+  "kimi-acp",
   "openai-compatible",
 ];
 

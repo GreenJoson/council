@@ -9,8 +9,8 @@
 | `src/lib.rs` | 入口 | 导出存储、错误、领域类型和输入结构 |
 | `src/error.rs` | 错误 | 定义可识别的 SQLite、NotFound、Conflict 和数据错误 |
 | `src/types.rs` | 类型 | 定义与 TypeScript camelCase JSON 兼容的动态 Actor、内容和快照领域模型 |
-| `src/store.rs` | 核心 | 解析活跃 Actor alias，冻结写入快照，拒绝索引 Actor/行快照不一致，并验证 Node v8 内容、Actor、Provider/Agent、RuntimeBinding、圆桌能力快照、逻辑请求/活动 session 唯一约束、实例身份和 revision |
-| `tests/compatibility.rs` | 集成 | 验证 fresh/v2/v3/v5→v8、动态 Actor、RuntimeBinding 与 Cycle capability schema、逻辑请求唯一键、快照身份一致、分页、跨连接、revision、版本镜像和未来结构拒绝 |
+| `src/store.rs` | 核心 | 解析活跃 Actor alias，冻结写入快照，拒绝索引 Actor/行快照不一致，并验证 Node v9 内容、Actor、Provider/Agent、Runtime 协议、RuntimeBinding、圆桌能力快照、逻辑请求/活动 session 唯一约束、实例身份和 revision |
+| `tests/compatibility.rs` | 集成 | 验证 fresh/v2/v3/v5→v9、动态 Actor、Kimi ACP/兼容 API ToolLoop、RuntimeBinding 与 Cycle capability schema、逻辑请求唯一键、快照身份一致、分页、跨连接、revision、版本镜像和未来结构拒绝 |
 | `tests/fixtures/` | 测试结构 | 保存当前 Node schema 的显式 Rust 测试夹具 |
 
 ## 公开 API

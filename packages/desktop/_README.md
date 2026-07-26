@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；Node sidecar 独占生产 schema 迁移，Rust 只有收到 `ready=true` 后才验证并打开 Store。Rust 内容命令按 active alias 解析动态 Actor 并返回冻结快照；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.5.3`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本引入统一 RuntimeEvent / RuntimeSessionRef 最小契约、事件流兼容桥与工具所有权校验，并把 `fix_review` 收紧为只读 commit/diff 互审。
+当前桌面发行版本为 `0.5.4`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本在统一 Runtime 契约上增加 Kimi Code ACP DelegatedRuntime：同一 RuntimeBinding 复用常驻进程与 ACP session，只开放项目内文件读取，accepted 决策、配置变更或空闲回收时关闭。

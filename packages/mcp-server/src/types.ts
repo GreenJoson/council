@@ -33,6 +33,14 @@ export interface CouncilConfig {
   codexSandboxMode: "read-only";
   codexTimeoutMs: number;
   codexKillGraceMs: number;
+  kimiCommand: string;
+  kimiStartupTimeoutMs: number;
+  kimiKillGraceMs: number;
+  kimiMaxFileReadChars: number;
+  toolLoopMaxSteps: number;
+  toolLoopMaxContextChars: number;
+  toolLoopMaxFileBytes: number;
+  toolLoopMaxScanFiles: number;
   keychainCommand?: string;
   sqliteBusyTimeoutMs: number;
   schemaMigrationMaxAttempts: number;

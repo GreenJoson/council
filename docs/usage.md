@@ -24,7 +24,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 | 双桌面手动接力 | 你习惯分别在 Claude Desktop Code 和 Codex App 中讨论 | 不需要 |
 | Codex 自动讨论 | 希望只在 Codex App 发一次指令，由 Codex 自动调用 Claude | 需要 |
 | Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复多 Agent 轮次 | 本机 Agent 需要登录；远程 Provider 需要 API Key |
-| 桌面工作台 | 希望双击启动、原生切项目并用 `@claude` / `@codex` / `@deepseek` / `@kimi` 直召 | 内容协作不需要；直召需要相应凭据 |
+| 桌面工作台 | 希望双击启动、原生切项目并用本机或远程 Agent 直召 | 内容协作不需要；直召需要相应 CLI 登录或 API Key |
 
 日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
 
@@ -62,9 +62,14 @@ npm run build:desktop
 
 桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用，但右栏只展示一张当前调用卡，旧调用折叠在“历史调用”中。直召依赖本地 Agent 服务，界面右上角显示连接状态；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
-`@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。每轮仍启动一个可取消的独立 OS 进程，并不存在常驻后台终端。
+`@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。Claude/Codex 每轮仍启动一个可取消的独立 OS 进程。
 
-Council 不随桌面安装包分发第三方专有 Agent SDK。当前持久性是“议题级逻辑 session + CLI resume”，不是隐藏的常驻模型进程：既保留上下文与增量效率，也让每一轮都可单独取消、超时和 fencing。未来常驻 helper 只能作为可选 transport 接入，不能改变公开上下文、请求账本和决策关闭语义。
+Kimi 有两个不同入口，不能混为一谈：
+
+- `Kimi Code`：本机 Kimi Code CLI 的 ACP DelegatedRuntime，不需要在 Council 填 API Key；先在本机完成 Kimi Code 登录，再从 catalog 添加 `Kimi Code` Provider 和 Agent。同一议题同一 Agent 会常驻复用一个 ACP 进程与 session，可读取当前项目内普通文本文件；Council 拒绝 Shell、文件写入、提交、推送和部署。
+- `Kimi`：OpenAI-compatible API 连接，需要单独 API Key；接收公开上下文，并通过 Council 只读 ToolLoop 按需读文件、列目录和搜索文本。
+
+Kimi Code 进程不会永久常驻：accepted 决策、配置变更、手动关闭或空闲回收都会关闭 RuntimeBinding 和进程。服务或 App 重启后会用 SQLite 保存的 ACP session ID 恢复，而不是重新发送全部历史。RuntimeBinding 的 session/cursor/epoch 仍是唯一真源，草稿和 ACP 事件不会绕过 lease/fencing 直接写消息。
 
 ## 圆桌能力与周期类型
 
@@ -79,9 +84,12 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 - 附件任务：可以额外声明媒体读取、视觉等能力。
 
 若任何参与者缺少所需能力，Council 会在启动模型前直接列出缺口，不消耗额度，也不允许
-纯文本模型声称已经读取本地文件或提交代码。当前 Claude/Codex resume Runtime 只具备只读
-项目能力；Kimi、DeepSeek 等兼容 API Runtime 只有文本能力。它们仍可参与普通架构讨论，
-但在增加受控只读 ToolLoop 或供应商原生 Delegated Runtime 前不能声称读过本地代码。
+模型声称执行了未授权操作。Claude/Codex resume Runtime 和 Kimi Code ACP Runtime 具备
+只读项目能力；Kimi API、DeepSeek 等兼容 API Runtime 通过 Council ToolLoop 获得受控
+`repository_read`，可读文件、列目录和搜索文本，但没有 Shell、`git_diff`、写文件、提交、
+推送或部署能力，因此不能承担要求完整 diff 证据的修复互审角色。
+工具事件不能自报权限：模型只返回工具名与参数，Council 从本地 ToolHost 注册表解析所需
+能力；未注册工具在执行前失败关闭。
 
 轮次预算耗尽时，界面会显示结构化的阻断分歧与停止原因。新发言如果缺少
 `council-verdict` 尾块，会按阻断处理并计入“缺少 verdict”度量，避免协议失效却继续显示
@@ -92,7 +100,7 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 点击顶栏齿轮打开 Model Router。设置明确分为两层：
 
 - Provider 连接：保存协议、API Base URL、Keychain 凭据、品牌和启用状态；Claude Code、
-  Codex CLI 复用本机登录，远程连接使用兼容 Chat Completions API。
+  Codex CLI 与 Kimi Code ACP 复用本机登录，远程连接使用兼容 Chat Completions API。
 - Agent：在某个 Provider 下保存独立名称、模型 ID、`@mentionAlias` 和启用状态。同一个
   Kimi、DeepSeek 或其他 Provider 可创建多个 Agent，每个 Agent 都拥有独立 Actor，
   不会统一显示成 `Other`。
@@ -102,13 +110,13 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 已经在执行中的调用不会被中途切换。在 Claude Code 里执行 `/model` 只会修改 Claude
 自身的新会话默认值，不会覆盖 Council Agent 保存的模型。
 
-远程 Provider 使用 OpenAI Chat Completions 兼容协议。API Key 保存于 macOS Keychain，不进入 Council SQLite、源码或设置 API 响应；界面只显示“是否已保存”。远程 Provider 只收到议题标题、问题、约束、本轮指令和已公开消息，不能直接读取项目目录，因此需要代码证据的轮次仍建议交给本机 Claude/Codex。
+远程 Provider 使用 OpenAI Chat Completions 兼容协议。API Key 保存于 macOS Keychain，不进入 Council SQLite、源码或设置 API 响应；界面只显示“是否已保存”。远程 Provider 先收到议题标题、问题、约束、本轮指令和已公开消息；需要代码证据时，模型只能调用 Council 提供的只读文件、目录和文本搜索工具。工具主机以真实路径限制当前项目，拒绝符号链接逃逸、敏感配置、Shell 和一切写操作。需要核对完整 Git diff、运行测试或修改代码的轮次仍应交给本机 Claude/Codex 或 Kimi Code ACP。
 
 Model Router 的配置写入由桌面应用内置 sidecar 独占。同一个日志库不能同时启动第二个配置写进程；Codex/Claude 的 stdio MCP 只能读取议题、发布公开结论和 proposed 决策，不能新增、修改或删除 Provider/Agent，也不能访问 Keychain。当前 HTTP 控制面只监听 loopback，并按本机单用户场景设计，没有实例令牌；不要端口转发或暴露给其他用户。未来若支持外部客户端，必须先增加每实例随机令牌和权限校验。
 
 完成设置后，编辑器的 `@` 补全和右侧 Agent 调用都会即时读取新的
-`mentionAlias`，无需重启服务。catalog 内置 Claude、Codex、OpenAI、Kimi、DeepSeek、
-Grok 与自定义兼容模板；模板未添加时不占路由列表空间。系统 Provider 不可删除，已知模板的供应商名称和品牌不可修改。删除远程 Provider 会同步清除其受管 Keychain 凭据；Provider/Agent 使用软删除，
+`mentionAlias`，无需重启服务。catalog 内置 Claude、Codex、OpenAI、Kimi API、Kimi Code
+ACP、DeepSeek、Grok 与自定义兼容模板；模板未添加时不占路由列表空间。系统 Provider 不可删除，已知模板的供应商名称和品牌不可修改。删除远程 Provider 会同步清除其受管 Keychain 凭据；Provider/Agent 使用软删除，
 活动 Run 正在引用时会失败关闭。
 
 ## 模式一：两个桌面手动接力

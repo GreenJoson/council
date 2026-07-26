@@ -6,7 +6,11 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-export type ProviderProtocol = "claude-cli" | "codex-cli" | "openai-compatible";
+export type ProviderProtocol =
+  | "claude-cli"
+  | "codex-cli"
+  | "kimi-acp"
+  | "openai-compatible";
 export type ProviderStatus = "active" | "inactive" | "deleted";
 
 export interface BrandAsset {

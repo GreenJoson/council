@@ -17,6 +17,14 @@ const REQUIRED_CODEX_SANDBOX_MODE = "read-only";
 const DEFAULT_CODEX_COMMAND = "codex";
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
+const DEFAULT_KIMI_COMMAND = "kimi";
+const DEFAULT_KIMI_STARTUP_TIMEOUT_MS = 30_000;
+const DEFAULT_KIMI_KILL_GRACE_MS = 3_000;
+const DEFAULT_KIMI_MAX_FILE_READ_CHARS = 262_144;
+const DEFAULT_TOOL_LOOP_MAX_STEPS = 12;
+const DEFAULT_TOOL_LOOP_MAX_CONTEXT_CHARS = 120_000;
+const DEFAULT_TOOL_LOOP_MAX_FILE_BYTES = 1_048_576;
+const DEFAULT_TOOL_LOOP_MAX_SCAN_FILES = 5_000;
 
 const FORBIDDEN_CLAUDE_ARGS = new Set([
   "--",
@@ -113,6 +121,15 @@ function parseOptionalTimer(name: string, env: NodeJS.ProcessEnv, fallback: numb
   return raw ? parseTimerValue(name, raw) : fallback;
 }
 
+function parseOptionalPositiveInteger(
+  name: string,
+  env: NodeJS.ProcessEnv,
+  fallback: number,
+): number {
+  const raw = env[name]?.trim();
+  return raw ? parsePositiveIntegerValue(name, raw) : fallback;
+}
+
 function isForbiddenArg(value: string, forbidden: ReadonlySet<string>): boolean {
   const flag = value.split("=", 1)[0]?.toLowerCase() ?? "";
   return forbidden.has(flag);
@@ -183,6 +200,42 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       "COUNCIL_CODEX_KILL_GRACE_MS",
       env,
       DEFAULT_CODEX_KILL_GRACE_MS,
+    ),
+    kimiCommand: env.COUNCIL_KIMI_COMMAND?.trim() || DEFAULT_KIMI_COMMAND,
+    kimiStartupTimeoutMs: parseOptionalTimer(
+      "COUNCIL_KIMI_STARTUP_TIMEOUT_MS",
+      env,
+      DEFAULT_KIMI_STARTUP_TIMEOUT_MS,
+    ),
+    kimiKillGraceMs: parseOptionalTimer(
+      "COUNCIL_KIMI_KILL_GRACE_MS",
+      env,
+      DEFAULT_KIMI_KILL_GRACE_MS,
+    ),
+    kimiMaxFileReadChars: parseOptionalPositiveInteger(
+      "COUNCIL_KIMI_MAX_FILE_READ_CHARS",
+      env,
+      DEFAULT_KIMI_MAX_FILE_READ_CHARS,
+    ),
+    toolLoopMaxSteps: parseOptionalPositiveInteger(
+      "COUNCIL_TOOL_LOOP_MAX_STEPS",
+      env,
+      DEFAULT_TOOL_LOOP_MAX_STEPS,
+    ),
+    toolLoopMaxContextChars: parseOptionalPositiveInteger(
+      "COUNCIL_TOOL_LOOP_MAX_CONTEXT_CHARS",
+      env,
+      DEFAULT_TOOL_LOOP_MAX_CONTEXT_CHARS,
+    ),
+    toolLoopMaxFileBytes: parseOptionalPositiveInteger(
+      "COUNCIL_TOOL_LOOP_MAX_FILE_BYTES",
+      env,
+      DEFAULT_TOOL_LOOP_MAX_FILE_BYTES,
+    ),
+    toolLoopMaxScanFiles: parseOptionalPositiveInteger(
+      "COUNCIL_TOOL_LOOP_MAX_SCAN_FILES",
+      env,
+      DEFAULT_TOOL_LOOP_MAX_SCAN_FILES,
     ),
     ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),

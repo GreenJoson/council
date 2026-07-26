@@ -12,7 +12,7 @@
 | `frozen-actor-rendering.test.tsx` | UI 回归 | 验证 Actor 改名后，旧议题所有者、决策提出者和备选作者仍显示写入时冻结快照 |
 | `configuration.test.ts` | 配置测试 | 验证 http 模式拒绝空值、相对路径和残缺 UNC 项目路径，以及 desktop 模式编排工厂的完整配置要求 |
 | `desktop-orchestration.test.ts` | 桌面编排 | 验证服务地址解析、离线降级与诚实文案、autostart 只拉起一次、服务恢复后自动转 LIVE 和健康轮询生命周期 |
-| `model-router.test.ts` | UI 逻辑 | 验证 Kimi/DeepSeek 名称与品牌、同 Provider 多 Agent、Claude/Codex 身份锁定、按需 catalog 及 API Key 不回显 |
+| `model-router.test.ts` | UI 逻辑 | 验证 Kimi API/Kimi Code ACP/DeepSeek 名称与品牌、同 Provider 多 Agent、Claude/Codex 身份锁定、按需 catalog 及 API Key 不回显 |
 | `auto-rounds.test.ts` | UI 逻辑 | 验证创建互斥、已决议题统一阻断、当前/历史调用、每 Agent 最新逻辑绑定分区和恢复预算 |
 | `selectors.test.ts` | 查询测试 | 验证议题搜索的空值、中文和大小写行为，以及 groupTopicsByStatus 的固定分组顺序、组内保序与空数组场景 |
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |

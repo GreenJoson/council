@@ -114,8 +114,9 @@ DeepSeek 或其他远程 Agent 时始终分配新的 UUID Actor；历史固定 K
 Claude/Codex 的名称、alias 与系统身份不可变，只允许修改模型和启用状态。
 
 API Key 不写 SQLite，macOS 通过系统 Keychain 保存；设置 API 只返回 `hasApiKey`。
-DeepSeek、Kimi、OpenAI、Grok 与自定义兼容 Provider 共用有界流式 Chat Completions
-运行时；上游错误正文不会进入 HTTP 响应或日志。删除远程 Provider 会先删除它明确
+DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 共用有界流式 Chat Completions
+ModelClient 和 Council 只读 ToolLoop；它们可通过受控工具读文件、列目录和搜索文本，但
+不能执行 Shell、读取敏感配置或写入项目。上游错误正文不会进入 HTTP 响应或日志。删除远程 Provider 会先删除它明确
 持有的 Keychain 项，失败则保持数据库配置不变；系统 Provider 永不删除。再次添加同一
 已删除模板会事务复活原 Provider 行、推进配置 revision，并使用新的 credentialRef 与
 连接状态；若 Keychain 或数据库任一步失败，会执行补偿，不留下半复活配置。

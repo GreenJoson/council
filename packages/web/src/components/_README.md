@@ -17,7 +17,7 @@
 | `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览，以及正文/议题两种语义化底部折叠；折叠高度从主题 token 读取，内容切换后恢复默认收起；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
 | `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成固定上限缩略 SVG；按 data-theme 联动主题，securityLevel 显式声明为 strict；点击放大，失败降级为原始代码块 + 错误提示 |
 | `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
-| `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、引用回复和动态 `@actor-id` 召唤；Claude、Codex、DeepSeek 与 Kimi 均使用独立 Actor 身份；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
+| `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、引用回复和动态 `@actor-id` 召唤；Claude、Codex、DeepSeek、Kimi API 与 Kimi Code 均使用独立 Actor 身份；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
 | `InspectorPanel.tsx` | 决策 | 组织自动轮次、真实约束、证据、备选方案和可空拟议决策；owner/备选作者优先使用各自行冻结快照 |
 | `CyclePanel.tsx` | 圆桌 | 开局勾选参与名册（首位为提案人）与持久化周期类型，展示 Runtime 能力、启动前缺口、阶段轨道、阻断结果、缺失 verdict 与累计度量 |
 | `AutoRoundsPanel.tsx` | 编排 | 展示 Agent 能力、单一当前调用卡、折叠历史、已决议题统一阻断及每 Agent 最新逻辑绑定状态/关闭/重开操作 |

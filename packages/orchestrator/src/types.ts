@@ -109,6 +109,8 @@ export type RuntimeBindingStatus =
 export type RuntimeTransportKind =
   | "claude-resume"
   | "codex-resume"
+  | "kimi-acp"
+  | "openai-tool-loop"
   | "openai-sessionless";
 
 export interface RuntimeBindingCursor {

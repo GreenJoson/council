@@ -8,7 +8,11 @@
 
 import catalogJson from "../resources/provider-catalog.json" with { type: "json" };
 
-export type ProviderProtocol = "claude-cli" | "codex-cli" | "openai-compatible";
+export type ProviderProtocol =
+  | "claude-cli"
+  | "codex-cli"
+  | "kimi-acp"
+  | "openai-compatible";
 export type BrandSourceKind = "project-curated" | "user-custom";
 
 export interface BrandCatalogEntry {
@@ -44,6 +48,7 @@ const COLOR_TOKEN_PATTERN = /^brand-[a-z][a-z0-9-]{0,63}$/u;
 const PROTOCOLS: readonly ProviderProtocol[] = [
   "claude-cli",
   "codex-cli",
+  "kimi-acp",
   "openai-compatible",
 ];
 

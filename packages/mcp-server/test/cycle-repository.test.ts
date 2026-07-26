@@ -1,5 +1,5 @@
 /**
- * @input  依赖：生产迁移器产出的真实 v8 库与 council-orchestrator 收敛仓储
+ * @input  依赖：生产迁移器产出的真实当前版本库与 council-orchestrator 收敛仓储
  * @output 验证：开局唯一性、能力快照重启恢复、发言推进与 CAS、提问挂起/回答幂等、收敛与放弃终态
  * @pos    收敛协议的持久化验收；刻意跑在真实迁移库上而不是手搭 fixture 上
  *

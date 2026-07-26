@@ -1,0 +1,451 @@
+/**
+ * @input  依赖：项目根目录、CouncilConfig 与结构化 Tool Call
+ * @output 导出：项目内读文件、列目录、文本搜索的有界只读 ToolHost 与共享敏感路径策略
+ * @pos    Council-owned ToolLoop 的本机沙箱；不执行 Shell、不写文件、不读取凭据文件
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+import {
+  lstat,
+  open,
+  readdir,
+  realpath,
+} from "node:fs/promises";
+import path from "node:path";
+import type {
+  ModelToolCall,
+  ModelToolDefinition,
+} from "./openai-compatible-model-client.js";
+import type { CouncilConfig } from "./types.js";
+
+const TOOL_NAMES = {
+  read: "council_read_text_file",
+  list: "council_list_directory",
+  search: "council_search_text",
+} as const;
+
+export function readOnlyToolCapability(
+  toolName: string,
+): "repository_read" | undefined {
+  return Object.values(TOOL_NAMES).includes(
+    toolName as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES],
+  )
+    ? "repository_read"
+    : undefined;
+}
+
+const IGNORED_DIRECTORIES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".aws",
+  ".ssh",
+  ".cache",
+  "node_modules",
+  "target",
+  "dist",
+  "build",
+  "coverage",
+]);
+
+const PROTECTED_FILE_NAMES = new Set([
+  ".env",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "credentials.json",
+  "id_rsa",
+  "id_ed25519",
+]);
+
+const PROTECTED_FILE_EXTENSIONS = new Set([
+  ".key",
+  ".pem",
+  ".p12",
+  ".pfx",
+]);
+
+export class ReadOnlyToolHostError extends Error {
+  constructor(
+    message: string,
+    readonly diagnosticCode: string,
+  ) {
+    super(message);
+    this.name = "ReadOnlyToolHostError";
+  }
+}
+
+export interface ReadOnlyToolResult {
+  toolCallId: string;
+  toolName: string;
+  content: string;
+}
+
+interface ToolArguments {
+  path?: unknown;
+  line?: unknown;
+  limit?: unknown;
+  query?: unknown;
+}
+
+function withinRoot(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+export function isProtectedProjectRelativePath(relativePath: string): boolean {
+  const segments = relativePath.split(path.sep).filter(Boolean);
+  if (segments.some((segment) => IGNORED_DIRECTORIES.has(segment))) {
+    return true;
+  }
+  const basename = segments.at(-1)?.toLowerCase() ?? "";
+  if (basename === ".env.example") {
+    return false;
+  }
+  return PROTECTED_FILE_NAMES.has(basename)
+    || basename.startsWith(".env.")
+    || PROTECTED_FILE_EXTENSIONS.has(path.extname(basename));
+}
+
+function parseArguments(call: ModelToolCall): ToolArguments {
+  let value: unknown;
+  try {
+    value = JSON.parse(call.arguments || "{}");
+  } catch {
+    throw new ReadOnlyToolHostError(
+      "工具参数不是有效 JSON。",
+      "invalid_tool_arguments",
+    );
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ReadOnlyToolHostError(
+      "工具参数必须是对象。",
+      "invalid_tool_arguments",
+    );
+  }
+  return value as ToolArguments;
+}
+
+function optionalPositiveInteger(
+  value: unknown,
+  fallback: number,
+  maximum: number,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw new ReadOnlyToolHostError(
+      "工具行号或数量必须是正整数。",
+      "invalid_tool_arguments",
+    );
+  }
+  return Math.min(Number(value), maximum);
+}
+
+function requiredPath(value: unknown, fallback?: string): string {
+  const candidate = value === undefined ? fallback : value;
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    throw new ReadOnlyToolHostError(
+      "工具 path 必须是非空字符串。",
+      "invalid_tool_arguments",
+    );
+  }
+  return candidate.trim();
+}
+
+function requiredQuery(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ReadOnlyToolHostError(
+      "搜索 query 必须是非空字符串。",
+      "invalid_tool_arguments",
+    );
+  }
+  return value.trim();
+}
+
+export class ReadOnlyToolHost {
+  readonly definitions: readonly ModelToolDefinition[] = [
+    {
+      type: "function",
+      function: {
+        name: TOOL_NAMES.read,
+        description:
+          "读取当前项目内的普通文本文件。path 可为项目相对路径；凭据、构建产物和项目外路径会被拒绝。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            path: { type: "string" },
+            line: { type: "integer", minimum: 1 },
+            limit: { type: "integer", minimum: 1 },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: TOOL_NAMES.list,
+        description: "列出当前项目内一个目录的直接子项，不递归。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            path: { type: "string", description: "项目相对目录，默认项目根目录。" },
+            limit: { type: "integer", minimum: 1 },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: TOOL_NAMES.search,
+        description:
+          "在当前项目的普通文本文件中按字面量搜索，返回文件、行号和有界片段。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            query: { type: "string" },
+            path: { type: "string", description: "项目相对目录，默认项目根目录。" },
+            limit: { type: "integer", minimum: 1 },
+          },
+          required: ["query"],
+        },
+      },
+    },
+  ];
+
+  readonly #root: string;
+  readonly #maxResultChars: number;
+  readonly #maxFileBytes: number;
+  readonly #maxScanFiles: number;
+  readonly #maxItems: number;
+
+  private constructor(root: string, config: CouncilConfig) {
+    this.#root = root;
+    this.#maxResultChars = config.maxOutputChars;
+    this.#maxFileBytes = config.toolLoopMaxFileBytes;
+    this.#maxScanFiles = config.toolLoopMaxScanFiles;
+    this.#maxItems = config.defaultMessageLimit;
+  }
+
+  static async create(projectPath: string, config: CouncilConfig): Promise<ReadOnlyToolHost> {
+    const root = await realpath(projectPath);
+    const info = await lstat(root);
+    if (!info.isDirectory()) {
+      throw new ReadOnlyToolHostError(
+        "当前项目路径不是目录。",
+        "invalid_project_path",
+      );
+    }
+    return new ReadOnlyToolHost(root, config);
+  }
+
+  async execute(call: ModelToolCall): Promise<ReadOnlyToolResult> {
+    const args = parseArguments(call);
+    let content: string;
+    switch (call.name) {
+      case TOOL_NAMES.read:
+        content = await this.#readTextFile(args);
+        break;
+      case TOOL_NAMES.list:
+        content = await this.#listDirectory(args);
+        break;
+      case TOOL_NAMES.search:
+        content = await this.#searchText(args);
+        break;
+      default:
+        throw new ReadOnlyToolHostError(
+          "模型请求了未注册工具。",
+          "unknown_tool",
+        );
+    }
+    return {
+      toolCallId: call.id,
+      toolName: call.name,
+      content: this.#bounded(content),
+    };
+  }
+
+  async #resolve(requestedPath: string): Promise<{ absolute: string; relative: string }> {
+    const candidate = path.isAbsolute(requestedPath)
+      ? requestedPath
+      : path.resolve(this.#root, requestedPath);
+    const absolute = await realpath(candidate);
+    if (!withinRoot(this.#root, absolute)) {
+      throw new ReadOnlyToolHostError(
+        "工具路径超出当前项目。",
+        "path_outside_project",
+      );
+    }
+    const relative = path.relative(this.#root, absolute);
+    if (isProtectedProjectRelativePath(relative)) {
+      throw new ReadOnlyToolHostError(
+        "安全策略禁止读取该路径。",
+        "protected_path",
+      );
+    }
+    return { absolute, relative: relative || "." };
+  }
+
+  async #readTextFile(args: ToolArguments): Promise<string> {
+    const resolved = await this.#resolve(requiredPath(args.path));
+    const info = await lstat(resolved.absolute);
+    if (!info.isFile() || info.size > this.#maxFileBytes) {
+      throw new ReadOnlyToolHostError(
+        "目标不是普通文本文件或超过文件大小上限。",
+        "file_not_readable",
+      );
+    }
+    const handle = await open(resolved.absolute, "r");
+    let content: string;
+    try {
+      content = await handle.readFile({ encoding: "utf8" });
+    } finally {
+      await handle.close();
+    }
+    if (content.includes("\0")) {
+      throw new ReadOnlyToolHostError(
+        "目标不是普通文本文件。",
+        "file_not_text",
+      );
+    }
+    const startLine = optionalPositiveInteger(
+      args.line,
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const limit = optionalPositiveInteger(
+      args.limit,
+      this.#maxItems,
+      this.#maxItems,
+    );
+    return content
+      .split(/\r?\n/u)
+      .slice(startLine - 1, startLine - 1 + limit)
+      .map((line, index) => `${String(startLine + index)}: ${line}`)
+      .join("\n");
+  }
+
+  async #listDirectory(args: ToolArguments): Promise<string> {
+    const resolved = await this.#resolve(requiredPath(args.path, "."));
+    const info = await lstat(resolved.absolute);
+    if (!info.isDirectory()) {
+      throw new ReadOnlyToolHostError(
+        "目标不是目录。",
+        "directory_not_readable",
+      );
+    }
+    const limit = optionalPositiveInteger(
+      args.limit,
+      this.#maxItems,
+      this.#maxItems,
+    );
+    const entries = (await readdir(resolved.absolute, { withFileTypes: true }))
+      .filter((entry) => !isProtectedProjectRelativePath(
+        path.join(resolved.relative, entry.name),
+      ))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, limit)
+      .map((entry) => ({
+        name: entry.name,
+        type: entry.isDirectory()
+          ? "directory"
+          : entry.isFile()
+            ? "file"
+            : "other",
+      }));
+    return JSON.stringify({ path: resolved.relative, entries });
+  }
+
+  async #searchText(args: ToolArguments): Promise<string> {
+    const query = requiredQuery(args.query);
+    const resolved = await this.#resolve(requiredPath(args.path, "."));
+    const info = await lstat(resolved.absolute);
+    if (!info.isDirectory()) {
+      throw new ReadOnlyToolHostError(
+        "搜索目标不是目录。",
+        "directory_not_readable",
+      );
+    }
+    const limit = optionalPositiveInteger(
+      args.limit,
+      this.#maxItems,
+      this.#maxItems,
+    );
+    const normalizedQuery = query.toLowerCase();
+    const results: Array<{ path: string; line: number; text: string }> = [];
+    const pending = [resolved.absolute];
+    let scannedFiles = 0;
+
+    while (pending.length > 0 && results.length < limit) {
+      const directory = pending.pop();
+      if (!directory) {
+        break;
+      }
+      const entries = (await readdir(directory, { withFileTypes: true }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        if (results.length >= limit) {
+          break;
+        }
+        const absolute = path.join(directory, entry.name);
+        const relative = path.relative(this.#root, absolute);
+        if (isProtectedProjectRelativePath(relative) || entry.isSymbolicLink()) {
+          continue;
+        }
+        if (entry.isDirectory()) {
+          pending.push(absolute);
+          continue;
+        }
+        if (!entry.isFile()) {
+          continue;
+        }
+        scannedFiles += 1;
+        if (scannedFiles > this.#maxScanFiles) {
+          throw new ReadOnlyToolHostError(
+            "项目搜索达到文件扫描上限，请缩小 path。",
+            "scan_limit",
+          );
+        }
+        const fileInfo = await lstat(absolute);
+        if (fileInfo.size > this.#maxFileBytes) {
+          continue;
+        }
+        const handle = await open(absolute, "r");
+        let content: string;
+        try {
+          content = await handle.readFile({ encoding: "utf8" });
+        } finally {
+          await handle.close();
+        }
+        if (content.includes("\0")) {
+          continue;
+        }
+        const lines = content.split(/\r?\n/u);
+        for (let index = 0; index < lines.length && results.length < limit; index += 1) {
+          const line = lines[index] ?? "";
+          if (line.toLowerCase().includes(normalizedQuery)) {
+            results.push({
+              path: relative,
+              line: index + 1,
+              text: line.slice(0, this.#maxResultChars),
+            });
+          }
+        }
+      }
+    }
+    return JSON.stringify({ query, scannedFiles, results });
+  }
+
+  #bounded(content: string): string {
+    if (content.length <= this.#maxResultChars) {
+      return content;
+    }
+    return `${content.slice(0, this.#maxResultChars)}\n[Council：工具结果已达到上限]`;
+  }
+}

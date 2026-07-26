@@ -143,7 +143,19 @@ with sync_playwright() as playwright:
     assert page.locator(".model-router-list-item", has_text="Kimi").count() == 0
     page.get_by_role("button", name="连接 Provider", exact=False).click()
     page.get_by_role("button", name="DeepSeek", exact=False).wait_for()
-    page.get_by_role("button", name="Kimi", exact=False).wait_for()
+    provider_catalog = page.locator(".agent-provider-catalog-list")
+    kimi_api = provider_catalog.locator("button").filter(
+        has=page.get_by_text("Kimi", exact=True)
+    )
+    kimi_code = provider_catalog.locator("button").filter(
+        has=page.get_by_text("Kimi Code", exact=True)
+    )
+    kimi_api.wait_for()
+    kimi_code.wait_for()
+    assert kimi_api.count() == 1
+    assert kimi_code.count() == 1
+    assert "OpenAI 兼容连接" in kimi_api.inner_text()
+    assert "本机 Kimi ACP 连接" in kimi_code.inner_text()
     page.get_by_role("button", name="DeepSeek", exact=False).click()
     page.get_by_text("连接 DeepSeek", exact=True).wait_for()
     page.get_by_role("button", name="取消", exact=True).click()
@@ -216,6 +228,18 @@ with sync_playwright() as playwright:
             "enabled": True,
         },
     )
+    tool_agent = api_request(
+        "POST",
+        "/api/v1/settings/agents",
+        {
+            "providerId": remote_provider["id"],
+            "slug": "router-tool",
+            "displayName": "Router Tool",
+            "model": "router-model-tool",
+            "mentionAlias": "router-tool",
+            "enabled": True,
+        },
+    )
     ready_snapshot = api_request("GET", "/api/v1/settings/model-router")
     ready_provider = next(
         provider
@@ -229,13 +253,18 @@ with sync_playwright() as playwright:
         for adapter in remote_capabilities["adapters"]
         if adapter["available"]
     }
-    assert {alpha_agent["id"], beta_agent["id"]} <= available_remote_ids, remote_capabilities
+    assert {
+        alpha_agent["id"],
+        beta_agent["id"],
+        tool_agent["id"],
+    } <= available_remote_ids, remote_capabilities
     # 配置由外部 API 客户端写入；重新加载浏览器快照，但不重启 Agent Service。
     page.reload(wait_until="domcontentloaded")
     page.get_by_role("heading", name="真实同步验收", exact=True).wait_for()
     capability_ledger = page.get_by_label("Agent 主动调用能力")
     capability_ledger.get_by_text("Router Alpha", exact=True).wait_for()
     capability_ledger.get_by_text("Router Beta", exact=True).wait_for()
+    capability_ledger.get_by_text("Router Tool", exact=True).wait_for()
 
     alpha_run = create_and_start_run(
         topic_id,
@@ -251,6 +280,16 @@ with sync_playwright() as playwright:
     )
     page.get_by_text("远程 Beta Agent 已完成即时调用。", exact=True).wait_for()
     wait_for_run_status(beta_run["id"], "completed")
+    tool_run = create_and_start_run(
+        topic_id,
+        tool_agent["id"],
+        "使用 Council 只读工具核对项目 package.json。",
+    )
+    page.get_by_text(
+        "远程 ToolLoop 已通过 Council 只读工具读取项目 package.json。",
+        exact=True,
+    ).wait_for()
+    wait_for_run_status(tool_run["id"], "completed")
 
     renamed_alpha = api_request(
         "PUT",

@@ -16,7 +16,9 @@ Claude Desktop ──┘                │
 
 Council.app ───────── React UI ── Tauri IPC ── Rust council-core ── SQLite
         └──────────── 内置 Agent Service sidecar ── Node schema migrator ── SQLite
-                                              └──── ExecutionManager ── Claude/Codex CLI
+                                              └──── ExecutionManager
+                                                     ├── Claude/Codex CLI
+                                                     └── Kimi Code ACP
 
 Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
                                       │
@@ -60,11 +62,12 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
   stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 圆桌开局会冻结周期类型、参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在任何模型调用前直接拒绝，避免让纯文本 Provider 假装已经读代码、跑测试或提交修复。
-- 普通讨论只要求文本能力；bug 修复互审只读核对交互式开发任务已经产生的 commit/diff，不在 headless Agent 中修改、测试、提交、推送或部署。当前 Claude/Codex resume Runtime 可承担该只读复审；Kimi/DeepSeek 的兼容 API Runtime 仍是纯文本能力，因此不会假装读过代码。
-- 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用，Council ToolLoop 只允许已授权的只读工具。
+- 普通讨论只要求文本能力；bug 修复互审只读核对交互式开发任务已经产生的 commit/diff，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime 与 Kimi Code ACP Runtime 可读取项目并核对既有 diff；Kimi API、DeepSeek 等兼容 API Runtime 通过 Council ToolLoop 获得有界 `repository_read`，但没有 Shell、`git_diff`、写文件或提交能力，因此不能冒充完整修复复审者。
+- 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
 - 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。
-- Claude/Codex 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。每轮仍是可取消的独立 CLI 进程，迟到回复不能写入。兼容远程 Provider 保持无状态。
-- 桌面当前不打包第三方专有 Agent SDK：Claude 与 Codex 复用用户本机 CLI 的公开 resume/session 能力；未来若引入常驻 helper，必须作为可选、可替换且经过独立许可审查的 transport。
+- 本机 Agent 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。Claude/Codex 当前按轮启动 CLI 并恢复 session；Kimi Code ACP 则让同一 RuntimeBinding 复用一个常驻进程与 ACP session。所有迟到回复都受 lease/fencing 阻止；兼容远程 Provider 的 ToolLoop 单轮无状态，但每一步工具调用都留在同一次模型对话内。
+- Kimi Code ACP 是首个正式 DelegatedRuntime：Kimi 自己拥有 AgentLoop，Council 只负责 RuntimeBinding、只读权限、取消、事件投影与原子公开提交。文件桥只读取当前项目真实路径下的普通文本文件；Shell、写文件、提交、推送和部署均被拒绝。accepted 决策、配置变更、手动关闭或空闲回收会终止对应进程。
+- DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Kun 风格的只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 只暴露项目内的读文件、列目录和文本搜索；AgentLoop 在统一步骤、上下文、文件与扫描预算内迭代；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
 - 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
 - Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
@@ -112,7 +115,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 
 > 使用 `$council` 读取 topic `<topic-id>`，检查项目代码，审查方案并把 critique 发布回去。
 
-自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI 或 Codex CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。启用远程 Provider 后，可用 `@deepseek`、`@kimi` 或自动轮次面板调用；远程 Provider 只接收 Council 已公开上下文，不会直接读取项目文件。
+自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI、Codex CLI 或 Kimi Code CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。Model Router 中的“`Kimi Code`”使用本机 ACP，可只读项目并持续复用议题会话；“`Kimi`”则使用兼容 API 和 Council 只读 ToolLoop。DeepSeek、Kimi API 等远程 Provider 只接收 Council 已公开上下文，并可通过 Council 明确授权的只读工具检查当前项目；它们不能运行 Shell、写文件、提交、推送或部署。
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
 SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全](docs/schema-migration-safety.md)。

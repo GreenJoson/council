@@ -58,7 +58,6 @@ export interface RuntimeToolEvent extends RuntimeEventBase {
   callId: string;
   toolName: string;
   owner: RuntimeToolOwner;
-  requiredCapability: RuntimeCapabilityKey;
 }
 
 export interface RuntimeUsageUpdatedEvent extends RuntimeEventBase {
@@ -84,9 +83,6 @@ export interface RuntimeEventSink {
 
 const COUNCIL_TOOL_LOOP_CAPABILITIES = new Set<RuntimeCapabilityKey>([
   "repository_read",
-  "shell_read",
-  "git_diff",
-  "media_read",
 ]);
 
 export function runtimeSessionRefFromBinding(
@@ -115,6 +111,8 @@ export function assertRuntimeToolEventAllowed(
   context: Readonly<{
     executionKind: RuntimeExecutionKind;
     grantedCapabilities: readonly RuntimeCapabilityKey[];
+    /** 必须来自本地 ToolHost/Runtime Adapter 注册表，不能来自模型事件。 */
+    registeredCapability?: RuntimeCapabilityKey;
   }>,
 ): void {
   const expectedOwner: RuntimeToolOwner = context.executionKind === "delegated"
@@ -125,17 +123,22 @@ export function assertRuntimeToolEventAllowed(
       `Runtime 工具所有权冲突：${context.executionKind} 必须由 ${expectedOwner} 执行。`,
     );
   }
-  if (!context.grantedCapabilities.includes(event.requiredCapability)) {
+  if (context.registeredCapability === undefined) {
     throw new OrchestrationConfigError(
-      `Runtime 未获授权能力：${event.requiredCapability}。`,
+      `Runtime 请求了未注册工具：${event.toolName}。`,
+    );
+  }
+  if (!context.grantedCapabilities.includes(context.registeredCapability)) {
+    throw new OrchestrationConfigError(
+      `Runtime 未获授权能力：${context.registeredCapability}。`,
     );
   }
   if (
     context.executionKind === "tool-loop"
-    && !COUNCIL_TOOL_LOOP_CAPABILITIES.has(event.requiredCapability)
+    && !COUNCIL_TOOL_LOOP_CAPABILITIES.has(context.registeredCapability)
   ) {
     throw new OrchestrationConfigError(
-      `Council ToolLoop 禁止执行非只读能力：${event.requiredCapability}。`,
+      `Council ToolLoop 禁止执行非只读能力：${context.registeredCapability}。`,
     );
   }
 }

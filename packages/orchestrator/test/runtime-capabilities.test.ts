@@ -94,6 +94,26 @@ test("纯文本 Provider 仍不能参加需要读取 commit/diff 的修复互审
   );
 });
 
+test("Council 只读 ToolLoop 让兼容 Provider 获得仓库读取但不伪造 git diff", () => {
+  const requirements = deriveCycleRequirements({
+    kind: "discussion",
+    participants: ["deepseek"],
+    task: { all: ["repository_read"] },
+  });
+  const toolLoop = snapshot("deepseek", "openai-tool-loop");
+  assert.deepEqual(toolLoop.granted, ["text", "repository_read"]);
+  assert.deepEqual(findCapabilityGaps(requirements, [toolLoop]), []);
+
+  const fixRequirements = deriveCycleRequirements({
+    kind: "fix_review",
+    participants: ["deepseek"],
+  });
+  assert.deepEqual(
+    findCapabilityGaps(fixRequirements, [toolLoop]),
+    [{ adapterId: "deepseek", missing: ["git_diff"] }],
+  );
+});
+
 test("远程 Provider 自述能力不能突破 Council policy", () => {
   assert.deepEqual(
     grantRuntimeCapabilities(

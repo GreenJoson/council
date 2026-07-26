@@ -113,12 +113,18 @@ function requirementsForRole(
   ]);
 }
 
-/** 由 transport 得到当前真实 Runtime 声明；兼容接口保持文本-only。 */
+/** 由 transport 得到当前真实 Runtime 声明；纯 sessionless 兼容接口保持文本-only。 */
 export function declaredCapabilitiesForTransport(
   transportKind: string,
 ): RuntimeCapabilityKey[] {
   if (transportKind === "claude-resume" || transportKind === "codex-resume") {
     return [...READ_ONLY_LOCAL_CAPABILITIES];
+  }
+  if (transportKind === "kimi-acp") {
+    return ["text", "repository_read", "session_resume"];
+  }
+  if (transportKind === "openai-tool-loop") {
+    return ["text", "repository_read"];
   }
   return [...STAGE_BASELINE_CAPABILITIES];
 }

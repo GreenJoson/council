@@ -1,7 +1,7 @@
 /**
  * @input  依赖：子进程命令、stdin、定时、输出上限、stdout 观察器与溢出策略
- * @output 导出：有界运行、增量 stdout 观察、首尾截断、进程树终止与 CLI 选项规范化工具
- * @pos    Claude 与 Codex 运行时共用的进程生命周期安全基础层
+ * @output 导出：有界运行、增量 stdout 观察、首尾截断、长驻进程树终止与 CLI 选项规范化工具
+ * @pos    Claude、Codex 与 Kimi 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -181,7 +181,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<b
 }
 
 async function settleWithin(
-  completion: Promise<ProcessResult>,
+  completion: Promise<unknown>,
   timeoutMs: number,
 ): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
@@ -204,7 +204,7 @@ async function settleWithin(
 
 async function terminateAndWait(
   child: ChildProcessWithoutNullStreams,
-  completion: Promise<ProcessResult>,
+  completion: Promise<unknown>,
   graceMs: number,
 ): Promise<void> {
   trySignalProcessTree(child, "SIGTERM");
@@ -237,6 +237,18 @@ async function terminateAndWait(
 
   // 无论底层探测最终结果如何，到达这里都必须保留调用方最初的停止原因。
   void processTreeGone;
+}
+
+/**
+ * 终止由调用方长期持有的进程树并等待退出。调用方必须传入只在 close/error 后
+ * settle 的 completion，避免发送信号后立即释放仍存活的 Agent Runtime。
+ */
+export async function terminateProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  completion: Promise<unknown>,
+  graceMs: number,
+): Promise<void> {
+  await terminateAndWait(child, completion, graceMs);
 }
 
 /**

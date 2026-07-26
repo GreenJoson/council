@@ -161,7 +161,7 @@ function normalizeBaseUrl(
 ): string | undefined {
   if (protocol !== "openai-compatible") {
     if (value?.trim()) {
-      invalid("本机 CLI Provider 不接受 API Base URL。");
+      invalid("本机 Runtime Provider 不接受 API Base URL。");
     }
     return undefined;
   }
@@ -295,7 +295,9 @@ export class ModelRouterService {
       brands: this.store.listBrands(),
       catalog: {
         providers: PROVIDER_CATALOG.providers.filter(
-          (entry) => entry.protocol === "openai-compatible",
+          (entry) =>
+            entry.protocol === "openai-compatible"
+            || entry.protocol === "kimi-acp",
         ),
       },
     };
@@ -305,7 +307,13 @@ export class ModelRouterService {
     const template = PROVIDER_CATALOG.providers.find(
       (entry) => entry.templateId === input.templateId,
     );
-    if (!template || template.protocol !== "openai-compatible") {
+    if (
+      !template
+      || (
+        template.protocol !== "openai-compatible"
+        && template.protocol !== "kimi-acp"
+      )
+    ) {
       invalid("Provider 模板不存在或不能由用户添加。");
     }
     const isCustom = template.templateId === "custom";

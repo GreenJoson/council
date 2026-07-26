@@ -38,9 +38,12 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 
 ## 版本规则
 
-当前 schema 版本为 `2`。版本 2 引入动态 Actor Identity、alias、冻结身份快照和 v2
-编排运行快照；固定作者枚举的版本 1 只作为迁移输入保留。详细字段、确定性映射与历史
-`other` 的待审计语义见 [Actor Identity v2 迁移](actor-identity-migration.md)。
+当前 schema 版本为 `9`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
+冻结历史身份并增加配置 revision；v6 增加 RuntimeBinding、双 lease 与请求账本；v7–v8
+增加可恢复的 DiscussionCycle、阻断提问与能力快照；v9 在不改变既有公开内容语义的前提下，
+扩展 Provider/Runtime 约束以接纳 Kimi ACP。固定作者枚举的版本 1 只作为迁移输入保留。
+详细字段、确定性映射与历史 `other` 的待审计语义见
+[Actor Identity v2 迁移](actor-identity-migration.md)。
 
 `schema_migrations` 是可审计账本，
 `PRAGMA user_version` 是 SQLite 快速版本标记，两者必须镜像一致。新增版本只能扩展 Node
@@ -49,6 +52,7 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 迁移重试次数必须由 `COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS` 显式提供；MCP/HTTP 缺失时
 启动立即失败。桌面 sidecar 由打包资源显式注入该键，不依赖源码默认值。
 
-测试覆盖 fresh 数据库、v1 内容/运行历史保留、旧作者确定性映射、未知 Actor 新写入拒绝、
+测试覆盖 fresh 数据库、v1 内容/运行历史保留、旧作者确定性映射、v8→v9 Provider/Agent/
+RuntimeBinding 无损升级、未知 Actor 新写入拒绝、
 canonical schema 反例、备份验证、故障注入回滚、版本不一致、未来版本、首次空库后外部创建、
 backup-lock 间隙并发写入、WAL checkpoint 阻塞、数据库身份错配，以及桌面 ready 门。

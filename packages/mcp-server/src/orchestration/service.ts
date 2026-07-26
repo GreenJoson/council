@@ -55,7 +55,10 @@ import {
   UnavailableSecretStore,
 } from "../keychain-secret-store.js";
 import { logger } from "../logger.js";
+import { KimiAcpRuntime } from "../kimi-acp-runtime.js";
+import { OpenAICompatibleModelClient } from "../openai-compatible-model-client.js";
 import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
+import { ReadOnlyAgentLoop } from "../read-only-agent-loop.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
 import { CodexAgentAdapter } from "./codex-agent-adapter.js";
@@ -66,6 +69,7 @@ import {
 } from "./cycle-driver.js";
 import { RunExecutionManager } from "./execution-manager.js";
 import { AgentProgressHub } from "./agent-progress-hub.js";
+import { KimiAcpAgentAdapter } from "./kimi-acp-agent-adapter.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
 
 export interface RegisteredAgentAdapter {
@@ -488,11 +492,7 @@ export class CouncilOrchestrationService {
           "计划 Agent 缺少可冻结的模型路由或适配器配置。",
         );
       }
-      const transportKind = provider.protocol === "claude-cli"
-        ? "claude-resume"
-        : provider.protocol === "codex-cli"
-          ? "codex-resume"
-          : "openai-sessionless";
+      const transportKind = transportKindForProtocol(provider.protocol);
       const binding = await this.#store.ensureRuntimeBinding({
         topicId,
         agentId: agent.id,
@@ -596,6 +596,7 @@ export class CouncilOrchestrationService {
       new Error("RuntimeBinding 已关闭，活动调用停止。"),
     );
     const closing = await this.#store.requestRuntimeBindingClose(bindingId, reason);
+    await this.orchestrator.closeAdapterBinding(closing.agentId, closing.id);
     if (closing.status === "closed") {
       return closing;
     }
@@ -652,11 +653,7 @@ export class CouncilOrchestrationService {
           "原 Agent 配置已删除或停用，不能重新打开持久会话。",
         );
       }
-      const transportKind = provider.protocol === "claude-cli"
-        ? "claude-resume"
-        : provider.protocol === "codex-cli"
-          ? "codex-resume"
-          : "openai-sessionless";
+      const transportKind = transportKindForProtocol(provider.protocol);
       return await this.#store.ensureRuntimeBinding({
         topicId: previous.topicId,
         agentId: agent.id,
@@ -918,6 +915,9 @@ export class CouncilOrchestrationService {
         .digest("hex")}`;
       let binding: EphemeralAgentBinding | undefined;
       if (this.#dynamicAdapterFingerprints.get(agent.id) !== fingerprint) {
+        if (this.#dynamicAdapterFingerprints.has(agent.id)) {
+          await this.#closeAgentRuntimeBindings(agent.id, "configuration-changed");
+        }
         binding = this.ephemeralAgentFactory(agent, provider);
         this.orchestrator.upsertAdapter(binding.adapter, fingerprint);
         this.#dynamicAdapterFingerprints.set(agent.id, fingerprint);
@@ -963,6 +963,7 @@ export class CouncilOrchestrationService {
       if (this.#staticAdapterIds.has(capability.id) || enabledIds.has(capability.id)) {
         continue;
       }
+      await this.#closeAgentRuntimeBindings(capability.id, "configuration-changed");
       this.#capabilities.splice(this.#capabilities.indexOf(capability), 1);
       this.orchestrator.removeAdapter(capability.id);
       this.#actors.delete(capability.id);
@@ -974,6 +975,15 @@ export class CouncilOrchestrationService {
     }
   }
 
+  async #closeAgentRuntimeBindings(agentId: string, reason: string): Promise<void> {
+    const bindings = await this.#store.listOpenRuntimeBindings();
+    for (const binding of bindings) {
+      if (binding.agentId === agentId) {
+        await this.closeRuntimeBinding(binding.id, reason);
+      }
+    }
+  }
+
   async shutdown(): Promise<void> {
     if (this.#runtimeBindingIdleTimer) {
       globalThis.clearInterval(this.#runtimeBindingIdleTimer);
@@ -981,6 +991,11 @@ export class CouncilOrchestrationService {
     }
     await this.#runtimeBindingIdleSweep;
     await this.manager.shutdown();
+    const bindings = await this.#store.listOpenRuntimeBindings();
+    await Promise.allSettled(
+      bindings.map(async (binding) =>
+        await this.orchestrator.closeAdapterBinding(binding.agentId, binding.id)),
+    );
   }
 
   close(): void {
@@ -997,7 +1012,9 @@ function transportKindForProtocol(
     ? "claude-resume"
     : protocol === "codex-cli"
       ? "codex-resume"
-      : "openai-sessionless";
+      : protocol === "kimi-acp"
+        ? "kimi-acp"
+        : "openai-tool-loop";
 }
 
 export function createProductionOrchestrationService(
@@ -1015,10 +1032,16 @@ export function createProductionOrchestrationService(
   const modelRouter = new ModelRouterService(routerStore, secretStore);
   const claudeRuntime = new ClaudeRuntime(councilConfig);
   const codexRuntime = new CodexRuntime(councilConfig);
+  const kimiRuntime = new KimiAcpRuntime(councilConfig);
   const remoteRuntime = new OpenAICompatibleRuntime(
     councilConfig.maxOutputChars,
     httpConfig.orchestrationDefaultAgentTimeoutMs,
   );
+  const remoteModelClient = new OpenAICompatibleModelClient(
+    councilConfig.maxOutputChars,
+    httpConfig.orchestrationDefaultAgentTimeoutMs,
+  );
+  const remoteAgentLoop = new ReadOnlyAgentLoop(remoteModelClient, councilConfig);
 
   modelRouter.registerTester(async (agent, provider, apiKey) => {
     if (provider.protocol === "claude-cli") {
@@ -1039,6 +1062,10 @@ export function createProductionOrchestrationService(
           ? { model: agent.model || councilConfig.codexModel }
           : {}),
       });
+      return;
+    }
+    if (provider.protocol === "kimi-acp") {
+      await kimiRuntime.probe(process.cwd(), agent.model);
       return;
     }
     if (!provider.baseUrl || !apiKey) {
@@ -1087,10 +1114,28 @@ export function createProductionOrchestrationService(
           "Codex CLI 当前不可用或未登录；请检查本机安装和登录状态。",
       };
     }
+    if (provider.protocol === "kimi-acp") {
+      return {
+        adapter: new KimiAcpAgentAdapter(
+          agent.id,
+          kimiRuntime,
+          modelRouter,
+          councilConfig.maxContextChars,
+        ),
+        checkAvailability: async () => {
+          const availability = await kimiRuntime.checkAvailability();
+          return await modelRouter.isAgentReady(agent.id)
+            && availability.available
+            && availability.authenticated;
+        },
+        limitationWhenUnavailable:
+          "Kimi Code CLI 当前不可用或未登录；请检查本机安装和登录状态。",
+      };
+    }
     return {
       adapter: new OpenAICompatibleAgentAdapter(
         agent.id,
-        remoteRuntime,
+        remoteAgentLoop,
         modelRouter,
         councilConfig.maxContextChars,
       ),

@@ -595,7 +595,9 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         ? "claude-resume"
         : provider.protocol === "codex-cli"
           ? "codex-resume"
-          : "openai-sessionless",
+          : provider.protocol === "kimi-acp"
+            ? "kimi-acp"
+            : "openai-tool-loop",
       status: "idle",
       hasSession: false,
       stateVersion: 1,

@@ -622,6 +622,11 @@ export class CouncilOrchestrator {
     return true;
   }
 
+  async closeAdapterBinding(adapterId: string, bindingId: string): Promise<void> {
+    assertAgentId(adapterId, "AgentAdapter.adapterId");
+    await this.#adapters.get(adapterId)?.adapter.closeBinding?.(bindingId);
+  }
+
   async createRun(input: CreateRunInput): Promise<OrchestrationRun> {
     const normalized = normalizeInput(input);
     const plan = normalized.plan.map((round) => {

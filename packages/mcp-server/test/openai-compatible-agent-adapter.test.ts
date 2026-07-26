@@ -8,19 +8,23 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
-import type { ModelRouterService } from "../src/model-router-service.js";
 import {
-  OpenAICompatibleRuntime,
-  OpenAICompatibleRuntimeError,
-  type OpenAICompatibleGenerateInput,
-} from "../src/openai-compatible-runtime.js";
+  AgentInvocationError,
+  type AgentInvocation,
+  type RuntimeEvent,
+} from "council-orchestrator";
+import type { ModelRouterService } from "../src/model-router-service.js";
+import { OpenAICompatibleRuntimeError } from "../src/openai-compatible-runtime.js";
 import { OpenAICompatibleAgentAdapter } from "../src/orchestration/openai-compatible-agent-adapter.js";
+import {
+  ReadOnlyAgentLoop,
+  type ReadOnlyAgentLoopInput,
+} from "../src/read-only-agent-loop.js";
 
 class FailingRuntime {
   constructor(private readonly error: Error) {}
 
-  async generate(_input: OpenAICompatibleGenerateInput): Promise<never> {
+  async generate(_input: ReadOnlyAgentLoopInput): Promise<never> {
     throw this.error;
   }
 }
@@ -80,7 +84,7 @@ function invocation(): AgentInvocation {
 function adapter(error: Error): OpenAICompatibleAgentAdapter {
   return new OpenAICompatibleAgentAdapter(
     "remote-test",
-    new FailingRuntime(error) as unknown as OpenAICompatibleRuntime,
+    new FailingRuntime(error) as unknown as ReadOnlyAgentLoop,
     settings,
     10_000,
   );
@@ -112,4 +116,49 @@ test("未知远程异常不会进入公开失败边界", async () => {
       && error.publicMessage === undefined
       && !error.message.includes("private upstream detail"),
   );
+});
+
+test("远程只读工具事件明确归 Council ToolLoop 所有", async () => {
+  const runtime = {
+    generate: async (input: ReadOnlyAgentLoopInput) => {
+      input.onToolEvent?.({
+        type: "tool.requested",
+        callId: "call-read",
+        toolName: "council_read_text_file",
+      });
+      input.onToolEvent?.({
+        type: "tool.completed",
+        callId: "call-read",
+        toolName: "council_read_text_file",
+      });
+      return "代码证据结论";
+    },
+  };
+  const current = invocation();
+  current.context.projectPath = process.cwd();
+  const events: RuntimeEvent[] = [];
+  const currentAdapter = new OpenAICompatibleAgentAdapter(
+    "remote-test",
+    runtime as unknown as ReadOnlyAgentLoop,
+    settings,
+    10_000,
+  );
+
+  const result = await currentAdapter.invoke(current, {
+    signal: new AbortController().signal,
+    runtimeEvents: {
+      emit: (event) => events.push(event),
+    },
+  });
+
+  assert.match(result.content, /代码证据结论/u);
+  assert.deepEqual(events.map((event) => event.type), [
+    "tool.requested",
+    "tool.completed",
+  ]);
+  const requested = events[0];
+  assert.equal(requested?.type, "tool.requested");
+  if (requested?.type === "tool.requested") {
+    assert.equal(requested.owner, "council");
+  }
 });

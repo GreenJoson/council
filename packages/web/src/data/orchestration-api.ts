@@ -78,7 +78,8 @@ const RUNTIME_BINDING_STATUSES: readonly RuntimeBindingStatus[] = [
   "starting", "ready", "thinking", "streaming", "idle", "interrupted", "closing", "closed",
 ];
 const RUNTIME_TRANSPORT_KINDS: readonly RuntimeTransportKind[] = [
-  "claude-resume", "codex-resume", "openai-sessionless",
+  "claude-resume", "codex-resume", "kimi-acp",
+  "openai-tool-loop", "openai-sessionless",
 ];
 const RUNTIME_CAPABILITY_KEYS: readonly RuntimeCapabilityKey[] = [
   "text",

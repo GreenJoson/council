@@ -283,7 +283,11 @@ export function ProviderProfileEditor({
       <EditorHeader
         brand={brand}
         title={title}
-        subtitle={protocol === "openai-compatible" ? "OpenAI 兼容 API 连接" : "本机 CLI 连接"}
+        subtitle={protocol === "openai-compatible"
+          ? "OpenAI 兼容 API 连接"
+          : protocol === "kimi-acp"
+            ? "本机 Kimi ACP 连接"
+            : "本机 CLI 连接"}
         isAdding={isAdding}
         active={draft.active}
         onActiveChange={(active) => onDraftChange({ active })}

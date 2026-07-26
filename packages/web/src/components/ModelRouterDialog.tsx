@@ -50,6 +50,16 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "模型路由操作失败";
 }
 
+function providerProtocolLabel(protocol: ProviderCatalogEntry["protocol"]): string {
+  if (protocol === "kimi-acp") {
+    return "本机 Kimi ACP 连接";
+  }
+  if (protocol === "openai-compatible") {
+    return "OpenAI 兼容连接";
+  }
+  return "本机 CLI 连接";
+}
+
 function agentDraft(agent: AgentDefinition): AgentDefinitionDraft {
   return {
     displayName: agent.displayName,
@@ -485,7 +495,10 @@ export function ModelRouterDialog({
                         return (
                           <button key={template.templateId} type="button" onClick={() => beginProvider(template)}>
                             <span><BrandGlyph brand={brand} size={17} /></span>
-                            <span><strong>{template.displayName}</strong><small>OpenAI 兼容连接</small></span>
+                            <span>
+                              <strong>{template.displayName}</strong>
+                              <small>{providerProtocolLabel(template.protocol)}</small>
+                            </span>
                             <Plus size={15} />
                           </button>
                         );

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：COUNCIL_FAKE_PROVIDER_PORT 与 OpenAI Chat Completions 流式请求
- * @output 导出：按模型返回可识别公开文本增量的 loopback 测试 Provider
- * @pos    动态远程 Provider/双 Agent 热加载与恢复边界的跨进程 E2E 替身
+ * @output 导出：按模型返回公开文本、只读 Tool Call 或故障的 loopback 测试 Provider
+ * @pos    动态远程 Provider/双 Agent/只读 ToolLoop 热加载与恢复边界的跨进程 E2E 替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -50,6 +50,49 @@ const server = createServer(async (request, response) => {
   const model = typeof payload?.model === "string" ? payload.model : "";
   if (model === "failure-model") {
     response.writeHead(503).end();
+    return;
+  }
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  if (model === "router-model-tool") {
+    const toolMessage = messages.find((message) => message?.role === "tool");
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+    });
+    if (!toolMessage) {
+      const toolChunks = [
+        {
+          index: 0,
+          id: "call-read-package",
+          type: "function",
+          function: {
+            name: "council_read_text_file",
+            arguments: "{\"path\":\"package",
+          },
+        },
+        {
+          index: 0,
+          function: {
+            arguments: ".json\"}",
+          },
+        },
+      ];
+      for (const toolCall of toolChunks) {
+        response.write(`data: ${JSON.stringify({
+          choices: [{ delta: { tool_calls: [toolCall] } }],
+        })}\n\n`);
+      }
+      response.end("data: [DONE]\n\n");
+      return;
+    }
+    const toolContent = typeof toolMessage.content === "string"
+      ? toolMessage.content
+      : "";
+    const reply = toolContent.includes("\"name\": \"council\"")
+      ? "远程 ToolLoop 已通过 Council 只读工具读取项目 package.json。"
+      : "远程 ToolLoop 没有收到预期的项目文件内容。";
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\n`);
+    response.end("data: [DONE]\n\n");
     return;
   }
   const reply = model === "router-model-beta"

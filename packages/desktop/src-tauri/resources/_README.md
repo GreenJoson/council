@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `agent-service-defaults.json` | 配置正本 | 内置 Agent 服务的非敏感、安全默认参数，显式覆盖 schema 迁移重试、桌面 ready/身份轮询和有界 Agent 工具回合预算 |
+| `agent-service-defaults.json` | 配置正本 | 内置 Agent 服务的非敏感、安全默认参数，显式覆盖 schema 迁移重试、桌面 ready/身份轮询、Kimi ACP 启动/文件读取边界及兼容 API ToolLoop 的步骤、上下文、文件与扫描预算 |
 | `node-LICENSE` | 构建产物 | 从实际打包的 Node.js 发行版复制的许可证，不纳入 Git |
 | `agent-service-THIRD-PARTY-NOTICES.txt` | 构建产物 | esbuild 汇总的 sidecar 第三方版权声明，不纳入 Git |
 

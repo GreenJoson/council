@@ -121,6 +121,47 @@ test("Provider 与 Agent 分层：同一 Kimi 连接可创建多个独立 Agent"
   }
 });
 
+test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", async () => {
+  const fixture = await createFixture();
+  try {
+    const before = await fixture.service.snapshot();
+    const template = before.catalog.providers.find(
+      (candidate) => candidate.templateId === "kimi-code",
+    );
+    assert.equal(template?.protocol, "kimi-acp");
+    assert.deepEqual(template?.modelCandidates, [
+      "k3",
+      "k3-256k",
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+    ]);
+
+    const provider = await fixture.service.createProvider({
+      templateId: "kimi-code",
+      slug: "kimi-code",
+      displayName: "Kimi Code",
+      active: true,
+    });
+    assert.equal(provider.protocol, "kimi-acp");
+    assert.equal(provider.requiresApiKey, false);
+    assert.equal(provider.hasApiKey, false);
+    assert.equal(provider.baseUrl, undefined);
+
+    const agent = fixture.service.createAgent({
+      providerId: provider.id,
+      slug: "kimi-k3-reviewer",
+      displayName: "Kimi K3 Reviewer",
+      model: "k3",
+      mentionAlias: "kimi-k3",
+      enabled: true,
+    });
+    assert.equal(await fixture.service.isAgentReady(agent.id), true);
+    assert.equal(fixture.secrets.values.size, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("Provider 校验 HTTPS；Keychain 写入失败时不创建半配置连接", async () => {
   const fixture = await createFixture();
   try {

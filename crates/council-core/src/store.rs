@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v8 Actor/Model Router/RuntimeBinding/Cycle SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v8 逻辑请求/session/capability 唯一 schema、查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v9 Actor/Model Router/RuntimeBinding/Cycle SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v9 Runtime 协议/逻辑请求/session/capability 唯一 schema、查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,7 +18,7 @@ use crate::types::{
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 8;
+const SUPPORTED_SCHEMA_VERSION: i64 = 9;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -560,7 +560,7 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_index_sql_contains(
         connection,
         "idx_runtime_bindings_active_session",
-        "WHERE session_id IS NOT NULL AND status <> 'closed' AND transport_kind IN ('claude-resume', 'codex-resume')",
+        "WHERE session_id IS NOT NULL AND status <> 'closed' AND transport_kind IN ('claude-resume', 'codex-resume', 'kimi-acp')",
     )?;
     assert_table_sql_contains(
         connection,
@@ -592,7 +592,7 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "runtime_bindings",
         &[
-            "transport_kind IN ('claude-resume', 'codex-resume', 'openai-sessionless')",
+            "transport_kind IN ( 'claude-resume', 'codex-resume', 'openai-sessionless', 'openai-tool-loop', 'kimi-acp' )",
             "agent_config_revision INTEGER NOT NULL CHECK (agent_config_revision > 0)",
             "provider_config_revision INTEGER NOT NULL CHECK (provider_config_revision > 0)",
             "(cursor_created_at IS NULL AND cursor_message_id IS NULL)",
