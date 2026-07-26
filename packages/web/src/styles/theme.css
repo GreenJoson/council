@@ -23,7 +23,8 @@
   --radius-large: 16px;
   --header-height: 64px;
   --sidebar-width: 296px;
-  --inspector-width: 340px;
+  /* 下限保持 340px：窄屏不挤讨论区；宽屏按视口增长，概要里的长值不再折行。 */
+  --inspector-width: clamp(340px, 26vw, 440px);
   --discussion-column-min: 940px;
   --discussion-column-fluid: 86cqi;
   --discussion-column-max: 1280px;
