@@ -97,9 +97,13 @@ function safeInvocationError(error: unknown): AgentInvocationError {
   const publicMessage = error instanceof ClaudeRuntimeError
     ? error.message
     : undefined;
+  // detail 只落本地日志，不进 publicMessage：CLI 拒绝时真正的原因只在 stderr 里，
+  // 没有它就只能对着「检查登录状态」猜，而真因可能与登录和模型权限都无关。
+  const privateDetail = error instanceof ClaudeRuntimeError ? error.privateDetail : undefined;
   logger.error(
     "claude-agent",
-    `Claude 调用失败：code=${diagnosticCode} retryable=${String(retryable)} reason=${publicMessage ?? "unclassified"}`,
+    `Claude 调用失败：code=${diagnosticCode} retryable=${String(retryable)} reason=${publicMessage ?? "unclassified"}`
+    + (privateDetail ? ` detail=${privateDetail}` : ""),
   );
   return new AgentInvocationError(
     retryable

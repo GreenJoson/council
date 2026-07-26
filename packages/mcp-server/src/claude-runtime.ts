@@ -42,6 +42,22 @@ const MCP_ISOLATION_ARGS = [
   '{"mcpServers":{}}',
 ] as const;
 
+const MAX_STDERR_DETAIL_CHARS = 300;
+
+/** 取 stderr 首个非空行作为失败原因；CLI 的拒绝理由都在第一行。 */
+function firstStderrLine(stderr: string): string {
+  const line = stderr
+    .split("\n")
+    .map((item) => item.trim())
+    .find((item) => item.length > 0);
+  if (!line) {
+    return "";
+  }
+  return line.length > MAX_STDERR_DETAIL_CHARS
+    ? `${line.slice(0, MAX_STDERR_DETAIL_CHARS)}…`
+    : line;
+}
+
 export interface ClaudeRuntimeInput {
   prompt: string;
   cwd: string;
@@ -64,6 +80,11 @@ export class ClaudeRuntimeError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly diagnosticCode: string,
+    /**
+     * 仅供本地日志的失败细节。message 会成为公开消息，privateDetail 不会——
+     * 两者必须保持这个不对称，否则 CLI 的 stderr 会随讨论一起被存进共享库。
+     */
+    readonly privateDetail?: string,
   ) {
     super(message);
     this.name = "ClaudeRuntimeError";
@@ -320,6 +341,9 @@ export class ClaudeRuntime {
       "--output-format",
       "stream-json",
       "--include-partial-messages",
+      // CLI 契约：--print 搭配 stream-json 必须带 --verbose，否则子进程直接退出 1
+      // 且不产出任何 stream-json，调用方只能看到一个没有原因的失败。
+      "--verbose",
       "--permission-mode",
       this.config.claudePermissionMode,
       ...MCP_ISOLATION_ARGS,
@@ -350,10 +374,14 @@ export class ClaudeRuntime {
       if (parsed?.is_error === true) {
         throw classifyFailure(content);
       }
+      // CLI 因参数或环境自身拒绝时只写 stderr、不产出 stream-json，公开消息里就只剩
+      // 「检查登录状态和模型权限」这种猜测。stderr 可能带路径与提示词，绝不能进公开流，
+      // 因此原因只随错误对象走到本地日志，公开消息保持脱敏。
       throw new ClaudeRuntimeError(
         "Claude Code 调用失败，请检查登录状态、模型权限和本地日志。",
         true,
         `process_exit_${String(result.exitCode)}`,
+        firstStderrLine(result.stderr),
       );
     }
     const response = parseClaudeOutput(result.stdout);

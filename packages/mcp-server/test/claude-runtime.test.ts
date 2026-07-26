@@ -35,6 +35,12 @@ if (argDumpFile) {
 if (pidFile) {
   writeFileSync(pidFile, String(process.pid));
 }
+// 复刻真实 CLI 的参数契约：--print 搭配 stream-json 缺 --verbose 时立即退出 1，
+// 且只写 stderr、不产出任何 stream-json。生产上正是这个组合把整轮圆桌打挂。
+if (args.includes("--print") && args.includes("stream-json") && !args.includes("--verbose")) {
+  process.stderr.write("Error: When using --print, --output-format=stream-json requires --verbose");
+  process.exit(1);
+}
 if (mode === "tree-hang") {
   spawn(process.execPath, [
     "-e",
