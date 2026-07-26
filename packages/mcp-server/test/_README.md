@@ -4,8 +4,9 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `schema-migrator.test.ts` | 主安全验收 | 用完整生产 v1/v2 与精确 v4 fixture 验证迁移到 v5：当前 Kimi/DeepSeek 重绑 UUID Actor、旧种子冻结、Claude/Codex 身份恢复、Topic/Message/Decision 及 `orchestration_runs` 全列逐值不变，以及漂移拒绝、备份、回滚与 WAL 阻塞 |
-| `schema-v7-migration.test.ts` | 安全验收 | 验证 v7 收敛容器的存储级不变量：议题内 active cycle 唯一、轮次预算硬停止、终态必须带 completed_at 与 proposed 决策、awaiting_user 与 resume_stage 双向绑定、cycle 内单一未答问题与按提问消息幂等、revision 推进与议题级联清理 |
+| `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v8：身份/运行数据无损、Runtime 能力快照 backfill、漂移拒绝、备份、回滚与 WAL 阻塞 |
+| `schema-v7-migration.test.ts` | 安全验收 | 在当前 v8 库上继续冻结 v7 收敛容器不变量，并验证 accepted 决策使用 canonical 停止原因终结 cycle |
+| `schema-v8-migration.test.ts` | 数据迁移 | 用最小现场 v7 cycle 直接验证需求/能力 backfill、旧停止原因规范化和 accepted trigger 修复 |
 | `cycle-repository.test.ts` | 安全验收 | 在真实迁移库上验证收敛仓储：开局唯一与已决议题拒绝开局、同意路径直达 synthesis、阻塞回环与预算用尽放弃、提问挂起/回答的重放幂等、过期版本 CAS 拒绝 |
 | `database.test.ts` | 单元测试 | 验证动态 Actor alias、冻结快照与索引一致、Session 历史/current 语义、未知身份拒绝、revision 分域与 lease 零噪声 |
 | `agent-progress-hub.test.ts` | 单元测试 | 验证临时 Agent 草稿的顺序、有界追加、快照和完成清理 |
@@ -30,6 +31,6 @@
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
 | `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式 Chat Completions，用于远程 Provider/双 Agent E2E |
-| `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：点一次跑完全程、决策正文与 synthesis 逐字一致、提问处停住且回答后不重跑、重复作答幂等、名册不足两位拒绝开局、diff 互审带 commit 引用、Agent 反复失败时停住等人、运行度量与一致性核对 |
-| `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证自动交接：一次开局跑完提案/评审/收敛、阻塞自动触发反驳回环、提问处停住且回答后不重来、预算用尽放弃不写决策 |
+| `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：能力 fail-fast、冻结修订/能力快照、点一次跑完全程、提问恢复、缺失 verdict 度量、阻断停止与决策一致性 |
+| `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证自动交接：一次开局跑完提案/评审/收敛、阻塞反驳回环、提问恢复，以及预算用尽原子保存阻断分歧 |
 | `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |

@@ -97,7 +97,7 @@ function stageBody(input: StageInstructionInput): readonly string[] {
   switch (input.stage) {
     case "proposal":
       return [
-        "你是本议题的提案人。基于当前项目代码给出一个可执行方案。",
+        "你是本议题的提案人。基于公开的问题、约束与证据给出一个可执行方案。",
         "",
         `随后 ${reviewerList(input.reviewers)} 会独立复审你的方案并可以否决它，`,
         "所以结论必须可验证、可反驳：写清方案、关键取舍、已知风险和验证方式。",

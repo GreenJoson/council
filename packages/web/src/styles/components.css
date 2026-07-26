@@ -1933,6 +1933,11 @@
   color: var(--color-text-muted);
 }
 
+.cycle-badge.is-warning {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
 .cycle-budget {
   display: flex;
   align-items: center;
@@ -2023,6 +2028,19 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 9px;
+}
+
+.cycle-outcome.is-completed {
+  border-color: var(--color-positive);
+  background: color-mix(in srgb, var(--color-positive) 10%, transparent);
+}
+
+.cycle-outcome.is-completed .cycle-question-title {
+  color: var(--color-positive);
+}
+
+.cycle-outcome .cycle-turns {
   margin-top: 9px;
 }
 

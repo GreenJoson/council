@@ -525,6 +525,15 @@ export function createCouncilHttpApp(
     sendSuccess(response, view ?? null);
   });
 
+  app.get("/api/v1/topics/:topicId/cycle/latest", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const view = orchestration.readLatestCycle(params.topicId);
+    sendSuccess(response, view ?? null);
+  });
+
   app.post("/api/v1/topics/:topicId/cycle", async (request, response) => {
     if (!orchestration) {
       throw new HttpError(503, "编排服务未启用。");
@@ -535,9 +544,11 @@ export function createCouncilHttpApp(
       topicId: params.topicId,
       participants: input.participants,
       ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
-      ...(input.requiresCommitRef === undefined
+      kind: input.kind
+        ?? (input.requiresCommitRef ? "fix_review" : "discussion"),
+      ...(input.taskRequirements === undefined
         ? {}
-        : { requiresCommitRef: input.requiresCommitRef }),
+        : { taskRequirements: input.taskRequirements }),
     });
     sendSuccess(response, view, "圆桌讨论已开始，提案人正在发言。", 201);
   });

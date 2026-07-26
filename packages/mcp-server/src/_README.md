@@ -9,7 +9,7 @@
 | `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题、消息、proposed 决策和可传递请求取消的 Claude 工具 |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
-| `schema-definitions.ts` | Schema 正本 | 保存 v1–v7 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1–v8 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
 | `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移、备份与失败关闭 |
 | `schema-migration-values.ts` | 迁移值边界 | 严格读取历史行字段并映射旧作者/Agent 身份，不接触迁移事务 |
 | `schema-storage.ts` | 存储边界 | 提供迁移共用的 pragma/完整性/行数校验、schema 快照、在线备份验证和文件保护 |
@@ -18,6 +18,7 @@
 | `schema-v5-migration.ts` | 迁移步骤 | 将当前 Kimi/DeepSeek Agent 重绑到新 UUID Actor，冻结旧种子供历史读取，并恢复 Claude/Codex 不可变身份 |
 | `schema-v6-migration.ts` | 迁移步骤 | 增加 RuntimeBinding、绑定 lease、议题级请求账本、活动 session 唯一约束、运行快照 v4、accepted fencing 与独立 revision 触发器 |
 | `schema-v7-migration.ts` | 迁移步骤 | 增加 DiscussionCycle（固定四段收敛、轮次预算、冻结上下文游标、议题级 active 唯一）与 BlockingQuestion（公开提问/回答、cycle 内单一未答、按提问消息幂等） |
+| `schema-v8-migration.ts` | 迁移步骤 | 为 DiscussionCycle 持久化周期类型、需求快照、Agent/Provider/Runtime 修订与能力快照，以及预算耗尽的结构化阻断结果 |
 | `database.ts` | 核心 | 验证已迁移 schema，区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |

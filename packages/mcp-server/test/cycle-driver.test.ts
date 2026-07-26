@@ -12,7 +12,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { SQLiteCouncilStore, commitCycleTurn } from "council-orchestrator";
+import {
+  SQLiteCouncilStore,
+  commitCycleTurn,
+  deriveCycleRequirements,
+} from "council-orchestrator";
 import { ACTOR_SNAPSHOT_SCHEMA_VERSION } from "../src/actor-identity.js";
 import { CycleDriver, type CycleRunner } from "../src/orchestration/cycle-driver.js";
 import { migrateCouncilSchema } from "../src/schema-migrator.js";
@@ -20,6 +24,31 @@ import { migrateCouncilSchema } from "../src/schema-migrator.js";
 const TOPIC = "topic_driver";
 const NOW = "2026-01-01T00:00:00.000Z";
 const PARTICIPANTS = ["claude", "codex"] as const;
+
+function cycleStartInput(roundBudget?: number) {
+  return {
+    topicId: TOPIC,
+    participants: PARTICIPANTS,
+    kind: "discussion" as const,
+    requirements: deriveCycleRequirements({
+      kind: "discussion",
+      participants: PARTICIPANTS,
+    }),
+    runtimeCapabilities: PARTICIPANTS.map((adapterId) => ({
+      schemaVersion: 1 as const,
+      adapterId,
+      actorId: adapterId,
+      agentConfigRevision: 1,
+      providerId: `provider-${adapterId}`,
+      providerConfigRevision: 1,
+      bindingRevision: `test:${adapterId}`,
+      transportKind: "test",
+      declared: ["text" as const],
+      granted: ["text" as const],
+    })),
+    ...(roundBudget === undefined ? {} : { roundBudget }),
+  };
+}
 
 const ACTOR_SNAPSHOT_SQL = `
   json_object(
@@ -47,7 +76,7 @@ interface Harness {
   cleanup: () => void;
 }
 
-async function createHarness(roundBudget = 3): Promise<Harness> {
+async function createHarness(): Promise<Harness> {
   const directory = mkdtempSync(path.join(tmpdir(), "council-driver-"));
   const databasePath = path.join(directory, "council.sqlite3");
   await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
@@ -209,7 +238,7 @@ async function drive(harness: Harness, maxSteps = 20): Promise<void> {
 test("开局后自动交接：用户只点一次，提案与全体评审依次被召唤", async () => {
   const harness = await createHarness();
   try {
-    await harness.driver.start({ topicId: TOPIC, participants: PARTICIPANTS });
+    await harness.driver.start(cycleStartInput());
     await drive(harness);
 
     assert.deepEqual(
@@ -236,7 +265,7 @@ test("阻塞异议自动触发反驳并回到评审，不需要用户居中调�
   const harness = await createHarness();
   try {
     // start() 已经跑完提案，所以立场要在下一次召唤之前设好。
-    await harness.driver.start({ topicId: TOPIC, participants: PARTICIPANTS });
+    await harness.driver.start(cycleStartInput());
     harness.replyWith("blocking");
     await harness.driver.advance(TOPIC);
     harness.replyWith("agree");
@@ -261,7 +290,7 @@ test("Agent 提问时驱动器停住，不在未决前提上继续推进", async
   const harness = await createHarness();
   try {
     harness.replyWith("agree", true);
-    await harness.driver.start({ topicId: TOPIC, participants: PARTICIPANTS });
+    await harness.driver.start(cycleStartInput());
     await drive(harness);
 
     const view = harness.store.readActiveDiscussionCycle(TOPIC);
@@ -289,14 +318,21 @@ test("Agent 提问时驱动器停住，不在未决前提上继续推进", async
 });
 
 test("预算用尽仍有阻塞时自动放弃，不产出没人认可的结论", async () => {
-  const harness = await createHarness(2);
+  const harness = await createHarness();
   try {
     harness.replyWith("blocking");
-    await harness.driver.start({ topicId: TOPIC, participants: PARTICIPANTS });
+    await harness.driver.start(cycleStartInput(2));
     await drive(harness);
 
     assert.equal(harness.decisions.length, 0, "放弃路径不得写决策");
     assert.equal(harness.store.readActiveDiscussionCycle(TOPIC), undefined);
+    const terminal = harness.store.readLatestDiscussionCycle(TOPIC);
+    assert.equal(terminal?.cycle.stopReason, "round_budget_exhausted");
+    assert.equal(terminal?.cycle.outcome?.kind, "blocking_disagreements");
+    assert.ok(
+      (terminal?.cycle.outcome?.items.length ?? 0) > 0,
+      "预算耗尽必须原子保留仍未解决的 blocking 发言",
+    );
     assert.ok(
       harness.invocations.every((item) => item.messageKind !== "synthesis"),
       "放弃路径不得进入 synthesis",

@@ -580,6 +580,7 @@ mod tests {
     use crate::orchestration::ReadyService;
     use rusqlite::Connection;
     use std::fs;
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::OnceLock;
@@ -622,6 +623,22 @@ mod tests {
         settings
             .configure_log_library(log_library)
             .expect("configure log library");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve isolated port");
+        let isolated_port = listener.local_addr().expect("isolated address").port();
+        drop(listener);
+        let settings_path = config.join("settings.json");
+        let mut persisted: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(&settings_path).expect("read persisted settings"),
+        )
+        .expect("decode persisted settings");
+        persisted["orchestrationBaseUrl"] =
+            serde_json::Value::String(format!("http://127.0.0.1:{isolated_port}"));
+        fs::write(
+            &settings_path,
+            serde_json::to_vec(&persisted).expect("encode isolated settings"),
+        )
+        .expect("write isolated settings");
+        let settings = SettingsStore::open(&config).expect("reopen isolated settings");
         let mut state = DesktopState {
             settings,
             database_path: None,

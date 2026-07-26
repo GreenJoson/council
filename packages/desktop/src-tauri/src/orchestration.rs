@@ -167,9 +167,12 @@ pub fn last_service_error(log_directory: &Path) -> Option<String> {
     let mut tail = String::new();
     file.read_to_string(&mut tail).ok()?;
     tail.lines()
-        .filter(|line| line.contains("[ERROR]"))
-        .next_back()
-        .map(|line| line.rsplit_once("] ").map_or(line, |(_, rest)| rest).to_string())
+        .rfind(|line| line.contains("[ERROR]"))
+        .map(|line| {
+            line.rsplit_once("] ")
+                .map_or(line, |(_, rest)| rest)
+                .to_string()
+        })
 }
 
 /// 该目录是否位于 macOS 会拦截的隐私保护位置。
@@ -350,8 +353,8 @@ pub fn terminate_service(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::{
-        built_in_autostart, is_privacy_protected, last_service_error, probe_http_service,
-        service_defaults, SERVICE_LOG_FILE_NAME,
+        SERVICE_LOG_FILE_NAME, built_in_autostart, is_privacy_protected, last_service_error,
+        probe_http_service, service_defaults,
     };
     use crate::validation::LoopbackEndpoint;
     use std::io::{Read, Write};
@@ -478,7 +481,10 @@ mod tests {
     fn privacy_protected_locations_are_recognised_without_matching_lookalikes() {
         let home = std::path::Path::new("/Users/someone");
         for name in ["Documents", "Desktop", "Downloads"] {
-            assert!(is_privacy_protected(&home.join(name).join("council"), home), "{name}");
+            assert!(
+                is_privacy_protected(&home.join(name).join("council"), home),
+                "{name}"
+            );
         }
         assert!(!is_privacy_protected(
             std::path::Path::new("/Users/someone/Projects/council"),

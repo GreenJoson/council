@@ -25,6 +25,7 @@ const FROZEN_SCHEMA_DIGESTS: ReadonlyMap<number, string> = new Map([
   [5, "b53a7b9dfd74068cec951d43f83697e902cd6921bc322e509ebc733f14e73771"],
   [6, "51f8a6684fd07a0ccd768cbce7c78a7a60718d2024217f382fb656d0a1a1cd34"],
   [7, "10f07f206328eec7845623786586e0e005ea8e15b80626c0fb72d21e3302f43e"],
+  [8, "7b99a20dff08fef3edce8e344ac15d8ae7ab46d18b49e338f4d3f7cd95306ef1"],
 ]);
 
 test("已发布迁移的 schema 文本被冻结", () => {

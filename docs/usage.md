@@ -64,7 +64,27 @@ npm run build:desktop
 
 `@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。每轮仍启动一个可取消的独立 OS 进程，并不存在常驻后台终端。
 
-Council 0.5.0 不随桌面安装包分发第三方专有 Agent SDK。当前持久性是“议题级逻辑 session + CLI resume”，不是隐藏的常驻模型进程：既保留上下文与增量效率，也让每一轮都可单独取消、超时和 fencing。未来常驻 helper 只能作为可选 transport 接入，不能改变公开上下文、请求账本和决策关闭语义。
+Council 不随桌面安装包分发第三方专有 Agent SDK。当前持久性是“议题级逻辑 session + CLI resume”，不是隐藏的常驻模型进程：既保留上下文与增量效率，也让每一轮都可单独取消、超时和 fencing。未来常驻 helper 只能作为可选 transport 接入，不能改变公开上下文、请求账本和决策关闭语义。
+
+## 圆桌能力与周期类型
+
+开始圆桌时，Council 会一次性冻结参与名册、周期类型、任务需求，以及每个参与者当时的
+Agent/Provider/Runtime 修订和实际授权能力。运行期间修改模型或 Provider 不会改写已经开始的
+cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普通讨论还是修复互审。
+
+- 普通讨论：只要求公开文本能力。
+- bug 修复互审：要求提案人具备仓库读写、shell、测试、diff 与 commit，评审者至少具备
+  仓库读取、只读 shell、测试和 diff。
+- 附件任务：可以额外声明媒体读取、视觉等能力。
+
+若任何参与者缺少所需能力，Council 会在启动模型前直接列出缺口，不消耗额度，也不允许
+纯文本模型声称已经读取本地文件或提交代码。当前 Claude/Codex resume Runtime 只具备只读
+项目能力；Kimi、DeepSeek 等兼容 API Runtime 只有文本能力。它们仍可参与普通架构讨论，
+但在增加受控工具 Runtime 前不能承担修复执行。
+
+轮次预算耗尽时，界面会显示结构化的阻断分歧与停止原因。新发言如果缺少
+`council-verdict` 尾块，会按阻断处理并计入“缺少 verdict”度量，避免协议失效却继续显示
+为已收敛。
 
 ## 模型与 Provider 设置
 

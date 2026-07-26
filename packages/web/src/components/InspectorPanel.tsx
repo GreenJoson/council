@@ -53,7 +53,7 @@ export interface InspectorPanelProps {
   onStartCycle: (
     participants: string[],
     roundBudget: number,
-    requiresCommitRef: boolean,
+    kind: "discussion" | "fix_review",
   ) => Promise<boolean>;
   onAnswerCycleQuestion: (
     questionMessageId: string,

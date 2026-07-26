@@ -9,7 +9,7 @@
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并发送公开增量，转发公开 JSONL 消息 |
 | `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，转发公开 `delta.content` 并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
-| `service.ts` | 聚合 | 固定浏览器身份/策略、允许单次覆盖完成复核、检查 Agent 可用性并组装生产依赖 |
+| `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
 Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，
@@ -53,6 +53,6 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 取消或失败清理会在同一状态迁移中清空 session 与游标；任何缺少 session 的绑定都强制使用
 完整公开上下文。进程重启只保留仍存在的可恢复 session。只有 open 议题可以创建运行或重开
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续调用。
-| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数与「决策正文 == 最终 synthesis」一致性核对 |
+| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 开局后按收敛状态机决定下一位发言人并创建/启动 Run；提问处停住，收敛时写 proposed 决策，预算用尽自动放弃 |
+| `cycle-driver.ts` | 自动交接 | 按持久化 cycle kind 决定下一位发言人并创建/启动 Run；提问处停住，收敛时写 proposed 决策，预算用尽原子保存结构化阻断分歧 |

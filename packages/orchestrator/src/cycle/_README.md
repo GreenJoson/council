@@ -14,3 +14,4 @@
 | `cycle-codec.ts` | 安全边界 | 严格解码 cycle / 阻塞提问行，校验名册、轮次、挂起与回归阶段的一致性，并投影成状态机输入 |
 | `cycle-commit.ts` | 原子边界 | 在轮次提交事务内把刚落库的公开消息记成一次发言并开出阻塞提问；消息与发言必须同生共死 |
 | `cycle-repository.ts` | 数据访问 | 开局唯一性、按 `state_version` CAS 推进、提问挂起与回答（按公开消息 id 幂等）、收敛与放弃终态 |
+| `runtime-capabilities.ts` | 能力正本 | 定义最小 RuntimeCapability、按周期类型/任务推导需求、策略与 Runtime 声明取交集，并在模型调用前报告缺口 |

@@ -23,6 +23,7 @@ import type {
   OrchestrationStatus,
   RuntimeBinding,
   RuntimeBindingStatus,
+  RuntimeCapabilityKey,
   RuntimeTransportKind,
 } from "../types/orchestration";
 
@@ -79,6 +80,29 @@ const RUNTIME_BINDING_STATUSES: readonly RuntimeBindingStatus[] = [
 const RUNTIME_TRANSPORT_KINDS: readonly RuntimeTransportKind[] = [
   "claude-resume", "codex-resume", "openai-sessionless",
 ];
+const RUNTIME_CAPABILITY_KEYS: readonly RuntimeCapabilityKey[] = [
+  "text",
+  "repository_read",
+  "repository_write",
+  "shell_read",
+  "shell_write",
+  "tests",
+  "git_diff",
+  "git_commit",
+  "media_read",
+  "vision",
+  "session_resume",
+];
+const CYCLE_KINDS: readonly DiscussionCycle["kind"][] = [
+  "discussion",
+  "fix_review",
+];
+const CYCLE_STOP_REASONS = [
+  "converged",
+  "round_budget_exhausted",
+  "decision_accepted",
+  "cancelled",
+] as const;
 
 function recordValue(value: unknown, path: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -114,6 +138,13 @@ function integerValue(record: Record<string, unknown>, key: string, minimum = 0)
   return value;
 }
 
+function schemaVersionOne(record: Record<string, unknown>, path: string): 1 {
+  if (record.schemaVersion !== 1) {
+    throw new Error(`${path}.schemaVersion 必须是受支持的版本 1`);
+  }
+  return 1;
+}
+
 function numberValue(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -128,6 +159,35 @@ function booleanValue(record: Record<string, unknown>, key: string): boolean {
     throw new Error(`${key} 必须是布尔值`);
   }
   return value;
+}
+
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} 必须是布尔值`);
+  }
+  return value;
+}
+
+function parseCapabilityArray(
+  record: Record<string, unknown>,
+  key: string,
+): RuntimeCapabilityKey[] {
+  return arrayValue(record, key, (item, index) => {
+    if (
+      typeof item !== "string"
+      || !RUNTIME_CAPABILITY_KEYS.includes(item as RuntimeCapabilityKey)
+    ) {
+      throw new Error(`${key}[${String(index)}] 包含不支持的能力`);
+    }
+    return item as RuntimeCapabilityKey;
+  });
 }
 
 function enumValue<T extends string>(
@@ -178,6 +238,7 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
       },
     } : {}),
     available: booleanValue(record, "available"),
+    runtimeCapabilities: parseCapabilityArray(record, "runtimeCapabilities"),
     ...(limitation ? { limitation } : {}),
   };
 }
@@ -267,7 +328,44 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
   const record = recordValue(value, "cycle view");
   const cycleRecord = recordValue(record.cycle, "cycle");
   const proposedDecisionId = optionalString(cycleRecord, "proposedDecisionId");
-  const stopReason = optionalString(cycleRecord, "stopReason");
+  const stopReason = cycleRecord.stopReason === undefined
+    ? undefined
+    : enumValue(cycleRecord, "stopReason", CYCLE_STOP_REASONS);
+  const outcomeRecord = cycleRecord.outcome === undefined
+    ? undefined
+    : recordValue(cycleRecord.outcome, "cycle.outcome");
+  const kind = enumValue(cycleRecord, "kind", CYCLE_KINDS);
+  const requirementsRecord = recordValue(cycleRecord.requirements, "cycle.requirements");
+  const taskRecord = recordValue(requirementsRecord.task, "cycle.requirements.task");
+  const byParticipantRecord = recordValue(
+    requirementsRecord.byParticipant,
+    "cycle.requirements.byParticipant",
+  );
+  const runtimeCapabilities = arrayValue(
+    cycleRecord,
+    "runtimeCapabilities",
+    (item) => {
+      const snapshot = recordValue(item, "runtime capability snapshot");
+      return {
+        schemaVersion: schemaVersionOne(snapshot, "runtime capability snapshot"),
+        adapterId: stringValue(snapshot, "adapterId"),
+        actorId: stringValue(snapshot, "actorId"),
+        agentConfigRevision: integerValue(snapshot, "agentConfigRevision"),
+        providerId: stringValue(snapshot, "providerId"),
+        providerConfigRevision: integerValue(snapshot, "providerConfigRevision"),
+        bindingRevision: stringValue(snapshot, "bindingRevision"),
+        transportKind: stringValue(snapshot, "transportKind"),
+        declared: parseCapabilityArray(snapshot, "declared"),
+        granted: parseCapabilityArray(snapshot, "granted"),
+      };
+    },
+  );
+  const byParticipant = Object.fromEntries(
+    Object.entries(byParticipantRecord).map(([adapterId, capabilities]) => {
+      const holder = { capabilities };
+      return [adapterId, parseCapabilityArray(holder, "capabilities")];
+    }),
+  );
   const cycle: DiscussionCycle = {
     id: stringValue(cycleRecord, "id"),
     topicId: stringValue(cycleRecord, "topicId"),
@@ -279,21 +377,93 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
       }
       return item;
     }),
+    kind,
+    requirements: {
+      schemaVersion: schemaVersionOne(requirementsRecord, "cycle.requirements"),
+      cycleKind: enumValue(requirementsRecord, "cycleKind", CYCLE_KINDS),
+      task: {
+        all: parseCapabilityArray(taskRecord, "all"),
+        proposer: parseCapabilityArray(taskRecord, "proposer"),
+        reviewers: parseCapabilityArray(taskRecord, "reviewers"),
+      },
+      byParticipant,
+    },
+    runtimeCapabilities,
     turns: arrayValue(cycleRecord, "turns", (item) => {
       const turn = recordValue(item, "turn");
+      const commitRef = optionalString(turn, "commitRef");
+      const verdictDeclared = optionalBoolean(turn, "verdictDeclared");
       return {
         agentId: stringValue(turn, "agentId"),
         stage: enumValue(turn, "stage", DEBATE_STAGES),
         round: integerValue(turn, "round"),
         stance: enumValue(turn, "stance", VERDICT_STANCES),
         messageId: stringValue(turn, "messageId"),
+        ...(commitRef ? { commitRef } : {}),
+        ...(verdictDeclared === undefined ? {} : { verdictDeclared }),
       };
     }),
     roundBudget: integerValue(cycleRecord, "roundBudget", 1),
-    currentRound: integerValue(cycleRecord, "currentRound"),
+    currentRound: integerValue(cycleRecord, "currentRound", 1),
     ...(proposedDecisionId ? { proposedDecisionId } : {}),
     ...(stopReason ? { stopReason } : {}),
+    ...(outcomeRecord ? {
+      outcome: {
+        kind: enumValue(
+          outcomeRecord,
+          "kind",
+          ["blocking_disagreements"] as const,
+        ),
+        items: arrayValue(outcomeRecord, "items", (item) => {
+          const entry = recordValue(item, "cycle.outcome.item");
+          return {
+            agentId: stringValue(entry, "agentId"),
+            round: integerValue(entry, "round", 1),
+            messageId: stringValue(entry, "messageId"),
+          };
+        }),
+      },
+    } : {}),
   };
+  const participantSet = new Set(cycle.participants);
+  const snapshotIds = cycle.runtimeCapabilities.map((snapshot) => snapshot.adapterId);
+  const requirementIds = Object.keys(cycle.requirements.byParticipant);
+  if (
+    participantSet.size !== cycle.participants.length
+    || cycle.requirements.cycleKind !== cycle.kind
+    || snapshotIds.length !== cycle.participants.length
+    || new Set(snapshotIds).size !== snapshotIds.length
+    || cycle.participants.some((participant) => !snapshotIds.includes(participant))
+    || requirementIds.length !== cycle.participants.length
+    || cycle.participants.some((participant) => !requirementIds.includes(participant))
+    || cycle.runtimeCapabilities.some((snapshot) => {
+      const declared = new Set(snapshot.declared);
+      return snapshot.granted.some((capability) => !declared.has(capability));
+    })
+    || cycle.turns.some(
+      (turn) =>
+        !participantSet.has(turn.agentId)
+        || turn.round < 1
+        || turn.round > cycle.currentRound,
+    )
+  ) {
+    throw new Error("cycle 冻结名册、需求或 Runtime 能力快照不一致");
+  }
+  if (
+    cycle.outcome
+    && (
+      cycle.status !== "abandoned"
+      || cycle.stopReason !== "round_budget_exhausted"
+      || cycle.outcome.items.some(
+        (item) =>
+          !participantSet.has(item.agentId)
+          || item.round > cycle.currentRound
+          || !cycle.turns.some((turn) => turn.messageId === item.messageId),
+      )
+    )
+  ) {
+    throw new Error("cycle 终局详情与持久化状态不一致");
+  }
   if (record.openQuestion === undefined || record.openQuestion === null) {
     return { cycle };
   }
@@ -330,6 +500,7 @@ export function parseCycleMetrics(value: unknown): CycleMetrics {
   const record = recordValue(value, "cycle metrics");
   const cycles = recordValue(record.cycles, "cycles");
   const questions = recordValue(record.questions, "questions");
+  const verdicts = recordValue(record.verdicts, "verdicts");
   const consistency = recordValue(record.decisionConsistency, "decisionConsistency");
   return {
     cycles: {
@@ -345,6 +516,16 @@ export function parseCycleMetrics(value: unknown): CycleMetrics {
       total: integerValue(questions, "total"),
       open: integerValue(questions, "open"),
       perCycle: numberValue(questions, "perCycle"),
+    },
+    verdicts: {
+      checked: integerValue(verdicts, "checked"),
+      missing: integerValue(verdicts, "missing"),
+      missingCycleIds: arrayValue(verdicts, "missingCycleIds", (item, index) => {
+        if (typeof item !== "string" || item.length === 0) {
+          throw new Error(`missingCycleIds[${String(index)}] 必须是非空字符串`);
+        }
+        return item;
+      }),
     },
     decisionConsistency: {
       checked: integerValue(consistency, "checked"),

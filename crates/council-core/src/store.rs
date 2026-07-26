@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v6 Actor/Model Router/RuntimeBinding SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v6 逻辑请求/session 唯一 schema、查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v8 Actor/Model Router/RuntimeBinding/Cycle SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v8 逻辑请求/session/capability 唯一 schema、查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,7 +18,7 @@ use crate::types::{
     TopicStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 7;
+const SUPPORTED_SCHEMA_VERSION: i64 = 8;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -205,6 +205,45 @@ const RUNTIME_BINDING_LEASE_COLUMNS: &[&str] = &[
 ];
 const RUNTIME_BINDING_REQUEST_COLUMNS: &[&str] =
     &["topic_id", "agent_id", "request_message_id", "consumed_at"];
+const DISCUSSION_CYCLE_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "stage",
+    "status",
+    "participants_json",
+    "turns_json",
+    "round_budget",
+    "current_round",
+    "resume_stage",
+    "context_cursor_message_id",
+    "context_cursor_created_at",
+    "proposed_decision_id",
+    "state_version",
+    "epoch",
+    "stop_reason",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "cycle_kind",
+    "requirements_json",
+    "capability_snapshot_json",
+    "outcome_json",
+];
+const BLOCKING_QUESTION_COLUMNS: &[&str] = &[
+    "id",
+    "cycle_id",
+    "asked_by_actor_id",
+    "asked_at_stage",
+    "question",
+    "rationale",
+    "options_json",
+    "status",
+    "question_message_id",
+    "answer_message_id",
+    "created_at",
+    "updated_at",
+    "resolved_at",
+];
 
 fn assert_schema_objects(
     connection: &Connection,
@@ -389,6 +428,8 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "runtime_binding_requests",
         RUNTIME_BINDING_REQUEST_COLUMNS,
     )?;
+    assert_table_columns(connection, "discussion_cycles", DISCUSSION_CYCLE_COLUMNS)?;
+    assert_table_columns(connection, "blocking_questions", BLOCKING_QUESTION_COLUMNS)?;
     assert_table_columns(
         connection,
         "actor_identities",

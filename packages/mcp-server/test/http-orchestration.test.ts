@@ -227,6 +227,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
         available: true,
         actorId: "claude",
         limitation: "仅用于确定性测试。",
+        runtimeCapabilities: ["text"],
       }],
       defaultPolicy: {
         maxRounds: 10,

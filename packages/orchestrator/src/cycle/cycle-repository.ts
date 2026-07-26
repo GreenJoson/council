@@ -28,12 +28,19 @@ import {
   type RecordedTurn,
 } from "./cycle-codec.js";
 import type { AgentQuestion } from "./verdict.js";
+import type {
+  DiscussionCycleKind,
+  FrozenCycleRequirements,
+  RuntimeCapabilitySnapshot,
+} from "./runtime-capabilities.js";
 
 const CYCLE_COLUMNS = `
-  id, topic_id, stage, status, participants_json, turns_json,
+  id, topic_id, stage, status, participants_json,
+  cycle_kind, requirements_json, capability_snapshot_json, turns_json,
   round_budget, current_round, resume_stage,
   context_cursor_message_id, context_cursor_created_at,
   proposed_decision_id, state_version, epoch, stop_reason,
+  outcome_json,
   created_at, updated_at, completed_at
 `;
 
@@ -46,6 +53,9 @@ const QUESTION_COLUMNS = `
 export interface StartDiscussionCycleInput {
   topicId: string;
   participants: readonly string[];
+  kind: DiscussionCycleKind;
+  requirements: FrozenCycleRequirements;
+  runtimeCapabilities: readonly RuntimeCapabilitySnapshot[];
   roundBudget: number;
   contextCursor?: CycleCursor;
   now: string;
@@ -92,6 +102,7 @@ export interface AbandonDiscussionCycleInput {
   cycleId: string;
   expectedVersion: number;
   reason: CycleStopReason;
+  outcome?: DiscussionCycle["outcome"];
   now: string;
 }
 
@@ -133,7 +144,9 @@ function view(database: DatabaseSync, cycleId: string): DiscussionCycleView {
   return {
     cycle,
     ...(openQuestion ? { openQuestion } : {}),
-    action: nextCycleAction(toConvergenceState(cycle, openQuestion !== undefined)),
+    action: cycle.status === "active"
+      ? nextCycleAction(toConvergenceState(cycle, openQuestion !== undefined))
+      : { kind: "done" },
   };
 }
 
@@ -171,6 +184,22 @@ export function startDiscussionCycle(
   if (!Number.isSafeInteger(input.roundBudget) || input.roundBudget < 1) {
     throw new InvalidRunStateError("Council 收敛轮次预算必须为正整数。");
   }
+  const snapshotAdapterIds = input.runtimeCapabilities.map(
+    (snapshot) => snapshot.adapterId,
+  );
+  const requirementAdapterIds = Object.keys(input.requirements.byParticipant);
+  if (
+    input.requirements.cycleKind !== input.kind
+    || input.runtimeCapabilities.length !== input.participants.length
+    || new Set(snapshotAdapterIds).size !== snapshotAdapterIds.length
+    || input.participants.some((participant) => !snapshotAdapterIds.includes(participant))
+    || requirementAdapterIds.length !== input.participants.length
+    || input.participants.some(
+      (participant) => !requirementAdapterIds.includes(participant),
+    )
+  ) {
+    throw new InvalidRunStateError("Council 收敛能力与需求快照不完整。");
+  }
   const topic = database.prepare(`
     SELECT status FROM topics WHERE id = ?
   `).get(input.topicId) as unknown as { status?: unknown } | undefined;
@@ -185,13 +214,15 @@ export function startDiscussionCycle(
   try {
     database.prepare(`
       INSERT INTO discussion_cycles (
-        id, topic_id, stage, status, participants_json, turns_json,
+        id, topic_id, stage, status, participants_json,
+        cycle_kind, requirements_json, capability_snapshot_json, turns_json,
         round_budget, current_round, resume_stage,
         context_cursor_message_id, context_cursor_created_at,
         proposed_decision_id, state_version, epoch, stop_reason,
         created_at, updated_at, completed_at
       ) VALUES (
-        ?, ?, 'proposal', 'active', ?, '[]',
+        ?, ?, 'proposal', 'active', ?,
+        ?, ?, ?, '[]',
         ?, 1, NULL,
         ?, ?,
         NULL, 1, 0, NULL,
@@ -201,6 +232,9 @@ export function startDiscussionCycle(
       id,
       input.topicId,
       JSON.stringify(input.participants),
+      input.kind,
+      JSON.stringify(input.requirements),
+      JSON.stringify(input.runtimeCapabilities),
       input.roundBudget,
       input.contextCursor?.messageId ?? null,
       input.contextCursor?.createdAt ?? null,
@@ -224,6 +258,20 @@ export function readActiveDiscussionCycle(
     SELECT ${CYCLE_COLUMNS}
     FROM discussion_cycles
     WHERE topic_id = ? AND status = 'active'
+  `).get(topicId) as unknown as DiscussionCycleRow | undefined;
+  return row ? view(database, decodeDiscussionCycle(row).id) : undefined;
+}
+
+export function readLatestDiscussionCycle(
+  database: DatabaseSync,
+  topicId: string,
+): DiscussionCycleView | undefined {
+  const row = database.prepare(`
+    SELECT ${CYCLE_COLUMNS}
+    FROM discussion_cycles
+    WHERE topic_id = ?
+    ORDER BY updated_at DESC, rowid DESC
+    LIMIT 1
   `).get(topicId) as unknown as DiscussionCycleRow | undefined;
   return row ? view(database, decodeDiscussionCycle(row).id) : undefined;
 }
@@ -418,8 +466,13 @@ export function abandonDiscussionCycle(
   casUpdate(
     database,
     `status = 'abandoned', resume_stage = NULL, stop_reason = ?,
-     epoch = epoch + 1, updated_at = ?, completed_at = ?`,
-    [input.reason, input.now, input.now],
+     outcome_json = ?, epoch = epoch + 1, updated_at = ?, completed_at = ?`,
+    [
+      input.reason,
+      input.outcome ? JSON.stringify(input.outcome) : null,
+      input.now,
+      input.now,
+    ],
     input.cycleId,
     input.expectedVersion,
   );

@@ -17,6 +17,7 @@ import {
   InvalidRunStateError,
   readActiveDiscussionCycle,
   startDiscussionCycle,
+  deriveCycleRequirements,
   LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
   LeaseConflictError,
   LeaseLostError,
@@ -37,6 +38,28 @@ import type {
 
 const BUSY_TIMEOUT_MS = 5_000;
 const TOPIC_ID = "topic_sqlite_store_test";
+
+function cycleStartInput(participants: readonly string[]) {
+  return {
+    kind: "discussion" as const,
+    requirements: deriveCycleRequirements({
+      kind: "discussion",
+      participants,
+    }),
+    runtimeCapabilities: participants.map((adapterId) => ({
+      schemaVersion: 1 as const,
+      adapterId,
+      actorId: adapterId,
+      agentConfigRevision: 1,
+      providerId: `provider-${adapterId}`,
+      providerConfigRevision: 1,
+      bindingRevision: `test:${adapterId}`,
+      transportKind: "test",
+      declared: ["text" as const],
+      granted: ["text" as const],
+    })),
+  };
+}
 
 function createBaseDatabase(databasePath: string): void {
   const database = new DatabaseSync(databasePath);
@@ -128,6 +151,16 @@ function createBaseDatabase(databasePath: string): void {
     database.exec(ORCHESTRATION_SCHEMA_SQL);
     database.exec(RUNTIME_BINDING_SCHEMA_SQL);
     database.exec(DISCUSSION_CYCLE_SCHEMA_SQL);
+    database.exec(`
+      ALTER TABLE discussion_cycles ADD COLUMN
+        cycle_kind TEXT NOT NULL DEFAULT 'discussion';
+      ALTER TABLE discussion_cycles ADD COLUMN
+        requirements_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE discussion_cycles ADD COLUMN
+        capability_snapshot_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE discussion_cycles ADD COLUMN
+        outcome_json TEXT;
+    `);
     const now = new Date().toISOString();
     const actorSeed = database.prepare(`
       INSERT INTO actor_identities (
@@ -1624,6 +1657,7 @@ test("议题正等待某 Agent 时，轮次提交把发言与公开消息写在�
         topicId: TOPIC_ID,
         // 名册用计划里的 adapterId：提交时按它判断这一轮是不是 cycle 在等的人。
         participants: ["alpha", "beta"],
+        ...cycleStartInput(["alpha", "beta"]),
         roundBudget: 2,
         now: new Date().toISOString(),
       });
@@ -1679,6 +1713,7 @@ test("同一条回复里的提问会挂起 cycle，并回到发言推进后的�
       startDiscussionCycle(database, {
         topicId: TOPIC_ID,
         participants: ["alpha", "beta"],
+        ...cycleStartInput(["alpha", "beta"]),
         roundBudget: 2,
         now: new Date().toISOString(),
       });

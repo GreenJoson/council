@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 from pathlib import Path
 
 from playwright.sync_api import ConsoleMessage, sync_playwright
@@ -180,7 +181,9 @@ def start_mock_agent_run(page, instruction: str) -> None:
 
 
 def verify_compact_run_history(page) -> None:
-    review_checkbox = page.get_by_role("checkbox")
+    review_checkbox = page.get_by_role(
+        "checkbox", name=re.compile(r"完成前需要我确认")
+    )
     assert not review_checkbox.is_checked()
 
     for instruction in ("检查第一次调用。", "检查第二次调用。"):

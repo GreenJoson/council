@@ -525,7 +525,7 @@ export default function App() {
   async function handleStartCycle(
     participants: string[],
     roundBudget: number,
-    requiresCommitRef: boolean,
+    kind: "discussion" | "fix_review",
   ): Promise<boolean> {
     setOrchestrationBusyAction("cycle");
     setRunsErrorMessage(null);
@@ -534,7 +534,7 @@ export default function App() {
         topicId: activeTopicId,
         participants,
         roundBudget,
-        requiresCommitRef,
+        kind,
       });
       setOrchestration(snapshot);
       setToastMessage("圆桌已开始，提案人正在发言");

@@ -7,6 +7,10 @@
  */
 
 import path from "node:path";
+import {
+  DISCUSSION_CYCLE_KINDS,
+  RUNTIME_CAPABILITY_KEYS,
+} from "council-orchestrator";
 import { z } from "zod/v4";
 import {
   DECISION_STATUSES,
@@ -249,10 +253,26 @@ export const startCycleBodySchema = z
         { message: "参与名册不能重复" },
       ),
     roundBudget: z.number().int().positive().max(MAX_CYCLE_ROUND_BUDGET).optional(),
-    /** bug 修复互审：修复者必须先提交并附上 commit 引用，复审者只读 diff。 */
+    kind: z.enum(DISCUSSION_CYCLE_KINDS).optional(),
+    taskRequirements: z
+      .object({
+        all: z.array(z.enum(RUNTIME_CAPABILITY_KEYS)).max(20).optional(),
+        proposer: z.array(z.enum(RUNTIME_CAPABILITY_KEYS)).max(20).optional(),
+        reviewers: z.array(z.enum(RUNTIME_CAPABILITY_KEYS)).max(20).optional(),
+      })
+      .strict()
+      .optional(),
+    /** v7 Web 兼容字段；服务端只用它转换成持久化 kind，不再用于后续推断。 */
     requiresCommitRef: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      value.kind === undefined
+      || value.requiresCommitRef === undefined
+      || value.kind === (value.requiresCommitRef ? "fix_review" : "discussion"),
+    { message: "kind 与 requiresCommitRef 冲突" },
+  );
 
 export const answerCycleQuestionBodySchema = z
   .object({

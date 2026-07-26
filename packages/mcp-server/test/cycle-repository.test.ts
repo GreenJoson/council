@@ -1,6 +1,6 @@
 /**
- * @input  依赖：生产迁移器产出的真实 v7 库与 council-orchestrator 收敛仓储
- * @output 验证：开局唯一性、发言推进与 CAS、提问挂起/回答幂等、收敛与放弃终态
+ * @input  依赖：生产迁移器产出的真实 v8 库与 council-orchestrator 收敛仓储
+ * @output 验证：开局唯一性、能力快照重启恢复、发言推进与 CAS、提问挂起/回答幂等、收敛与放弃终态
  * @pos    收敛协议的持久化验收；刻意跑在真实迁移库上而不是手搭 fixture 上
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,8 +18,10 @@ import {
   abandonDiscussionCycle,
   answerBlockingQuestion,
   completeDiscussionCycle,
+  deriveCycleRequirements,
   openBlockingQuestion,
   readActiveDiscussionCycle,
+  readLatestDiscussionCycle,
   recordCycleTurn,
   startDiscussionCycle,
   type DiscussionCycleView,
@@ -86,6 +88,23 @@ function start(database: DatabaseSync, roundBudget = 3): DiscussionCycleView {
   return startDiscussionCycle(database, {
     topicId: TOPIC,
     participants: PARTICIPANTS,
+    kind: "discussion",
+    requirements: deriveCycleRequirements({
+      kind: "discussion",
+      participants: PARTICIPANTS,
+    }),
+    runtimeCapabilities: PARTICIPANTS.map((adapterId) => ({
+      schemaVersion: 1,
+      adapterId,
+      actorId: adapterId,
+      agentConfigRevision: 1,
+      providerId: `provider-${adapterId}`,
+      providerConfigRevision: 1,
+      bindingRevision: `test:${adapterId}`,
+      transportKind: "test",
+      declared: ["text"],
+      granted: ["text"],
+    })),
     roundBudget,
     now: NOW,
   });
@@ -144,6 +163,27 @@ test("开局后同议题不能再开第二个 cycle，已决议题根本不能�
       now: NOW,
     });
     assert.throws(() => start(database), InvalidRunStateError);
+  } finally {
+    database.close();
+    fixture.cleanup();
+  }
+});
+
+test("Cycle 类型与 Runtime 能力快照在数据库重开后保持不变", async () => {
+  const fixture = temporaryDatabase();
+  let database = await openSeeded(fixture.databasePath);
+  try {
+    const opened = start(database);
+    database.close();
+
+    database = new DatabaseSync(fixture.databasePath);
+    database.exec("PRAGMA foreign_keys = ON;");
+    const reopened = readLatestDiscussionCycle(database, TOPIC);
+    assert.equal(reopened?.cycle.id, opened.cycle.id);
+    assert.equal(reopened?.cycle.kind, "discussion");
+    assert.deepEqual(reopened?.cycle.requirements, opened.cycle.requirements);
+    assert.deepEqual(reopened?.cycle.runtimeCapabilities, opened.cycle.runtimeCapabilities);
+    assert.deepEqual(reopened?.action, opened.action);
   } finally {
     database.close();
     fixture.cleanup();

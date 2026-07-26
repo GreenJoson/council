@@ -71,6 +71,7 @@ export function commitCycleTurn(
       stance: reply.verdict.stance,
       messageId: input.messageId,
       ...(reply.fix ? { commitRef: reply.fix.commit } : {}),
+      verdictDeclared: reply.verdictDeclared,
     },
     contextCursor: cursor,
     now: input.now,

@@ -42,6 +42,13 @@ const STANCE_LABELS: Readonly<Record<CycleTurn["stance"], string>> = {
   blocking: "阻塞异议",
 };
 
+const STOP_REASON_LABELS: Readonly<Record<string, string>> = {
+  converged: "已收敛并生成待确认决策",
+  round_budget_exhausted: "轮次预算耗尽，仍有阻断异议",
+  decision_accepted: "用户已接受决策",
+  cancelled: "用户已取消本轮圆桌",
+};
+
 /** 默认轮次预算与服务端 DEFAULT_ROUND_BUDGET 一致：提案 + 一轮反驳 + 一轮复核。 */
 const DEFAULT_ROUND_BUDGET = 3;
 
@@ -53,7 +60,7 @@ export interface CyclePanelProps {
   onStart: (
     participants: string[],
     roundBudget: number,
-    requiresCommitRef: boolean,
+    kind: "discussion" | "fix_review",
   ) => Promise<boolean>;
   onAnswer: (questionMessageId: string, content: string) => Promise<boolean>;
   onAbandon: () => Promise<void>;
@@ -64,6 +71,16 @@ function adapterLabel(
   adapterId: string,
 ): string {
   return adapters.find((candidate) => candidate.id === adapterId)?.label ?? adapterId;
+}
+
+function runtimeCapabilityLabel(adapter: OrchestrationAdapter): string {
+  if (adapter.runtimeCapabilities.includes("repository_write")) {
+    return "可执行修复";
+  }
+  if (adapter.runtimeCapabilities.includes("repository_read")) {
+    return "只读项目";
+  }
+  return "仅文本";
 }
 
 function StageTrack({ view }: { view: DiscussionCycleView }): ReactElement {
@@ -139,6 +156,9 @@ function CycleStarter({
                 />
                 <BrandGlyph brand={adapter.brand} size={16} />
                 <span className="cycle-roster-name">{adapter.label}</span>
+                <span className="cycle-hint-inline">
+                  {runtimeCapabilityLabel(adapter)}
+                </span>
                 {order === 0 ? <span className="cycle-badge">提案人</span> : null}
                 {order > 0 ? (
                   <span className="cycle-badge is-muted">评审 {order}</span>
@@ -162,7 +182,9 @@ function CycleStarter({
           onChange={() => { setIsFixReview((current) => !current); }}
         />
         <span className="cycle-roster-name">bug 修复互审</span>
-        <span className="cycle-hint-inline">修复者先提交并给出 commit，复审者只读 diff</span>
+        <span className="cycle-hint-inline">
+          需要提案人具备写仓库、测试和提交能力；能力不足会在调用模型前拒绝
+        </span>
       </label>
       <label className="cycle-budget">
         轮次预算
@@ -177,14 +199,18 @@ function CycleStarter({
             setRoundBudget(Number.isNaN(parsed) ? DEFAULT_ROUND_BUDGET : parsed);
           }}
         />
-        <span className="cycle-hint-inline">吵满仍未一致就放弃，交回给你</span>
+        <span className="cycle-hint-inline">预算耗尽时输出阻断清单并交回给你</span>
       </label>
       <button
         type="button"
         className="primary-button"
         disabled={!canStart}
         onClick={() => {
-          void onStart(roster, roundBudget, isFixReview);
+          void onStart(
+            roster,
+            roundBudget,
+            isFixReview ? "fix_review" : "discussion",
+          );
         }}
       >
         {busy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
@@ -263,6 +289,47 @@ function BlockingQuestion({
   );
 }
 
+function CycleOutcome({
+  view,
+  adapters,
+}: {
+  view: DiscussionCycleView;
+  adapters: readonly OrchestrationAdapter[];
+}): ReactElement {
+  const { cycle } = view;
+  return (
+    <div className={`cycle-question cycle-outcome is-${cycle.status}`}>
+      <p className="cycle-question-title">
+        {cycle.status === "completed"
+          ? <ThumbsUp size={15} />
+          : <TriangleAlert size={15} />}
+        {STOP_REASON_LABELS[cycle.stopReason ?? ""] ?? "圆桌已经结束"}
+      </p>
+      {cycle.outcome?.kind === "blocking_disagreements" ? (
+        <>
+          <p className="cycle-question-rationale">
+            下面这些公开发言仍为 blocking，未被静默当作共识：
+          </p>
+          <ul className="cycle-turns">
+            {cycle.outcome.items.map((item) => (
+              <li key={item.messageId} className="cycle-turn is-blocking">
+                <span className="cycle-turn-agent">
+                  {adapterLabel(adapters, item.agentId)}
+                </span>
+                <span className="cycle-turn-stage">第 {item.round} 轮</span>
+                <span className="cycle-turn-stance">
+                  <TriangleAlert size={13} />
+                  {item.messageId.slice(0, 18)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function formatDuration(milliseconds: number): string {
   if (milliseconds < 60_000) {
     return `${String(Math.round(milliseconds / 1_000))} 秒`;
@@ -300,6 +367,10 @@ function MetricsLedger({ metrics }: { metrics: CycleMetrics }): ReactElement | n
         <dt>平均打断</dt>
         <dd>{metrics.questions.perCycle} 次</dd>
       </div>
+      <div className={metrics.verdicts.missing > 0 ? "cycle-metric-alert" : undefined}>
+        <dt>协议缺失</dt>
+        <dd>{metrics.verdicts.missing} / {metrics.verdicts.checked}</dd>
+      </div>
       <div className={diverged > 0 ? "cycle-metric-alert" : undefined}>
         <dt>决策一致性</dt>
         <dd>
@@ -323,6 +394,7 @@ export function CyclePanel({
 }: CyclePanelProps): ReactElement | null {
   const adapters = snapshot?.capabilities?.adapters ?? [];
   const view = snapshot?.activeTopicId === topicId ? snapshot.cycle : undefined;
+  const activeView = view?.cycle.status === "active" ? view : undefined;
   const busy = busyAction === "cycle";
 
   if (!snapshot?.capabilities) {
@@ -341,17 +413,18 @@ export function CyclePanel({
         {view ? (
           <span className="cycle-round">
             第 {view.cycle.currentRound}/{view.cycle.roundBudget} 轮 ·{" "}
-            {STAGE_LABELS[view.cycle.stage]}
+            {STAGE_LABELS[view.cycle.stage]} ·{" "}
+            {view.cycle.kind === "fix_review" ? "修复互审" : "方案讨论"}
           </span>
         ) : null}
       </header>
 
-      {view ? (
+      {activeView ? (
         <>
-          <StageTrack view={view} />
-          <BlockingQuestion view={view} busy={busy} onAnswer={onAnswer} />
+          <StageTrack view={activeView} />
+          <BlockingQuestion view={activeView} busy={busy} onAnswer={onAnswer} />
           <ol className="cycle-turns">
-            {view.cycle.turns.map((turn) => (
+            {activeView.cycle.turns.map((turn) => (
               <li key={turn.messageId} className={`cycle-turn is-${turn.stance}`}>
                 <span className="cycle-turn-agent">
                   {adapterLabel(adapters, turn.agentId)}
@@ -362,6 +435,9 @@ export function CyclePanel({
                   {turn.stance === "blocking" ? <TriangleAlert size={13} /> : null}
                   {STANCE_LABELS[turn.stance]}
                 </span>
+                {turn.verdictDeclared === false ? (
+                  <span className="cycle-badge is-warning">缺少 verdict</span>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -376,12 +452,15 @@ export function CyclePanel({
           </button>
         </>
       ) : (
-        <CycleStarter
-          adapters={adapters}
-          isTopicOpen={isTopicOpen}
-          busy={busy}
-          onStart={onStart}
-        />
+        <>
+          {view ? <CycleOutcome view={view} adapters={adapters} /> : null}
+          <CycleStarter
+            adapters={adapters}
+            isTopicOpen={isTopicOpen}
+            busy={busy}
+            onStart={onStart}
+          />
+        </>
       )}
       {snapshot.cycleMetrics ? (
         <MetricsLedger metrics={snapshot.cycleMetrics} />

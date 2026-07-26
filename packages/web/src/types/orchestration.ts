@@ -23,6 +23,19 @@ export type OrchestrationMessageKind =
   | "synthesis"
   | "note";
 
+export type RuntimeCapabilityKey =
+  | "text"
+  | "repository_read"
+  | "repository_write"
+  | "shell_read"
+  | "shell_write"
+  | "tests"
+  | "git_diff"
+  | "git_commit"
+  | "media_read"
+  | "vision"
+  | "session_resume";
+
 export interface OrchestrationAdapter {
   id: string;
   actorId: string;
@@ -37,6 +50,7 @@ export interface OrchestrationAdapter {
   };
   available: boolean;
   limitation?: string;
+  runtimeCapabilities: RuntimeCapabilityKey[];
 }
 
 export interface OrchestrationDefaultPolicy {
@@ -159,6 +173,34 @@ export interface CycleTurn {
   round: number;
   stance: "agree" | "non_blocking" | "blocking";
   messageId: string;
+  commitRef?: string;
+  verdictDeclared?: boolean;
+}
+
+export type DiscussionCycleKind = "discussion" | "fix_review";
+
+export interface FrozenCycleRequirements {
+  schemaVersion: 1;
+  cycleKind: DiscussionCycleKind;
+  task: {
+    all: RuntimeCapabilityKey[];
+    proposer: RuntimeCapabilityKey[];
+    reviewers: RuntimeCapabilityKey[];
+  };
+  byParticipant: Record<string, RuntimeCapabilityKey[]>;
+}
+
+export interface RuntimeCapabilitySnapshot {
+  schemaVersion: 1;
+  adapterId: string;
+  actorId: string;
+  agentConfigRevision: number;
+  providerId: string;
+  providerConfigRevision: number;
+  bindingRevision: string;
+  transportKind: string;
+  declared: RuntimeCapabilityKey[];
+  granted: RuntimeCapabilityKey[];
 }
 
 export interface DiscussionCycle {
@@ -168,11 +210,22 @@ export interface DiscussionCycle {
   status: "active" | "completed" | "abandoned";
   /** 开局冻结的名册；首位是提案人。 */
   participants: string[];
+  kind: DiscussionCycleKind;
+  requirements: FrozenCycleRequirements;
+  runtimeCapabilities: RuntimeCapabilitySnapshot[];
   turns: CycleTurn[];
   roundBudget: number;
   currentRound: number;
   proposedDecisionId?: string;
   stopReason?: string;
+  outcome?: {
+    kind: "blocking_disagreements";
+    items: Array<{
+      agentId: string;
+      round: number;
+      messageId: string;
+    }>;
+  };
 }
 
 export interface CycleBlockingQuestion {
@@ -193,8 +246,12 @@ export interface StartCycleInput {
   topicId: string;
   participants: string[];
   roundBudget?: number;
-  /** bug 修复互审：修复者先提交并给出 commit 引用，复审者只读 diff。 */
-  requiresCommitRef?: boolean;
+  kind?: DiscussionCycleKind;
+  taskRequirements?: {
+    all?: RuntimeCapabilityKey[];
+    proposer?: RuntimeCapabilityKey[];
+    reviewers?: RuntimeCapabilityKey[];
+  };
 }
 
 export interface AnswerCycleQuestionInput {
@@ -215,6 +272,7 @@ export interface CycleMetrics {
   rounds: { count: number; mean: number; median: number; max: number };
   wallClockMs: { count: number; mean: number; median: number; max: number };
   questions: { total: number; open: number; perCycle: number };
+  verdicts: { checked: number; missing: number; missingCycleIds: string[] };
   /** `divergedCycleIds` 非空即为决策与讨论对不上，属于要立刻查的事故。 */
   decisionConsistency: { checked: number; divergedCycleIds: string[] };
 }

@@ -1,5 +1,5 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5→v6、RuntimeBinding/逻辑请求唯一 schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5→v8、RuntimeBinding/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -158,7 +158,7 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
 }
 
 #[test]
-fn opens_node_v6_runtime_binding_schema_and_preserves_cross_language_identity() {
+fn opens_node_v8_runtime_binding_schema_and_preserves_cross_language_identity() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("node-v6.sqlite3");
     prepare_node_schema(&database_path);
@@ -186,12 +186,12 @@ fn opens_node_v6_runtime_binding_schema_and_preserves_cross_language_identity() 
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 7);
+    assert_eq!(user_version, 8);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 5);
     drop(raw);
 
-    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v6");
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v8");
     let topic = store
         .create_topic(topic_input(
             "Node v6 到 Rust",
@@ -430,7 +430,7 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    // v7 为 discussion_cycles / blocking_questions 各加 3 个 revision 触发器。
+    // v7 为 discussion_cycles / blocking_questions 各加 3 个 revision 触发器；v8 不新增触发器。
     assert_eq!(trigger_count, 21);
 }
 
@@ -447,11 +447,11 @@ fn opens_fresh_v2_v3_and_v5_migrated_databases_created_by_node() {
 }
 
 #[test]
-fn reads_v3_to_v6_dynamic_kimi_rebinding_created_by_node() {
+fn reads_v3_to_v8_dynamic_kimi_rebinding_created_by_node() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("v3-migrated.sqlite3");
     prepare_node_schema_with_mode(&database_path, "v3-migrated");
-    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v6 database");
+    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v8 database");
 
     let raw = Connection::open(&database_path).expect("inspection connection");
     let (actor_id, mention_alias, config_revision): (String, String, i64) = raw
@@ -512,8 +512,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (8, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 8;",
+             VALUES (9, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 9;",
         )
         .expect("future schema fixture");
     assert!(matches!(

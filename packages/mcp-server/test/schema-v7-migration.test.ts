@@ -321,7 +321,7 @@ test("v7 accepted 决策同时终结 cycle 与未答问题，自动交接不会�
     assert.equal(cycle.stage, "completed");
     assert.equal(cycle.resume_stage, null);
     assert.equal(cycle.proposed_decision_id, "decision_v7");
-    assert.equal(cycle.stop_reason, "decision-accepted");
+    assert.equal(cycle.stop_reason, "decision_accepted");
     assert.equal(cycle.completed_at, "2026-01-02T00:00:00.000Z");
     assert.equal(cycle.epoch, 1);
 

@@ -17,6 +17,14 @@ import {
   type CycleTurn,
   type DebateStage,
 } from "./convergence.js";
+import {
+  DISCUSSION_CYCLE_KINDS,
+  RUNTIME_CAPABILITY_KEYS,
+  type DiscussionCycleKind,
+  type FrozenCycleRequirements,
+  type RuntimeCapabilityKey,
+  type RuntimeCapabilitySnapshot,
+} from "./runtime-capabilities.js";
 import { VERDICT_STANCES, type VerdictStance } from "./verdict.js";
 
 export const BLOCKING_QUESTION_STATUSES = [
@@ -38,6 +46,8 @@ export interface RecordedTurn extends CycleTurn {
    * 该列的 CHECK 只约束"是 JSON 数组"，加字段不动 DDL，也就不用再抬 schema 版本。
    */
   commitRef?: string;
+  /** `false` 代表本轮缺少结构化 verdict 尾块；legacy 发言保持 undefined。 */
+  verdictDeclared?: boolean;
 }
 
 export interface CycleCursor {
@@ -51,6 +61,9 @@ export interface DiscussionCycle {
   stage: CycleStage;
   status: CycleStatus;
   participants: readonly string[];
+  kind: DiscussionCycleKind;
+  requirements: FrozenCycleRequirements;
+  runtimeCapabilities: readonly RuntimeCapabilitySnapshot[];
   turns: readonly RecordedTurn[];
   roundBudget: number;
   currentRound: number;
@@ -60,6 +73,14 @@ export interface DiscussionCycle {
   stateVersion: number;
   epoch: number;
   stopReason?: CycleStopReason;
+  outcome?: {
+    kind: "blocking_disagreements";
+    items: Array<{
+      agentId: string;
+      round: number;
+      messageId: string;
+    }>;
+  };
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -87,6 +108,9 @@ export interface DiscussionCycleRow {
   stage: unknown;
   status: unknown;
   participants_json: unknown;
+  cycle_kind: unknown;
+  requirements_json: unknown;
+  capability_snapshot_json: unknown;
   turns_json: unknown;
   round_budget: unknown;
   current_round: unknown;
@@ -97,6 +121,7 @@ export interface DiscussionCycleRow {
   state_version: unknown;
   epoch: unknown;
   stop_reason: unknown;
+  outcome_json: unknown;
   created_at: unknown;
   updated_at: unknown;
   completed_at: unknown;
@@ -164,6 +189,19 @@ function jsonArray(value: unknown, label: string): unknown[] {
   return parsed;
 }
 
+function jsonObject(value: unknown, label: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text(value, label)) as unknown;
+  } catch {
+    throw new InvalidRunStateError(`Council 收敛 ${label} 不是有效 JSON。`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new InvalidRunStateError(`Council 收敛 ${label} 必须是对象。`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 function stringArray(value: unknown, label: string): string[] {
   return jsonArray(value, label).map((item) => text(item, label));
 }
@@ -186,6 +224,146 @@ function decodeTurn(value: unknown, label: string): RecordedTurn {
     ...(record.commitRef === undefined || record.commitRef === null
       ? {}
       : { commitRef: text(record.commitRef, `${label}.commitRef`) }),
+    ...(record.verdictDeclared === undefined || record.verdictDeclared === null
+      ? {}
+      : typeof record.verdictDeclared === "boolean"
+        ? { verdictDeclared: record.verdictDeclared }
+        : (() => {
+            throw new InvalidRunStateError(
+              `Council 收敛 ${label}.verdictDeclared 无效。`,
+            );
+          })()),
+  };
+}
+
+function capabilityArray(value: unknown, label: string): RuntimeCapabilityKey[] {
+  if (!Array.isArray(value)) {
+    throw new InvalidRunStateError(`Council 收敛 ${label} 必须是数组。`);
+  }
+  const decoded = value.map((item) =>
+    member(item, RUNTIME_CAPABILITY_KEYS, label));
+  if (new Set(decoded).size !== decoded.length) {
+    throw new InvalidRunStateError(`Council 收敛 ${label} 不允许重复能力。`);
+  }
+  return decoded;
+}
+
+function decodeRequirements(
+  value: unknown,
+  participants: readonly string[],
+  cycleKind: DiscussionCycleKind,
+): FrozenCycleRequirements {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidRunStateError("Council 收敛 requirements_json 必须是对象。");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1 || record.cycleKind !== cycleKind) {
+    throw new InvalidRunStateError("Council 收敛需求快照版本或类型无效。");
+  }
+  if (
+    typeof record.task !== "object"
+    || record.task === null
+    || Array.isArray(record.task)
+  ) {
+    throw new InvalidRunStateError("Council 收敛任务需求无效。");
+  }
+  const task = record.task as Record<string, unknown>;
+  if (
+    typeof record.byParticipant !== "object"
+    || record.byParticipant === null
+    || Array.isArray(record.byParticipant)
+  ) {
+    throw new InvalidRunStateError("Council 收敛参与者需求无效。");
+  }
+  const byParticipantRecord = record.byParticipant as Record<string, unknown>;
+  const byParticipant: Record<string, RuntimeCapabilityKey[]> = {};
+  for (const participant of participants) {
+    byParticipant[participant] = capabilityArray(
+      byParticipantRecord[participant],
+      `requirements.byParticipant.${participant}`,
+    );
+  }
+  if (Object.keys(byParticipantRecord).some((key) => !participants.includes(key))) {
+    throw new InvalidRunStateError("Council 收敛需求快照包含名册外参与者。");
+  }
+  return {
+    schemaVersion: 1,
+    cycleKind,
+    task: {
+      all: capabilityArray(task.all, "requirements.task.all"),
+      proposer: capabilityArray(task.proposer, "requirements.task.proposer"),
+      reviewers: capabilityArray(task.reviewers, "requirements.task.reviewers"),
+    },
+    byParticipant,
+  };
+}
+
+function decodeRuntimeCapabilitySnapshot(
+  value: unknown,
+  label: string,
+): RuntimeCapabilitySnapshot {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidRunStateError(`Council 收敛 ${label} 必须是对象。`);
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== 1) {
+    throw new InvalidRunStateError(`Council 收敛 ${label}.schemaVersion 无效。`);
+  }
+  const declared = capabilityArray(record.declared, `${label}.declared`);
+  const granted = capabilityArray(record.granted, `${label}.granted`);
+  const declaredSet = new Set(declared);
+  if (granted.some((capability) => !declaredSet.has(capability))) {
+    throw new InvalidRunStateError(`Council 收敛 ${label}.granted 超出声明能力。`);
+  }
+  return {
+    schemaVersion: 1,
+    adapterId: text(record.adapterId, `${label}.adapterId`),
+    actorId: text(record.actorId, `${label}.actorId`),
+    agentConfigRevision: positiveInteger(
+      record.agentConfigRevision,
+      `${label}.agentConfigRevision`,
+    ),
+    providerId: text(record.providerId, `${label}.providerId`),
+    providerConfigRevision: positiveInteger(
+      record.providerConfigRevision,
+      `${label}.providerConfigRevision`,
+    ),
+    bindingRevision: text(record.bindingRevision, `${label}.bindingRevision`),
+    transportKind: text(record.transportKind, `${label}.transportKind`),
+    declared,
+    granted,
+  };
+}
+
+function decodeOutcome(value: unknown): DiscussionCycle["outcome"] {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  const record = jsonObject(value, "outcome_json");
+  if (record.kind !== "blocking_disagreements" || !Array.isArray(record.items)) {
+    throw new InvalidRunStateError("Council 收敛终局详情无效。");
+  }
+  return {
+    kind: "blocking_disagreements",
+    items: record.items.map((item, index) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        throw new InvalidRunStateError(
+          `Council 收敛 outcome.items[${String(index)}] 无效。`,
+        );
+      }
+      const entry = item as Record<string, unknown>;
+      return {
+        agentId: text(entry.agentId, `outcome.items[${String(index)}].agentId`),
+        round: positiveInteger(
+          entry.round,
+          `outcome.items[${String(index)}].round`,
+        ),
+        messageId: text(
+          entry.messageId,
+          `outcome.items[${String(index)}].messageId`,
+        ),
+      };
+    }),
   };
 }
 
@@ -215,6 +393,26 @@ export function decodeDiscussionCycle(row: DiscussionCycleRow): DiscussionCycle 
   if (new Set(participants).size !== participants.length) {
     throw new InvalidRunStateError("Council 收敛名册不允许重复 Agent。");
   }
+  const kind = member(row.cycle_kind, DISCUSSION_CYCLE_KINDS, "cycle_kind");
+  const requirements = decodeRequirements(
+    jsonObject(row.requirements_json, "requirements_json"),
+    participants,
+    kind,
+  );
+  const runtimeCapabilities = jsonArray(
+    row.capability_snapshot_json,
+    "capability_snapshot_json",
+  ).map((item, index) =>
+    decodeRuntimeCapabilitySnapshot(item, `capability_snapshot_json[${String(index)}]`));
+  if (
+    runtimeCapabilities.length !== participants.length
+    || runtimeCapabilities.some((snapshot) => !participants.includes(snapshot.adapterId))
+    || new Set(runtimeCapabilities.map((snapshot) => snapshot.adapterId)).size
+      !== runtimeCapabilities.length
+  ) {
+    throw new InvalidRunStateError("Council 收敛 Runtime 能力快照与冻结名册不一致。");
+  }
+  const outcome = decodeOutcome(row.outcome_json);
   const roundBudget = positiveInteger(row.round_budget, "round_budget");
   const currentRound = positiveInteger(row.current_round, "current_round");
   if (roundBudget < 1 || currentRound < 1 || currentRound > roundBudget) {
@@ -232,12 +430,30 @@ export function decodeDiscussionCycle(row: DiscussionCycleRow): DiscussionCycle 
       throw new InvalidRunStateError("Council 收敛发言轮次超出当前轮次。");
     }
   }
+  if (
+    outcome
+    && (
+      row.status !== "abandoned"
+      || row.stop_reason !== "round_budget_exhausted"
+      || outcome.items.some(
+        (item) =>
+          !participants.includes(item.agentId)
+          || item.round > currentRound
+          || !turns.some((turn) => turn.messageId === item.messageId),
+      )
+    )
+  ) {
+    throw new InvalidRunStateError("Council 收敛终局详情与 cycle 状态不一致。");
+  }
   return {
     id: text(row.id, "id"),
     topicId: text(row.topic_id, "topic_id"),
     stage,
     status: member(row.status, CYCLE_STATUSES, "status"),
     participants,
+    kind,
+    requirements,
+    runtimeCapabilities,
     turns,
     roundBudget,
     currentRound,
@@ -253,6 +469,7 @@ export function decodeDiscussionCycle(row: DiscussionCycleRow): DiscussionCycle 
     ...(row.stop_reason === null || row.stop_reason === undefined
       ? {}
       : { stopReason: member(row.stop_reason, CYCLE_STOP_REASONS, "stop_reason") }),
+    ...(outcome ? { outcome } : {}),
     createdAt: text(row.created_at, "created_at"),
     updatedAt: text(row.updated_at, "updated_at"),
     ...(optionalText(row.completed_at, "completed_at") !== undefined

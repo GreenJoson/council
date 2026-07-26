@@ -9,6 +9,9 @@
 import {
   buildStageInstruction,
   type DiscussionCycleView,
+  type DiscussionCycleKind,
+  type FrozenCycleRequirements,
+  type RuntimeCapabilitySnapshot,
   type SQLiteCouncilStore,
 } from "council-orchestrator";
 import { logger } from "../logger.js";
@@ -21,13 +24,10 @@ export interface StartCycleInput {
   /** 首位是提案人；由用户在开局时勾选并冻结。 */
   participants: readonly string[];
   roundBudget?: number;
-  /**
-   * 这是一次 bug 修复互审：修复者必须先提交并附上 commit 引用，复审者只读 diff。
-   *
-   * 不落库是有意的——它只影响提案阶段的指令，而指令在创建 Run 时就冻结进了
-   * 计划里；之后的阶段改从 turns 里已声明的 commit 引用推断，重启也不会丢。
-   */
-  requiresCommitRef?: boolean;
+  /** 开局冻结，后续推进不得再从 commit 或调用参数猜测。 */
+  kind: DiscussionCycleKind;
+  requirements: FrozenCycleRequirements;
+  runtimeCapabilities: readonly RuntimeCapabilitySnapshot[];
 }
 
 export interface CycleRunner {
@@ -77,10 +77,13 @@ export class CycleDriver {
     const opened = this.#store.startDiscussionCycle({
       topicId: input.topicId,
       participants: input.participants,
+      kind: input.kind,
+      requirements: input.requirements,
+      runtimeCapabilities: input.runtimeCapabilities,
       roundBudget: input.roundBudget ?? DEFAULT_ROUND_BUDGET,
       now: this.#now(),
     });
-    await this.advance(input.topicId, input.requiresCommitRef ?? false);
+    await this.advance(input.topicId);
     return this.#store.readActiveDiscussionCycle(input.topicId) ?? opened;
   }
 
@@ -105,25 +108,19 @@ export class CycleDriver {
    * 只推进一步，不循环。下一步由 Run 提交后再次调用触发——发言是在提交事务里
    * 记上的，所以「提交完成」本身就是可以继续的信号，驱动器不需要自己轮询。
    */
-  async advance(
-    topicId: string,
-    requiresCommitRef = false,
-  ): Promise<DiscussionCycleView | undefined> {
+  async advance(topicId: string): Promise<DiscussionCycleView | undefined> {
     const pending = this.#inFlight.get(topicId);
     if (pending) {
       return await pending;
     }
-    const running = this.#advanceOnce(topicId, requiresCommitRef).finally(() => {
+    const running = this.#advanceOnce(topicId).finally(() => {
       this.#inFlight.delete(topicId);
     });
     this.#inFlight.set(topicId, running);
     return await running;
   }
 
-  async #advanceOnce(
-    topicId: string,
-    requiresCommitRef: boolean,
-  ): Promise<DiscussionCycleView | undefined> {
+  async #advanceOnce(topicId: string): Promise<DiscussionCycleView | undefined> {
     const view = this.#store.readActiveDiscussionCycle(topicId);
     if (!view) {
       return undefined;
@@ -140,9 +137,7 @@ export class CycleDriver {
           (participant) => participant !== action.agentId,
         );
         const proposer = cycle.participants[0] ?? action.agentId;
-        // 一旦有人声明过 commit 引用，这个 cycle 就是 diff 互审，重启后也认得出来。
-        const isFixCycle = requiresCommitRef
-          || cycle.turns.some((turn) => turn.commitRef !== undefined);
+        const isFixCycle = cycle.kind === "fix_review";
         const reviewed = action.stage === "critique"
           ? [...cycle.turns]
             .reverse()
@@ -168,10 +163,29 @@ export class CycleDriver {
         // 停在这里是刻意的：问题没答之前继续推进，后面每一段都建立在错误前提上。
         return view;
       case "abandon": {
+        const blockingItems = cycle.turns
+          .filter(
+            (turn) =>
+              turn.round === cycle.currentRound
+              && turn.stance === "blocking",
+          )
+          .map((turn) => ({
+            agentId: turn.agentId,
+            round: turn.round,
+            messageId: turn.messageId,
+          }));
         this.#store.abandonDiscussionCycle({
           cycleId: cycle.id,
           expectedVersion: cycle.stateVersion,
           reason: action.reason,
+          ...(action.reason === "round_budget_exhausted"
+            ? {
+                outcome: {
+                  kind: "blocking_disagreements" as const,
+                  items: blockingItems,
+                },
+              }
+            : {}),
           now: this.#now(),
         });
         logger.info(

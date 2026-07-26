@@ -281,9 +281,10 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       {
         participants: input.participants,
         ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
-        ...(input.requiresCommitRef === undefined
+        ...(input.kind === undefined ? {} : { kind: input.kind }),
+        ...(input.taskRequirements === undefined
           ? {}
-          : { requiresCommitRef: input.requiresCommitRef }),
+          : { taskRequirements: input.taskRequirements }),
       },
     );
   }
@@ -589,11 +590,22 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
   }
 
   async #loadCycle(topicId: string): Promise<DiscussionCycleView | null> {
-    return await requestApiData(
+    const active = await requestApiData(
       this.#fetcher,
       createApiUrl(
         this.#baseUrl,
         `/api/v1/topics/${encodeURIComponent(topicId)}/cycle`,
+      ),
+      parseDiscussionCycleView,
+    );
+    if (active) {
+      return active;
+    }
+    return await requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/cycle/latest`,
       ),
       parseDiscussionCycleView,
     );

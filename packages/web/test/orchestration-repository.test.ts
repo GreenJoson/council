@@ -148,6 +148,13 @@ function createOrchestrationFixture(): OrchestrationFixture {
             actorId: "claude",
             label: "Claude",
             available: true,
+            runtimeCapabilities: [
+              "text",
+              "repository_read",
+              "shell_read",
+              "git_diff",
+              "session_resume",
+            ],
           },
         ],
         defaultPolicy: {
@@ -165,12 +172,16 @@ function createOrchestrationFixture(): OrchestrationFixture {
     if (/^\/api\/v1\/topics\/[^/]+\/cycle$/u.test(url.pathname)) {
       return success(null);
     }
+    if (/^\/api\/v1\/topics\/[^/]+\/cycle\/latest$/u.test(url.pathname)) {
+      return success(null);
+    }
     if (url.pathname === "/api/v1/orchestration/cycle-metrics") {
       return success({
         cycles: { total: 0, converged: 0, abandoned: 0, active: 0, awaitingUser: 0 },
         rounds: { count: 0, mean: 0, median: 0, max: 0 },
         wallClockMs: { count: 0, mean: 0, median: 0, max: 0 },
         questions: { total: 0, open: 0, perCycle: 0 },
+        verdicts: { checked: 0, missing: 0, missingCycleIds: [] },
         decisionConsistency: { checked: 0, divergedCycleIds: [] },
       });
     }

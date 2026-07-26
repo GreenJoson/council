@@ -40,12 +40,26 @@ const CAPABILITIES: OrchestrationCapabilities = {
       actorId: "claude",
       label: "Claude",
       available: true,
+      runtimeCapabilities: [
+        "text",
+        "repository_read",
+        "shell_read",
+        "git_diff",
+        "session_resume",
+      ],
     },
     {
       id: "codex-shared",
       actorId: "codex",
       label: "Codex",
       available: false,
+      runtimeCapabilities: [
+        "text",
+        "repository_read",
+        "shell_read",
+        "git_diff",
+        "session_resume",
+      ],
       limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
     },
   ],
@@ -296,6 +310,32 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         stage: "proposal",
         status: "active",
         participants: [...input.participants],
+        kind: input.kind ?? "discussion",
+        requirements: {
+          schemaVersion: 1,
+          cycleKind: input.kind ?? "discussion",
+          task: { all: [], proposer: [], reviewers: [] },
+          byParticipant: Object.fromEntries(
+            input.participants.map((participant) => [participant, ["text"]]),
+          ),
+        },
+        runtimeCapabilities: input.participants.map((adapterId) => {
+          const adapter = CAPABILITIES.adapters.find(
+            (candidate) => candidate.id === adapterId,
+          );
+          return {
+            schemaVersion: 1,
+            adapterId,
+            actorId: adapter?.actorId ?? adapterId,
+            agentConfigRevision: 1,
+            providerId: adapter?.providerId ?? `provider-${adapterId}`,
+            providerConfigRevision: 1,
+            bindingRevision: `mock-${adapterId}`,
+            transportKind: "mock",
+            declared: adapter?.runtimeCapabilities ?? ["text"],
+            granted: adapter?.runtimeCapabilities ?? ["text"],
+          };
+        }),
         turns: [],
         roundBudget: input.roundBudget ?? 3,
         currentRound: 1,
@@ -306,7 +346,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       plan: [{
         adapterId: proposer,
         messageKind: "proposal",
-        instruction: input.requiresCommitRef
+        instruction: input.kind === "fix_review"
           ? "先自审并提交，回帖时附上 commit 引用。"
           : "给出可执行方案，并说明失败条件与验证方式。",
       }],

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council SQLite 上的 discussion_cycles、blocking_questions、decisions 与 messages
- * @output 导出：圆桌运行度量——轮次、墙钟耗时、提问次数与决策一致性核对
+ * @output 导出：圆桌运行度量——轮次、墙钟耗时、提问、verdict 协议与决策一致性核对
  * @pos    只读报表；不新建任何存储，全部从既有落库状态推算，因此永远不会与真相分叉
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -46,6 +46,12 @@ export interface CycleMetrics {
     open: number;
     /** 平均每个圆桌打断用户几次；这个数越大说明议题给的约束越不够。 */
     perCycle: number;
+  };
+  verdicts: {
+    /** 新协议发言数；legacy 未记录的发言不进入分母。 */
+    checked: number;
+    missing: number;
+    missingCycleIds: string[];
   };
   decisionConsistency: DecisionConsistencyMetrics;
 }
@@ -151,6 +157,42 @@ function elapsedMs(from: string, to: string): number | undefined {
   return end - start;
 }
 
+function verdictMetrics(rows: readonly CycleRow[]): CycleMetrics["verdicts"] {
+  let checked = 0;
+  let missing = 0;
+  const missingCycleIds: string[] = [];
+  for (const row of rows) {
+    let turns: unknown;
+    try {
+      turns = JSON.parse(row.turns_json) as unknown;
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(turns)) {
+      continue;
+    }
+    let cycleMissing = false;
+    for (const value of turns) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        continue;
+      }
+      const declared = (value as Record<string, unknown>).verdictDeclared;
+      if (typeof declared !== "boolean") {
+        continue;
+      }
+      checked += 1;
+      if (!declared) {
+        missing += 1;
+        cycleMissing = true;
+      }
+    }
+    if (cycleMissing) {
+      missingCycleIds.push(row.id);
+    }
+  }
+  return { checked, missing, missingCycleIds };
+}
+
 export function computeCycleMetrics(database: DatabaseSync): CycleMetrics {
   const rows = database.prepare(`
     SELECT id, status, stage, turns_json, current_round,
@@ -208,6 +250,7 @@ export function computeCycleMetrics(database: DatabaseSync): CycleMetrics {
         ? 0
         : Math.round((questionTotal / rows.length) * 100) / 100,
     },
+    verdicts: verdictMetrics(rows),
     decisionConsistency: checkConsistency(database, rows),
   };
 }

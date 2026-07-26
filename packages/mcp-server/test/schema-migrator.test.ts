@@ -1436,8 +1436,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (5, 'dynamic-provider-actors', '2026-01-05T00:00:00.000Z'),
         (6, 'topic-runtime-bindings', '2026-01-06T00:00:00.000Z'),
         (7, 'discussion-cycles', '2026-01-07T00:00:00.000Z'),
-        (8, 'future', '2026-01-08T00:00:00.000Z');
-      PRAGMA user_version = 8;
+        (8, 'cycle-runtime-capabilities', '2026-01-08T00:00:00.000Z'),
+        (9, 'future', '2026-01-09T00:00:00.000Z');
+      PRAGMA user_version = 9;
     `);
     futureDatabase.close();
     await assert.rejects(

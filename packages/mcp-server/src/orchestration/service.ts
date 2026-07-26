@@ -16,11 +16,21 @@ import {
   SQLiteCouncilStore,
   type AgentAdapter,
   type ApproveGateResult,
+  declaredCapabilitiesForTransport,
+  defaultPolicyCapabilitiesForTransport,
+  deriveCycleRequirements,
   type DiscussionCycleView,
+  type DiscussionCycleKind,
+  findCapabilityGaps,
+  grantRuntimeCapabilities,
   type MessageKind,
   type OrchestrationRun,
   type PaginatedRuns,
   type RuntimeBinding,
+  type RuntimeCapabilityKey,
+  type RuntimeCapabilitySnapshot,
+  type CycleTaskRequirements,
+  type RuntimeTransportKind,
 } from "council-orchestrator";
 import {
   type CreateAgentInput,
@@ -67,6 +77,8 @@ export interface RegisteredAgentAdapter {
   /** 可用性检查失败时展示的可执行提示；未提供则回退到通用不可用说明。 */
   limitationWhenUnavailable?: string;
   checkAvailability?: () => Promise<boolean>;
+  /** Runtime 自述能力；外部静态适配器未提供时保守降为纯文本。 */
+  runtimeCapabilities?: readonly RuntimeCapabilityKey[];
 }
 
 export interface EphemeralAgentBinding {
@@ -103,6 +115,7 @@ export interface PublicAgentCapability {
   available: boolean;
   actorId: string;
   limitation?: string;
+  runtimeCapabilities: RuntimeCapabilityKey[];
   mentionAlias?: string;
   providerId?: string;
   providerName?: string;
@@ -133,6 +146,7 @@ export class CouncilOrchestrationService {
   readonly #baseLimitations = new Map<string, string | undefined>();
   readonly #staticAdapterIds = new Set<string>();
   readonly #dynamicAdapterFingerprints = new Map<string, string>();
+  readonly #runtimeCapabilityOverrides = new Map<string, readonly RuntimeCapabilityKey[]>();
   readonly #cycles: CycleDriver;
   /** 决策写入器需要 CouncilDatabase，晚于本服务构造；开局时校验已挂载。 */
   #decisions: CycleDecisionWriter | undefined;
@@ -174,8 +188,15 @@ export class CouncilOrchestrationService {
         label: registration.label ?? registration.adapter.adapterId,
         available: registration.available ?? true,
         actorId,
+        runtimeCapabilities: [...(registration.runtimeCapabilities ?? ["text"])],
         ...(registration.limitation ? { limitation: registration.limitation } : {}),
       });
+      if (registration.runtimeCapabilities) {
+        this.#runtimeCapabilityOverrides.set(
+          registration.adapter.adapterId,
+          registration.runtimeCapabilities,
+        );
+      }
       if (registration.checkAvailability) {
         this.#availabilityChecks.set(
           registration.adapter.adapterId,
@@ -250,27 +271,107 @@ export class CouncilOrchestrationService {
     topicId: string;
     participants: readonly string[];
     roundBudget?: number;
-    requiresCommitRef?: boolean;
+    kind?: DiscussionCycleKind;
+    taskRequirements?: CycleTaskRequirements;
   }): Promise<DiscussionCycleView> {
     if (!this.#decisions) {
       throw new OrchestrationConfigError("决策写入器未挂载，无法开始圆桌讨论。");
     }
-    for (const participant of input.participants) {
-      if (!this.#actors.has(participant)) {
-        await this.#syncDynamicAgents();
-        break;
-      }
-    }
+    await this.#syncDynamicAgents();
+    await this.#ensureFreshAvailability();
     for (const participant of input.participants) {
       if (!this.#actors.has(participant)) {
         throw new OrchestrationConfigError("参与名册包含未注册的 Agent 适配器。");
       }
+      const publicCapability = this.#capabilities.find(
+        (capability) => capability.id === participant,
+      );
+      if (!publicCapability?.available) {
+        throw new OrchestrationConfigError(
+          `参与者 ${participant} 当前不可用，圆桌尚未启动。`,
+        );
+      }
     }
-    return await this.#cycles.start(input);
+    const kind = input.kind ?? "discussion";
+    const requirements = deriveCycleRequirements({
+      kind,
+      participants: input.participants,
+      ...(input.taskRequirements ? { task: input.taskRequirements } : {}),
+    });
+    const runtimeCapabilities = input.participants.map((participant) =>
+      this.#freezeRuntimeCapabilities(participant));
+    const gaps = findCapabilityGaps(requirements, runtimeCapabilities);
+    if (gaps.length > 0) {
+      const summary = gaps
+        .map((gap) => `${gap.adapterId}: ${gap.missing.join(", ")}`)
+        .join("；");
+      throw new OrchestrationConfigError(
+        `圆桌尚未启动：Runtime 能力不足（${summary}）。请更换具备所需能力的 Agent，或改用普通讨论。`,
+      );
+    }
+    return await this.#cycles.start({
+      topicId: input.topicId,
+      participants: input.participants,
+      ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
+      kind,
+      requirements,
+      runtimeCapabilities,
+    });
+  }
+
+  #freezeRuntimeCapabilities(adapterId: string): RuntimeCapabilitySnapshot {
+    const actorId = this.#actors.get(adapterId);
+    const agent =
+      this.modelRouter?.getAgent(adapterId)
+      ?? this.#fallbackRouterStore?.getAgent(adapterId)
+      ?? (actorId ? this.#fallbackRouterStore?.getAgent(actorId) : undefined);
+    const provider = agent
+      ? this.modelRouter?.getProvider(agent.providerId)
+        ?? this.#fallbackRouterStore?.getProvider(agent.providerId)
+      : undefined;
+    const bindingRevision = this.orchestrator.adapterBindingRevision(adapterId);
+    if (!actorId || !agent || !provider || !bindingRevision) {
+      throw new OrchestrationConfigError(
+        `参与者 ${adapterId} 缺少可冻结的 Agent、Provider 或 Runtime 版本。`,
+      );
+    }
+    const transportKind = transportKindForProtocol(provider.protocol);
+    const publicCapability = this.#capabilities.find(
+      (capability) => capability.id === adapterId,
+    );
+    const declared = [
+      ...(this.#runtimeCapabilityOverrides.get(adapterId)
+        ?? (this.#staticAdapterIds.has(adapterId)
+          ? publicCapability?.runtimeCapabilities ?? ["text"]
+          : declaredCapabilitiesForTransport(transportKind))),
+    ];
+    const granted = grantRuntimeCapabilities(
+      declared,
+      defaultPolicyCapabilitiesForTransport(transportKind),
+    );
+    if (publicCapability) {
+      publicCapability.runtimeCapabilities = [...granted];
+    }
+    return {
+      schemaVersion: 1,
+      adapterId,
+      actorId,
+      agentConfigRevision: agent.configRevision,
+      providerId: provider.id,
+      providerConfigRevision: provider.configRevision,
+      bindingRevision,
+      transportKind,
+      declared,
+      granted,
+    };
   }
 
   readCycle(topicId: string): DiscussionCycleView | undefined {
     return this.#store.readActiveDiscussionCycle(topicId);
+  }
+
+  readLatestCycle(topicId: string): DiscussionCycleView | undefined {
+    return this.#store.readLatestDiscussionCycle(topicId);
   }
 
   /**
@@ -832,6 +933,12 @@ export class CouncilOrchestrationService {
         mentionAlias: agent.mentionAlias,
         providerId: provider.id,
         providerName: provider.displayName,
+        runtimeCapabilities: grantRuntimeCapabilities(
+          declaredCapabilitiesForTransport(transportKindForProtocol(provider.protocol)),
+          defaultPolicyCapabilitiesForTransport(
+            transportKindForProtocol(provider.protocol),
+          ),
+        ),
         brand: brand ? {
           glyphId: brand.glyphId,
           colorToken: brand.colorToken,
@@ -862,6 +969,7 @@ export class CouncilOrchestrationService {
       this.#availabilityChecks.delete(capability.id);
       this.#baseLimitations.delete(capability.id);
       this.#unavailableLimitations.delete(capability.id);
+      this.#runtimeCapabilityOverrides.delete(capability.id);
     }
   }
 
@@ -879,6 +987,16 @@ export class CouncilOrchestrationService {
     this.#fallbackRouterStore?.close();
     this.modelRouter?.close();
   }
+}
+
+function transportKindForProtocol(
+  protocol: ProviderProfile["protocol"],
+): RuntimeTransportKind {
+  return protocol === "claude-cli"
+    ? "claude-resume"
+    : protocol === "codex-cli"
+      ? "codex-resume"
+      : "openai-sessionless";
 }
 
 export function createProductionOrchestrationService(

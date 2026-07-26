@@ -68,6 +68,7 @@ export function buildOfflineOrchestrationSnapshot(
         actorId: "council",
         label: "本地 Agent 服务",
         available: false,
+        runtimeCapabilities: [],
         limitation: buildOfflineLimitation(baseUrl),
       }],
       defaultPolicy: {

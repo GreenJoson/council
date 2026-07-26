@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -176,6 +177,18 @@ async function waitForPid(pidFile: string): Promise<number> {
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+    if (process.platform !== "win32") {
+      try {
+        const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        // 同组 SIGKILL 后，孤儿进程可能短暂处于僵尸态等待系统回收；它已不能执行。
+        return state.length > 0 && !state.startsWith("Z");
+      } catch {
+        return false;
+      }
+    }
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";

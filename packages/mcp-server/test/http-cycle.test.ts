@@ -22,10 +22,23 @@ const JSON_HEADERS = { "Content-Type": "application/json" };
 interface CycleView {
   cycle: {
     id: string;
+    kind: "discussion" | "fix_review";
     stage: string;
     status: string;
     participants: string[];
-    turns: { agentId: string; stage: string; stance: string }[];
+    runtimeCapabilities: {
+      adapterId: string;
+      agentConfigRevision: number;
+      providerConfigRevision: number;
+      bindingRevision: string;
+      granted: string[];
+    }[];
+    turns: {
+      agentId: string;
+      stage: string;
+      stance: string;
+      verdictDeclared?: boolean;
+    }[];
     currentRound: number;
     roundBudget: number;
   };
@@ -78,6 +91,12 @@ async function createTopic(baseUrl: string): Promise<string> {
 
 async function readCycle(baseUrl: string, topicId: string): Promise<CycleView | null> {
   const response = await fetch(`${baseUrl}/api/v1/topics/${topicId}/cycle`);
+  assert.equal(response.status, 200);
+  return (await readEnvelope<CycleView | null>(response)).data ?? null;
+}
+
+async function readLatestCycle(baseUrl: string, topicId: string): Promise<CycleView | null> {
+  const response = await fetch(`${baseUrl}/api/v1/topics/${topicId}/cycle/latest`);
   assert.equal(response.status, 200);
   return (await readEnvelope<CycleView | null>(response)).data ?? null;
 }
@@ -138,6 +157,20 @@ test("点一次开始圆桌即跑完全程，决策正文与最终 synthesis 逐
     assert.equal(await settle(harness.baseUrl, topicId), null, "收敛后不应留下活动 cycle");
     assert.deepEqual(proposer.seen, ["proposal", "synthesis"]);
     assert.deepEqual(reviewer.seen, ["critique"], "评审必须由另一位 Agent 做");
+
+    const persisted = await readLatestCycle(harness.baseUrl, topicId);
+    assert.equal(persisted?.cycle.kind, "discussion");
+    const snapshots = persisted?.cycle.runtimeCapabilities ?? [];
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.adapterId),
+      ["claude", "codex"],
+    );
+    for (const snapshot of snapshots) {
+      assert.ok(snapshot.agentConfigRevision > 0);
+      assert.ok(snapshot.providerConfigRevision > 0);
+      assert.ok(snapshot.bindingRevision.length > 0);
+      assert.deepEqual(snapshot.granted, ["text"]);
+    }
 
     const detail = await readTopic(harness.baseUrl, topicId);
     assert.equal(detail.decisions.length, 1);
@@ -259,49 +292,34 @@ test("名册不足两位时拒绝开局：一个人自说自话不构成互审",
   }
 });
 
-test("bug 修复互审：复审者拿到修复者提交的 commit，并被要求只读地读 diff", async () => {
-  const commit = "a1b2c3d4e5f6a7b8";
+test("bug 修复互审在只读 Runtime 上 fail-fast，不启动任何模型调用", async () => {
   const fixer = new ScriptedAgent("claude", (kind) =>
-    kind === "proposal"
-      ? [
-        "修好了越界读。",
-        "",
-        "```council-fix",
-        `{"commit":"${commit}","summary":"修正边界判断"}`,
-        "```",
-        "",
-        verdict("agree"),
-      ].join("\n")
-      : `${kind} 正文。\n\n${verdict("agree")}`);
+    `${kind} 正文。\n\n${verdict("agree")}`);
   const reviewer = new ScriptedAgent("codex", (kind) =>
     `${kind} 正文。\n\n${verdict("agree")}`);
   const harness = await harnessWith(fixer, reviewer);
   try {
     const topicId = await createTopic(harness.baseUrl);
-    await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
       method: "POST",
       headers: JSON_HEADERS,
       body: JSON.stringify({
         participants: ["claude", "codex"],
-        requiresCommitRef: true,
+        kind: "fix_review",
       }),
     });
-    await settle(harness.baseUrl, topicId);
-
-    assert.ok(
-      fixer.instructions[0]?.includes("```council-fix\n"),
-      "修复者开局就该被要求提交并附上 commit",
-    );
-    const review = reviewer.instructions[0] ?? "";
-    assert.ok(review.includes(`git show ${commit}`), "复审者必须拿到被审的那份 diff");
-    assert.ok(review.includes("只读复审"), "复审者不得改代码或部署");
-    assert.notEqual(reviewer.adapterId, fixer.adapterId, "复审必须换人");
+    assert.equal(response.status, 400);
+    const envelope = await readEnvelope<unknown>(response);
+    assert.match(envelope.message, /Runtime 能力不足/u);
+    assert.deepEqual(fixer.seen, []);
+    assert.deepEqual(reviewer.seen, []);
+    assert.equal(await readCycle(harness.baseUrl, topicId), null);
   } finally {
     await harness.close();
   }
 });
 
-test("修复者只在正文里声称改好而不给 commit 时，复审者仍被要求拦下来", async () => {
+test("task 附件能力同样在开局前检查，文本 Runtime 不能假装读取媒体", async () => {
   const fixer = new ScriptedAgent("claude", (kind) =>
     `我已经改好并提交了，请复审。\n\n${verdict("agree")}\n\n${kind}`);
   const reviewer = new ScriptedAgent("codex", (kind) =>
@@ -309,22 +327,18 @@ test("修复者只在正文里声称改好而不给 commit 时，复审者仍被
   const harness = await harnessWith(fixer, reviewer);
   try {
     const topicId = await createTopic(harness.baseUrl);
-    await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
       method: "POST",
       headers: JSON_HEADERS,
       body: JSON.stringify({
         participants: ["claude", "codex"],
-        requiresCommitRef: true,
+        kind: "discussion",
+        taskRequirements: { all: ["media_read", "vision"] },
       }),
     });
-    await settle(harness.baseUrl, topicId);
-
-    const review = reviewer.instructions[0] ?? "";
-    assert.ok(!review.includes("git show"), "没有引用就没有可读的 diff，不该编一个出来");
-    assert.ok(
-      review.includes("验证不了的改动"),
-      "缺引用恰恰是复审必须拦截的情形，规则不能只在有引用时才下发",
-    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(fixer.seen, []);
+    assert.deepEqual(reviewer.seen, []);
   } finally {
     await harness.close();
   }
@@ -377,6 +391,7 @@ test("度量从既有落库状态推算：轮次、耗时、提问次数与决�
       rounds: { count: number; max: number };
       wallClockMs: { count: number };
       questions: { total: number; open: number; perCycle: number };
+      verdicts: { checked: number; missing: number; missingCycleIds: string[] };
       decisionConsistency: { checked: number; divergedCycleIds: string[] };
     }>(response)).data;
     assert(metrics);
@@ -392,12 +407,56 @@ test("度量从既有落库状态推算：轮次、耗时、提问次数与决�
     assert.equal(metrics.rounds.max, 1, "全体同意时不该多走轮次");
     assert.equal(metrics.wallClockMs.count, 1);
     assert.deepEqual(metrics.questions, { total: 1, open: 0, perCycle: 1 });
+    assert.deepEqual(metrics.verdicts, {
+      checked: 3,
+      missing: 0,
+      missingCycleIds: [],
+    });
     assert.equal(metrics.decisionConsistency.checked, 1);
     assert.deepEqual(
       metrics.decisionConsistency.divergedCycleIds,
       [],
       "刚写完就该一致；不一致说明步骤 6 的搬运有问题",
     );
+  } finally {
+    await harness.close();
+  }
+});
+
+test("缺少 verdict 的发言进入可观测度量，不能只在运行日志里悄悄降级", async () => {
+  const proposer = new ScriptedAgent("claude", (kind) =>
+    `${kind} 正文。\n\n${verdict("agree")}`);
+  const reviewer = new ScriptedAgent("codex", (kind) =>
+    `${kind} 正文。\n\n${verdict("agree")}`);
+  const harness = await harnessWith(proposer, reviewer);
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ participants: ["claude", "codex"] }),
+    });
+    await settle(harness.baseUrl, topicId);
+
+    const raw = new (await import("node:sqlite")).DatabaseSync(harness.databasePath);
+    try {
+      raw.exec(`
+        UPDATE discussion_cycles
+        SET turns_json = json_set(turns_json, '$[0].verdictDeclared', json('false'))
+      `);
+    } finally {
+      raw.close();
+    }
+
+    const response = await fetch(
+      `${harness.baseUrl}/api/v1/orchestration/cycle-metrics`,
+    );
+    const metrics = (await readEnvelope<{
+      verdicts: { checked: number; missing: number; missingCycleIds: string[] };
+    }>(response)).data;
+    assert.equal(metrics?.verdicts.checked, 3);
+    assert.equal(metrics?.verdicts.missing, 1);
+    assert.equal(metrics?.verdicts.missingCycleIds.length, 1);
   } finally {
     await harness.close();
   }
