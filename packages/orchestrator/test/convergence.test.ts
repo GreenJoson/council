@@ -374,8 +374,8 @@ test("互审指令带上被审 commit，并且始终禁止放行读不到的改�
     assert.ok(instruction.includes("验证不了的改动"), "缺引用时的判定规则必须无条件下发");
   }
 
-  // 只有会动代码的阶段才被要求提交；评审阶段拿到 FIX_SPEC 只会诱导它去写文件。
-  const fixer = buildStageInstruction({
+  // 主审只传递交互式开发任务产生的 commit；Council headless 回合不得写代码。
+  const leadReviewer = buildStageInstruction({
     stage: "rebuttal",
     round: 2,
     roundBudget: 3,
@@ -383,7 +383,15 @@ test("互审指令带上被审 commit，并且始终禁止放行读不到的改�
     proposer: "claude",
     requiresCommitRef: true,
   });
-  assert.ok(fixer.includes("```council-fix\n"), "修复者必须拿到 commit 尾块规格");
+  assert.ok(
+    leadReviewer.includes("```council-fix\n"),
+    "只读主审必须传递被审 commit 引用",
+  );
+  assert.ok(leadReviewer.includes("不要修改文件"), "只读主审不得被诱导修改代码");
+  assert.ok(
+    !leadReviewer.includes("先自审并提交"),
+    "只读主审不得收到提交指令",
+  );
   assert.ok(
     !buildStageInstruction({
       stage: "critique",
@@ -392,7 +400,7 @@ test("互审指令带上被审 commit，并且始终禁止放行读不到的改�
       reviewers: ["codex"],
       proposer: "claude",
       requiresCommitRef: true,
-    }).includes("先自审并提交"),
-    "评审阶段不得被要求提交",
+    }).includes("```council-fix\n"),
+    "独立评审只消费主审传来的 commit，不重复生成引用规格",
   );
 });

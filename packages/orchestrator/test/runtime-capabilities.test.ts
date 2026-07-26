@@ -53,25 +53,45 @@ test("普通讨论只需要文本，CLI 与 sessionless Runtime 都能开局", (
   );
 });
 
-test("修复互审要求提案人写仓库、测试和提交，当前只读 CLI 在调用前被拒绝", () => {
+test("修复互审只审查已有 commit/diff，当前只读 CLI 可以开局", () => {
   const requirements = deriveCycleRequirements({
     kind: "fix_review",
     participants: ["claude", "codex"],
   });
-  const gaps = findCapabilityGaps(requirements, [
-    snapshot("claude", "claude-resume"),
-    snapshot("codex", "codex-resume"),
+  assert.deepEqual(requirements.byParticipant.claude, [
+    "text",
+    "repository_read",
+    "git_diff",
   ]);
-  assert.deepEqual(gaps, [
-    {
-      adapterId: "claude",
-      missing: ["repository_write", "shell_write", "tests", "git_commit"],
-    },
-    {
-      adapterId: "codex",
-      missing: ["tests"],
-    },
+  assert.deepEqual(requirements.byParticipant.codex, [
+    "text",
+    "repository_read",
+    "git_diff",
   ]);
+  assert.deepEqual(
+    findCapabilityGaps(requirements, [
+      snapshot("claude", "claude-resume"),
+      snapshot("codex", "codex-resume"),
+    ]),
+    [],
+  );
+});
+
+test("纯文本 Provider 仍不能参加需要读取 commit/diff 的修复互审", () => {
+  const requirements = deriveCycleRequirements({
+    kind: "fix_review",
+    participants: ["kimi", "codex"],
+  });
+  assert.deepEqual(
+    findCapabilityGaps(requirements, [
+      snapshot("kimi", "openai-sessionless"),
+      snapshot("codex", "codex-resume"),
+    ]),
+    [{
+      adapterId: "kimi",
+      missing: ["repository_read", "git_diff"],
+    }],
+  );
 });
 
 test("远程 Provider 自述能力不能突破 Council policy", () => {

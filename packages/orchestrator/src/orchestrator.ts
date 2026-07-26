@@ -27,6 +27,7 @@ import {
   RunBusyError,
 } from "./errors.js";
 import type { AgentAdapter, CouncilStore } from "./ports.js";
+import type { RuntimeEvent, RuntimeEventSink } from "./runtime/contracts.js";
 import type {
   AgentInvocation,
   ApproveGateInput,
@@ -469,6 +470,11 @@ export type UnclassifiedErrorReporter = (
   error: unknown,
 ) => void;
 
+export interface CouncilOrchestratorOptions {
+  onUnclassifiedError?: UnclassifiedErrorReporter;
+  runtimeEvents?: RuntimeEventSink;
+}
+
 /**
  * 能被翻译成可公开失败文案的异常类型。不属于这些类型的异常会退化成一句
  * 「适配器未提供可公开的错误分类」——那句话对排查毫无价值，所以未分类的
@@ -537,13 +543,15 @@ export class CouncilOrchestrator {
   #adapterGeneration = 0;
 
   readonly #onUnclassifiedError?: UnclassifiedErrorReporter;
+  readonly #runtimeEvents?: RuntimeEventSink;
 
   constructor(
     private readonly store: CouncilStore,
     adapters: readonly AgentAdapter[],
-    options?: Readonly<{ onUnclassifiedError?: UnclassifiedErrorReporter }>,
+    options?: Readonly<CouncilOrchestratorOptions>,
   ) {
     this.#onUnclassifiedError = options?.onUnclassifiedError;
+    this.#runtimeEvents = options?.runtimeEvents;
     for (const adapter of adapters) {
       assertAgentId(adapter.adapterId, "AgentAdapter.adapterId");
       if (this.#adapters.has(adapter.adapterId)) {
@@ -1221,6 +1229,13 @@ export class CouncilOrchestrator {
     cleanupTimeoutMs: number,
     notifyStreaming: () => void,
   ) {
+    const eventBase = {
+      schemaVersion: 1 as const,
+      runId,
+      topicId: invocation.topicId,
+      adapterId: adapter.adapterId,
+      runtimeBindingId: invocation.runtimeBindingId,
+    };
     const controller = new AbortController();
     this.#activeControllers.set(runId, controller);
     this.#activeAdapterIds.set(runId, adapter.adapterId);
@@ -1238,11 +1253,32 @@ export class CouncilOrchestrator {
         await adapter.invoke(invocation, {
           signal: controller.signal,
           notifyStreaming,
+          runtimeEvents: {
+            emit: (event) => this.#emitRuntimeEvent(event),
+          },
         }),
     );
+    this.#emitRuntimeEvent({
+      ...eventBase,
+      type: "turn.started",
+      occurredAt: new Date().toISOString(),
+    });
     try {
-      return await Promise.race([invocationPromise, aborted]);
+      const result = await Promise.race([invocationPromise, aborted]);
+      this.#emitRuntimeEvent({
+        ...eventBase,
+        type: "turn.completed",
+        occurredAt: new Date().toISOString(),
+      });
+      return result;
     } catch (error) {
+      this.#emitRuntimeEvent({
+        ...eventBase,
+        type: error instanceof InvocationCancelledError || error instanceof LeaseLostError
+          ? "turn.aborted"
+          : "turn.failed",
+        occurredAt: new Date().toISOString(),
+      });
       if (controller.signal.aborted) {
         const cleaned = await waitForInvocationCleanup(invocationPromise, cleanupTimeoutMs);
         if (!cleaned) {
@@ -1264,6 +1300,17 @@ export class CouncilOrchestrator {
       if (this.#activeAdapterIds.get(runId) === adapter.adapterId) {
         this.#activeAdapterIds.delete(runId);
       }
+    }
+  }
+
+  #emitRuntimeEvent(event: RuntimeEvent): void {
+    try {
+      this.#runtimeEvents?.emit(event);
+    } catch (error) {
+      this.#onUnclassifiedError?.(
+        { runId: event.runId, adapterId: event.adapterId },
+        error,
+      );
     }
   }
 

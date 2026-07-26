@@ -1,6 +1,6 @@
 /**
- * @input  依赖：公开 Council 上下文、ModelRouterService、远程兼容运行时、草稿流与 AbortSignal
- * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、流式、脱敏失败 AgentAdapter
+ * @input  依赖：公开 Council 上下文、ModelRouterService、远程兼容运行时、统一 RuntimeEvent 与 AbortSignal
+ * @output 导出：DeepSeek/Kimi 等兼容 Provider 的只读、流式事件、脱敏失败 AgentAdapter
  * @pos    编排核心、远程模型 API 与临时草稿流之间的安全桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,7 @@ import {
   type AgentInvocation,
   type AgentInvocationOptions,
   type AgentResult,
+  type RuntimeTextOperation,
 } from "council-orchestrator";
 import type { ModelRouterService } from "../model-router-service.js";
 import { logger } from "../logger.js";
@@ -20,11 +21,6 @@ import {
   OpenAICompatibleRuntimeError,
 } from "../openai-compatible-runtime.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
-import type {
-  AgentProgressMeta,
-  AgentProgressPublisher,
-} from "./agent-progress-hub.js";
-
 function buildPrompt(input: AgentInvocation, maximum: number): string {
   const trustedPrefix = [
     "你是 Council 架构委员会中的独立顾问。只返回可公开共享的最终结论，不输出隐藏思维链。",
@@ -68,7 +64,6 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
     private readonly runtime: OpenAICompatibleRuntime,
     private readonly router: ModelRouterService,
     private readonly maxContextChars: number,
-    private readonly progress?: AgentProgressPublisher,
   ) {}
 
   async invoke(
@@ -90,12 +85,13 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
       const message = "远程 Agent 配置不完整。";
       throw new AgentInvocationError(message, false, message);
     }
-    const progressMeta: AgentProgressMeta = {
+    const eventMeta = {
+      schemaVersion: 1 as const,
       runId: input.runId,
       topicId: input.topicId,
       adapterId: this.adapterId,
+      runtimeBindingId: input.runtimeBindingId,
     };
-    this.progress?.reset(progressMeta);
     try {
       const content = await this.runtime.generate({
         baseUrl: provider.baseUrl,
@@ -104,14 +100,19 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         prompt: buildPrompt(input, this.maxContextChars),
         signal: options.signal,
         onTextEvent: (event) => {
+          options.runtimeEvents?.emit({
+            ...eventMeta,
+            type: "text.updated",
+            occurredAt: new Date().toISOString(),
+            operation: event.operation satisfies RuntimeTextOperation,
+            ...(event.operation === "reset" ? {} : { content: event.content }),
+          });
           if (event.operation === "reset") {
-            this.progress?.reset(progressMeta);
+            return;
           } else if (event.operation === "append") {
             options.notifyStreaming?.();
-            this.progress?.append(progressMeta, event.content);
           } else {
             options.notifyStreaming?.();
-            this.progress?.replace(progressMeta, event.content);
           }
         },
       });
@@ -140,8 +141,6 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         retryable,
         publicMessage,
       );
-    } finally {
-      this.progress?.complete(progressMeta);
     }
   }
 }

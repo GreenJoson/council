@@ -1,6 +1,6 @@
 /**
- * @input  依赖：假 ClaudeRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、项目目录、session 恢复与安全失败原因测试
+ * @input  依赖：假 ClaudeRuntime、公开编排上下文、RuntimeEvent 与 AbortSignal
+ * @output 导出：可信 prompt、统一文本事件、历史裁剪、项目目录、session 恢复与安全失败原因测试
  * @pos    Claude Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,7 +9,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
+import {
+  AgentInvocationError,
+  type AgentInvocation,
+  type RuntimeEvent,
+} from "council-orchestrator";
 import {
   ClaudeRuntime,
   ClaudeRuntimeError,
@@ -168,4 +172,39 @@ test("Claude 配额失败保持不可重试分类", async () => {
       && error.retryable === false
       && error.publicMessage === "额度不足",
   );
+});
+
+test("Claude 公开增量只通过统一 RuntimeEvent 发出", async () => {
+  const runtime = {
+    generate: async (input: ClaudeRuntimeInput) => {
+      input.onTextEvent?.({ operation: "reset" });
+      input.onTextEvent?.({ operation: "append", content: "增量" });
+      input.onTextEvent?.({ operation: "replace", content: "最终草稿" });
+      return { content: "最终草稿", sessionId: "session_event_test" };
+    },
+  };
+  const adapter = new ClaudeAgentAdapter(runtime as unknown as ClaudeRuntime, {
+    maxContextChars: 2_000,
+  });
+  const events: RuntimeEvent[] = [];
+  let streamingNotifications = 0;
+
+  await adapter.invoke(invocation(path.resolve(".")), {
+    signal: new AbortController().signal,
+    notifyStreaming: () => {
+      streamingNotifications += 1;
+    },
+    runtimeEvents: {
+      emit: (event) => events.push(event),
+    },
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.type === "text.updated"
+      ? `${event.type}:${event.operation}`
+      : event.type),
+    ["text.updated:reset", "text.updated:append", "text.updated:replace"],
+  );
+  assert.equal(events[1]?.runtimeBindingId, "binding_claude");
+  assert.equal(streamingNotifications, 2);
 });

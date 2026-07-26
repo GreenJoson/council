@@ -129,10 +129,23 @@ async function settle(
 function harnessWith(
   proposer: ScriptedAgent,
   reviewer: ScriptedAgent,
+  runtimeCapabilities: readonly (
+    "text" | "repository_read" | "git_diff"
+  )[] = ["text"],
 ): Promise<Awaited<ReturnType<typeof startHttpHarness>>> {
   return startHttpHarness({}, [
-    { adapter: proposer, actorAlias: "claude", label: "Claude" },
-    { adapter: reviewer, actorAlias: "codex", label: "Codex" },
+    {
+      adapter: proposer,
+      actorAlias: "claude",
+      label: "Claude",
+      runtimeCapabilities,
+    },
+    {
+      adapter: reviewer,
+      actorAlias: "codex",
+      label: "Codex",
+      runtimeCapabilities,
+    },
   ]);
 }
 
@@ -292,12 +305,26 @@ test("名册不足两位时拒绝开局：一个人自说自话不构成互审",
   }
 });
 
-test("bug 修复互审在只读 Runtime 上 fail-fast，不启动任何模型调用", async () => {
-  const fixer = new ScriptedAgent("claude", (kind) =>
-    `${kind} 正文。\n\n${verdict("agree")}`);
+test("bug 修复互审只读核对交互式任务产生的 commit，不要求 Agent 修改或提交", async () => {
+  const reviewedCommit = "a1b2c3d4e5f6";
+  const fixer = new ScriptedAgent("claude", (kind) => kind === "proposal"
+    ? [
+        `${kind} 正文。`,
+        "",
+        "```council-fix",
+        `{"commit":"${reviewedCommit}","summary":"核对已有修复"}`,
+        "```",
+        "",
+        verdict("agree"),
+      ].join("\n")
+    : `${kind} 正文。\n\n${verdict("agree")}`);
   const reviewer = new ScriptedAgent("codex", (kind) =>
     `${kind} 正文。\n\n${verdict("agree")}`);
-  const harness = await harnessWith(fixer, reviewer);
+  const harness = await harnessWith(
+    fixer,
+    reviewer,
+    ["text", "repository_read", "git_diff"],
+  );
   try {
     const topicId = await createTopic(harness.baseUrl);
     const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
@@ -308,12 +335,13 @@ test("bug 修复互审在只读 Runtime 上 fail-fast，不启动任何模型调
         kind: "fix_review",
       }),
     });
-    assert.equal(response.status, 400);
-    const envelope = await readEnvelope<unknown>(response);
-    assert.match(envelope.message, /Runtime 能力不足/u);
-    assert.deepEqual(fixer.seen, []);
-    assert.deepEqual(reviewer.seen, []);
-    assert.equal(await readCycle(harness.baseUrl, topicId), null);
+    assert.equal(response.status, 201);
+    assert.equal(await settle(harness.baseUrl, topicId), null);
+    assert.deepEqual(fixer.seen, ["proposal", "synthesis"]);
+    assert.deepEqual(reviewer.seen, ["critique"]);
+    assert.match(fixer.instructions[0] ?? "", /只读 bug 修复互审/);
+    assert.doesNotMatch(fixer.instructions[0] ?? "", /先自审并提交/);
+    assert.match(reviewer.instructions[0] ?? "", new RegExp(`git show ${reviewedCommit}`));
   } finally {
     await harness.close();
   }

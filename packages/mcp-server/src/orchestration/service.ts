@@ -215,6 +215,7 @@ export class CouncilOrchestrationService {
       this.#store,
       registrations.map((registration) => registration.adapter),
       {
+        runtimeEvents: progressHub,
         // 未被适配器分类的异常此前会静默消失，运行里只剩一句无信息量的兜底文案。
         onUnclassifiedError: ({ runId, adapterId }, error) => {
           logger.error(
@@ -1058,7 +1059,6 @@ export function createProductionOrchestrationService(
           adapterId: agent.id,
           maxContextChars: councilConfig.maxContextChars,
           getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.claudeModel,
-          progress: progressHub,
         }),
         checkAvailability: async () => {
           const availability = await claudeRuntime.checkAvailability();
@@ -1076,7 +1076,6 @@ export function createProductionOrchestrationService(
           adapterId: agent.id,
           maxContextChars: councilConfig.maxContextChars,
           getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.codexModel,
-          progress: progressHub,
         }),
         checkAvailability: async () => {
           const availability = await codexRuntime.checkAvailability();
@@ -1094,7 +1093,6 @@ export function createProductionOrchestrationService(
         remoteRuntime,
         modelRouter,
         councilConfig.maxContextChars,
-        progressHub,
       ),
       checkAvailability: async () => await modelRouter.isAgentReady(agent.id),
       limitationWhenUnavailable:

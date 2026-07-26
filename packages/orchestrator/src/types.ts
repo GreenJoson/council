@@ -272,6 +272,7 @@ export interface AgentInvocation {
 export interface AgentInvocationOptions {
   signal: AbortSignal;
   notifyStreaming?: () => void;
+  runtimeEvents?: import("./runtime/contracts.js").RuntimeEventSink;
 }
 
 export interface AgentResult {

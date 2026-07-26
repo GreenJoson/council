@@ -21,7 +21,7 @@ export interface StageInstructionInput {
    * 复审者必须去读真实改动而不是读描述。
    */
   reviewedCommitRef?: string;
-  /** 本轮是不是 bug 修复互审；决定要不要给会动代码的阶段下发 commit 引用规格。 */
+  /** 本轮是不是只读 bug 修复互审；决定要不要要求主审传递已有 commit 引用。 */
   requiresCommitRef?: boolean;
 }
 
@@ -55,21 +55,23 @@ const TRAILER_SPEC = [
 ].join("\n");
 
 /**
- * 修复者的自述格式。要求 commit 引用而不是"我改好了"：
- * 复审者只有拿到不可变的对象名，才能确定自己读的就是被审的那份改动。
+ * 只读主审的引用传递格式。代码修改和提交必须先由交互式开发任务完成；
+ * Council 只验证并传递不可变 commit，不在 headless Runtime 里写文件。
  */
 const FIX_SPEC = [
-  "## 这是一次 bug 修复互审",
+  "## 这是一次只读 bug 修复互审",
   "",
-  "先自审并提交，再回帖。正文之后必须附上改动尾块：",
+  "本轮不负责修改代码。先从议题公开记录里找到交互式开发任务已经产生的 commit 引用，",
+  "用 `git show <commit>` 和必要的上下文文件核对真实 diff；不要修改文件、运行写操作、",
+  "创建提交、推送或部署。正文之后必须原样传递被审 commit：",
   "",
   "```council-fix",
-  '{"commit":"<已提交的 commit sha>","summary":"这次改动解决了什么"}',
+  '{"commit":"<被审 commit sha>","summary":"这次改动解决了什么"}',
   "```",
   "",
-  "commit 必须是已经提交到本仓库的对象名（7 位以上十六进制），不能填分支名或 tag——",
-  "它们会移动，复审者读到的就不再是被审的那份 diff。",
-  "尾块缺失或引用非法时，复审者会直接判定 `blocking`，本轮不算完成。",
+  "commit 必须是本仓库中已经存在的对象名（7 位以上十六进制），不能填分支名或 tag。",
+  "找不到明确 commit、对象不存在或无法读取 diff 时，不要猜；标记 `blocking`，并通过",
+  "`council-question` 要求用户或交互式开发任务补充真实 commit。",
 ].join("\n");
 
 function reviewBody(input: StageInstructionInput): readonly string[] {
@@ -96,6 +98,15 @@ function reviewerList(reviewers: readonly string[]): string {
 function stageBody(input: StageInstructionInput): readonly string[] {
   switch (input.stage) {
     case "proposal":
+      if (input.requiresCommitRef) {
+        return [
+          "你是本次修复的只读主审。修复已由交互式开发任务完成；你只审查已有 commit/diff，",
+          "不修改文件、不运行写操作、不创建提交。",
+          "",
+          `随后 ${reviewerList(input.reviewers)} 会独立复审你的判断并可以否决它，`,
+          "所以结论必须引用真实 diff，写清修复是否命中根因、边界风险和验证证据。",
+        ];
+      }
       return [
         "你是本议题的提案人。基于公开的问题、约束与证据给出一个可执行方案。",
         "",
@@ -119,6 +130,15 @@ function stageBody(input: StageInstructionInput): readonly string[] {
         ...reviewBody(input),
       ];
     case "rebuttal":
+      if (input.requiresCommitRef) {
+        return [
+          "评审对被审 commit 提出了阻塞级异议。基于同一份真实 diff 逐条回应，",
+          "接受问题或用代码证据反驳；不要修改文件或另建提交。",
+          "",
+          `回应之后 ${reviewerList(input.reviewers)} 会再看一轮——`,
+          "分歧是否解决由评审判定，不由你宣布。",
+        ];
+      }
       return [
         "评审提出了阻塞级异议。逐条正面回应：接受并说明如何修改，或用证据反驳。",
         "",
@@ -139,7 +159,7 @@ function stageBody(input: StageInstructionInput): readonly string[] {
 
 /** 组装某一阶段下发给 Agent 的完整指令。 */
 export function buildStageInstruction(input: StageInstructionInput): string {
-  // 只有会动代码的阶段才下发 FIX_SPEC；评审是只读的，给它这段只会诱导它去提交。
+  // 主审在 proposal/rebuttal 中传递同一 immutable commit；critique 只消费该引用。
   const wantsFixSpec = input.requiresCommitRef
     && (input.stage === "proposal" || input.stage === "rebuttal");
   return [

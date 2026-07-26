@@ -10,5 +10,6 @@
 | `errors.ts` | 错误 | 提供可判定的配置、状态、冲突、lease、超时和调用错误；适配器只能通过显式 `publicMessage` 公开脱敏原因 |
 | `orchestrator.ts` | 核心 | 分离 begin/drive，统一 Run 与活动 RuntimeBinding 续租、session 恢复、cleanup 屏障、人工门、取消和恢复 |
 | `index.ts` | 入口 | 汇总导出公开 API 及供 Node 单一迁移器消费的编排 schema 契约 |
+| `runtime/` | 运行时协议 | 定义 RuntimeSessionRef 投影、统一 RuntimeEvent、Sink 与工具所有权 fail-closed 校验 |
 | `cycle/` | 收敛协议 | 固定四段圆桌协议：纯状态机、立场/提问尾块解析、cycle 与阻塞提问的严格解码与 CAS 仓储 |
 | `sqlite/` | 持久化 | 实现事务、CAS、单活动 run、RuntimeBinding、双 lease fencing 和稳定公开游标 |

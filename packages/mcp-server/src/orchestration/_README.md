@@ -4,10 +4,10 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `agent-progress-hub.ts` | 临时流 | 在内存中维护每个 Run 的有界公开草稿、单调 sequence 和 SSE 重连快照，不写 SQLite |
-| `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，首轮发送完整公开上下文、后续恢复 session 并发送公开增量，转发文本增量且仅公开脱敏诊断 |
-| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并发送公开增量，转发公开 JSONL 消息 |
-| `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，转发公开 `delta.content` 并仅公开脱敏原因 |
+| `agent-progress-hub.ts` | 兼容桥 | 把统一 RuntimeEvent 投影为现有 SSE 草稿、单调 sequence 和重连快照，不写 SQLite |
+| `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，首轮发送完整公开上下文、后续恢复 session 并发出统一文本事件，只公开脱敏诊断 |
+| `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并把公开 JSONL 消息转成统一文本事件 |
+| `openai-compatible-agent-adapter.ts` | 适配 | 将公开上下文交给已配置的兼容 API，把公开 `delta.content` 转成统一文本事件并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
 
@@ -45,8 +45,8 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 只有手动调用请求显式设置 `confirmationBeforeCompletion=true` 时才进入 `before_completion`
 人工复核，其他执行策略仍由服务端固定。
 
-所有适配器把临时输出写入同一个 `AgentProgressHub`：键由
-`runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经
+编排器和适配器只发出统一 `RuntimeEvent`；`AgentProgressHub` 是面向旧 SSE 草稿协议的兼容
+投影，键由 `runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经
 `SQLiteCouncilStore.commitRound` 原子发布，因此浏览器断线、草稿丢失或进程退出不会制造
 半条正式消息。
 

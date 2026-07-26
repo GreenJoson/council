@@ -79,19 +79,12 @@ const READ_ONLY_LOCAL_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
 const FIX_PROPOSER_REQUIREMENTS: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
-  "repository_write",
-  "shell_read",
-  "shell_write",
-  "tests",
   "git_diff",
-  "git_commit",
 ];
 
 const FIX_REVIEWER_REQUIREMENTS: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
-  "shell_read",
-  "tests",
   "git_diff",
 ];
 

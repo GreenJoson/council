@@ -16,6 +16,7 @@ export * from "./cycle/stage-instructions.js";
 export * from "./cycle/verdict.js";
 export * from "./errors.js";
 export * from "./orchestrator.js";
+export * from "./runtime/contracts.js";
 export {
   DISCUSSION_CYCLE_SCHEMA_SQL,
   LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,

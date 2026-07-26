@@ -17,6 +17,7 @@ import {
   MAX_TIMER_DELAY_MS,
   OrchestrationConfigError,
   StoreConflictError,
+  type RuntimeEvent,
 } from "../src/index.js";
 import type {
   ApproveGateInput,
@@ -100,6 +101,67 @@ test("按计划完成多 Agent 多消息类型轮次", async () => {
   ]);
   assert.ok(store.statusHistory.includes("running"));
   assert.ok(store.statusHistory.includes("waiting_agent"));
+});
+
+test("编排器通过统一 RuntimeEvent 报告回合开始与终态", async () => {
+  const store = new FakeCouncilStore();
+  const agent = new FakeAgentAdapter("alpha", async () => ({ content: "公开回复" }));
+  const events: RuntimeEvent[] = [];
+  const orchestrator = new CouncilOrchestrator(store, [agent], {
+    runtimeEvents: {
+      emit: (event) => events.push(event),
+    },
+  });
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.deepEqual(events.map((event) => event.type), [
+    "turn.started",
+    "turn.completed",
+  ]);
+  assert.equal(events[0]?.runtimeBindingId, "binding_alpha");
+  assert.equal(events[0]?.topicId, "topic_test");
+});
+
+test("RuntimeEvent 观察器失败只进宿主日志，不得中断 Agent 或公开提交", async () => {
+  const store = new FakeCouncilStore();
+  const agent = new FakeAgentAdapter("alpha", async (invocation, options) => {
+    options.runtimeEvents?.emit({
+      schemaVersion: 1,
+      type: "text.updated",
+      occurredAt: "2026-07-27T00:00:00.000Z",
+      runId: invocation.runId,
+      topicId: invocation.topicId,
+      adapterId: invocation.adapterId,
+      runtimeBindingId: invocation.runtimeBindingId,
+      operation: "append",
+      content: "公开增量",
+    });
+    return { content: "公开回复" };
+  });
+  const reported: unknown[] = [];
+  const orchestrator = new CouncilOrchestrator(store, [agent], {
+    runtimeEvents: {
+      emit: () => {
+        throw new Error("事件观察器故障");
+      },
+    },
+    onUnclassifiedError: (_context, error) => reported.push(error),
+  });
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  const completed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(completed.status, "completed");
+  assert.equal(store.messages[0]?.content, "公开回复");
+  assert.equal(reported.length, 3, "started、text.updated、completed 均应隔离观察器故障");
 });
 
 test("Agent 可重试失败在尝试上限后进入 failed", async () => {

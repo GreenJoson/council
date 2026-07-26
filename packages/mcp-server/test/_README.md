@@ -9,7 +9,7 @@
 | `schema-v8-migration.test.ts` | 数据迁移 | 用最小现场 v7 cycle 直接验证需求/能力 backfill、旧停止原因规范化和 accepted trigger 修复 |
 | `cycle-repository.test.ts` | 安全验收 | 在真实迁移库上验证收敛仓储：开局唯一与已决议题拒绝开局、同意路径直达 synthesis、阻塞回环与预算用尽放弃、提问挂起/回答的重放幂等、过期版本 CAS 拒绝 |
 | `database.test.ts` | 单元测试 | 验证动态 Actor alias、冻结快照与索引一致、Session 历史/current 语义、未知身份拒绝、revision 分域与 lease 零噪声 |
-| `agent-progress-hub.test.ts` | 单元测试 | 验证临时 Agent 草稿的顺序、有界追加、快照和完成清理 |
+| `agent-progress-hub.test.ts` | 单元测试 | 验证统一 RuntimeEvent 到临时草稿的兼容投影、顺序、有界追加、快照和完成清理 |
 | `claude-runtime.test.ts` | 单元测试 | 验证纯生成、公开 stream-json 增量、session 恢复、取消、超时、输出上限与脱敏错误 |
 | `codex-runtime.test.ts` | 单元测试 | 验证只读沙箱、公开 JSONL 消息增量、事件截断、最终正文限长、取消与脱敏错误分类 |
 | `claude-config.test.ts` | 单元测试 | 验证 Claude 权限模式、stdio MCP 调用者身份必填、HTTP 配置隔离、保留参数和定时器边界 |
@@ -31,6 +31,6 @@
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
 | `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式 Chat Completions，用于远程 Provider/双 Agent E2E |
-| `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：能力 fail-fast、冻结修订/能力快照、点一次跑完全程、提问恢复、缺失 verdict 度量、阻断停止与决策一致性 |
+| `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：能力 fail-fast、只读 commit/diff 互审、冻结修订/能力快照、点一次跑完全程、提问恢复、缺失 verdict 度量、阻断停止与决策一致性 |
 | `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证自动交接：一次开局跑完提案/评审/收敛、阻塞反驳回环、提问恢复，以及预算用尽原子保存阻断分歧 |
 | `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |

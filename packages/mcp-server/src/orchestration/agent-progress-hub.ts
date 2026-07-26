@@ -1,10 +1,12 @@
 /**
- * @input  依赖：Agent 运行标识、公开文本增量与预览长度上限
- * @output 导出：进程内 Agent 草稿快照、增量事件与订阅中心
- * @pos    CLI 运行时和 HTTP SSE 之间的临时桥梁；草稿不写 SQLite
+ * @input  依赖：统一 RuntimeEvent、Agent 运行标识、公开文本增量与预览长度上限
+ * @output 导出：RuntimeEvent 到进程内 Agent 草稿快照、增量事件与订阅中心的兼容桥
+ * @pos    Runtime 契约和 HTTP SSE 之间的临时投影；草稿不写 SQLite
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import type { RuntimeEvent, RuntimeEventSink } from "council-orchestrator";
 
 export type AgentProgressOperation =
   | "snapshot"
@@ -32,24 +34,46 @@ interface AgentProgressDraft extends AgentProgressMeta {
   content: string;
 }
 
-export interface AgentProgressPublisher {
-  reset(meta: AgentProgressMeta): void;
-  append(meta: AgentProgressMeta, delta: string): void;
-  replace(meta: AgentProgressMeta, content: string): void;
-  complete(meta: AgentProgressMeta): void;
-}
-
 function sameInvocation(draft: AgentProgressDraft, meta: AgentProgressMeta): boolean {
   return draft.topicId === meta.topicId && draft.adapterId === meta.adapterId;
 }
 
-export class AgentProgressHub implements AgentProgressPublisher {
+export class AgentProgressHub implements RuntimeEventSink {
   readonly #drafts = new Map<string, AgentProgressDraft>();
   readonly #listeners = new Set<AgentProgressListener>();
 
   constructor(private readonly maxContentChars: number) {
     if (!Number.isSafeInteger(maxContentChars) || maxContentChars <= 0) {
       throw new Error("Agent 草稿预览长度上限必须是正安全整数。");
+    }
+  }
+
+  emit(event: RuntimeEvent): void {
+    const meta: AgentProgressMeta = {
+      runId: event.runId,
+      topicId: event.topicId,
+      adapterId: event.adapterId,
+    };
+    if (event.type === "turn.started") {
+      this.reset(meta);
+      return;
+    }
+    if (event.type === "text.updated") {
+      if (event.operation === "reset") {
+        this.reset(meta);
+      } else if (event.operation === "append") {
+        this.append(meta, event.content ?? "");
+      } else {
+        this.replace(meta, event.content ?? "");
+      }
+      return;
+    }
+    if (
+      event.type === "turn.completed"
+      || event.type === "turn.failed"
+      || event.type === "turn.aborted"
+    ) {
+      this.complete(meta);
     }
   }
 

@@ -1,6 +1,6 @@
 /**
- * @input  依赖：假 CodexRuntime、公开编排上下文与 AbortSignal
- * @output 导出：可信 prompt、历史裁剪、session 恢复、失败重试与安全原因测试
+ * @input  依赖：假 CodexRuntime、公开编排上下文、RuntimeEvent 与 AbortSignal
+ * @output 导出：可信 prompt、统一文本事件、历史裁剪、session 恢复、失败重试与安全原因测试
  * @pos    Codex Agent 适配器跨越不可信公开记录时的安全边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,7 +9,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { AgentInvocationError, type AgentInvocation } from "council-orchestrator";
+import {
+  AgentInvocationError,
+  type AgentInvocation,
+  type RuntimeEvent,
+} from "council-orchestrator";
 import {
   CodexRuntime,
   CodexRuntimeError,
@@ -202,4 +206,39 @@ test("Codex 登录等确定性失败不消耗恢复重试", async () => {
       /调用失败/.test(error.message) &&
       error.publicMessage === "脱敏登录失败",
   );
+});
+
+test("Codex 公开增量只通过统一 RuntimeEvent 发出", async () => {
+  const runtime = {
+    generate: async (input: CodexRuntimeInput) => {
+      input.onTextEvent?.({ operation: "reset" });
+      input.onTextEvent?.({ operation: "append", content: "增量" });
+      input.onTextEvent?.({ operation: "replace", content: "最终草稿" });
+      return { content: "最终草稿", sessionId: "thread_event_test" };
+    },
+  };
+  const adapter = new CodexAgentAdapter(runtime as unknown as CodexRuntime, {
+    maxContextChars: 2_000,
+  });
+  const events: RuntimeEvent[] = [];
+  let streamingNotifications = 0;
+
+  await adapter.invoke(invocation(path.resolve(".")), {
+    signal: new AbortController().signal,
+    notifyStreaming: () => {
+      streamingNotifications += 1;
+    },
+    runtimeEvents: {
+      emit: (event) => events.push(event),
+    },
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.type === "text.updated"
+      ? `${event.type}:${event.operation}`
+      : event.type),
+    ["text.updated:reset", "text.updated:append", "text.updated:replace"],
+  );
+  assert.equal(events[1]?.runtimeBindingId, "binding_codex");
+  assert.equal(streamingNotifications, 2);
 });

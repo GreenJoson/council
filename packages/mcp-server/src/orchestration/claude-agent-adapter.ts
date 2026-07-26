@@ -1,6 +1,6 @@
 /**
- * @input  依赖：公开 Council 上下文、纯 ClaudeRuntime、临时草稿流与 Agent AbortSignal
- * @output 导出：不写数据库、复用议题 session、转发公开文本增量并脱敏失败的适配器
+ * @input  依赖：公开 Council 上下文、纯 ClaudeRuntime、统一 RuntimeEvent 与 Agent AbortSignal
+ * @output 导出：不写数据库、复用议题 session、发出公开文本事件并脱敏失败的适配器
  * @pos    编排 AgentAdapter 与 Claude Code `-p --resume` 逻辑持久会话之间的安全流式桥梁
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,22 +12,17 @@ import {
   type AgentInvocation,
   type AgentInvocationOptions,
   type AgentResult,
+  type RuntimeTextOperation,
 } from "council-orchestrator";
 import { ClaudeRuntime, ClaudeRuntimeError } from "../claude-runtime.js";
 import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
-import type {
-  AgentProgressMeta,
-  AgentProgressPublisher,
-} from "./agent-progress-hub.js";
-
 export interface ClaudeAgentAdapterOptions {
   adapterId?: string;
   maxContextChars: number;
   model?: string;
   getModel?: () => string | undefined;
-  progress?: AgentProgressPublisher;
 }
 
 function formatTrustedPrefix(input: AgentInvocation): string {
@@ -140,12 +135,13 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       throw new AgentInvocationError(message, false, message);
     }
     const prompt = buildPrompt(input, this.options.maxContextChars);
-    const progressMeta: AgentProgressMeta = {
+    const eventMeta = {
+      schemaVersion: 1 as const,
       runId: input.runId,
       topicId: input.topicId,
       adapterId: this.adapterId,
+      runtimeBindingId: input.runtimeBindingId,
     };
-    this.options.progress?.reset(progressMeta);
     try {
       const model = this.options.getModel?.() ?? this.options.model;
       const response = await this.runtime.generate({
@@ -155,14 +151,19 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         ...(model ? { model } : {}),
         signal: options.signal,
         onTextEvent: (event) => {
+          options.runtimeEvents?.emit({
+            ...eventMeta,
+            type: "text.updated",
+            occurredAt: new Date().toISOString(),
+            operation: event.operation satisfies RuntimeTextOperation,
+            ...(event.operation === "reset" ? {} : { content: event.content }),
+          });
           if (event.operation === "reset") {
-            this.options.progress?.reset(progressMeta);
+            return;
           } else if (event.operation === "append") {
             options.notifyStreaming?.();
-            this.options.progress?.append(progressMeta, event.content);
           } else {
             options.notifyStreaming?.();
-            this.options.progress?.replace(progressMeta, event.content);
           }
         },
       });
@@ -175,8 +176,6 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         throw options.signal.reason;
       }
       throw safeInvocationError(error);
-    } finally {
-      this.options.progress?.complete(progressMeta);
     }
   }
 }

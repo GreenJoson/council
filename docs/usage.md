@@ -73,14 +73,15 @@ Agent/Provider/Runtime 修订和实际授权能力。运行期间修改模型或
 cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普通讨论还是修复互审。
 
 - 普通讨论：只要求公开文本能力。
-- bug 修复互审：要求提案人具备仓库读写、shell、测试、diff 与 commit，评审者至少具备
-  仓库读取、只读 shell、测试和 diff。
+- bug 修复互审：修复必须先由 Codex App、Claude Code 等交互式开发任务完成并提供真实
+  commit；Council 圆桌只读核对该 commit/diff。参与者需要仓库读取和 diff 能力，但不会
+  获得修改文件、写 Shell、运行写操作、创建提交、推送或部署权限。
 - 附件任务：可以额外声明媒体读取、视觉等能力。
 
 若任何参与者缺少所需能力，Council 会在启动模型前直接列出缺口，不消耗额度，也不允许
 纯文本模型声称已经读取本地文件或提交代码。当前 Claude/Codex resume Runtime 只具备只读
 项目能力；Kimi、DeepSeek 等兼容 API Runtime 只有文本能力。它们仍可参与普通架构讨论，
-但在增加受控工具 Runtime 前不能承担修复执行。
+但在增加受控只读 ToolLoop 或供应商原生 Delegated Runtime 前不能声称读过本地代码。
 
 轮次预算耗尽时，界面会显示结构化的阻断分歧与停止原因。新发言如果缺少
 `council-verdict` 尾块，会按阻断处理并计入“缺少 verdict”度量，避免协议失效却继续显示
