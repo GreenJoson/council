@@ -63,6 +63,19 @@ const modelOptions = (currentValue) => [{
     { value: "k3", name: "k3" }
   ]
 }];
+// 真实 Kimi Code CLI 1.44.0 的形状：models/availableModels + session/set_model，
+// 没有 configOptions，session/set_config_option 直接 -32601。
+const legacyModels = process.env.FAKE_KIMI_LEGACY_MODELS === "1";
+const legacyModelState = (currentModelId) => ({
+  availableModels: [
+    { modelId: "default-model", name: "Default Model" },
+    { modelId: "k3", name: "k3" }
+  ],
+  currentModelId
+});
+const sessionShape = (currentValue) => legacyModels
+  ? { models: legacyModelState(currentValue) }
+  : { configOptions: modelOptions(currentValue) };
 const requestGitPermission = () => {
   step = "git-permission";
   request("session/request_permission", {
@@ -117,7 +130,7 @@ lineReader.on("line", (line) => {
     log({ type: "new", cwd: message.params.cwd, mcpServers: message.params.mcpServers });
     result(message.id, {
       sessionId: "fake-kimi-session",
-      configOptions: modelOptions("default-model")
+      ...sessionShape("default-model")
     });
     return;
   }
@@ -127,10 +140,27 @@ lineReader.on("line", (line) => {
       sessionId: message.params.sessionId,
       mcpServers: message.params.mcpServers
     });
-    result(message.id, { configOptions: modelOptions("default-model") });
+    result(message.id, sessionShape("default-model"));
+    return;
+  }
+  if (message.method === "session/set_model") {
+    if (!legacyModels) {
+      send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
+    log({
+      type: "set-model",
+      sessionId: message.params.sessionId,
+      modelId: message.params.modelId
+    });
+    result(message.id, {});
     return;
   }
   if (message.method === "session/set_config_option") {
+    if (legacyModels) {
+      send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
     log({
       type: "set-config",
       sessionId: message.params.sessionId,
@@ -462,7 +492,7 @@ test("注册表校验 buildLaunchArgs 真正生成的 argv，而不只是静态�
     () =>
       definitionWith(({ model }) => ["--model", model]).buildLaunchArgs({
         cwd: "/tmp",
-        model: "k3 --dangerous",
+        model: "k3\u0000--dangerous",
       }),
     /生成了非法启动参数/u,
   );
@@ -599,6 +629,48 @@ test("通用 ACP Runtime 可通过 session config 选择模型并在恢复时重
     await firstRuntime.shutdown();
     delete process.env.FAKE_KIMI_LOG;
     delete process.env.FAKE_KIMI_READ_PATH;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Agent 只给 models/availableModels 时改用 session/set_model 选模型", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-legacy-models-"));
+  const command = path.join(directory, "fake-legacy-agent");
+  const logPath = path.join(directory, "fake-legacy-agent.log");
+  const sourcePath = path.join(directory, "source.txt");
+  writeFileSync(command, FAKE_KIMI);
+  chmodSync(command, 0o700);
+  writeFileSync(sourcePath, "LEGACY_MODEL_EVIDENCE");
+  process.env.FAKE_KIMI_LOG = logPath;
+  process.env.FAKE_KIMI_READ_PATH = sourcePath;
+  process.env.FAKE_KIMI_LEGACY_MODELS = "1";
+  const definition = runtimeDefinition(
+    "kimi-code",
+    command,
+    ["text", "repository_read", "git_diff", "session_resume"],
+    "session-config",
+  );
+  const runtime = new AcpDelegatedRuntime(config(directory, command));
+  try {
+    const result = await runtime.generate(
+      input(definition, "binding-legacy", directory, undefined, [
+        "text",
+        "repository_read",
+      ]),
+    );
+
+    assert.equal(result.content, "公开回复");
+    const entries = readLog(logPath);
+    assert.deepEqual(
+      entries.find((entry) => entry.type === "set-model")?.modelId,
+      "k3",
+      "没有 configOptions 时必须回落到 session/set_model",
+    );
+  } finally {
+    await runtime.shutdown();
+    delete process.env.FAKE_KIMI_LOG;
+    delete process.env.FAKE_KIMI_READ_PATH;
+    delete process.env.FAKE_KIMI_LEGACY_MODELS;
     rmSync(directory, { recursive: true, force: true });
   }
 });

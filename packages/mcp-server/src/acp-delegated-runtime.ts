@@ -184,10 +184,44 @@ function flattenSelectOptions(
     "options" in candidate ? candidate.options : [candidate]);
 }
 
+/**
+ * `session/new` 的旧模型形状。
+ *
+ * SDK 1.3.0 用 `configOptions` + `session/set_config_option` 表达模型选择，
+ * 但真实 Agent 未必跟到这一版：Kimi Code CLI 1.44.0 同样自称 protocolVersion 1，
+ * 返回的却是 `models.availableModels`，且 `session/set_config_option` 直接
+ * 报 -32601。两种形状都要认，否则只能跑通假 Agent。
+ */
+interface LegacyAgentModelState {
+  availableModels: Array<{ modelId?: unknown; name?: unknown }>;
+  currentModelId?: unknown;
+}
+
+const SET_MODEL_METHOD = "session/set_model";
+
+function legacyModelState(response: unknown): LegacyAgentModelState | undefined {
+  if (typeof response !== "object" || response === null) {
+    return undefined;
+  }
+  const models = (response as { models?: unknown }).models;
+  if (typeof models !== "object" || models === null) {
+    return undefined;
+  }
+  const available = (models as { availableModels?: unknown }).availableModels;
+  if (!Array.isArray(available)) {
+    return undefined;
+  }
+  return {
+    availableModels: available as LegacyAgentModelState["availableModels"],
+    currentModelId: (models as { currentModelId?: unknown }).currentModelId,
+  };
+}
+
 async function selectSessionModel(
   connection: ClientConnection,
   sessionId: string,
   model: string,
+  sessionResponse: unknown,
   configOptions: readonly SessionConfigOption[] | null | undefined,
   definition: AcpRuntimeDefinition,
   cancellationSignal: AbortSignal,
@@ -202,24 +236,40 @@ async function selectSessionModel(
     ? flattenSelectOptions(selector).find((candidate) =>
         candidate.value === model || candidate.name === model)
     : undefined;
-  if (!selector || !selected) {
-    throw new AcpDelegatedRuntimeError(
-      `${definition.displayName} 没有公开可选择的模型 ${model}。`,
-      false,
-      "invalid_model",
-    );
-  }
-  if (selector.currentValue === selected.value) {
+  if (selector && selected) {
+    if (selector.currentValue !== selected.value) {
+      await connection.agent.request(
+        methods.agent.session.setConfigOption,
+        { sessionId, configId: selector.id, value: selected.value },
+        { cancellationSignal },
+      );
+    }
     return;
   }
-  await connection.agent.request(
-    methods.agent.session.setConfigOption,
-    {
-      sessionId,
-      configId: selector.id,
-      value: selected.value,
-    },
-    { cancellationSignal },
+  const legacy = legacyModelState(sessionResponse);
+  const legacyMatch = legacy?.availableModels.find((candidate) =>
+    candidate.modelId === model || candidate.name === model);
+  if (legacy && typeof legacyMatch?.modelId === "string") {
+    if (legacy.currentModelId !== legacyMatch.modelId) {
+      await connection.agent.request(
+        SET_MODEL_METHOD,
+        { sessionId, modelId: legacyMatch.modelId },
+        { cancellationSignal },
+      );
+    }
+    return;
+  }
+  // 两种形状都没给出这个模型：宁可开局失败，也不要静默用默认模型跑完一轮。
+  const offered = legacy?.availableModels
+    .map((candidate) => candidate.modelId)
+    .filter((candidate): candidate is string => typeof candidate === "string")
+    ?? [];
+  throw new AcpDelegatedRuntimeError(
+    offered.length > 0
+      ? `${definition.displayName} 没有模型 ${model}；它公开的是 ${offered.join("、")}。`
+      : `${definition.displayName} 没有公开可选择的模型 ${model}。`,
+    false,
+    "invalid_model",
   );
 }
 
@@ -639,6 +689,7 @@ export class AcpDelegatedRuntime {
         : [];
       let activeSessionId: string;
       let configOptions: readonly SessionConfigOption[] | null | undefined;
+      let sessionResponse: unknown;
       if (sessionId) {
         const resumed = await connection.agent.request(
             methods.agent.session.resume,
@@ -647,6 +698,7 @@ export class AcpDelegatedRuntime {
           );
         activeSessionId = sessionId;
         configOptions = resumed.configOptions;
+        sessionResponse = resumed;
       } else {
         const created = await connection.agent.request(
             methods.agent.session.new,
@@ -655,11 +707,13 @@ export class AcpDelegatedRuntime {
           );
         activeSessionId = created.sessionId;
         configOptions = created.configOptions;
+        sessionResponse = created;
       }
       await selectSessionModel(
         connection,
         activeSessionId,
         model,
+        sessionResponse,
         configOptions,
         definition,
         startupSignal,
