@@ -58,6 +58,8 @@ interface CommonEditorProps {
 interface AgentDefinitionEditorProps extends CommonEditorProps {
   agent?: AgentDefinition;
   provider: ProviderProfile;
+  /** 目录给出的候选模型；只是提示，不是白名单。 */
+  modelCandidates: readonly string[];
   draft: AgentDefinitionDraft;
   isAdding: boolean;
   identityLocked: boolean;
@@ -144,6 +146,7 @@ function RemoveConfirm({
 export function AgentDefinitionEditor({
   agent,
   provider,
+  modelCandidates,
   brand,
   draft,
   busyAction,
@@ -162,6 +165,7 @@ export function AgentDefinitionEditor({
 }: AgentDefinitionEditorProps) {
   const isBusy = busyAction !== null;
   const modelOptional = provider.protocol === "codex-cli";
+  const modelListId = `agent-model-candidates-${provider.id}`;
   return (
     <article className="model-router-editor">
       <EditorHeader
@@ -195,12 +199,25 @@ export function AgentDefinitionEditor({
         <label>
           <span>模型 ID</span>
           <small>{modelOptional ? "可以留空并跟随 Codex CLI 默认模型" : "使用该供应商公布的精确模型标识"}</small>
+          {/*
+            用 datalist 而不是 select：候选表是静态的，真实可用模型随会员档位、
+            CLI 版本变化——ACP 那边实际广播出来的比目录里列的多。封成下拉框
+            会在供应商上新模型的当天就把用户挡在外面。
+          */}
           <input
             value={draft.model}
+            list={modelCandidates.length > 0 ? modelListId : undefined}
             placeholder={modelOptional ? "留空使用 CLI 默认模型" : "provider-model-id"}
             spellCheck={false}
             onChange={(event) => onDraftChange({ model: event.target.value })}
           />
+          {modelCandidates.length > 0 ? (
+            <datalist id={modelListId}>
+              {modelCandidates.map((candidate) => (
+                <option key={candidate} value={candidate} />
+              ))}
+            </datalist>
+          ) : null}
         </label>
         <label>
           <span>召唤别名</span>

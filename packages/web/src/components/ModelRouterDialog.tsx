@@ -513,6 +513,13 @@ export function ModelRouterDialog({
                   <AgentDefinitionEditor
                     agent={selectedAgent}
                     provider={agentProvider}
+                    modelCandidates={
+                      snapshot.catalog.providers.find(
+                        (template) =>
+                          template.slug === agentProvider.slug
+                          && template.protocol === agentProvider.protocol,
+                      )?.modelCandidates ?? []
+                    }
                     brand={selectedBrand}
                     draft={agentForm}
                     busyAction={busyAction}
