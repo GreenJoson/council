@@ -34,9 +34,9 @@ export interface CouncilConfig {
   codexTimeoutMs: number;
   codexKillGraceMs: number;
   kimiCommand: string;
-  kimiStartupTimeoutMs: number;
-  kimiKillGraceMs: number;
-  kimiMaxFileReadChars: number;
+  acpStartupTimeoutMs: number;
+  acpKillGraceMs: number;
+  acpMaxFileReadChars: number;
   toolLoopMaxSteps: number;
   toolLoopMaxContextChars: number;
   toolLoopMaxFileBytes: number;

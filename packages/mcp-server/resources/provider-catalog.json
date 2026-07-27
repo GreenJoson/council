@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "brands": [
     {
       "id": "brand-claude",
@@ -101,7 +101,8 @@
       "templateId": "kimi-code",
       "slug": "kimi-code",
       "displayName": "Kimi Code",
-      "protocol": "kimi-acp",
+      "protocol": "acp",
+      "runtimeDefinitionId": "kimi-code",
       "baseUrl": null,
       "requiresApiKey": false,
       "brandAssetId": "brand-kimi",

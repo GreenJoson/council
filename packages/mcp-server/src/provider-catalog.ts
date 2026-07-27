@@ -11,7 +11,7 @@ import catalogJson from "../resources/provider-catalog.json" with { type: "json"
 export type ProviderProtocol =
   | "claude-cli"
   | "codex-cli"
-  | "kimi-acp"
+  | "acp"
   | "openai-compatible";
 export type BrandSourceKind = "project-curated" | "user-custom";
 
@@ -34,10 +34,11 @@ export interface ProviderCatalogEntry {
   requiresApiKey: boolean;
   brandAssetId: string;
   modelCandidates: readonly string[];
+  runtimeDefinitionId?: string;
 }
 
 export interface ProviderCatalog {
-  schemaVersion: 1;
+  schemaVersion: 2;
   brands: readonly BrandCatalogEntry[];
   providers: readonly ProviderCatalogEntry[];
 }
@@ -48,7 +49,7 @@ const COLOR_TOKEN_PATTERN = /^brand-[a-z][a-z0-9-]{0,63}$/u;
 const PROTOCOLS: readonly ProviderProtocol[] = [
   "claude-cli",
   "codex-cli",
-  "kimi-acp",
+  "acp",
   "openai-compatible",
 ];
 
@@ -102,6 +103,12 @@ function parseProvider(value: unknown): ProviderCatalogEntry {
   }
   const modelCandidates = item.modelCandidates.map((candidate, index) =>
     text(candidate, `Provider.modelCandidates[${String(index)}]`));
+  const runtimeDefinitionId = item.runtimeDefinitionId;
+  if (
+    (protocol === "acp") !== (typeof runtimeDefinitionId === "string")
+  ) {
+    throw new Error("只有 ACP Provider 必须引用 RuntimeDefinition。");
+  }
   return {
     templateId: text(item.templateId, "Provider.templateId", SLUG_PATTERN),
     slug: text(item.slug, "Provider.slug", SLUG_PATTERN),
@@ -111,12 +118,21 @@ function parseProvider(value: unknown): ProviderCatalogEntry {
     requiresApiKey: item.requiresApiKey,
     brandAssetId: text(item.brandAssetId, "Provider.brandAssetId", SLUG_PATTERN),
     modelCandidates,
+    ...(typeof runtimeDefinitionId === "string"
+      ? {
+          runtimeDefinitionId: text(
+            runtimeDefinitionId,
+            "Provider.runtimeDefinitionId",
+            SLUG_PATTERN,
+          ),
+        }
+      : {}),
   };
 }
 
 function parseCatalog(value: unknown): ProviderCatalog {
   const root = record(value, "Provider catalog");
-  if (root.schemaVersion !== 1 || !Array.isArray(root.brands) || !Array.isArray(root.providers)) {
+  if (root.schemaVersion !== 2 || !Array.isArray(root.brands) || !Array.isArray(root.providers)) {
     throw new Error("Provider catalog 版本或结构无效。");
   }
   const brands = root.brands.map(parseBrand);
@@ -134,7 +150,7 @@ function parseCatalog(value: unknown): ProviderCatalog {
   if (providers.some((provider) => !brandIds.has(provider.brandAssetId))) {
     throw new Error("Provider 模板引用了未知 BrandAsset。");
   }
-  return { schemaVersion: 1, brands, providers };
+  return { schemaVersion: 2, brands, providers };
 }
 
 export const PROVIDER_CATALOG: ProviderCatalog = parseCatalog(catalogJson);

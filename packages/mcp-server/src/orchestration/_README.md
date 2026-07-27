@@ -7,7 +7,7 @@
 | `agent-progress-hub.ts` | 兼容桥 | 把统一 RuntimeEvent 投影为现有 SSE 草稿、单调 sequence 和重连快照，不写 SQLite |
 | `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，首轮发送完整公开上下文、后续恢复 session 并发出统一文本事件，只公开脱敏诊断 |
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并把公开 JSONL 消息转成统一文本事件 |
-| `kimi-acp-agent-adapter.ts` | Delegated 适配 | 将 Kimi ACP session、只读工具/审批和公开文本映射到统一 RuntimeEvent，禁止写操作越过 Council policy |
+| `acp-delegated-agent-adapter.ts` | Delegated 适配 | 将注册表选定的 ACP session、只读工具/审批和公开文本映射到统一 RuntimeEvent，禁止写操作越过 Council policy |
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
@@ -18,7 +18,7 @@ Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以�
 `SQLiteCouncilStore.commitRound` 在运行 lease、RuntimeBinding lease 和版本校验通过后原子发布，
 同时保存 session、实际消费水位和 human 请求消费凭证。调用开始后新到达的消息不会被水位
 越过，成功消费过的请求会在再次调用模型前被拒绝。RuntimeBinding 是逻辑会话绑定，不代表
-常驻 OS 进程。Kimi ACP 是例外：同一 RuntimeBinding 复用一个长驻进程与 ACP session；
+常驻 OS 进程。ACP DelegatedRuntime 是例外：同一 RuntimeBinding 复用一个长驻进程与 ACP session；
 同一议题同一 Agent 串行复用，不同议题不会共享。
 
 HTTP 请求断开不会取消后台执行。只有显式 cancel 会把运行改为 `cancelled` 并失效 lease；
@@ -35,7 +35,7 @@ Claude/Codex 非零退出按认证、额度、模型权限、回合耗尽、暂�
 未知退出不公开内部原因。日志只记录脱敏诊断码、retryable 标志和同一份安全原因，不记录
 prompt、项目路径或 CLI stderr。
 
-Claude/Codex、Kimi ACP 与远程 Agent 每次调用都从 `ModelRouterService` 读取当前 Provider 和 Agent
+Claude/Codex、ACP 与远程 Agent 每次调用都从 `ModelRouterService` 读取当前 Provider 和 Agent
 定义。远程 Provider 只有在 HTTPS/loopback Base URL、Keychain API Key、启用 Provider
 和启用 Agent 同时有效时才进入 capabilities；兼容 Agent 共用 `ModelClient → ToolHost →
 AgentLoop` 只读路径，在有界预算内获得 `repository_read`，并以各自 `mentionAlias` 参与
@@ -44,8 +44,10 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 重复读取 capabilities 会保留未变化绑定最近一次已验证的可用性；只有绑定 fingerprint
 变化时才清空状态并强制重检，避免 TTL 内把健康动态 Agent 错误重置为不可用。
 
-Kimi Code ACP 使用供应商自己的 AgentLoop，Council 不重复实现工具循环。Runtime 向
-ACP 声明项目内文件读取能力，并额外挂载只公开 `council_git_diff` 的 stdio MCP；
+通用 ACP Runtime 根据 Provider 持久化的 `runtimeDefinitionId` 从受控注册表读取命令、
+启动参数与声明能力，再与独立 Council policy 计算实际授权；Kimi Code 是首个正式定义。供应商自己的 AgentLoop 负责工具循环，
+Council 不重复实现。Runtime 只在定义获得 `repository_read` 时声明文件读取能力，只在
+获得 `git_diff` 时挂载仅公开 `council_git_diff` 的 stdio MCP；
 read/search/think 与该精确工具名仅允许单次，execute/edit/delete/move/fetch 等请求均拒绝。
 文件路径必须 realpath 后位于当前项目根目录；Git 工具只读已提交 commit/ref，过滤敏感路径，
 禁用外部驱动且不接触未提交工作区。服务重启后使用

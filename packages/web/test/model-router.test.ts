@@ -105,6 +105,34 @@ describe("动态模型路由协议", () => {
     expect(new Set(snapshot.agents.map((agent) => agent.actorId)).size).toBe(2);
   });
 
+  it("ACP Provider 与模板都必须显式携带同一类 RuntimeDefinition 引用", () => {
+    const value = routerSnapshot() as {
+      providers: Array<Record<string, unknown>>;
+      catalog: { providers: Array<Record<string, unknown>> };
+    };
+    value.providers[0] = {
+      ...value.providers[0],
+      protocol: "acp",
+      runtimeDefinitionId: "kimi-code",
+      baseUrl: undefined,
+      requiresApiKey: false,
+      hasApiKey: false,
+    };
+    value.catalog.providers[0] = {
+      ...value.catalog.providers[0],
+      protocol: "acp",
+      runtimeDefinitionId: "kimi-code",
+      baseUrl: undefined,
+      requiresApiKey: false,
+    };
+    const parsed = parseModelRouterSnapshot(value);
+    expect(parsed.providers[0]?.runtimeDefinitionId).toBe("kimi-code");
+    expect(parsed.catalog.providers[0]?.runtimeDefinitionId).toBe("kimi-code");
+
+    delete value.providers[0]?.runtimeDefinitionId;
+    expect(() => parseModelRouterSnapshot(value)).toThrow(/RuntimeDefinition/u);
+  });
+
   it("公开快照只返回 hasApiKey，不接受密钥正文", () => {
     const snapshot = routerSnapshot() as Record<string, unknown>;
     const providers = snapshot.providers as Array<Record<string, unknown>>;

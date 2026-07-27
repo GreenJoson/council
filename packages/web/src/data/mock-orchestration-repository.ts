@@ -461,6 +461,9 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       requiresApiKey: template.requiresApiKey,
       hasApiKey: Boolean(input.apiKey),
       brandAssetId: input.brandAssetId ?? template.brandAssetId,
+      ...(template.runtimeDefinitionId
+        ? { runtimeDefinitionId: template.runtimeDefinitionId }
+        : {}),
       status: input.active ? "active" : "inactive",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -595,8 +598,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         ? "claude-resume"
         : provider.protocol === "codex-cli"
           ? "codex-resume"
-          : provider.protocol === "kimi-acp"
-            ? "kimi-acp"
+          : provider.protocol === "acp"
+            ? "acp"
             : "openai-tool-loop",
       status: "idle",
       hasSession: false,

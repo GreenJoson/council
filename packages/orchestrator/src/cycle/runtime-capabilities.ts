@@ -76,6 +76,23 @@ const READ_ONLY_LOCAL_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
   "session_resume",
 ];
 
+/*
+ * Council policy 必须独立于 Runtime 声明。不要把这里委托给
+ * declaredCapabilitiesForTransport：同一次编辑不能既声明能力又自动授权能力。
+ */
+const READ_ONLY_ACP_POLICY: readonly RuntimeCapabilityKey[] = [
+  "text",
+  "repository_read",
+  "git_diff",
+  "session_resume",
+];
+
+const READ_ONLY_TOOL_LOOP_POLICY: readonly RuntimeCapabilityKey[] = [
+  "text",
+  "repository_read",
+  "git_diff",
+];
+
 const FIX_PROPOSER_REQUIREMENTS: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
@@ -120,7 +137,7 @@ export function declaredCapabilitiesForTransport(
   if (transportKind === "claude-resume" || transportKind === "codex-resume") {
     return [...READ_ONLY_LOCAL_CAPABILITIES];
   }
-  if (transportKind === "kimi-acp") {
+  if (transportKind === "acp") {
     return ["text", "repository_read", "git_diff", "session_resume"];
   }
   if (transportKind === "openai-tool-loop") {
@@ -144,7 +161,16 @@ export function grantRuntimeCapabilities(
 export function defaultPolicyCapabilitiesForTransport(
   transportKind: string,
 ): RuntimeCapabilityKey[] {
-  return declaredCapabilitiesForTransport(transportKind);
+  if (transportKind === "claude-resume" || transportKind === "codex-resume") {
+    return [...READ_ONLY_LOCAL_CAPABILITIES];
+  }
+  if (transportKind === "acp") {
+    return [...READ_ONLY_ACP_POLICY];
+  }
+  if (transportKind === "openai-tool-loop") {
+    return [...READ_ONLY_TOOL_LOOP_POLICY];
+  }
+  return [...STAGE_BASELINE_CAPABILITIES];
 }
 
 export function deriveCycleRequirements(input: {

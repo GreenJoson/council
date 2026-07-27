@@ -1,7 +1,7 @@
 /**
  * @input  依赖：临时 Git 仓库、只读 Git diff 服务与单工具 MCP server
  * @output 验证：commit/ref 解析、敏感路径过滤、外部驱动禁用、预算降级与 MCP 调用
- * @pos    ToolLoop 与 Kimi ACP 共用 Git 边界的对抗性回归
+ * @pos    ToolLoop 与 ACP DelegatedRuntime 共用 Git 边界的对抗性回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */

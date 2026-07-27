@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   LEGACY_ORCHESTRATION_SCHEMA_V2_SQL,
+  RUNTIME_BINDING_SCHEMA_SQL,
   SQLiteCouncilStore,
 } from "council-orchestrator";
 import {
@@ -22,6 +23,7 @@ import {
   assertCouncilSchema,
   migrateCouncilSchema,
 } from "../src/schema-migrator.js";
+import { migrateVersionNine } from "../src/schema-v9-migration.js";
 
 const LEGACY_SCHEMA_SQL = `
   CREATE TABLE topics (
@@ -515,6 +517,7 @@ async function createCanonicalV4Database(databasePath: string): Promise<{
       DELETE FROM schema_migrations WHERE version >= 5;
       PRAGMA user_version = 4;
     `);
+    downgradeProviderProfilesBeforeVersionTen(database);
     return {
       historicalRows: {
         topics: plainSqlValue(database.prepare(`
@@ -553,6 +556,62 @@ function pragmaInteger(database: DatabaseSync, name: string): number {
 
 function plainSqlValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/**
+ * 部分迁移测试从当前库机械回退到 v4/v5，用来证明整条升级链可重放。
+ * v10 为 Provider 增加了 RuntimeDefinition 绑定；回退 fixture 必须真实移除该列，
+ * 不能只改 user_version，否则得到的不是历史 schema。
+ */
+function downgradeProviderProfilesBeforeVersionTen(database: DatabaseSync): void {
+  database.exec("PRAGMA foreign_keys = OFF;");
+  try {
+    database.exec(`
+      CREATE TEMP TABLE provider_profiles_pre_v10_backup AS
+        SELECT * FROM provider_profiles;
+      DROP TABLE provider_profiles;
+      CREATE TABLE provider_profiles (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        display_name TEXT NOT NULL,
+        protocol TEXT NOT NULL CHECK (
+          protocol IN ('claude-cli', 'codex-cli', 'openai-compatible')
+        ),
+        base_url TEXT,
+        requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1)),
+        credential_ref TEXT UNIQUE,
+        brand_asset_id TEXT NOT NULL REFERENCES brand_assets(id),
+        status TEXT NOT NULL CHECK (status IN ('active', 'inactive', 'deleted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)
+      );
+      CREATE INDEX idx_provider_profiles_status_slug
+        ON provider_profiles(status, slug);
+      INSERT INTO provider_profiles (
+        id, slug, display_name, protocol, base_url, requires_api_key,
+        credential_ref, brand_asset_id, status, created_at, updated_at, config_revision
+      )
+      SELECT
+        id, slug, display_name, protocol, base_url, requires_api_key,
+        credential_ref, brand_asset_id, status, created_at, updated_at, config_revision
+      FROM provider_profiles_pre_v10_backup;
+      DROP TABLE provider_profiles_pre_v10_backup;
+    `);
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
+function recreateVersionEightRuntimeTables(database: DatabaseSync): void {
+  database.exec(`
+    DROP TRIGGER trg_decisions_runtime_close_update;
+    DROP TRIGGER trg_decisions_runtime_close_insert;
+    DROP TABLE runtime_binding_requests;
+    DROP TABLE runtime_binding_leases;
+    DROP TABLE runtime_bindings;
+  `);
+  database.exec(RUNTIME_BINDING_SCHEMA_SQL);
 }
 
 test("fresh DB 由 Node 创建版本账本且 revision trigger 可工作", async () => {
@@ -602,6 +661,144 @@ test("fresh DB 由 Node 创建版本账本且 revision trigger 可工作", async
   }
 });
 
+test("v9→v10 将 Kimi 专用协议归一为 ACP 且无损保留 session、lease 与请求账本", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
+    const versionNine = new DatabaseSync(fixture.databasePath);
+    try {
+      recreateVersionEightRuntimeTables(versionNine);
+      downgradeProviderProfilesBeforeVersionTen(versionNine);
+      versionNine.exec(`
+        DELETE FROM schema_migrations WHERE version >= 9;
+        PRAGMA user_version = 8;
+      `);
+      migrateVersionNine(versionNine);
+      const now = "2026-01-10T00:00:00.000Z";
+      versionNine.exec(`
+        INSERT INTO actor_identities (
+          id, slug, display_name, short_name, role,
+          actor_type, status, created_at, updated_at
+        ) VALUES (
+          'actor-kimi-v9', 'kimi-v9', 'Kimi Agent', 'KI', '模型顾问',
+          'agent', 'active', '${now}', '${now}'
+        );
+        INSERT INTO actor_aliases (alias, actor_id, alias_kind, created_at)
+        VALUES ('kimi-v9', 'actor-kimi-v9', 'adapter', '${now}');
+        INSERT INTO provider_profiles (
+          id, slug, display_name, protocol, base_url, requires_api_key,
+          credential_ref, brand_asset_id, status, created_at, updated_at, config_revision
+        ) VALUES (
+          'provider-kimi-v9', 'kimi', 'Kimi', 'kimi-acp', NULL, 0,
+          NULL, 'brand-kimi', 'active', '${now}', '${now}', 3
+        );
+        INSERT INTO agent_definitions (
+          id, actor_id, provider_id, slug, display_name, model,
+          mention_alias, enabled, deleted_at, created_at, updated_at, config_revision
+        ) VALUES (
+          'agent-kimi-v9', 'actor-kimi-v9', 'provider-kimi-v9', 'kimi-agent-v9',
+          'Kimi Agent', 'k3', 'kimi-v9', 1, NULL, '${now}', '${now}', 4
+        );
+        INSERT INTO topics (
+          id, title, question, constraints_json, project_path,
+          status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+          created_at, updated_at
+        ) VALUES (
+          'topic-kimi-v9', 'ACP 迁移', 'session 必须无损', '[]', NULL, 'open',
+          'human', '${HUMAN_SNAPSHOT_JSON.replaceAll("'", "''")}', NULL, '${now}', '${now}'
+        );
+        INSERT INTO messages (
+          id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+          kind, content, parent_message_id, created_at
+        ) VALUES (
+          'message-kimi-v9', 'topic-kimi-v9', 'human',
+          '${HUMAN_SNAPSHOT_JSON.replaceAll("'", "''")}', NULL,
+          'proposal', '继续同一个 ACP session。', NULL, '${now}'
+        );
+        INSERT INTO runtime_bindings (
+          id, topic_id, agent_id, actor_id, provider_id, binding_revision,
+          agent_config_revision, provider_config_revision, project_path,
+          transport_kind, session_id, cursor_created_at, cursor_message_id,
+          status, state_version, epoch, process_instance_id, last_activity_at,
+          close_reason, created_at, updated_at, closed_at
+        ) VALUES (
+          'binding-kimi-v9', 'topic-kimi-v9', 'agent-kimi-v9', 'actor-kimi-v9',
+          'provider-kimi-v9', 'binding-revision-v9', 4, 3, NULL,
+          'kimi-acp', 'session-kimi-v9', '${now}', 'message-kimi-v9',
+          'idle', 7, 2, 'process-v9', '${now}', NULL, '${now}', '${now}', NULL
+        );
+        INSERT INTO runtime_binding_leases (
+          binding_id, owner_id, lease_token, epoch, expires_at_ms, updated_at
+        ) VALUES (
+          'binding-kimi-v9', 'worker-v9', 'lease-v9', 2, 4102444800000, '${now}'
+        );
+        INSERT INTO runtime_binding_requests (
+          topic_id, agent_id, request_message_id, consumed_at
+        ) VALUES (
+          'topic-kimi-v9', 'agent-kimi-v9', 'message-kimi-v9', '${now}'
+        );
+      `);
+    } finally {
+      versionNine.close();
+    }
+
+    const result = await migrateCouncilSchema(
+      fixture.databasePath,
+      5_000,
+      { maxAttempts: 3 },
+    );
+    assert.equal(result.version, 10);
+    const migrated = new DatabaseSync(fixture.databasePath);
+    try {
+      assert.deepEqual(
+        plainSqlValue(migrated.prepare(`
+          SELECT protocol, runtime_definition_id, config_revision
+          FROM provider_profiles WHERE id = 'provider-kimi-v9'
+        `).get()),
+        {
+          protocol: "acp",
+          runtime_definition_id: "kimi-code",
+          config_revision: 3,
+        },
+      );
+      assert.deepEqual(
+        plainSqlValue(migrated.prepare(`
+          SELECT transport_kind, session_id, state_version, epoch, process_instance_id
+          FROM runtime_bindings WHERE id = 'binding-kimi-v9'
+        `).get()),
+        {
+          transport_kind: "acp",
+          session_id: "session-kimi-v9",
+          state_version: 7,
+          epoch: 2,
+          process_instance_id: "process-v9",
+        },
+      );
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM runtime_binding_leases
+          WHERE binding_id = 'binding-kimi-v9' AND lease_token = 'lease-v9'
+        `).get() as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM runtime_binding_requests
+          WHERE topic_id = 'topic-kimi-v9'
+            AND agent_id = 'agent-kimi-v9'
+            AND request_message_id = 'message-kimi-v9'
+        `).get() as { count: number }).count,
+        1,
+      );
+      assertCouncilSchema(migrated);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定", async () => {
   const fixture = temporaryDatabase();
   try {
@@ -621,6 +818,7 @@ test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定",
         DELETE FROM schema_migrations WHERE version >= 6;
         PRAGMA user_version = 5;
       `);
+      downgradeProviderProfilesBeforeVersionTen(downgrade);
     } finally {
       downgrade.close();
     }
@@ -1438,8 +1636,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (7, 'discussion-cycles', '2026-01-07T00:00:00.000Z'),
         (8, 'cycle-runtime-capabilities', '2026-01-08T00:00:00.000Z'),
         (9, 'runtime-protocols', '2026-01-09T00:00:00.000Z'),
-        (10, 'future', '2026-01-10T00:00:00.000Z');
-      PRAGMA user_version = 10;
+        (10, 'generic-acp-runtime', '2026-01-10T00:00:00.000Z'),
+        (11, 'future', '2026-01-11T00:00:00.000Z');
+      PRAGMA user_version = 11;
     `);
     futureDatabase.close();
     await assert.rejects(

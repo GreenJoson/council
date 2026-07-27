@@ -211,7 +211,13 @@ function publicProvider(
 
 function catalogTemplateForProvider(provider: ProviderProfile): ProviderCatalogEntry | undefined {
   return PROVIDER_CATALOG.providers.find(
-    (entry) => entry.slug === provider.slug && entry.protocol === provider.protocol,
+    (entry) =>
+      entry.protocol === provider.protocol
+      && (
+        provider.runtimeDefinitionId
+          ? entry.runtimeDefinitionId === provider.runtimeDefinitionId
+          : entry.slug === provider.slug
+      ),
   );
 }
 
@@ -297,7 +303,7 @@ export class ModelRouterService {
         providers: PROVIDER_CATALOG.providers.filter(
           (entry) =>
             entry.protocol === "openai-compatible"
-            || entry.protocol === "kimi-acp",
+            || entry.protocol === "acp",
         ),
       },
     };
@@ -311,7 +317,7 @@ export class ModelRouterService {
       !template
       || (
         template.protocol !== "openai-compatible"
-        && template.protocol !== "kimi-acp"
+        && template.protocol !== "acp"
       )
     ) {
       invalid("Provider 模板不存在或不能由用户添加。");
@@ -377,6 +383,9 @@ export class ModelRouterService {
         requiresApiKey: template.requiresApiKey,
         credentialRef,
         brandAssetId,
+        ...(template.runtimeDefinitionId
+          ? { runtimeDefinitionId: template.runtimeDefinitionId }
+          : {}),
         status: input.active ? "active" : "inactive",
         now: new Date().toISOString(),
       } as const;

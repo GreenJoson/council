@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v9：身份/运行数据无损、Runtime 能力快照、Kimi ACP 协议扩展、漂移拒绝、备份、回滚与 WAL 阻塞 |
+| `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v10：身份/运行数据无损、通用 ACP 协议迁移、Runtime 能力快照、漂移拒绝、备份、回滚与 WAL 阻塞 |
 | `schema-v7-migration.test.ts` | 安全验收 | 在当前迁移库上继续冻结 v7 收敛容器不变量，并验证 accepted 决策使用 canonical 停止原因终结 cycle |
 | `schema-v8-migration.test.ts` | 数据迁移 | 用最小现场 v7 cycle 直接验证需求/能力 backfill、旧停止原因规范化和 accepted trigger 修复 |
 | `cycle-repository.test.ts` | 安全验收 | 在真实迁移库上验证收敛仓储：开局唯一与已决议题拒绝开局、同意路径直达 synthesis、阻塞回环与预算用尽放弃、提问挂起/回答的重放幂等、过期版本 CAS 拒绝 |
@@ -12,7 +12,7 @@
 | `agent-progress-hub.test.ts` | 单元测试 | 验证统一 RuntimeEvent 到临时草稿的兼容投影、顺序、有界追加、快照和完成清理 |
 | `claude-runtime.test.ts` | 单元测试 | 验证纯生成、公开 stream-json 增量、session 恢复、取消、超时、输出上限与脱敏错误 |
 | `codex-runtime.test.ts` | 单元测试 | 验证只读沙箱、公开 JSONL 消息增量、事件截断、最终正文限长、取消与脱敏错误分类 |
-| `kimi-acp-runtime.test.ts` | ACP 进程测试 | 用真实 stdio 假 Agent 验证同 binding 进程/session 复用、服务重开 resume、普通文本读取、单工具 Git MCP 配置、敏感文件阻断和执行权限拒绝 |
+| `acp-delegated-runtime.test.ts` | ACP 进程测试 | 用多个声明式 RuntimeDefinition 与真实 stdio 假 Agent 验证供应商无关启动、同 binding 进程/session 复用、服务重开 resume、只读工具、敏感文件阻断和执行权限拒绝 |
 | `claude-config.test.ts` | 单元测试 | 验证 Claude 权限模式、stdio MCP 调用者身份必填、HTTP 配置隔离、保留参数和定时器边界 |
 | `codex-config.test.ts` | 单元测试 | 验证 Codex 只读沙箱、默认值、保留参数和定时器配置边界 |
 | `claude-client.test.ts` | 集成测试 | 验证数据库兼容层的后台会话恢复及取消零写入 |
@@ -23,7 +23,7 @@
 | `http-events.test.ts` | 集成测试 | 验证跨连接变更、Agent 草稿增量/重连快照、独立 retry 与 Last-Event-ID 语义 |
 | `claude-agent-adapter.test.ts` | 安全测试 | 验证可信指令保留、首轮历史裁剪、session 恢复、公开增量与显式安全失败原因 |
 | `codex-agent-adapter.test.ts` | 安全测试 | 验证可信指令、首轮历史裁剪、session 恢复、公开增量、失败恢复与安全原因分类 |
-| `kimi-acp-agent-adapter.test.ts` | Runtime 契约测试 | 验证 ACP session 续接、只读工具事件归 Runtime 所有、隐藏思考隔离与 binding 关闭桥 |
+| `acp-delegated-agent-adapter.test.ts` | Runtime 契约测试 | 验证通用 ACP session 续接、只读工具事件归 Runtime 所有、隐藏思考隔离与 binding 关闭桥 |
 | `model-router.test.ts` | 安全测试 | 验证同 Provider 多 Agent/独立 UUID Actor 与 alias、Kimi/DeepSeek 自定义 alias 与删除后自然 alias 重建跨迁移重开稳定、品牌不退化为 Other、Claude/Codex 身份不可变、Provider 软删除后原行复活与新凭据生效、API Key 零落盘、Keychain/alias 原子回滚及活动 Run 变更失败关闭 |
 | `keychain-secret-store.test.ts` | 安全测试 | 验证 Keychain 凭据不存在返回空值，命令故障必须 fail closed |
 | `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、错误脱敏与有界响应 |

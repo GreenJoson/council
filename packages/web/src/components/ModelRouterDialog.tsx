@@ -51,8 +51,8 @@ function getErrorMessage(error: unknown): string {
 }
 
 function providerProtocolLabel(protocol: ProviderCatalogEntry["protocol"]): string {
-  if (protocol === "kimi-acp") {
-    return "本机 Kimi ACP 连接";
+  if (protocol === "acp") {
+    return "本机 ACP Agent 连接";
   }
   if (protocol === "openai-compatible") {
     return "OpenAI 兼容连接";

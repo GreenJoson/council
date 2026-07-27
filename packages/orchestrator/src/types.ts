@@ -109,7 +109,7 @@ export type RuntimeBindingStatus =
 export type RuntimeTransportKind =
   | "claude-resume"
   | "codex-resume"
-  | "kimi-acp"
+  | "acp"
   | "openai-tool-loop"
   | "openai-sessionless";
 

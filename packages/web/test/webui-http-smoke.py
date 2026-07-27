@@ -155,7 +155,7 @@ with sync_playwright() as playwright:
     assert kimi_api.count() == 1
     assert kimi_code.count() == 1
     assert "OpenAI 兼容连接" in kimi_api.inner_text()
-    assert "本机 Kimi ACP 连接" in kimi_code.inner_text()
+    assert "本机 ACP Agent 连接" in kimi_code.inner_text()
     page.get_by_role("button", name="DeepSeek", exact=False).click()
     page.get_by_text("连接 DeepSeek", exact=True).wait_for()
     page.get_by_role("button", name="取消", exact=True).click()

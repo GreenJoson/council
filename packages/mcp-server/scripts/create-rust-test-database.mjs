@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已构建的 Node schema migrator、目标 SQLite 路径与 fresh/v2/v3/v5 模式
- * @output 导出：由 Node canonical 迁移器真实创建的 v6 测试数据库
+ * @output 导出：由 Node canonical 迁移器真实创建的 v10 测试数据库
  * @pos    Rust 跨语言兼容测试的唯一数据库生成入口；禁止手抄 Node DDL
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -27,6 +27,46 @@ if (
   );
 }
 const databasePath = resolve(databaseArgument);
+
+function removeVersionTenProviderBinding(database) {
+  database.exec("PRAGMA foreign_keys = OFF;");
+  try {
+    database.exec(`
+      CREATE TEMP TABLE provider_profiles_pre_v10_backup AS
+        SELECT * FROM provider_profiles;
+      DROP TABLE provider_profiles;
+      CREATE TABLE provider_profiles (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        display_name TEXT NOT NULL,
+        protocol TEXT NOT NULL CHECK (
+          protocol IN ('claude-cli', 'codex-cli', 'openai-compatible')
+        ),
+        base_url TEXT,
+        requires_api_key INTEGER NOT NULL CHECK (requires_api_key IN (0, 1)),
+        credential_ref TEXT UNIQUE,
+        brand_asset_id TEXT NOT NULL REFERENCES brand_assets(id),
+        status TEXT NOT NULL CHECK (status IN ('active', 'inactive', 'deleted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)
+      );
+      CREATE INDEX idx_provider_profiles_status_slug
+        ON provider_profiles(status, slug);
+      INSERT INTO provider_profiles (
+        id, slug, display_name, protocol, base_url, requires_api_key,
+        credential_ref, brand_asset_id, status, created_at, updated_at, config_revision
+      )
+      SELECT
+        id, slug, display_name, protocol, base_url, requires_api_key,
+        credential_ref, brand_asset_id, status, created_at, updated_at, config_revision
+      FROM provider_profiles_pre_v10_backup;
+      DROP TABLE provider_profiles_pre_v10_backup;
+    `);
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON;");
+  }
+}
 
 if (mode === "fresh") {
   await migrateCouncilSchema(databasePath, 5_000, { maxAttempts: 3 });
@@ -73,6 +113,7 @@ if (mode === "fresh") {
       DROP TABLE orchestration_runs;
     `);
     database.exec(LEGACY_ORCHESTRATION_SCHEMA_V2_SQL);
+    removeVersionTenProviderBinding(database);
     database.exec(`
       UPDATE council_meta
       SET value = 2
@@ -136,6 +177,7 @@ if (mode === "fresh") {
       DELETE FROM schema_migrations WHERE version >= 6;
       PRAGMA user_version = 5;
     `);
+    removeVersionTenProviderBinding(database);
   } finally {
     database.close();
   }

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：项目 realpath、受控 Git 配置、已提交 ref 与 AbortSignal
  * @output 导出：过滤敏感路径、禁用外部驱动并受预算约束的只读 commit diff
- * @pos    ToolLoop 与 Kimi ACP 共用的唯一 Git 读取边界；不经过 Shell、不读取工作区未提交内容
+ * @pos    ToolLoop 与 ACP DelegatedRuntime 共用的唯一 Git 读取边界；不经过 Shell、不读取工作区未提交内容
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */

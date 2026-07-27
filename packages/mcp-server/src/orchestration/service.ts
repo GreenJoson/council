@@ -55,7 +55,12 @@ import {
   UnavailableSecretStore,
 } from "../keychain-secret-store.js";
 import { logger } from "../logger.js";
-import { KimiAcpRuntime } from "../kimi-acp-runtime.js";
+import { AcpDelegatedRuntime } from "../acp-delegated-runtime.js";
+import {
+  createProductionAcpRuntimeRegistry,
+  type AcpRuntimeDefinition,
+  type AcpRuntimeRegistry,
+} from "../acp-runtime-registry.js";
 import { OpenAICompatibleModelClient } from "../openai-compatible-model-client.js";
 import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
 import { ReadOnlyAgentLoop } from "../read-only-agent-loop.js";
@@ -69,7 +74,7 @@ import {
 } from "./cycle-driver.js";
 import { RunExecutionManager } from "./execution-manager.js";
 import { AgentProgressHub } from "./agent-progress-hub.js";
-import { KimiAcpAgentAdapter } from "./kimi-acp-agent-adapter.js";
+import { AcpDelegatedAgentAdapter } from "./acp-delegated-agent-adapter.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
 
 export interface RegisteredAgentAdapter {
@@ -89,6 +94,7 @@ export interface EphemeralAgentBinding {
   adapter: AgentAdapter;
   checkAvailability: () => Promise<boolean>;
   limitationWhenUnavailable?: string;
+  runtimeCapabilities?: readonly RuntimeCapabilityKey[];
 }
 
 export type EphemeralAgentFactory = (
@@ -921,6 +927,14 @@ export class CouncilOrchestrationService {
         binding = this.ephemeralAgentFactory(agent, provider);
         this.orchestrator.upsertAdapter(binding.adapter, fingerprint);
         this.#dynamicAdapterFingerprints.set(agent.id, fingerprint);
+        if (binding.runtimeCapabilities) {
+          this.#runtimeCapabilityOverrides.set(
+            agent.id,
+            binding.runtimeCapabilities,
+          );
+        } else {
+          this.#runtimeCapabilityOverrides.delete(agent.id);
+        }
         this.#availabilityCheckedAt = 0;
       }
       this.#actors.set(agent.id, agent.actorId);
@@ -935,7 +949,8 @@ export class CouncilOrchestrationService {
         providerId: provider.id,
         providerName: provider.displayName,
         runtimeCapabilities: grantRuntimeCapabilities(
-          declaredCapabilitiesForTransport(transportKindForProtocol(provider.protocol)),
+          this.#runtimeCapabilityOverrides.get(agent.id)
+            ?? declaredCapabilitiesForTransport(transportKindForProtocol(provider.protocol)),
           defaultPolicyCapabilitiesForTransport(
             transportKindForProtocol(provider.protocol),
           ),
@@ -1012,9 +1027,21 @@ function transportKindForProtocol(
     ? "claude-resume"
     : protocol === "codex-cli"
       ? "codex-resume"
-      : protocol === "kimi-acp"
-        ? "kimi-acp"
+      : protocol === "acp"
+        ? "acp"
         : "openai-tool-loop";
+}
+
+function acpDefinitionForProvider(
+  provider: ProviderProfile,
+  registry: AcpRuntimeRegistry,
+): AcpRuntimeDefinition {
+  if (provider.protocol !== "acp" || !provider.runtimeDefinitionId) {
+    throw new OrchestrationConfigError(
+      `Provider ${provider.slug} 没有绑定 ACP RuntimeDefinition。`,
+    );
+  }
+  return registry.require(provider.runtimeDefinitionId);
 }
 
 export function createProductionOrchestrationService(
@@ -1032,7 +1059,8 @@ export function createProductionOrchestrationService(
   const modelRouter = new ModelRouterService(routerStore, secretStore);
   const claudeRuntime = new ClaudeRuntime(councilConfig);
   const codexRuntime = new CodexRuntime(councilConfig);
-  const kimiRuntime = new KimiAcpRuntime(councilConfig);
+  const acpRegistry = createProductionAcpRuntimeRegistry(councilConfig);
+  const acpRuntime = new AcpDelegatedRuntime(councilConfig);
   const remoteRuntime = new OpenAICompatibleRuntime(
     councilConfig.maxOutputChars,
     httpConfig.orchestrationDefaultAgentTimeoutMs,
@@ -1064,8 +1092,18 @@ export function createProductionOrchestrationService(
       });
       return;
     }
-    if (provider.protocol === "kimi-acp") {
-      await kimiRuntime.probe(process.cwd(), agent.model);
+    if (provider.protocol === "acp") {
+      const definition = acpDefinitionForProvider(provider, acpRegistry);
+      const grantedCapabilities = grantRuntimeCapabilities(
+        definition.declaredCapabilities,
+        defaultPolicyCapabilitiesForTransport("acp"),
+      );
+      await acpRuntime.probe(
+        definition,
+        process.cwd(),
+        agent.model,
+        grantedCapabilities,
+      );
       return;
     }
     if (!provider.baseUrl || !apiKey) {
@@ -1114,22 +1152,29 @@ export function createProductionOrchestrationService(
           "Codex CLI 当前不可用或未登录；请检查本机安装和登录状态。",
       };
     }
-    if (provider.protocol === "kimi-acp") {
+    if (provider.protocol === "acp") {
+      const definition = acpDefinitionForProvider(provider, acpRegistry);
+      const grantedCapabilities = grantRuntimeCapabilities(
+        definition.declaredCapabilities,
+        defaultPolicyCapabilitiesForTransport("acp"),
+      );
       return {
-        adapter: new KimiAcpAgentAdapter(
+        adapter: new AcpDelegatedAgentAdapter(
           agent.id,
-          kimiRuntime,
+          acpRuntime,
+          definition,
+          grantedCapabilities,
           modelRouter,
           councilConfig.maxContextChars,
         ),
         checkAvailability: async () => {
-          const availability = await kimiRuntime.checkAvailability();
+          const availability = await acpRuntime.checkAvailability(definition);
           return await modelRouter.isAgentReady(agent.id)
             && availability.available
             && availability.authenticated;
         },
-        limitationWhenUnavailable:
-          "Kimi Code CLI 当前不可用或未登录；请检查本机安装和登录状态。",
+        limitationWhenUnavailable: definition.limitationWhenUnavailable,
+        runtimeCapabilities: definition.declaredCapabilities,
       };
     }
     return {

@@ -116,7 +116,7 @@ test("Council 只读 ToolLoop 让兼容 Provider 独立读取仓库与已提交 
   assert.deepEqual(
     findCapabilityGaps(
       kimiFixRequirements,
-      [snapshot("kimi", "kimi-acp")],
+      [snapshot("kimi", "acp")],
     ),
     [],
   );
@@ -129,6 +129,27 @@ test("远程 Provider 自述能力不能突破 Council policy", () => {
       defaultPolicyCapabilitiesForTransport("openai-sessionless"),
     ),
     ["text"],
+  );
+});
+
+test("ACP 声明与 Council policy 独立，新增副作用能力不会自动获权", () => {
+  const declared = [
+    ...declaredCapabilitiesForTransport("acp"),
+    "repository_write",
+    "shell_write",
+    "git_commit",
+  ] as const;
+  const policy = defaultPolicyCapabilitiesForTransport("acp");
+
+  assert.deepEqual(policy, [
+    "text",
+    "repository_read",
+    "git_diff",
+    "session_resume",
+  ]);
+  assert.deepEqual(
+    grantRuntimeCapabilities(declared, policy),
+    policy,
   );
 });
 

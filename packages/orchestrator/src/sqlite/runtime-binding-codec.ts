@@ -61,7 +61,7 @@ const STATUS_VALUES: readonly RuntimeBindingStatus[] = [
 const TRANSPORT_VALUES: readonly RuntimeTransportKind[] = [
   "claude-resume",
   "codex-resume",
-  "kimi-acp",
+  "acp",
   "openai-tool-loop",
   "openai-sessionless",
 ];

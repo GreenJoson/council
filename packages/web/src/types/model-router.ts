@@ -9,7 +9,7 @@
 export type ProviderProtocol =
   | "claude-cli"
   | "codex-cli"
-  | "kimi-acp"
+  | "acp"
   | "openai-compatible";
 export type ProviderStatus = "active" | "inactive" | "deleted";
 
@@ -35,6 +35,7 @@ export interface ProviderProfile {
   requiresApiKey: boolean;
   hasApiKey: boolean;
   brandAssetId: string;
+  runtimeDefinitionId?: string;
   status: ProviderStatus;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +64,7 @@ export interface ProviderCatalogEntry {
   requiresApiKey: boolean;
   brandAssetId: string;
   modelCandidates: string[];
+  runtimeDefinitionId?: string;
 }
 
 export interface ModelRouterSnapshot {

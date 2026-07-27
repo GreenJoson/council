@@ -50,6 +50,7 @@ export interface ProviderProfile {
   requiresApiKey: boolean;
   credentialRef?: string;
   brandAssetId: string;
+  runtimeDefinitionId?: string;
   status: ProviderStatus;
   configRevision: number;
   createdAt: string;
@@ -93,6 +94,7 @@ interface ProviderRow {
   requires_api_key: number;
   credential_ref: string | null;
   brand_asset_id: string;
+  runtime_definition_id: string | null;
   status: ProviderStatus;
   config_revision: number;
   created_at: string;
@@ -139,6 +141,9 @@ function providerFromRow(row: ProviderRow): ProviderProfile {
     requiresApiKey: row.requires_api_key === 1,
     ...(row.credential_ref ? { credentialRef: row.credential_ref } : {}),
     brandAssetId: row.brand_asset_id,
+    ...(row.runtime_definition_id
+      ? { runtimeDefinitionId: row.runtime_definition_id }
+      : {}),
     status: row.status,
     configRevision: row.config_revision,
     createdAt: row.created_at,
@@ -234,14 +239,16 @@ export class ModelRouterStore {
     requiresApiKey: boolean;
     credentialRef?: string;
     brandAssetId: string;
+    runtimeDefinitionId?: string;
     status: Exclude<ProviderStatus, "deleted">;
     now: string;
   }): ProviderProfile {
     this.#database.prepare(`
       INSERT INTO provider_profiles (
         id, slug, display_name, protocol, base_url, requires_api_key,
-        credential_ref, brand_asset_id, status, config_revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        credential_ref, brand_asset_id, runtime_definition_id, status,
+        config_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     `).run(
       input.id,
       input.slug,
@@ -251,6 +258,7 @@ export class ModelRouterStore {
       input.requiresApiKey ? 1 : 0,
       input.credentialRef ?? null,
       input.brandAssetId,
+      input.runtimeDefinitionId ?? null,
       input.status,
       input.now,
       input.now,
@@ -267,6 +275,7 @@ export class ModelRouterStore {
     requiresApiKey: boolean;
     credentialRef?: string;
     brandAssetId: string;
+    runtimeDefinitionId?: string;
     status: Exclude<ProviderStatus, "deleted">;
     now: string;
   }): ProviderProfile {
@@ -291,7 +300,7 @@ export class ModelRouterStore {
       const result = this.#database.prepare(`
         UPDATE provider_profiles
         SET display_name = ?, protocol = ?, base_url = ?, requires_api_key = ?,
-            credential_ref = ?, brand_asset_id = ?, status = ?,
+            credential_ref = ?, brand_asset_id = ?, runtime_definition_id = ?, status = ?,
             config_revision = config_revision + 1, updated_at = ?
         WHERE id = ? AND status = 'deleted'
       `).run(
@@ -301,6 +310,7 @@ export class ModelRouterStore {
         input.requiresApiKey ? 1 : 0,
         input.credentialRef ?? null,
         input.brandAssetId,
+        input.runtimeDefinitionId ?? null,
         input.status,
         input.now,
         input.id,

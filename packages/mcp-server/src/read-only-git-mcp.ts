@@ -1,6 +1,6 @@
 /**
  * @input  依赖：ACP stdio MCP 配置、内部 COUNCIL_READONLY_GIT_* 环境与只读 Git diff 服务
- * @output 导出：Kimi ACP 可委托调用的单工具 MCP server 与安全启动配置
+ * @output 导出：获授权 ACP DelegatedRuntime 可调用的单工具 MCP server 与安全启动配置
  * @pos    DelegatedRuntime 的 Git diff 桥；只暴露 council_git_diff，不继承 Council 主服务工具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释

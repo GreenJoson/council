@@ -1,7 +1,7 @@
 /**
- * @input  依赖：假 KimiAcpRuntime、假 ModelRouter、公开编排上下文与 RuntimeEvent
- * @output 验证：可信 prompt、ACP session 恢复、文件/Git 只读事件所有权与进程关闭桥
- * @pos    Kimi DelegatedRuntime 接入统一编排契约的适配器边界回归
+ * @input  依赖：假通用 ACP Runtime、RuntimeDefinition、假 ModelRouter、公开上下文与 RuntimeEvent
+ * @output 验证：供应商无关可信 prompt、session 恢复、授权能力事件所有权与进程关闭桥
+ * @pos    AcpDelegatedRuntime 接入统一编排契约的适配器边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -14,17 +14,33 @@ import {
   type AgentInvocation,
   type RuntimeEvent,
 } from "council-orchestrator";
-import type { KimiAcpRuntimeInput } from "../src/kimi-acp-runtime.js";
-import { KimiAcpRuntime } from "../src/kimi-acp-runtime.js";
+import type { AcpDelegatedRuntimeInput } from "../src/acp-delegated-runtime.js";
+import { AcpDelegatedRuntime } from "../src/acp-delegated-runtime.js";
 import type { ModelRouterService } from "../src/model-router-service.js";
-import { KimiAcpAgentAdapter } from "../src/orchestration/kimi-acp-agent-adapter.js";
+import type { AcpRuntimeDefinition } from "../src/acp-runtime-registry.js";
+import { AcpDelegatedAgentAdapter } from "../src/orchestration/acp-delegated-agent-adapter.js";
+
+const DEFINITION: AcpRuntimeDefinition = {
+  id: "kimi-code",
+  displayName: "Kimi Code",
+  command: "kimi",
+  versionArgs: ["--version"],
+  buildLaunchArgs: () => ["--plan", "acp"],
+  declaredCapabilities: [
+    "text",
+    "repository_read",
+    "git_diff",
+    "session_resume",
+  ],
+  limitationWhenUnavailable: "Kimi Code 不可用。",
+};
 
 class FakeRuntime {
-  readonly calls: KimiAcpRuntimeInput[] = [];
+  readonly calls: AcpDelegatedRuntimeInput[] = [];
   readonly closedBindings: string[] = [];
 
   async generate(
-    input: KimiAcpRuntimeInput,
+    input: AcpDelegatedRuntimeInput,
   ): Promise<{ content: string; sessionId: string }> {
     this.calls.push(input);
     input.onUpdate?.({
@@ -98,7 +114,7 @@ function router(): ModelRouterService {
           id: "provider-kimi-code",
           slug: "kimi-code",
           displayName: "Kimi Code",
-          protocol: "kimi-acp",
+          protocol: "acp",
           requiresApiKey: false,
           brandAssetId: "brand-kimi",
           status: "active",
@@ -152,11 +168,13 @@ function invocation(projectPath: string): AgentInvocation {
   };
 }
 
-test("Kimi 适配器复用 ACP session 并将只读事件归属 Runtime", async () => {
+test("通用 ACP 适配器复用 session 并按注册能力投影 Runtime 事件", async () => {
   const runtime = new FakeRuntime();
-  const adapter = new KimiAcpAgentAdapter(
+  const adapter = new AcpDelegatedAgentAdapter(
     "kimi-agent",
-    runtime as unknown as KimiAcpRuntime,
+    runtime as unknown as AcpDelegatedRuntime,
+    DEFINITION,
+    DEFINITION.declaredCapabilities,
     router(),
     4_000,
   );
@@ -180,9 +198,10 @@ test("Kimi 适配器复用 ACP session 并将只读事件归属 Runtime", async 
   const call = runtime.calls[0];
   assert.ok(call);
   assert.equal(call.bindingId, "binding-kimi");
+  assert.deepEqual(call.grantedCapabilities, DEFINITION.declaredCapabilities);
   assert.equal(call.sessionId, "session_existing");
   assert.equal(call.model, "k3");
-  assert.match(call.prompt, /既有上下文沿用当前 Kimi ACP session/u);
+  assert.match(call.prompt, /既有上下文沿用当前 ACP session/u);
   assert.match(call.prompt, /DELTA_PUBLIC_CONTEXT/u);
   assert.doesNotMatch(call.prompt, /DUPLICATE_CURRENT_REQUEST/u);
   assert.deepEqual(
@@ -214,9 +233,9 @@ test("Kimi 适配器复用 ACP session 并将只读事件归属 Runtime", async 
   assert.deepEqual(runtime.closedBindings, ["binding-kimi"]);
 });
 
-test("Kimi 适配器不把隐藏思考或未授权工具投影为公开事件", async () => {
+test("通用 ACP 适配器不把隐藏思考或未授权工具投影为公开事件", async () => {
   const runtime = {
-    generate: async (input: KimiAcpRuntimeInput) => {
+    generate: async (input: AcpDelegatedRuntimeInput) => {
       const updates: SessionUpdate[] = [
         {
           sessionUpdate: "agent_thought_chunk",
@@ -236,9 +255,17 @@ test("Kimi 适配器不把隐藏思考或未授权工具投影为公开事件", 
     },
     closeBinding: async () => undefined,
   };
-  const adapter = new KimiAcpAgentAdapter(
+  const adapter = new AcpDelegatedAgentAdapter(
     "kimi-agent",
-    runtime as unknown as KimiAcpRuntime,
+    runtime as unknown as AcpDelegatedRuntime,
+    {
+      ...DEFINITION,
+      declaredCapabilities: [
+        ...DEFINITION.declaredCapabilities,
+        "shell_write",
+      ],
+    },
+    ["text"],
     router(),
     4_000,
   );

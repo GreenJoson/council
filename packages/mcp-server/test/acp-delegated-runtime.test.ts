@@ -1,7 +1,7 @@
 /**
- * @input  依赖：假 ACP Agent 子进程、临时项目、KimiAcpRuntime 与 CouncilConfig
- * @output 验证：进程/session 复用、重启恢复、只读文件/Git MCP 桥与权限拒绝
- * @pos    Kimi DelegatedRuntime 的真实 stdio ACP 进程边界回归
+ * @input  依赖：两个声明式假 ACP Agent、临时项目、AcpDelegatedRuntime 与 CouncilConfig
+ * @output 验证：跨定义进程/session 复用、重启恢复、只读文件/Git MCP 桥与权限拒绝
+ * @pos    供应商无关 DelegatedRuntime 的真实 stdio ACP 进程边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -18,9 +18,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  KimiAcpRuntime,
-  type KimiAcpRuntimeInput,
-} from "../src/kimi-acp-runtime.js";
+  AcpDelegatedRuntime,
+  type AcpDelegatedRuntimeInput,
+} from "../src/acp-delegated-runtime.js";
+import {
+  AcpRuntimeRegistry,
+  type AcpRuntimeDefinition,
+} from "../src/acp-runtime-registry.js";
 import type { CouncilConfig } from "../src/types.js";
 
 const FAKE_KIMI = String.raw`#!/usr/bin/env node
@@ -43,6 +47,44 @@ const request = (method, params) => {
   return id;
 };
 const notify = (method, params) => send({ jsonrpc: "2.0", method, params });
+const selectedOption = (message) =>
+  message.result?.outcome?.outcome === "selected"
+    ? message.result.outcome.optionId
+    : undefined;
+const requestGitPermission = () => {
+  step = "git-permission";
+  request("session/request_permission", {
+    sessionId: "fake-kimi-session",
+    toolCall: {
+      toolCallId: "git-call",
+      title: "Read committed diff",
+      name: "council_git_diff",
+      kind: "other",
+      status: "pending"
+    },
+    options: [
+      { optionId: "allow-git", name: "Allow once", kind: "allow_once" },
+      { optionId: "reject-git", name: "Reject once", kind: "reject_once" }
+    ]
+  });
+};
+const requestExecutePermission = () => {
+  step = "execute-permission";
+  request("session/request_permission", {
+    sessionId: "fake-kimi-session",
+    toolCall: {
+      toolCallId: "execute-call",
+      title: "Run shell",
+      name: "shell",
+      kind: "execute",
+      status: "pending"
+    },
+    options: [
+      { optionId: "allow-exec", name: "Allow once", kind: "allow_once" },
+      { optionId: "reject-exec", name: "Reject once", kind: "reject_once" }
+    ]
+  });
+};
 
 lineReader.on("line", (line) => {
   const message = JSON.parse(line);
@@ -108,75 +150,53 @@ lineReader.on("line", (line) => {
   }
   if (step === "read-permission") {
     log({ type: "read-permission", outcome: message.result.outcome });
-    step = "read-file";
-    request("fs/read_text_file", {
-      sessionId: "fake-kimi-session",
-      path: readPath,
-      line: 1,
-      limit: 20
-    });
+    if (selectedOption(message) === "allow-read") {
+      step = "read-file";
+      request("fs/read_text_file", {
+        sessionId: "fake-kimi-session",
+        path: readPath,
+        line: 1,
+        limit: 20
+      });
+    } else {
+      requestGitPermission();
+    }
     return;
   }
   if (step === "read-file") {
     log(message.error
       ? { type: "read-error", code: message.error.code }
       : { type: "read-result", content: message.result.content });
-    step = "git-permission";
-    request("session/request_permission", {
-      sessionId: "fake-kimi-session",
-      toolCall: {
-        toolCallId: "git-call",
-        title: "Read committed diff",
-        name: "council_git_diff",
-        kind: "other",
-        status: "pending"
-      },
-      options: [
-        { optionId: "allow-git", name: "Allow once", kind: "allow_once" },
-        { optionId: "reject-git", name: "Reject once", kind: "reject_once" }
-      ]
-    });
+    requestGitPermission();
     return;
   }
   if (step === "git-permission") {
     log({ type: "git-permission", outcome: message.result.outcome });
-    notify("session/update", {
-      sessionId: "fake-kimi-session",
-      update: {
-        sessionUpdate: "tool_call",
-        toolCallId: "git-call",
-        title: "Read committed diff",
-        name: "council_git_diff",
-        kind: "other",
-        status: "pending"
-      }
-    });
-    notify("session/update", {
-      sessionId: "fake-kimi-session",
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "git-call",
-        title: "Read committed diff",
-        name: "council_git_diff",
-        kind: "other",
-        status: "completed"
-      }
-    });
-    step = "execute-permission";
-    request("session/request_permission", {
-      sessionId: "fake-kimi-session",
-      toolCall: {
-        toolCallId: "execute-call",
-        title: "Run shell",
-        name: "shell",
-        kind: "execute",
-        status: "pending"
-      },
-      options: [
-        { optionId: "allow-exec", name: "Allow once", kind: "allow_once" },
-        { optionId: "reject-exec", name: "Reject once", kind: "reject_once" }
-      ]
-    });
+    if (selectedOption(message) === "allow-git") {
+      notify("session/update", {
+        sessionId: "fake-kimi-session",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "git-call",
+          title: "Read committed diff",
+          name: "council_git_diff",
+          kind: "other",
+          status: "pending"
+        }
+      });
+      notify("session/update", {
+        sessionId: "fake-kimi-session",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "git-call",
+          title: "Read committed diff",
+          name: "council_git_diff",
+          kind: "other",
+          status: "completed"
+        }
+      });
+    }
+    requestExecutePermission();
     return;
   }
   if (step === "execute-permission") {
@@ -218,9 +238,9 @@ function config(directory: string, command: string): CouncilConfig {
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
     kimiCommand: command,
-    kimiStartupTimeoutMs: 5_000,
-    kimiKillGraceMs: 50,
-    kimiMaxFileReadChars: 10_000,
+    acpStartupTimeoutMs: 5_000,
+    acpKillGraceMs: 50,
+    acpMaxFileReadChars: 10_000,
     toolLoopMaxSteps: 4,
     toolLoopMaxContextChars: 20_000,
     toolLoopMaxFileBytes: 10_000,
@@ -241,11 +261,16 @@ function config(directory: string, command: string): CouncilConfig {
 }
 
 function input(
+  definition: AcpRuntimeDefinition,
   bindingId: string,
   cwd: string,
   sessionId?: string,
-): KimiAcpRuntimeInput {
+  grantedCapabilities: AcpDelegatedRuntimeInput["grantedCapabilities"] =
+    definition.declaredCapabilities,
+): AcpDelegatedRuntimeInput {
   return {
+    definition,
+    grantedCapabilities,
     bindingId,
     cwd,
     prompt: "只读评审当前项目。",
@@ -262,8 +287,38 @@ function readLog(logPath: string): Array<Record<string, unknown>> {
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许读文件", async () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "council-kimi-acp-"));
+function runtimeDefinition(
+  id: string,
+  command: string,
+  declaredCapabilities: AcpRuntimeDefinition["declaredCapabilities"] = [
+    "text",
+    "repository_read",
+    "git_diff",
+    "session_resume",
+  ],
+): AcpRuntimeDefinition {
+  return new AcpRuntimeRegistry([
+    {
+      id,
+      displayName: id === "kimi-code" ? "Kimi Code" : "Second ACP Agent",
+      command,
+      versionArgs: ["--version"],
+      buildLaunchArgs: ({ cwd, model }) => [
+        "--work-dir",
+        cwd,
+        "--model",
+        model,
+        "--plan",
+        "acp",
+      ],
+      declaredCapabilities,
+      limitationWhenUnavailable: "测试 Agent 当前不可用。",
+    },
+  ]).require(id);
+}
+
+test("通用 ACP Runtime 按定义启动，同 binding 复用 session 且重启后 resume", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-runtime-"));
   const command = path.join(directory, "fake-kimi");
   const logPath = path.join(directory, "fake-kimi.log");
   const sourcePath = path.join(directory, "source.txt");
@@ -272,16 +327,19 @@ test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许�
   writeFileSync(sourcePath, "LOCAL_SOURCE_EVIDENCE");
   process.env.FAKE_KIMI_LOG = logPath;
   process.env.FAKE_KIMI_READ_PATH = sourcePath;
+  const definition = runtimeDefinition("kimi-code", command);
 
-  const firstRuntime = new KimiAcpRuntime(config(directory, command));
+  const firstRuntime = new AcpDelegatedRuntime(config(directory, command));
   try {
-    const first = await firstRuntime.generate(input("binding-one", directory));
+    const first = await firstRuntime.generate(
+      input(definition, "binding-one", directory),
+    );
     assert.deepEqual(first, {
       content: "公开回复",
       sessionId: "fake-kimi-session",
     });
     const second = await firstRuntime.generate(
-      input("binding-one", directory, first.sessionId),
+      input(definition, "binding-one", directory, first.sessionId),
     );
     assert.equal(second.content, "公开回复");
     const beforeRestart = readLog(logPath);
@@ -315,7 +373,7 @@ test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许�
     writeFileSync(protectedPath, "SECRET_SHOULD_NOT_LEAVE_TOOL_HOST");
     process.env.FAKE_KIMI_READ_PATH = protectedPath;
     const protectedResult = await firstRuntime.generate(
-      input("binding-protected", directory),
+      input(definition, "binding-protected", directory),
     );
     assert.equal(protectedResult.content, "公开回复");
     assert.equal(
@@ -324,10 +382,10 @@ test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许�
     );
     await firstRuntime.closeBinding("binding-one");
 
-    const resumedRuntime = new KimiAcpRuntime(config(directory, command));
+    const resumedRuntime = new AcpDelegatedRuntime(config(directory, command));
     try {
       const resumed = await resumedRuntime.generate(
-        input("binding-one", directory, first.sessionId),
+        input(definition, "binding-one", directory, first.sessionId),
       );
       assert.equal(resumed.content, "公开回复");
       const afterRestart = readLog(logPath);
@@ -339,6 +397,52 @@ test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许�
     }
   } finally {
     await firstRuntime.shutdown();
+    delete process.env.FAKE_KIMI_LOG;
+    delete process.env.FAKE_KIMI_READ_PATH;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("第二个 ACP 定义无需供应商分支，Council policy 可收窄握手与工具", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-generic-acp-"));
+  const command = path.join(directory, "fake-second-agent");
+  const logPath = path.join(directory, "fake-second-agent.log");
+  const sourcePath = path.join(directory, "source.txt");
+  writeFileSync(command, FAKE_KIMI);
+  chmodSync(command, 0o700);
+  writeFileSync(sourcePath, "SECOND_RUNTIME_EVIDENCE");
+  process.env.FAKE_KIMI_LOG = logPath;
+  process.env.FAKE_KIMI_READ_PATH = sourcePath;
+  const definition = runtimeDefinition("second-agent", command, [
+    "text",
+    "repository_read",
+    "git_diff",
+    "shell_write",
+  ]);
+  const runtime = new AcpDelegatedRuntime(config(directory, command));
+  try {
+    const result = await runtime.generate(
+      input(definition, "binding-second", directory, undefined, ["text"]),
+    );
+    assert.equal(result.content, "公开回复");
+    const entries = readLog(logPath);
+    assert.equal(entries.filter((entry) => entry.type === "initialize").length, 1);
+    assert.deepEqual(
+      entries.find((entry) => entry.type === "new")?.mcpServers,
+      [],
+    );
+    assert.deepEqual(
+      entries.find((entry) => entry.type === "read-permission")?.outcome,
+      { outcome: "selected", optionId: "reject-read" },
+    );
+    assert.deepEqual(
+      entries.find((entry) => entry.type === "git-permission")?.outcome,
+      { outcome: "selected", optionId: "reject-git" },
+    );
+    assert.equal(entries.filter((entry) => entry.type === "read-result").length, 0);
+    assert.equal(entries.filter((entry) => entry.type === "read-error").length, 0);
+  } finally {
+    await runtime.shutdown();
     delete process.env.FAKE_KIMI_LOG;
     delete process.env.FAKE_KIMI_READ_PATH;
     rmSync(directory, { recursive: true, force: true });

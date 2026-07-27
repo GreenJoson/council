@@ -66,10 +66,10 @@ npm run build:desktop
 
 Kimi 有两个不同入口，不能混为一谈：
 
-- `Kimi Code`：本机 Kimi Code CLI 的 ACP DelegatedRuntime，不需要在 Council 填 API Key；先在本机完成 Kimi Code 登录，再从 catalog 添加 `Kimi Code` Provider 和 Agent。同一议题同一 Agent 会常驻复用一个 ACP 进程与 session，可读取当前项目内普通文本文件和受控已提交 Git diff；Council 拒绝未提交工作区读取、Shell、文件写入、提交、推送和部署。
+- `Kimi Code`：通用 ACP DelegatedRuntime 的首个正式 RuntimeDefinition，不需要在 Council 填 API Key；先在本机完成 Kimi Code 登录，再从 catalog 添加 `Kimi Code` Provider 和 Agent。同一议题同一 Agent 会常驻复用一个 ACP 进程与 session，可读取当前项目内普通文本文件和受控已提交 Git diff；Council 拒绝未提交工作区读取、Shell、文件写入、提交、推送和部署。
 - `Kimi`：OpenAI-compatible API 连接，需要单独 API Key；接收公开上下文，并通过 Council 只读 ToolLoop 按需读文件、列目录、搜索文本及核对已提交 Git diff。
 
-Kimi Code 进程不会永久常驻：accepted 决策、配置变更、手动关闭或空闲回收都会关闭 RuntimeBinding 和进程。服务或 App 重启后会用 SQLite 保存的 ACP session ID 恢复，而不是重新发送全部历史。RuntimeBinding 的 session/cursor/epoch 仍是唯一真源，草稿和 ACP 事件不会绕过 lease/fencing 直接写消息。
+ACP 进程不会永久常驻：accepted 决策、配置变更、手动关闭或空闲回收都会关闭 RuntimeBinding 和进程。服务或 App 重启后会用 SQLite 保存的 ACP session ID 恢复，而不是重新发送全部历史。Provider 持久化 `runtimeDefinitionId`；注册表决定实际命令、启动参数与能力，Runtime 本体不按供应商分支。RuntimeBinding 的 session/cursor/epoch 仍是唯一真源，草稿和 ACP 事件不会绕过 lease/fencing 直接写消息。
 
 ## 圆桌能力与周期类型
 

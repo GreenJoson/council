@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @input  依赖：COUNCIL_HTTP_* 配置、内部只读 Git MCP 标记、Node schema 迁移器与本地客户端
- * @output 导出：迁移成功后运行 REST/SSE，或为 Kimi ACP 运行单工具 stdio MCP
+ * @output 导出：迁移成功后运行 REST/SSE，或为 ACP DelegatedRuntime 运行单工具 stdio MCP
  * @pos    WebUI 后端与 delegated Git 工具共用的桌面 sidecar 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释

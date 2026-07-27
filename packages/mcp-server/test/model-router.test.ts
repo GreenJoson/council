@@ -128,7 +128,8 @@ test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", asy
     const template = before.catalog.providers.find(
       (candidate) => candidate.templateId === "kimi-code",
     );
-    assert.equal(template?.protocol, "kimi-acp");
+    assert.equal(template?.protocol, "acp");
+    assert.equal(template?.runtimeDefinitionId, "kimi-code");
     assert.deepEqual(template?.modelCandidates, [
       "k3",
       "k3-256k",
@@ -142,7 +143,8 @@ test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", asy
       displayName: "Kimi Code",
       active: true,
     });
-    assert.equal(provider.protocol, "kimi-acp");
+    assert.equal(provider.protocol, "acp");
+    assert.equal(provider.runtimeDefinitionId, "kimi-code");
     assert.equal(provider.requiresApiKey, false);
     assert.equal(provider.hasApiKey, false);
     assert.equal(provider.baseUrl, undefined);

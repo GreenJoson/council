@@ -19,7 +19,7 @@ import type {
 const PROTOCOLS: readonly ProviderProtocol[] = [
   "claude-cli",
   "codex-cli",
-  "kimi-acp",
+  "acp",
   "openai-compatible",
 ];
 
@@ -96,15 +96,21 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
     throw new Error("provider.status 无效");
   }
   const baseUrl = optionalString(record, "baseUrl");
+  const protocol = protocolValue(record);
+  const runtimeDefinitionId = optionalString(record, "runtimeDefinitionId");
+  if ((protocol === "acp") !== Boolean(runtimeDefinitionId)) {
+    throw new Error("只有 ACP Provider 必须绑定 RuntimeDefinition");
+  }
   return {
     id: stringValue(record, "id"),
     slug: stringValue(record, "slug"),
     displayName: stringValue(record, "displayName"),
-    protocol: protocolValue(record),
+    protocol,
     ...(baseUrl ? { baseUrl } : {}),
     requiresApiKey: booleanValue(record, "requiresApiKey"),
     hasApiKey: booleanValue(record, "hasApiKey"),
     brandAssetId: stringValue(record, "brandAssetId"),
+    ...(runtimeDefinitionId ? { runtimeDefinitionId } : {}),
     status,
     createdAt: stringValue(record, "createdAt"),
     updatedAt: stringValue(record, "updatedAt"),
@@ -132,17 +138,23 @@ export function parseAgentDefinition(value: unknown): AgentDefinition {
 function parseCatalogEntry(value: unknown): ProviderCatalogEntry {
   const record = asRecord(value, "provider catalog");
   const baseUrl = optionalString(record, "baseUrl");
+  const protocol = protocolValue(record);
+  const runtimeDefinitionId = optionalString(record, "runtimeDefinitionId");
   if (!Array.isArray(record.modelCandidates)) {
     throw new Error("modelCandidates 必须是数组");
+  }
+  if ((protocol === "acp") !== Boolean(runtimeDefinitionId)) {
+    throw new Error("只有 ACP Provider 必须引用 RuntimeDefinition");
   }
   return {
     templateId: stringValue(record, "templateId"),
     slug: stringValue(record, "slug"),
     displayName: stringValue(record, "displayName"),
-    protocol: protocolValue(record),
+    protocol,
     ...(baseUrl ? { baseUrl } : {}),
     requiresApiKey: booleanValue(record, "requiresApiKey"),
     brandAssetId: stringValue(record, "brandAssetId"),
+    ...(runtimeDefinitionId ? { runtimeDefinitionId } : {}),
     modelCandidates: record.modelCandidates.map((item) => {
       if (typeof item !== "string" || !item) {
         throw new Error("modelCandidates 项无效");

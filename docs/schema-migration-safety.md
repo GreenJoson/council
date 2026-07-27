@@ -38,10 +38,11 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 
 ## 版本规则
 
-当前 schema 版本为 `9`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
+当前 schema 版本为 `10`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
 冻结历史身份并增加配置 revision；v6 增加 RuntimeBinding、双 lease 与请求账本；v7–v8
 增加可恢复的 DiscussionCycle、阻断提问与能力快照；v9 在不改变既有公开内容语义的前提下，
-扩展 Provider/Runtime 约束以接纳 Kimi ACP。固定作者枚举的版本 1 只作为迁移输入保留。
+扩展 Provider/Runtime 约束以接纳 Kimi ACP；v10 将供应商专用协议归一为通用 `acp`，
+并在 Provider 上持久化 `runtimeDefinitionId`。固定作者枚举的版本 1 只作为迁移输入保留。
 详细字段、确定性映射与历史 `other` 的待审计语义见
 [Actor Identity v2 迁移](actor-identity-migration.md)。
 
@@ -52,7 +53,7 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 迁移重试次数必须由 `COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS` 显式提供；MCP/HTTP 缺失时
 启动立即失败。桌面 sidecar 由打包资源显式注入该键，不依赖源码默认值。
 
-测试覆盖 fresh 数据库、v1 内容/运行历史保留、旧作者确定性映射、v8→v9 Provider/Agent/
-RuntimeBinding 无损升级、未知 Actor 新写入拒绝、
+测试覆盖 fresh 数据库、v1 内容/运行历史保留、旧作者确定性映射、v8→v9 与 v9→v10
+Provider/Agent/RuntimeBinding 无损升级（含 ACP session、lease、epoch 与请求账本）、未知 Actor 新写入拒绝、
 canonical schema 反例、备份验证、故障注入回滚、版本不一致、未来版本、首次空库后外部创建、
 backup-lock 间隙并发写入、WAL checkpoint 阻塞、数据库身份错配，以及桌面 ready 门。

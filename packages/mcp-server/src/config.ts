@@ -18,9 +18,9 @@ const DEFAULT_CODEX_COMMAND = "codex";
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
 const DEFAULT_KIMI_COMMAND = "kimi";
-const DEFAULT_KIMI_STARTUP_TIMEOUT_MS = 30_000;
-const DEFAULT_KIMI_KILL_GRACE_MS = 3_000;
-const DEFAULT_KIMI_MAX_FILE_READ_CHARS = 262_144;
+const DEFAULT_ACP_STARTUP_TIMEOUT_MS = 30_000;
+const DEFAULT_ACP_KILL_GRACE_MS = 3_000;
+const DEFAULT_ACP_MAX_FILE_READ_CHARS = 262_144;
 const DEFAULT_TOOL_LOOP_MAX_STEPS = 12;
 const DEFAULT_TOOL_LOOP_MAX_CONTEXT_CHARS = 120_000;
 const DEFAULT_TOOL_LOOP_MAX_FILE_BYTES = 1_048_576;
@@ -137,6 +137,39 @@ function parseOptionalPositiveInteger(
   return raw ? parsePositiveIntegerValue(name, raw) : fallback;
 }
 
+function aliasedOptionalRaw(
+  primary: string,
+  legacy: string,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const current = env[primary]?.trim();
+  const previous = env[legacy]?.trim();
+  if (current && previous) {
+    throw new Error(`环境变量 ${primary} 与旧键 ${legacy} 不能同时定义。`);
+  }
+  return current || previous;
+}
+
+function parseAliasedOptionalTimer(
+  primary: string,
+  legacy: string,
+  env: NodeJS.ProcessEnv,
+  fallback: number,
+): number {
+  const raw = aliasedOptionalRaw(primary, legacy, env);
+  return raw ? parseTimerValue(primary, raw) : fallback;
+}
+
+function parseAliasedOptionalPositiveInteger(
+  primary: string,
+  legacy: string,
+  env: NodeJS.ProcessEnv,
+  fallback: number,
+): number {
+  const raw = aliasedOptionalRaw(primary, legacy, env);
+  return raw ? parsePositiveIntegerValue(primary, raw) : fallback;
+}
+
 function isForbiddenArg(value: string, forbidden: ReadonlySet<string>): boolean {
   const flag = value.split("=", 1)[0]?.toLowerCase() ?? "";
   return forbidden.has(flag);
@@ -209,20 +242,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       DEFAULT_CODEX_KILL_GRACE_MS,
     ),
     kimiCommand: env.COUNCIL_KIMI_COMMAND?.trim() || DEFAULT_KIMI_COMMAND,
-    kimiStartupTimeoutMs: parseOptionalTimer(
+    acpStartupTimeoutMs: parseAliasedOptionalTimer(
+      "COUNCIL_ACP_STARTUP_TIMEOUT_MS",
       "COUNCIL_KIMI_STARTUP_TIMEOUT_MS",
       env,
-      DEFAULT_KIMI_STARTUP_TIMEOUT_MS,
+      DEFAULT_ACP_STARTUP_TIMEOUT_MS,
     ),
-    kimiKillGraceMs: parseOptionalTimer(
+    acpKillGraceMs: parseAliasedOptionalTimer(
+      "COUNCIL_ACP_KILL_GRACE_MS",
       "COUNCIL_KIMI_KILL_GRACE_MS",
       env,
-      DEFAULT_KIMI_KILL_GRACE_MS,
+      DEFAULT_ACP_KILL_GRACE_MS,
     ),
-    kimiMaxFileReadChars: parseOptionalPositiveInteger(
+    acpMaxFileReadChars: parseAliasedOptionalPositiveInteger(
+      "COUNCIL_ACP_MAX_FILE_READ_CHARS",
       "COUNCIL_KIMI_MAX_FILE_READ_CHARS",
       env,
-      DEFAULT_KIMI_MAX_FILE_READ_CHARS,
+      DEFAULT_ACP_MAX_FILE_READ_CHARS,
     ),
     toolLoopMaxSteps: parseOptionalPositiveInteger(
       "COUNCIL_TOOL_LOOP_MAX_STEPS",

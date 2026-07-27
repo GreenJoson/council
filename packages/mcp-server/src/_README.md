@@ -20,6 +20,7 @@
 | `schema-v7-migration.ts` | 迁移步骤 | 增加 DiscussionCycle（固定四段收敛、轮次预算、冻结上下文游标、议题级 active 唯一）与 BlockingQuestion（公开提问/回答、cycle 内单一未答、按提问消息幂等） |
 | `schema-v8-migration.ts` | 迁移步骤 | 为 DiscussionCycle 持久化周期类型、需求快照、Agent/Provider/Runtime 修订与能力快照，以及预算耗尽的结构化阻断结果 |
 | `schema-v9-migration.ts` | 迁移步骤 | 原子扩展 Provider/Runtime 约束以接纳 Kimi ACP 与兼容 API ToolLoop，并保留 Provider、Agent、RuntimeBinding、lease、请求账本和 revision 触发器 |
+| `schema-v10-migration.ts` | 迁移步骤 | 将 Kimi 专用协议/transport 原子归一为通用 ACP，并无损保留 Provider、Agent、RuntimeBinding session、lease 与请求账本 |
 | `database.ts` | 核心 | 验证已迁移 schema，区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
@@ -29,12 +30,13 @@
 | `runtime-stream.ts` | 流式基础 | 定义公开文本增量事件并对任意 stdout 分片做 JSONL 解码 |
 | `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code stream-json，只转发公开 text delta，并将失败分类为脱敏诊断 |
 | `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；转发公开 JSONL 消息、约束总事件流并独立限制最终正文 |
-| `kimi-acp-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻 Kimi Code 进程/session、项目内只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
+| `acp-runtime-registry.ts` | Runtime 注册 | 声明 Agent 到 ACP 命令、启动参数和 Runtime 能力的受控映射；实际授权再与独立 Council policy 取交集，首个正式定义为 Kimi Code |
+| `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、项目内只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |
 | `read-only-tool-host.ts` | ToolHost | 以 realpath 限制项目根目录，提供读文本、列目录、搜索文本和受控已提交 Git diff，拒绝敏感配置、符号链接逃逸与所有写操作 |
 | `read-only-agent-loop.ts` | AgentLoop | 在统一步骤、上下文、文件和扫描预算内循环执行模型请求与 Council 只读工具 |
 | `read-only-git-diff.ts` | Git 安全边界 | 将 commit/ref 解析为 OID，先过滤敏感路径，再用禁用外部驱动的固定 argv 生成有界 patch 或统计摘要 |
-| `read-only-git-mcp.ts` | Delegated 工具桥 | 只向 Kimi ACP 暴露 `council_git_diff`；复用同一 sidecar，不暴露 Council 写工具或 Shell |
+| `read-only-git-mcp.ts` | Delegated 工具桥 | 只向获授权 ACP Runtime 暴露 `council_git_diff`；复用同一 sidecar，不暴露 Council 写工具或 Shell |
 | `openai-compatible-runtime.ts` | 兼容层 | 复用 ModelClient 提供连接测试与旧绑定所需的纯文本生成接口 |
 | `claude-client.ts` | 适配 | 组装公开上下文、恢复 session，并在成功后写入共享数据库 |
 | `provider-catalog.ts` | 配置入口 | 严格加载打包 catalog，集中提供 Provider 模板与受控 BrandAsset 元数据 |

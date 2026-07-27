@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `provider-catalog.json` | 配置正本 | 定义可添加 Provider、Kimi API/本机 Kimi Code ACP 两种独立入口、默认连接地址、受控品牌 glyph 和来源元数据；不包含密钥 |
+| `provider-catalog.json` | 配置正本 | 定义可添加 Provider、ACP RuntimeDefinition 引用、默认连接地址、受控品牌 glyph 和来源元数据；不包含密钥 |
 
 所有远程地址只作为可编辑模板写在配置资源中，不得复制到 `src/` 业务代码。品牌 glyph
 只允许引用前端受控组件；`sourceLabel` 说明来源与许可，不代表供应商官方背书。
