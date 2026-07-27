@@ -436,6 +436,53 @@ test("通用 ACP Runtime 按定义启动，同 binding 复用 session 且重启�
   }
 });
 
+test("注册表校验 buildLaunchArgs 真正生成的 argv，而不只是静态参数", () => {
+  const definitionWith = (
+    buildLaunchArgs: AcpRuntimeDefinition["buildLaunchArgs"],
+  ): AcpRuntimeDefinition =>
+    new AcpRuntimeRegistry([
+      {
+        id: "argv-probe",
+        displayName: "Argv Probe",
+        agentCommand: "fake-agent",
+        versionArgs: ["--version"],
+        modelSelection: "launch-args",
+        buildLaunchArgs,
+        declaredCapabilities: ["text"],
+        limitationWhenUnavailable: "测试 Agent 当前不可用。",
+      },
+    ]).require("argv-probe");
+
+  /*
+   * model 由用户配置，落点是动态 argv，不是写死的 versionArgs。
+   * 固定 argv 无 shell，带空格的 model 只会是一个参数，切不出第二个；
+   * 真正切得动的是 NUL——它在 spawn 层截断，此处不拦就没有别处拦。
+   */
+  assert.throws(
+    () =>
+      definitionWith(({ model }) => ["--model", model]).buildLaunchArgs({
+        cwd: "/tmp",
+        model: "k3 --dangerous",
+      }),
+    /生成了非法启动参数/u,
+  );
+  assert.throws(
+    () =>
+      definitionWith(({ model }) => ["--model", model]).buildLaunchArgs({
+        cwd: "/tmp",
+        model: "x".repeat(4_097),
+      }),
+    /生成了非法启动参数/u,
+  );
+  assert.deepEqual(
+    definitionWith(({ model }) => ["--model", model]).buildLaunchArgs({
+      cwd: "/tmp",
+      model: "k3",
+    }),
+    ["--model", "k3"],
+  );
+});
+
 test("生产注册表声明五个 ACP Agent 且不在 Runtime 中分支", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-acp-registry-"));
   try {

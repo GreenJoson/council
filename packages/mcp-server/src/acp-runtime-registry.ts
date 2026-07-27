@@ -30,6 +30,34 @@ export interface AcpRuntimeDefinition {
 }
 
 const DEFINITION_ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
+const MAX_PROCESS_ARGUMENT_CHARS = 4_096;
+const MAX_PROCESS_ARGUMENTS = 64;
+
+function isSafeProcessArgument(value: unknown): value is string {
+  return typeof value === "string"
+    && !value.includes("\0")
+    && value.length <= MAX_PROCESS_ARGUMENT_CHARS;
+}
+
+/**
+ * 校验真正交给 spawn 的那份 argv。
+ *
+ * `versionArgs` 是写死在定义里的字面量，`buildLaunchArgs` 的输出却嵌着
+ * 用户配置的 model 与项目路径——只查前者不查后者，等于查了不会变的那半边。
+ */
+function checkedProcessArguments(
+  definitionId: string,
+  args: readonly string[],
+): string[] {
+  if (
+    !Array.isArray(args)
+    || args.length > MAX_PROCESS_ARGUMENTS
+    || !args.every(isSafeProcessArgument)
+  ) {
+    throw new Error(`ACP RuntimeDefinition ${definitionId} 生成了非法启动参数。`);
+  }
+  return [...args];
+}
 
 function validateDefinition(
   definition: AcpRuntimeDefinition,
@@ -41,8 +69,8 @@ function validateDefinition(
     || !definition.agentCommand.trim()
     || definition.agentCommand.includes("\0")
     || !["launch-args", "session-config"].includes(definition.modelSelection)
-    || !definition.versionArgs.every((value) =>
-      typeof value === "string" && !value.includes("\0"))
+    || definition.versionArgs.length > MAX_PROCESS_ARGUMENTS
+    || !definition.versionArgs.every(isSafeProcessArgument)
     || !definition.declaredCapabilities.every((capability) =>
       RUNTIME_CAPABILITY_KEYS.includes(capability))
     || !definition.declaredCapabilities.includes("text")
@@ -50,8 +78,12 @@ function validateDefinition(
   ) {
     throw new Error(`ACP RuntimeDefinition ${definition.id || "<empty>"} 无效。`);
   }
+  const buildLaunchArgs = definition.buildLaunchArgs.bind(definition);
   return Object.freeze({
     ...definition,
+    // 注册表出口即校验点：拿到 definition 的人无需再自己检查 argv。
+    buildLaunchArgs: (context: AcpLaunchContext) =>
+      checkedProcessArguments(definition.id, buildLaunchArgs(context)),
     versionArgs: Object.freeze([...definition.versionArgs]),
     declaredCapabilities: Object.freeze([...definition.declaredCapabilities]),
   });
