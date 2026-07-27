@@ -68,7 +68,7 @@ export interface CapabilityGap {
 /** proposal / critique / rebuttal / synthesis 四段都必须能产生公开文本。 */
 const STAGE_BASELINE_CAPABILITIES: readonly RuntimeCapabilityKey[] = ["text"];
 
-const READ_ONLY_LOCAL_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
+const LOCAL_CLI_DECLARED_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
   "shell_read",
@@ -80,6 +80,14 @@ const READ_ONLY_LOCAL_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
  * Council policy 必须独立于 Runtime 声明。不要把这里委托给
  * declaredCapabilitiesForTransport：同一次编辑不能既声明能力又自动授权能力。
  */
+const READ_ONLY_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
+  "text",
+  "repository_read",
+  "shell_read",
+  "git_diff",
+  "session_resume",
+];
+
 const READ_ONLY_ACP_POLICY: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
@@ -135,7 +143,7 @@ export function declaredCapabilitiesForTransport(
   transportKind: string,
 ): RuntimeCapabilityKey[] {
   if (transportKind === "claude-resume" || transportKind === "codex-resume") {
-    return [...READ_ONLY_LOCAL_CAPABILITIES];
+    return [...LOCAL_CLI_DECLARED_CAPABILITIES];
   }
   if (transportKind === "acp") {
     return ["text", "repository_read", "git_diff", "session_resume"];
@@ -162,7 +170,7 @@ export function defaultPolicyCapabilitiesForTransport(
   transportKind: string,
 ): RuntimeCapabilityKey[] {
   if (transportKind === "claude-resume" || transportKind === "codex-resume") {
-    return [...READ_ONLY_LOCAL_CAPABILITIES];
+    return [...READ_ONLY_LOCAL_POLICY];
   }
   if (transportKind === "acp") {
     return [...READ_ONLY_ACP_POLICY];

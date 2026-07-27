@@ -132,26 +132,42 @@ test("远程 Provider 自述能力不能突破 Council policy", () => {
   );
 });
 
-test("ACP 声明与 Council policy 独立，新增副作用能力不会自动获权", () => {
-  const declared = [
-    ...declaredCapabilitiesForTransport("acp"),
-    "repository_write",
-    "shell_write",
-    "git_commit",
-  ] as const;
-  const policy = defaultPolicyCapabilitiesForTransport("acp");
+const SIDE_EFFECT_CAPABILITIES = [
+  "repository_write",
+  "shell_write",
+  "tests",
+  "git_commit",
+] as const;
 
-  assert.deepEqual(policy, [
-    "text",
-    "repository_read",
-    "git_diff",
-    "session_resume",
-  ]);
-  assert.deepEqual(
-    grantRuntimeCapabilities(declared, policy),
-    policy,
-  );
-});
+for (const transportKind of [
+  "claude-resume",
+  "codex-resume",
+  "acp",
+  "openai-tool-loop",
+] as const) {
+  test(`${transportKind} 的声明与 Council policy 独立，新增副作用能力不会自动获权`, () => {
+    const declared = [
+      ...declaredCapabilitiesForTransport(transportKind),
+      ...SIDE_EFFECT_CAPABILITIES,
+    ];
+    const policy = defaultPolicyCapabilitiesForTransport(transportKind);
+
+    assert.deepEqual(
+      policy.filter((capability) =>
+        SIDE_EFFECT_CAPABILITIES.some((sideEffect) => sideEffect === capability)
+      ),
+      [],
+    );
+    assert.deepEqual(
+      grantRuntimeCapabilities(declared, policy),
+      policy,
+    );
+    assert.notStrictEqual(
+      declaredCapabilitiesForTransport(transportKind),
+      defaultPolicyCapabilitiesForTransport(transportKind),
+    );
+  });
+}
 
 test("附件能力与 cycle baseline 做并集，不会被文本能力覆盖", () => {
   const requirements = deriveCycleRequirements({
