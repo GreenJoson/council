@@ -160,10 +160,14 @@
       "requiresApiKey": false,
       "brandAssetId": "brand-kimi",
       "modelCandidates": [
-        "k3",
-        "k3-256k",
-        "kimi-for-coding",
-        "kimi-for-coding-highspeed"
+        "kimi-code/k3",
+        "kimi-code/k3,thinking",
+        "kimi-code/k3-256k",
+        "kimi-code/k3-256k,thinking",
+        "kimi-code/kimi-for-coding",
+        "kimi-code/kimi-for-coding,thinking",
+        "kimi-code/kimi-for-coding-highspeed",
+        "kimi-code/kimi-for-coding-highspeed,thinking"
       ]
     },
     {

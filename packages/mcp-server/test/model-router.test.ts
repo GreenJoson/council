@@ -130,11 +130,21 @@ test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", asy
     );
     assert.equal(template?.protocol, "acp");
     assert.equal(template?.runtimeDefinitionId, "kimi-code");
+    /*
+     * 候选取 ACP 的 modelId，不取 name。CLI 两个字段都给：modelId 是
+     * `kimi-code/k3` 这样的协议标识，name 是 `k3 (thinking)` 这样的显示名。
+     * 显示名会随 CLI 版本改写，思考档的 name 还带空格和括号——拿它当配置值
+     * 存进数据库，等于把界面文案当成了稳定标识。
+     */
     assert.deepEqual(template?.modelCandidates, [
-      "k3",
-      "k3-256k",
-      "kimi-for-coding",
-      "kimi-for-coding-highspeed",
+      "kimi-code/k3",
+      "kimi-code/k3,thinking",
+      "kimi-code/k3-256k",
+      "kimi-code/k3-256k,thinking",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding,thinking",
+      "kimi-code/kimi-for-coding-highspeed",
+      "kimi-code/kimi-for-coding-highspeed,thinking",
     ]);
 
     const provider = await fixture.service.createProvider({
@@ -153,7 +163,7 @@ test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", asy
       providerId: provider.id,
       slug: "kimi-k3-reviewer",
       displayName: "Kimi K3 Reviewer",
-      model: "k3",
+      model: "kimi-code/k3",
       mentionAlias: "kimi-k3",
       enabled: true,
     });

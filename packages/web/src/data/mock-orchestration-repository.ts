@@ -171,7 +171,7 @@ const MOCK_MODEL_ROUTER: ModelRouterSnapshot = {
       runtimeDefinitionId: "kimi-code",
       requiresApiKey: false,
       brandAssetId: "brand-kimi",
-      modelCandidates: ["k3", "k3-256k"],
+      modelCandidates: ["kimi-code/k3", "kimi-code/k3-256k"],
     },
     {
       templateId: "gemini-cli-acp",
