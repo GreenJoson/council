@@ -147,7 +147,80 @@ test("ReadOnlyAgentLoop 由 Council 执行工具并把结果回填模型", async
   }
 });
 
-test("ReadOnlyAgentLoop 达到配置轮数后确定性停止", async () => {
+test("ReadOnlyAgentLoop 最后一轮收回工具，模型据此收尾而不是整轮失败", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-agent-loop-final-"));
+  try {
+    writeFileSync(path.join(directory, "source.ts"), "export {};\n");
+    const seen: Array<string[] | undefined> = [];
+    const client = {
+      complete: async (input: ModelClientInput): Promise<ModelClientResult> => {
+        seen.push(input.tools?.map((tool) => tool.function.name));
+        // 只要还发着工具就继续调用——真实模型没有理由主动停下来。
+        return input.tools
+          ? {
+              content: "",
+              toolCalls: [{
+                id: `call-${String(seen.length)}`,
+                name: "council_read_text_file",
+                arguments: JSON.stringify({ path: "source.ts" }),
+              }],
+            }
+          : { content: "基于已读到的内容给出的结论", toolCalls: [] };
+      },
+    };
+    const loop = new ReadOnlyAgentLoop(
+      client as unknown as OpenAICompatibleModelClient,
+      config(directory, 3),
+    );
+
+    const result = await loop.generate({
+      baseUrl: "https://example.com/v1",
+      model: "test-model",
+      apiKey: "test-key",
+      prompt: "请检查代码。",
+      projectPath: directory,
+    });
+
+    assert.equal(result, "基于已读到的内容给出的结论");
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2], undefined, "最后一轮不得再提供工具");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ReadOnlyAgentLoop 拒绝把空正文当成最终回复", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-agent-loop-empty-"));
+  try {
+    const client = {
+      complete: async (): Promise<ModelClientResult> => ({
+        content: "   \n",
+        toolCalls: [],
+      }),
+    };
+    const loop = new ReadOnlyAgentLoop(
+      client as unknown as OpenAICompatibleModelClient,
+      config(directory),
+    );
+
+    await assert.rejects(
+      loop.generate({
+        baseUrl: "https://example.com/v1",
+        model: "test-model",
+        apiKey: "test-key",
+        prompt: "请检查代码。",
+        projectPath: directory,
+      }),
+      (error: unknown) =>
+        error instanceof OpenAICompatibleRuntimeError
+        && error.diagnosticCode === "empty_response",
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ReadOnlyAgentLoop 对收回工具后仍请求工具的模型失败关闭", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-agent-loop-limit-"));
   try {
     writeFileSync(path.join(directory, "source.ts"), "export {};\n");

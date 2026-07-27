@@ -42,6 +42,10 @@ export interface ReadOnlyAgentLoopInput {
   }) => void;
 }
 
+const FINAL_STEP_INSTRUCTION =
+  "工具轮数已用尽，本轮不再提供工具。请基于以上已获得的信息直接给出最终回复；"
+  + "若证据不足以支撑结论，请写明还缺什么，不要再请求工具。";
+
 function contextChars(messages: readonly ModelMessage[]): number {
   return messages.reduce((total, message) => {
     const toolChars = message.role === "assistant"
@@ -94,17 +98,43 @@ export class ReadOnlyAgentLoop {
           "tool_context_limit",
         );
       }
+      /*
+       * 最后一轮收回工具并明确通知模型收尾。
+       *
+       * 只靠"轮数用尽就报错"会把前面所有轮次读到的证据一起丢掉，而模型此时
+       * 通常已经有足够材料写结论——它只是没有任何理由停下来：工具一直摆在
+       * 那里，也没人告诉它还剩几轮。
+       */
+      const finalStep = step === this.config.toolLoopMaxSteps;
+      if (finalStep && host) {
+        messages.push({ role: "user", content: FINAL_STEP_INSTRUCTION });
+      }
       const result = await this.client.complete({
         baseUrl: input.baseUrl,
         model: input.model,
         apiKey: input.apiKey,
         messages,
-        ...(host ? { tools: host.definitions } : {}),
+        ...(host && !finalStep ? { tools: host.definitions } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.onTextEvent ? { onTextEvent: input.onTextEvent } : {}),
       });
       if (result.toolCalls.length === 0) {
+        /*
+         * 收回工具后模型更可能交白卷。空正文会被适配器拼上抬头照常发帖，
+         * 于是圆桌里出现一条只有署名的消息——按可重试失败处理更诚实。
+         */
+        if (!result.content.trim()) {
+          throw new OpenAICompatibleRuntimeError(
+            "只读 ToolLoop 没有返回公开文本。",
+            true,
+            "empty_response",
+          );
+        }
         return result.content;
+      }
+      if (finalStep) {
+        // 工具已收回却仍在请求工具：不执行，落到循环外的失败关闭。
+        break;
       }
       if (!host) {
         throw new OpenAICompatibleRuntimeError(
