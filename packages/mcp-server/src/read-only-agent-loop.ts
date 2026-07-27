@@ -15,6 +15,7 @@ import {
   ReadOnlyToolHost,
   ReadOnlyToolHostError,
 } from "./read-only-tool-host.js";
+import { ReadOnlyGitDiffError } from "./read-only-git-diff.js";
 import type { CouncilConfig } from "./types.js";
 
 export type ToolLoopToolEventType =
@@ -56,7 +57,10 @@ function contextChars(messages: readonly ModelMessage[]): number {
 }
 
 function toolErrorContent(error: unknown): string {
-  if (error instanceof ReadOnlyToolHostError) {
+  if (
+    error instanceof ReadOnlyToolHostError
+    || error instanceof ReadOnlyGitDiffError
+  ) {
     return JSON.stringify({
       error: error.diagnosticCode,
       message: error.message,
@@ -144,7 +148,7 @@ export class ReadOnlyAgentLoop {
         });
         let content: string;
         try {
-          content = (await host.execute(call)).content;
+          content = (await host.execute(call, input.signal)).content;
         } catch (error) {
           content = toolErrorContent(error);
         }

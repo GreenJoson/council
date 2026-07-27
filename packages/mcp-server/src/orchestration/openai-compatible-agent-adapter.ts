@@ -115,7 +115,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
       };
       assertRuntimeToolEventAllowed(runtimeEvent, {
         executionKind: "tool-loop",
-        grantedCapabilities: ["text", "repository_read"],
+        grantedCapabilities: ["text", "repository_read", "git_diff"],
         registeredCapability: readOnlyToolCapability(event.toolName),
       });
       options.runtimeEvents?.emit(runtimeEvent);

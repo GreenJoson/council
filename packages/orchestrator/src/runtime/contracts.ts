@@ -83,6 +83,7 @@ export interface RuntimeEventSink {
 
 const COUNCIL_TOOL_LOOP_CAPABILITIES = new Set<RuntimeCapabilityKey>([
   "repository_read",
+  "git_diff",
 ]);
 
 export function runtimeSessionRefFromBinding(

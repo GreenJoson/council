@@ -143,7 +143,10 @@ export const ORCHESTRATION_SCHEMA_SQL = orchestrationSchemaSql(
   "1, 2, 3, 4",
 );
 
-/** RuntimeBinding DDL 的唯一正本；由 Node 迁移器执行，Store/Rust 只验证。 */
+/**
+ * RuntimeBinding 的 v6 基线 DDL；生产结构由 Node schema-v9 migration 原子扩展，
+ * Store/Rust 只验证迁移完成后的 canonical 结构，禁止在启动时隐式补表。
+ */
 export const RUNTIME_BINDING_SCHEMA_SQL = `
   CREATE TABLE runtime_bindings (
     id TEXT PRIMARY KEY,

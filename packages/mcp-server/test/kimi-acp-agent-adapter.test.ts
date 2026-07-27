@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 KimiAcpRuntime、假 ModelRouter、公开编排上下文与 RuntimeEvent
- * @output 验证：可信 prompt、ACP session 恢复、只读工具事件所有权与进程关闭桥
+ * @output 验证：可信 prompt、ACP session 恢复、文件/Git 只读事件所有权与进程关闭桥
  * @pos    Kimi DelegatedRuntime 接入统一编排契约的适配器边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -45,6 +45,22 @@ class FakeRuntime {
       title: "读取源码",
       name: "read_file",
       kind: "read",
+      status: "completed",
+    });
+    input.onUpdate?.({
+      sessionUpdate: "tool_call",
+      toolCallId: "git-call",
+      title: "读取 commit diff",
+      name: "council_git_diff",
+      kind: "other",
+      status: "pending",
+    });
+    input.onUpdate?.({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "git-call",
+      title: "读取 commit diff",
+      name: "council_git_diff",
+      kind: "other",
       status: "completed",
     });
     input.onUpdate?.({
@@ -171,13 +187,26 @@ test("Kimi 适配器复用 ACP session 并将只读事件归属 Runtime", async 
   assert.doesNotMatch(call.prompt, /DUPLICATE_CURRENT_REQUEST/u);
   assert.deepEqual(
     events.map((event) => event.type),
-    ["text.updated", "tool.requested", "tool.completed", "usage.updated"],
+    [
+      "text.updated",
+      "tool.requested",
+      "tool.completed",
+      "tool.requested",
+      "tool.completed",
+      "usage.updated",
+    ],
   );
   const requested = events[1];
   assert.equal(requested?.type, "tool.requested");
   if (requested?.type === "tool.requested") {
     assert.equal(requested.owner, "runtime");
     assert.equal(requested.runtimeBindingId, "binding-kimi");
+  }
+  const gitRequested = events[3];
+  assert.equal(gitRequested?.type, "tool.requested");
+  if (gitRequested?.type === "tool.requested") {
+    assert.equal(gitRequested.toolName, "council_git_diff");
+    assert.equal(gitRequested.owner, "runtime");
   }
   assert.equal(streamingNotifications, 1);
 

@@ -5,7 +5,7 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `index.ts` | 入口 | 加载配置，等待 schema 迁移完成后连接 stdio MCP |
-| `http-index.ts` | 入口 | 迁移 schema 后独立启动本地 REST 与 SSE 服务 |
+| `http-index.ts` | 入口 | 默认迁移 schema 后启动本地 REST/SSE；sidecar 子模式只启动 Kimi 使用的单工具 Git MCP |
 | `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题、消息、proposed 决策和可传递请求取消的 Claude 工具 |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
@@ -25,13 +25,16 @@
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
 | `process-utils.ts` | 安全基础 | 提供有界子进程运行、stdout 停止/首尾截断策略、长驻进程树终止与 CLI 选项规范化 |
+| `project-path-policy.ts` | 路径策略 | 为文件工具与 Git diff 提供同一敏感目录/文件判定，防止入口间规则漂移 |
 | `runtime-stream.ts` | 流式基础 | 定义公开文本增量事件并对任意 stdout 分片做 JSONL 解码 |
 | `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code stream-json，只转发公开 text delta，并将失败分类为脱敏诊断 |
 | `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；转发公开 JSONL 消息、约束总事件流并独立限制最终正文 |
-| `kimi-acp-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻 Kimi Code 进程/session、项目内只读文件桥、审批拒绝、取消与恢复 |
+| `kimi-acp-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻 Kimi Code 进程/session、项目内只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |
-| `read-only-tool-host.ts` | ToolHost | 以 realpath 限制项目根目录，只提供读文本、列目录和搜索文本，拒绝敏感配置、符号链接逃逸与所有写操作 |
+| `read-only-tool-host.ts` | ToolHost | 以 realpath 限制项目根目录，提供读文本、列目录、搜索文本和受控已提交 Git diff，拒绝敏感配置、符号链接逃逸与所有写操作 |
 | `read-only-agent-loop.ts` | AgentLoop | 在统一步骤、上下文、文件和扫描预算内循环执行模型请求与 Council 只读工具 |
+| `read-only-git-diff.ts` | Git 安全边界 | 将 commit/ref 解析为 OID，先过滤敏感路径，再用禁用外部驱动的固定 argv 生成有界 patch 或统计摘要 |
+| `read-only-git-mcp.ts` | Delegated 工具桥 | 只向 Kimi ACP 暴露 `council_git_diff`；复用同一 sidecar，不暴露 Council 写工具或 Shell |
 | `openai-compatible-runtime.ts` | 兼容层 | 复用 ModelClient 提供连接测试与旧绑定所需的纯文本生成接口 |
 | `claude-client.ts` | 适配 | 组装公开上下文、恢复 session，并在成功后写入共享数据库 |
 | `provider-catalog.ts` | 配置入口 | 严格加载打包 catalog，集中提供 Provider 模板与受控 BrandAsset 元数据 |

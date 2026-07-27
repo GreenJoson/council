@@ -94,23 +94,31 @@ test("纯文本 Provider 仍不能参加需要读取 commit/diff 的修复互审
   );
 });
 
-test("Council 只读 ToolLoop 让兼容 Provider 获得仓库读取但不伪造 git diff", () => {
+test("Council 只读 ToolLoop 让兼容 Provider 独立读取仓库与已提交 diff", () => {
   const requirements = deriveCycleRequirements({
     kind: "discussion",
     participants: ["deepseek"],
     task: { all: ["repository_read"] },
   });
   const toolLoop = snapshot("deepseek", "openai-tool-loop");
-  assert.deepEqual(toolLoop.granted, ["text", "repository_read"]);
+  assert.deepEqual(toolLoop.granted, ["text", "repository_read", "git_diff"]);
   assert.deepEqual(findCapabilityGaps(requirements, [toolLoop]), []);
 
   const fixRequirements = deriveCycleRequirements({
     kind: "fix_review",
     participants: ["deepseek"],
   });
+  assert.deepEqual(findCapabilityGaps(fixRequirements, [toolLoop]), []);
+  const kimiFixRequirements = deriveCycleRequirements({
+    kind: "fix_review",
+    participants: ["kimi"],
+  });
   assert.deepEqual(
-    findCapabilityGaps(fixRequirements, [toolLoop]),
-    [{ adapterId: "deepseek", missing: ["git_diff"] }],
+    findCapabilityGaps(
+      kimiFixRequirements,
+      [snapshot("kimi", "kimi-acp")],
+    ),
+    [],
   );
 });
 

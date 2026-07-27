@@ -44,16 +44,19 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 重复读取 capabilities 会保留未变化绑定最近一次已验证的可用性；只有绑定 fingerprint
 变化时才清空状态并强制重检，避免 TTL 内把健康动态 Agent 错误重置为不可用。
 
-Kimi Code ACP 使用供应商自己的 AgentLoop，Council 不重复实现工具循环。Runtime 只向
-ACP 声明文件读取能力，所有路径必须 realpath 后位于当前项目根目录；read/search/think
-审批仅允许单次，execute/edit/delete/move/fetch 等请求均拒绝。服务重启后使用
+Kimi Code ACP 使用供应商自己的 AgentLoop，Council 不重复实现工具循环。Runtime 向
+ACP 声明项目内文件读取能力，并额外挂载只公开 `council_git_diff` 的 stdio MCP；
+read/search/think 与该精确工具名仅允许单次，execute/edit/delete/move/fetch 等请求均拒绝。
+文件路径必须 realpath 后位于当前项目根目录；Git 工具只读已提交 commit/ref，过滤敏感路径，
+禁用外部驱动且不接触未提交工作区。服务重启后使用
 RuntimeBinding 保存的 session ID 执行 `session/resume`；accepted 决策、配置变化、手动
 关闭、空闲回收与服务退出都会有界取消并终止对应进程树。
 
 兼容 API Provider 没有供应商 DelegatedRuntime，因此走 Council 自己的只读 AgentLoop。
-ModelClient 只负责通信与 Tool Call；ToolHost 只提供项目内文本读取、目录枚举和文本搜索；
+ModelClient 只负责通信与 Tool Call；ToolHost 提供项目内文本读取、目录枚举、文本搜索和
+受控已提交 Git diff；
 AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推理”。这条路径没有 Shell、
-`git_diff`、文件写入、提交、推送或部署能力，所有工具事件归 `owner=council`。事件不接受
+未提交工作区读取、文件写入、提交、推送或部署能力，所有工具事件归 `owner=council`。事件不接受
 模型自报能力；Adapter 必须按本地 ToolHost 注册表从工具名解析能力，未知工具立即失败。
 
 桌面默认在正式回复原子落库后自动完成运行。Composer 的 `@Agent` 调用也会显式关闭完成门；

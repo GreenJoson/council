@@ -12,7 +12,7 @@
 | `agent-progress-hub.test.ts` | 单元测试 | 验证统一 RuntimeEvent 到临时草稿的兼容投影、顺序、有界追加、快照和完成清理 |
 | `claude-runtime.test.ts` | 单元测试 | 验证纯生成、公开 stream-json 增量、session 恢复、取消、超时、输出上限与脱敏错误 |
 | `codex-runtime.test.ts` | 单元测试 | 验证只读沙箱、公开 JSONL 消息增量、事件截断、最终正文限长、取消与脱敏错误分类 |
-| `kimi-acp-runtime.test.ts` | ACP 进程测试 | 用真实 stdio 假 Agent 验证同 binding 进程/session 复用、服务重开 resume、普通文本读取、敏感文件阻断和执行权限拒绝 |
+| `kimi-acp-runtime.test.ts` | ACP 进程测试 | 用真实 stdio 假 Agent 验证同 binding 进程/session 复用、服务重开 resume、普通文本读取、单工具 Git MCP 配置、敏感文件阻断和执行权限拒绝 |
 | `claude-config.test.ts` | 单元测试 | 验证 Claude 权限模式、stdio MCP 调用者身份必填、HTTP 配置隔离、保留参数和定时器边界 |
 | `codex-config.test.ts` | 单元测试 | 验证 Codex 只读沙箱、默认值、保留参数和定时器配置边界 |
 | `claude-client.test.ts` | 集成测试 | 验证数据库兼容层的后台会话恢复及取消零写入 |
@@ -29,12 +29,13 @@
 | `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、错误脱敏与有界响应 |
 | `read-only-tool-host.test.ts` | ToolHost 安全测试 | 验证读文件、列目录、文本搜索、敏感配置拒绝与符号链接逃逸阻断 |
 | `read-only-agent-loop.test.ts` | AgentLoop 行为测试 | 验证模型—工具多步循环、工具事件、公开文本替换与步骤预算耗尽 |
+| `read-only-git-diff.test.ts` | Git 安全测试 | 验证 commit/ref 固定解析、敏感文件及 rename 过滤、外部 diff 驱动禁用、预算降级和单工具 MCP 暴露 |
 | `openai-compatible-agent-adapter.test.ts` | ToolLoop 适配测试 | 验证 `repository_read` 与 Council 所有权工具事件、远程脱敏原因可公开且未知异常继续隔离 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |
 | `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、系统 Agent 名称/alias/删除拒绝、单次完成复核覆盖、上下文限制转发、跨议题 session 碰撞失败关闭、断线、取消、审批、恢复与 sweeper；长调用跨越 RuntimeBinding TTL 且瞬时续租失败时仍可原子提交 |
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议 |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
-| `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式文本、分片 Tool Call 与故障响应，用于远程 Provider/双 Agent/只读 ToolLoop E2E |
+| `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式文本、分片文件/Git Tool Call 与故障响应，用于远程 Provider/双 Agent/只读 ToolLoop E2E |
 | `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证圆桌：能力 fail-fast、只读 commit/diff 互审、冻结修订/能力快照、点一次跑完全程、提问恢复、缺失 verdict 度量、阻断停止与决策一致性 |
 | `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证自动交接：一次开局跑完提案/评审/收敛、阻塞反驳回环、提问恢复，以及预算用尽原子保存阻断分歧 |
 | `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |

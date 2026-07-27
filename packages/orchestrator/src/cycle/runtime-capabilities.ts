@@ -121,10 +121,10 @@ export function declaredCapabilitiesForTransport(
     return [...READ_ONLY_LOCAL_CAPABILITIES];
   }
   if (transportKind === "kimi-acp") {
-    return ["text", "repository_read", "session_resume"];
+    return ["text", "repository_read", "git_diff", "session_resume"];
   }
   if (transportKind === "openai-tool-loop") {
-    return ["text", "repository_read"];
+    return ["text", "repository_read", "git_diff"];
   }
   return [...STAGE_BASELINE_CAPABILITIES];
 }

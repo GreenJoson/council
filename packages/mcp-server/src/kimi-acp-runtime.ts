@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Kimi Code CLI、ACP v1 SDK、项目目录、持久 RuntimeBinding 与 AbortSignal
- * @output 导出：每 binding 长驻、可恢复、只读权限的 Kimi ACP Runtime
+ * @input  依赖：Kimi Code CLI、ACP v1 SDK、项目目录、只读 Git MCP、持久 RuntimeBinding 与 AbortSignal
+ * @output 导出：每 binding 长驻、可恢复、含受控 commit diff 的只读 Kimi ACP Runtime
  * @pos    Kimi DelegatedRuntime；Kimi 自己拥有 AgentLoop，Council 只管理 session 与权限
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -28,11 +28,21 @@ import {
   runBoundedProcess,
   terminateProcessTree,
 } from "./process-utils.js";
-import { isProtectedProjectRelativePath } from "./read-only-tool-host.js";
+import { isProtectedProjectRelativePath } from "./project-path-policy.js";
+import { COUNCIL_GIT_DIFF_TOOL_NAME } from "./read-only-git-diff.js";
+import { readOnlyGitMcpServerConfig } from "./read-only-git-mcp.js";
 
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/,-]*$/u;
 const SESSION_PATTERN = /^[A-Za-z0-9._:-]+$/u;
 const READ_ONLY_TOOL_KINDS = new Set(["read", "search", "think"]);
+
+function isAllowedDelegatedTool(
+  kind: string | null | undefined,
+  name: string | null | undefined,
+): boolean {
+  return name === COUNCIL_GIT_DIFF_TOOL_NAME
+    || READ_ONLY_TOOL_KINDS.has(kind ?? "other");
+}
 
 export interface KimiAcpAvailability {
   available: boolean;
@@ -267,7 +277,7 @@ export class KimiAcpRuntime {
       onUpdate: (update) => {
         if (
           update.sessionUpdate === "tool_call"
-          && !READ_ONLY_TOOL_KINDS.has(update.kind ?? "other")
+          && !isAllowedDelegatedTool(update.kind, update.name)
           && update.status !== "failed"
           && update.status !== "completed"
         ) {
@@ -417,7 +427,7 @@ export class KimiAcpRuntime {
         const request = context.params;
         managed?.activeTurn?.onPermission?.(request);
         const kind = request.toolCall.kind ?? "other";
-        const allowed = READ_ONLY_TOOL_KINDS.has(kind);
+        const allowed = isAllowedDelegatedTool(kind, request.toolCall.name);
         const option = request.options.find((candidate) =>
           candidate.kind === (allowed ? "allow_once" : "reject_once"))
           ?? (!allowed
@@ -464,15 +474,16 @@ export class KimiAcpRuntime {
         },
         { cancellationSignal: startupSignal },
       );
+      const mcpServers = [readOnlyGitMcpServerConfig(rootRealPath, this.config)];
       const session = sessionId
         ? await connection.agent.request(
             methods.agent.session.resume,
-            { sessionId, cwd, mcpServers: [] },
+            { sessionId, cwd, mcpServers },
             { cancellationSignal: startupSignal },
           ).then(() => ({ sessionId }))
         : await connection.agent.request(
             methods.agent.session.new,
-            { cwd, mcpServers: [] },
+            { cwd, mcpServers },
             { cancellationSignal: startupSignal },
           );
       managed = {

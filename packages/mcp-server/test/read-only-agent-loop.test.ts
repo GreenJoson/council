@@ -51,6 +51,13 @@ function config(directory: string, maxSteps = 4): CouncilConfig {
     toolLoopMaxContextChars: 20_000,
     toolLoopMaxFileBytes: 10_000,
     toolLoopMaxScanFiles: 100,
+    gitCommand: "git",
+    gitDiffTimeoutMs: 5_000,
+    gitDiffKillGraceMs: 50,
+    gitDiffMaxFiles: 20,
+    gitDiffMaxLines: 200,
+    gitDiffMaxHunksPerFile: 20,
+    gitDiffMaxOutputChars: 10_000,
     sqliteBusyTimeoutMs: 5_000,
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
@@ -116,7 +123,15 @@ test("ReadOnlyAgentLoop 由 Council 执行工具并把结果回填模型", async
 
     assert.equal(result, "最终结论");
     assert.equal(client.calls.length, 2);
-    assert.equal(client.calls[0]?.tools?.length, 3);
+    assert.deepEqual(
+      client.calls[0]?.tools?.map((tool) => tool.function.name),
+      [
+        "council_read_text_file",
+        "council_list_directory",
+        "council_search_text",
+        "council_git_diff",
+      ],
+    );
     assert.deepEqual(textEvents, ["append", "reset", "append"]);
     assert.deepEqual(
       toolEvents.map((event) => event.type),

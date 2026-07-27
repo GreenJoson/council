@@ -129,6 +129,14 @@ test("Council ToolLoop 只允许自己执行已授权的只读工具", () => {
     ),
     /禁止执行非只读能力/,
   );
+  assert.doesNotThrow(() => assertRuntimeToolEventAllowed(
+    toolEvent("council", "council_git_diff"),
+    {
+      executionKind: "tool-loop",
+      grantedCapabilities: ["git_diff"],
+      registeredCapability: "git_diff",
+    },
+  ));
 });
 
 test("Runtime 工具能力未获 Council policy 授权时默认拒绝", () => {

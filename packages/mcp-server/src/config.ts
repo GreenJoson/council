@@ -25,6 +25,13 @@ const DEFAULT_TOOL_LOOP_MAX_STEPS = 12;
 const DEFAULT_TOOL_LOOP_MAX_CONTEXT_CHARS = 120_000;
 const DEFAULT_TOOL_LOOP_MAX_FILE_BYTES = 1_048_576;
 const DEFAULT_TOOL_LOOP_MAX_SCAN_FILES = 5_000;
+const DEFAULT_GIT_COMMAND = "git";
+const DEFAULT_GIT_DIFF_TIMEOUT_MS = 15_000;
+const DEFAULT_GIT_DIFF_KILL_GRACE_MS = 1_000;
+const DEFAULT_GIT_DIFF_MAX_FILES = 200;
+const DEFAULT_GIT_DIFF_MAX_LINES = 4_000;
+const DEFAULT_GIT_DIFF_MAX_HUNKS_PER_FILE = 200;
+const DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS = 30_000;
 
 const FORBIDDEN_CLAUDE_ARGS = new Set([
   "--",
@@ -236,6 +243,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       "COUNCIL_TOOL_LOOP_MAX_SCAN_FILES",
       env,
       DEFAULT_TOOL_LOOP_MAX_SCAN_FILES,
+    ),
+    gitCommand: env.COUNCIL_GIT_COMMAND?.trim() || DEFAULT_GIT_COMMAND,
+    gitDiffTimeoutMs: parseOptionalTimer(
+      "COUNCIL_GIT_DIFF_TIMEOUT_MS",
+      env,
+      DEFAULT_GIT_DIFF_TIMEOUT_MS,
+    ),
+    gitDiffKillGraceMs: parseOptionalTimer(
+      "COUNCIL_GIT_DIFF_KILL_GRACE_MS",
+      env,
+      DEFAULT_GIT_DIFF_KILL_GRACE_MS,
+    ),
+    gitDiffMaxFiles: parseOptionalPositiveInteger(
+      "COUNCIL_GIT_DIFF_MAX_FILES",
+      env,
+      DEFAULT_GIT_DIFF_MAX_FILES,
+    ),
+    gitDiffMaxLines: parseOptionalPositiveInteger(
+      "COUNCIL_GIT_DIFF_MAX_LINES",
+      env,
+      DEFAULT_GIT_DIFF_MAX_LINES,
+    ),
+    gitDiffMaxHunksPerFile: parseOptionalPositiveInteger(
+      "COUNCIL_GIT_DIFF_MAX_HUNKS_PER_FILE",
+      env,
+      DEFAULT_GIT_DIFF_MAX_HUNKS_PER_FILE,
+    ),
+    gitDiffMaxOutputChars: parseOptionalPositiveInteger(
+      "COUNCIL_GIT_DIFF_MAX_OUTPUT_CHARS",
+      env,
+      DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS,
     ),
     ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),

@@ -41,6 +41,13 @@ export interface CouncilConfig {
   toolLoopMaxContextChars: number;
   toolLoopMaxFileBytes: number;
   toolLoopMaxScanFiles: number;
+  gitCommand: string;
+  gitDiffTimeoutMs: number;
+  gitDiffKillGraceMs: number;
+  gitDiffMaxFiles: number;
+  gitDiffMaxLines: number;
+  gitDiffMaxHunksPerFile: number;
+  gitDiffMaxOutputChars: number;
   keychainCommand?: string;
   sqliteBusyTimeoutMs: number;
   schemaMigrationMaxAttempts: number;

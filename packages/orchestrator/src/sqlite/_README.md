@@ -11,3 +11,7 @@
 | `runtime-invocation-context.ts` | 上下文 | 按“议题 + Agent + 请求”拒绝重复调用，并构建首轮全量或 session 增量公开上下文 |
 | `atomic-round-commit.ts` | 原子提交 | 在单事务写入 Run、公开消息、逻辑请求账本、唯一 session/游标并释放 binding lease |
 | `sqlite-council-store.ts` | 核心适配器 | 验证已迁移 schema，以事务和 CAS 聚合 Run、lease、上下文与原子提交模块 |
+
+`RUNTIME_BINDING_SCHEMA_SQL` 是历史 v6 基线，不是当前生产迁移入口。生产数据库必须先由
+`mcp-server/schema-migrator.ts` 连续迁移到 v9；`assertOrchestrationSchema` 只验证 canonical
+对象和版本，故意不在 Store 启动时隐式修改结构，避免两个进程同时“修库”。

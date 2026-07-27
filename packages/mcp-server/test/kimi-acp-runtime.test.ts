@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 ACP Agent 子进程、临时项目、KimiAcpRuntime 与 CouncilConfig
- * @output 验证：进程/session 复用、重启恢复、只读文件桥与权限拒绝
+ * @output 验证：进程/session 复用、重启恢复、只读文件/Git MCP 桥与权限拒绝
  * @pos    Kimi DelegatedRuntime 的真实 stdio ACP 进程边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -60,12 +60,16 @@ lineReader.on("line", (line) => {
     return;
   }
   if (message.method === "session/new") {
-    log({ type: "new", cwd: message.params.cwd });
+    log({ type: "new", cwd: message.params.cwd, mcpServers: message.params.mcpServers });
     result(message.id, { sessionId: "fake-kimi-session" });
     return;
   }
   if (message.method === "session/resume") {
-    log({ type: "resume", sessionId: message.params.sessionId });
+    log({
+      type: "resume",
+      sessionId: message.params.sessionId,
+      mcpServers: message.params.mcpServers
+    });
     result(message.id, {});
     return;
   }
@@ -117,6 +121,47 @@ lineReader.on("line", (line) => {
     log(message.error
       ? { type: "read-error", code: message.error.code }
       : { type: "read-result", content: message.result.content });
+    step = "git-permission";
+    request("session/request_permission", {
+      sessionId: "fake-kimi-session",
+      toolCall: {
+        toolCallId: "git-call",
+        title: "Read committed diff",
+        name: "council_git_diff",
+        kind: "other",
+        status: "pending"
+      },
+      options: [
+        { optionId: "allow-git", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-git", name: "Reject once", kind: "reject_once" }
+      ]
+    });
+    return;
+  }
+  if (step === "git-permission") {
+    log({ type: "git-permission", outcome: message.result.outcome });
+    notify("session/update", {
+      sessionId: "fake-kimi-session",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "git-call",
+        title: "Read committed diff",
+        name: "council_git_diff",
+        kind: "other",
+        status: "pending"
+      }
+    });
+    notify("session/update", {
+      sessionId: "fake-kimi-session",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "git-call",
+        title: "Read committed diff",
+        name: "council_git_diff",
+        kind: "other",
+        status: "completed"
+      }
+    });
     step = "execute-permission";
     request("session/request_permission", {
       sessionId: "fake-kimi-session",
@@ -180,6 +225,13 @@ function config(directory: string, command: string): CouncilConfig {
     toolLoopMaxContextChars: 20_000,
     toolLoopMaxFileBytes: 10_000,
     toolLoopMaxScanFiles: 100,
+    gitCommand: "git",
+    gitDiffTimeoutMs: 5_000,
+    gitDiffKillGraceMs: 50,
+    gitDiffMaxFiles: 20,
+    gitDiffMaxLines: 200,
+    gitDiffMaxHunksPerFile: 20,
+    gitDiffMaxOutputChars: 10_000,
     sqliteBusyTimeoutMs: 5_000,
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
@@ -244,6 +296,17 @@ test("Kimi ACP 同 binding 复用进程/session，重启后 resume 且只允许�
       beforeRestart.find((entry) => entry.type === "execute-permission")?.outcome,
       { outcome: "selected", optionId: "reject-exec" },
     );
+    assert.deepEqual(
+      beforeRestart.find((entry) => entry.type === "git-permission")?.outcome,
+      { outcome: "selected", optionId: "allow-git" },
+    );
+    const newSession = beforeRestart.find((entry) => entry.type === "new");
+    const mcpServers = newSession?.mcpServers as Array<Record<string, unknown>>;
+    assert.equal(mcpServers.length, 1);
+    assert.equal(mcpServers[0]?.name, "Council Read-only Git");
+    assert.equal(typeof mcpServers[0]?.command, "string");
+    assert.ok(Array.isArray(mcpServers[0]?.args));
+    assert.ok(Array.isArray(mcpServers[0]?.env));
     assert.equal(
       beforeRestart.find((entry) => entry.type === "read-result")?.content,
       "LOCAL_SOURCE_EVIDENCE",

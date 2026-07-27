@@ -1,5 +1,5 @@
 /**
- * @input  依赖：子进程命令、stdin、定时、输出上限、stdout 观察器与溢出策略
+ * @input  依赖：子进程命令、stdin、环境、定时、输出上限、stdout 观察器与溢出策略
  * @output 导出：有界运行、增量 stdout 观察、首尾截断、长驻进程树终止与 CLI 选项规范化工具
  * @pos    Claude、Codex 与 Kimi 运行时共用的进程生命周期安全基础层
  *
@@ -35,6 +35,8 @@ export interface BoundedProcessOptions {
   args: string[];
   input: string;
   cwd?: string;
+  /** 调用方提供完整环境时不再继承 process.env；用于 Git 等需隔离配置的子进程。 */
+  env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   timeoutMs: number;
   killGraceMs: number;
@@ -263,6 +265,7 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
 
   const child = spawn(options.command, options.args, {
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.env ? { env: options.env } : {}),
     detached: IS_POSIX,
     stdio: ["pipe", "pipe", "pipe"],
     shell: false,

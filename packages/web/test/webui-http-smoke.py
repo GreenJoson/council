@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE、远程 Provider 双 Agent 热加载、配置失效边界与 Claude 自动轮次验收
+@output 导出：项目隔离、REST/SSE、远程 Provider、受控 Git ToolLoop、配置失效边界与 Claude 验收
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -240,6 +240,18 @@ with sync_playwright() as playwright:
             "enabled": True,
         },
     )
+    git_agent = api_request(
+        "POST",
+        "/api/v1/settings/agents",
+        {
+            "providerId": remote_provider["id"],
+            "slug": "router-git",
+            "displayName": "Router Git",
+            "model": "router-model-git",
+            "mentionAlias": "router-git",
+            "enabled": True,
+        },
+    )
     ready_snapshot = api_request("GET", "/api/v1/settings/model-router")
     ready_provider = next(
         provider
@@ -257,6 +269,7 @@ with sync_playwright() as playwright:
         alpha_agent["id"],
         beta_agent["id"],
         tool_agent["id"],
+        git_agent["id"],
     } <= available_remote_ids, remote_capabilities
     # 配置由外部 API 客户端写入；重新加载浏览器快照，但不重启 Agent Service。
     page.reload(wait_until="domcontentloaded")
@@ -265,6 +278,7 @@ with sync_playwright() as playwright:
     capability_ledger.get_by_text("Router Alpha", exact=True).wait_for()
     capability_ledger.get_by_text("Router Beta", exact=True).wait_for()
     capability_ledger.get_by_text("Router Tool", exact=True).wait_for()
+    capability_ledger.get_by_text("Router Git", exact=True).wait_for()
 
     alpha_run = create_and_start_run(
         topic_id,
@@ -290,6 +304,16 @@ with sync_playwright() as playwright:
         exact=True,
     ).wait_for()
     wait_for_run_status(tool_run["id"], "completed")
+    git_run = create_and_start_run(
+        topic_id,
+        git_agent["id"],
+        "使用 Council 受控 Git 工具核对当前 HEAD 的已提交差异。",
+    )
+    page.get_by_text(
+        "远程 ToolLoop 已通过 Council 受控 Git 工具读取已提交 diff。",
+        exact=True,
+    ).wait_for()
+    wait_for_run_status(git_run["id"], "completed")
 
     renamed_alpha = api_request(
         "PUT",

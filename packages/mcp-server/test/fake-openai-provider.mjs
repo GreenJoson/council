@@ -1,7 +1,7 @@
 /**
  * @input  依赖：COUNCIL_FAKE_PROVIDER_PORT 与 OpenAI Chat Completions 流式请求
  * @output 导出：按模型返回公开文本、只读 Tool Call 或故障的 loopback 测试 Provider
- * @pos    动态远程 Provider/双 Agent/只读 ToolLoop 热加载与恢复边界的跨进程 E2E 替身
+ * @pos    动态远程 Provider/双 Agent/只读文件与受控 Git ToolLoop 的跨进程 E2E 替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -53,14 +53,32 @@ const server = createServer(async (request, response) => {
     return;
   }
   const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-  if (model === "router-model-tool") {
+  if (model === "router-model-tool" || model === "router-model-git") {
     const toolMessage = messages.find((message) => message?.role === "tool");
     response.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
     });
     if (!toolMessage) {
-      const toolChunks = [
+      const toolChunks = model === "router-model-git"
+        ? [
+          {
+            index: 0,
+            id: "call-read-committed-diff",
+            type: "function",
+            function: {
+              name: "council_git_diff",
+              arguments: "{\"commit\":\"HE",
+            },
+          },
+          {
+            index: 0,
+            function: {
+              arguments: "AD\"}",
+            },
+          },
+        ]
+        : [
         {
           index: 0,
           id: "call-read-package",
@@ -76,7 +94,7 @@ const server = createServer(async (request, response) => {
             arguments: ".json\"}",
           },
         },
-      ];
+        ];
       for (const toolCall of toolChunks) {
         response.write(`data: ${JSON.stringify({
           choices: [{ delta: { tool_calls: [toolCall] } }],
@@ -88,9 +106,17 @@ const server = createServer(async (request, response) => {
     const toolContent = typeof toolMessage.content === "string"
       ? toolMessage.content
       : "";
-    const reply = toolContent.includes("\"name\": \"council\"")
-      ? "远程 ToolLoop 已通过 Council 只读工具读取项目 package.json。"
-      : "远程 ToolLoop 没有收到预期的项目文件内容。";
+    const reply = model === "router-model-git"
+      ? (
+        toolContent.includes("diff --git")
+        || toolContent.includes("[Council：完整 patch 超过输出预算")
+      )
+        && !toolContent.includes("COUNCIL_FAKE_KEYCHAIN_FILE")
+        ? "远程 ToolLoop 已通过 Council 受控 Git 工具读取已提交 diff。"
+        : "远程 ToolLoop 没有收到预期的安全 Git diff。"
+      : toolContent.includes("\"name\": \"council\"")
+        ? "远程 ToolLoop 已通过 Council 只读工具读取项目 package.json。"
+        : "远程 ToolLoop 没有收到预期的项目文件内容。";
     response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: reply } }] })}\n\n`);
     response.end("data: [DONE]\n\n");
     return;

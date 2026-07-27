@@ -1,6 +1,6 @@
 /**
  * @input  依赖：项目根目录、CouncilConfig 与结构化 Tool Call
- * @output 导出：项目内读文件、列目录、文本搜索的有界只读 ToolHost 与共享敏感路径策略
+ * @output 导出：项目内读文件、列目录、文本搜索和 commit diff 的有界只读 ToolHost
  * @pos    Council-owned ToolLoop 的本机沙箱；不执行 Shell、不写文件、不读取凭据文件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,54 +17,36 @@ import type {
   ModelToolCall,
   ModelToolDefinition,
 } from "./openai-compatible-model-client.js";
+import {
+  COUNCIL_GIT_DIFF_TOOL_NAME,
+  ReadOnlyGitDiff,
+  type GitDiffRequest,
+} from "./read-only-git-diff.js";
+import {
+  IGNORED_PROJECT_DIRECTORIES,
+  isProtectedProjectRelativePath,
+} from "./project-path-policy.js";
 import type { CouncilConfig } from "./types.js";
 
 const TOOL_NAMES = {
   read: "council_read_text_file",
   list: "council_list_directory",
   search: "council_search_text",
+  gitDiff: COUNCIL_GIT_DIFF_TOOL_NAME,
 } as const;
 
 export function readOnlyToolCapability(
   toolName: string,
-): "repository_read" | undefined {
-  return Object.values(TOOL_NAMES).includes(
-    toolName as (typeof TOOL_NAMES)[keyof typeof TOOL_NAMES],
-  )
+): "repository_read" | "git_diff" | undefined {
+  if (toolName === TOOL_NAMES.gitDiff) {
+    return "git_diff";
+  }
+  return toolName === TOOL_NAMES.read
+    || toolName === TOOL_NAMES.list
+    || toolName === TOOL_NAMES.search
     ? "repository_read"
     : undefined;
 }
-
-const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".aws",
-  ".ssh",
-  ".cache",
-  "node_modules",
-  "target",
-  "dist",
-  "build",
-  "coverage",
-]);
-
-const PROTECTED_FILE_NAMES = new Set([
-  ".env",
-  ".netrc",
-  ".npmrc",
-  ".pypirc",
-  "credentials.json",
-  "id_rsa",
-  "id_ed25519",
-]);
-
-const PROTECTED_FILE_EXTENSIONS = new Set([
-  ".key",
-  ".pem",
-  ".p12",
-  ".pfx",
-]);
 
 export class ReadOnlyToolHostError extends Error {
   constructor(
@@ -87,24 +69,13 @@ interface ToolArguments {
   line?: unknown;
   limit?: unknown;
   query?: unknown;
+  commit?: unknown;
+  base?: unknown;
+  head?: unknown;
 }
 
 function withinRoot(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
-}
-
-export function isProtectedProjectRelativePath(relativePath: string): boolean {
-  const segments = relativePath.split(path.sep).filter(Boolean);
-  if (segments.some((segment) => IGNORED_DIRECTORIES.has(segment))) {
-    return true;
-  }
-  const basename = segments.at(-1)?.toLowerCase() ?? "";
-  if (basename === ".env.example") {
-    return false;
-  }
-  return PROTECTED_FILE_NAMES.has(basename)
-    || basename.startsWith(".env.")
-    || PROTECTED_FILE_EXTENSIONS.has(path.extname(basename));
 }
 
 function parseArguments(call: ModelToolCall): ToolArguments {
@@ -164,6 +135,38 @@ function requiredQuery(value: unknown): string {
   return value.trim();
 }
 
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ReadOnlyToolHostError(
+      `Git diff 的 ${name} 必须是非空字符串。`,
+      "invalid_tool_arguments",
+    );
+  }
+  return value.trim();
+}
+
+function gitDiffRequest(args: ToolArguments): GitDiffRequest {
+  const unexpected = Object.keys(args).filter((key) =>
+    key !== "commit" && key !== "base" && key !== "head");
+  if (unexpected.length > 0) {
+    throw new ReadOnlyToolHostError(
+      "Git diff 包含未允许的参数。",
+      "invalid_tool_arguments",
+    );
+  }
+  const commit = optionalString(args.commit, "commit");
+  const base = optionalString(args.base, "base");
+  const head = optionalString(args.head, "head");
+  return {
+    ...(commit ? { commit } : {}),
+    ...(base ? { base } : {}),
+    ...(head ? { head } : {}),
+  };
+}
+
 export class ReadOnlyToolHost {
   readonly definitions: readonly ModelToolDefinition[] = [
     {
@@ -217,6 +220,30 @@ export class ReadOnlyToolHost {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: TOOL_NAMES.gitDiff,
+        description:
+          "独立读取已提交 commit 或 base/head 范围的 Git diff。不会读取未提交工作区；敏感路径会被过滤，超限会返回明确摘要。",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            commit: {
+              type: "string",
+              description: "单个 commit/ref；Council 比较它与第一父提交。",
+            },
+            base: { type: "string", description: "范围起点 commit/ref。" },
+            head: { type: "string", description: "范围终点 commit/ref。" },
+          },
+          oneOf: [
+            { required: ["commit"] },
+            { required: ["base", "head"] },
+          ],
+        },
+      },
+    },
   ];
 
   readonly #root: string;
@@ -224,13 +251,19 @@ export class ReadOnlyToolHost {
   readonly #maxFileBytes: number;
   readonly #maxScanFiles: number;
   readonly #maxItems: number;
+  readonly #gitDiff: ReadOnlyGitDiff;
 
-  private constructor(root: string, config: CouncilConfig) {
+  private constructor(
+    root: string,
+    config: CouncilConfig,
+    gitDiff: ReadOnlyGitDiff,
+  ) {
     this.#root = root;
     this.#maxResultChars = config.maxOutputChars;
     this.#maxFileBytes = config.toolLoopMaxFileBytes;
     this.#maxScanFiles = config.toolLoopMaxScanFiles;
     this.#maxItems = config.defaultMessageLimit;
+    this.#gitDiff = gitDiff;
   }
 
   static async create(projectPath: string, config: CouncilConfig): Promise<ReadOnlyToolHost> {
@@ -242,10 +275,17 @@ export class ReadOnlyToolHost {
         "invalid_project_path",
       );
     }
-    return new ReadOnlyToolHost(root, config);
+    return new ReadOnlyToolHost(
+      root,
+      config,
+      await ReadOnlyGitDiff.create(root, config),
+    );
   }
 
-  async execute(call: ModelToolCall): Promise<ReadOnlyToolResult> {
+  async execute(
+    call: ModelToolCall,
+    signal?: AbortSignal,
+  ): Promise<ReadOnlyToolResult> {
     const args = parseArguments(call);
     let content: string;
     switch (call.name) {
@@ -257,6 +297,12 @@ export class ReadOnlyToolHost {
         break;
       case TOOL_NAMES.search:
         content = await this.#searchText(args);
+        break;
+      case TOOL_NAMES.gitDiff:
+        content = await this.#gitDiff.generate(
+          gitDiffRequest(args),
+          signal,
+        );
         break;
       default:
         throw new ReadOnlyToolHostError(
@@ -395,7 +441,14 @@ export class ReadOnlyToolHost {
         }
         const absolute = path.join(directory, entry.name);
         const relative = path.relative(this.#root, absolute);
-        if (isProtectedProjectRelativePath(relative) || entry.isSymbolicLink()) {
+        if (
+          isProtectedProjectRelativePath(relative)
+          || entry.isSymbolicLink()
+          || (
+            entry.isDirectory()
+            && IGNORED_PROJECT_DIRECTORIES.has(entry.name.toLowerCase())
+          )
+        ) {
           continue;
         }
         if (entry.isDirectory()) {
