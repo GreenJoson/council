@@ -97,7 +97,13 @@ export function createProductionAcpRuntimeRegistry(
       agentCommand: config.kimiAcpCommand,
       versionArgs: ["--version"],
       modelSelection: "session-config",
-      buildLaunchArgs: () => ["acp"],
+      /*
+       * `--plan` 是 Kimi 的计划模式（只读），必须作为全局参数排在 `acp`
+       * 子命令之前——`kimi acp` 自身不接受任何选项。它与 Claude 的
+       * `--permission-mode plan`、Codex 的 `--sandbox read-only` 同级，
+       * 是 Council headless 只读边界在启动参数上的那一层，删掉即降级。
+       */
+      buildLaunchArgs: () => ["--plan", "acp"],
       declaredCapabilities: [
         "text",
         "repository_read",

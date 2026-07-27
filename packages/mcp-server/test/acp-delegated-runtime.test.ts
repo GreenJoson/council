@@ -452,12 +452,16 @@ test("生产注册表声明五个 ACP Agent 且不在 Runtime 中分支", () => 
         "claude-agent",
       ],
     );
+    /*
+     * `--plan` 是只读边界的一部分，不是可选优化：它必须存在，且必须排在
+     * `acp` 子命令之前。这条断言的作用是让它无法再被无声删除。
+     */
     assert.deepEqual(
       registry.require("kimi-code").buildLaunchArgs({
         cwd: directory,
         model: "k3",
       }),
-      ["acp"],
+      ["--plan", "acp"],
     );
     assert.equal(registry.require("kimi-code").modelSelection, "session-config");
     assert.deepEqual(
