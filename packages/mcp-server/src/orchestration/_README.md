@@ -28,7 +28,7 @@ Agent 收到取消后还必须在独立 cleanup 期限内退出，超时不得�
 `running` 继续，`waiting_agent` 标记为 `execution_interrupted`，`waiting_user` 不参与扫描。
 候选数超过安全上限会明确阻止启动，不会静默漏恢复。
 
-生产初始化会检查 Claude Code CLI、Codex CLI 与 Kimi Code CLI 的可用性。不可用适配器在
+生产初始化会检查 Claude Code CLI、Codex CLI 与已配置 ACP Agent 的可用性。不可用适配器在
 capabilities 中标记 `available=false`，返回注册时提供的可执行提示（如 Codex 的
 "运行 codex login"）或通用限制说明，并在创建运行时被拒绝；底层本机错误不会进入响应。
 Claude/Codex 非零退出按认证、额度、模型权限、回合耗尽、暂时性服务故障和未知进程退出分类；
@@ -45,7 +45,8 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 变化时才清空状态并强制重检，避免 TTL 内把健康动态 Agent 错误重置为不可用。
 
 通用 ACP Runtime 根据 Provider 持久化的 `runtimeDefinitionId` 从受控注册表读取命令、
-启动参数与声明能力，再与独立 Council policy 计算实际授权；Kimi Code 是首个正式定义。供应商自己的 AgentLoop 负责工具循环，
+启动参数、模型选择协议与声明能力，再与独立 Council policy 计算实际授权；当前注册 Kimi、
+Gemini、Grok、Codex 与 Claude Agent。供应商自己的 AgentLoop 负责工具循环，
 Council 不重复实现。Runtime 只在定义获得 `repository_read` 时声明文件读取能力，只在
 获得 `git_diff` 时挂载仅公开 `council_git_diff` 的 stdio MCP；
 read/search/think 与该精确工具名仅允许单次，execute/edit/delete/move/fetch 等请求均拒绝。

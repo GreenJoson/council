@@ -1,6 +1,6 @@
 /**
- * @input  依赖：两个声明式假 ACP Agent、临时项目、AcpDelegatedRuntime 与 CouncilConfig
- * @output 验证：跨定义进程/session 复用、重启恢复、只读文件/Git MCP 桥与权限拒绝
+ * @input  依赖：声明式假 ACP Agent、五 Agent 生产注册表、临时项目、AcpDelegatedRuntime 与 CouncilConfig
+ * @output 验证：跨定义启动、launch/session 模型选择、进程/session 复用、恢复、只读桥与权限拒绝
  * @pos    供应商无关 DelegatedRuntime 的真实 stdio ACP 进程边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,7 @@ import {
 } from "../src/acp-delegated-runtime.js";
 import {
   AcpRuntimeRegistry,
+  createProductionAcpRuntimeRegistry,
   type AcpRuntimeDefinition,
 } from "../src/acp-runtime-registry.js";
 import type { CouncilConfig } from "../src/types.js";
@@ -51,6 +52,17 @@ const selectedOption = (message) =>
   message.result?.outcome?.outcome === "selected"
     ? message.result.outcome.optionId
     : undefined;
+const modelOptions = (currentValue) => [{
+  id: "model",
+  name: "Model",
+  category: "model",
+  type: "select",
+  currentValue,
+  options: [
+    { value: "default-model", name: "Default Model" },
+    { value: "k3", name: "k3" }
+  ]
+}];
 const requestGitPermission = () => {
   step = "git-permission";
   request("session/request_permission", {
@@ -103,7 +115,10 @@ lineReader.on("line", (line) => {
   }
   if (message.method === "session/new") {
     log({ type: "new", cwd: message.params.cwd, mcpServers: message.params.mcpServers });
-    result(message.id, { sessionId: "fake-kimi-session" });
+    result(message.id, {
+      sessionId: "fake-kimi-session",
+      configOptions: modelOptions("default-model")
+    });
     return;
   }
   if (message.method === "session/resume") {
@@ -112,7 +127,17 @@ lineReader.on("line", (line) => {
       sessionId: message.params.sessionId,
       mcpServers: message.params.mcpServers
     });
-    result(message.id, {});
+    result(message.id, { configOptions: modelOptions("default-model") });
+    return;
+  }
+  if (message.method === "session/set_config_option") {
+    log({
+      type: "set-config",
+      sessionId: message.params.sessionId,
+      configId: message.params.configId,
+      value: message.params.value
+    });
+    result(message.id, { configOptions: modelOptions(message.params.value) });
     return;
   }
   if (message.method === "session/prompt") {
@@ -237,7 +262,11 @@ function config(directory: string, command: string): CouncilConfig {
     codexSandboxMode: "read-only",
     codexTimeoutMs: 5_000,
     codexKillGraceMs: 50,
-    kimiCommand: command,
+    kimiAcpCommand: command,
+    geminiAcpCommand: command,
+    grokAcpCommand: command,
+    codexAcpCommand: command,
+    claudeAcpCommand: command,
     acpStartupTimeoutMs: 5_000,
     acpKillGraceMs: 50,
     acpMaxFileReadChars: 10_000,
@@ -296,21 +325,25 @@ function runtimeDefinition(
     "git_diff",
     "session_resume",
   ],
+  modelSelection: AcpRuntimeDefinition["modelSelection"] = "launch-args",
 ): AcpRuntimeDefinition {
   return new AcpRuntimeRegistry([
     {
       id,
       displayName: id === "kimi-code" ? "Kimi Code" : "Second ACP Agent",
-      command,
+      agentCommand: command,
       versionArgs: ["--version"],
-      buildLaunchArgs: ({ cwd, model }) => [
-        "--work-dir",
-        cwd,
-        "--model",
-        model,
-        "--plan",
-        "acp",
-      ],
+      modelSelection,
+      buildLaunchArgs: modelSelection === "launch-args"
+        ? ({ cwd, model }) => [
+            "--work-dir",
+            cwd,
+            "--model",
+            model,
+            "--plan",
+            "acp",
+          ]
+        : () => ["--session-config-agent"],
       declaredCapabilities,
       limitationWhenUnavailable: "测试 Agent 当前不可用。",
     },
@@ -392,6 +425,122 @@ test("通用 ACP Runtime 按定义启动，同 binding 复用 session 且重启�
       assert.equal(afterRestart.filter((entry) => entry.type === "initialize").length, 3);
       assert.equal(afterRestart.filter((entry) => entry.type === "new").length, 2);
       assert.equal(afterRestart.filter((entry) => entry.type === "resume").length, 1);
+    } finally {
+      await resumedRuntime.shutdown();
+    }
+  } finally {
+    await firstRuntime.shutdown();
+    delete process.env.FAKE_KIMI_LOG;
+    delete process.env.FAKE_KIMI_READ_PATH;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("生产注册表声明五个 ACP Agent 且不在 Runtime 中分支", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-registry-"));
+  try {
+    const registry = createProductionAcpRuntimeRegistry(
+      config(directory, "fake-agent"),
+    );
+    assert.deepEqual(
+      registry.list().map((definition) => definition.id),
+      [
+        "kimi-code",
+        "gemini-cli",
+        "grok-build",
+        "codex-agent",
+        "claude-agent",
+      ],
+    );
+    assert.deepEqual(
+      registry.require("kimi-code").buildLaunchArgs({
+        cwd: directory,
+        model: "k3",
+      }),
+      ["acp"],
+    );
+    assert.equal(registry.require("kimi-code").modelSelection, "session-config");
+    assert.deepEqual(
+      registry.require("gemini-cli").buildLaunchArgs({
+        cwd: directory,
+        model: "gemini-model",
+      }),
+      ["--model", "gemini-model", "--acp"],
+    );
+    assert.deepEqual(
+      registry.require("grok-build").buildLaunchArgs({
+        cwd: directory,
+        model: "grok-model",
+      }),
+      [
+        "--no-auto-update",
+        "--cwd",
+        directory,
+        "--model",
+        "grok-model",
+        "agent",
+        "stdio",
+      ],
+    );
+    assert.equal(registry.require("codex-agent").modelSelection, "session-config");
+    assert.equal(registry.require("claude-agent").modelSelection, "session-config");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("通用 ACP Runtime 可通过 session config 选择模型并在恢复时重申", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-config-model-"));
+  const command = path.join(directory, "fake-session-config-agent");
+  const logPath = path.join(directory, "fake-session-config-agent.log");
+  const sourcePath = path.join(directory, "source.txt");
+  writeFileSync(command, FAKE_KIMI);
+  chmodSync(command, 0o700);
+  writeFileSync(sourcePath, "SESSION_CONFIG_EVIDENCE");
+  process.env.FAKE_KIMI_LOG = logPath;
+  process.env.FAKE_KIMI_READ_PATH = sourcePath;
+  const definition = runtimeDefinition(
+    "session-config-agent",
+    command,
+    ["text"],
+    "session-config",
+  );
+  const firstRuntime = new AcpDelegatedRuntime(config(directory, command));
+  try {
+    const first = await firstRuntime.generate(
+      input(definition, "binding-config", directory, undefined, ["text"]),
+    );
+    assert.equal(first.content, "公开回复");
+    assert.deepEqual(
+      readLog(logPath).find((entry) => entry.type === "set-config"),
+      {
+        type: "set-config",
+        sessionId: "fake-kimi-session",
+        configId: "model",
+        value: "k3",
+      },
+    );
+    assert.deepEqual(
+      readLog(logPath).find((entry) => entry.type === "initialize")?.argv,
+      ["--session-config-agent"],
+    );
+    await firstRuntime.shutdown();
+
+    const resumedRuntime = new AcpDelegatedRuntime(config(directory, command));
+    try {
+      await resumedRuntime.generate(
+        input(
+          definition,
+          "binding-config",
+          directory,
+          first.sessionId,
+          ["text"],
+        ),
+      );
+      assert.equal(
+        readLog(logPath).filter((entry) => entry.type === "set-config").length,
+        2,
+      );
     } finally {
       await resumedRuntime.shutdown();
     }

@@ -33,7 +33,11 @@ export interface CouncilConfig {
   codexSandboxMode: "read-only";
   codexTimeoutMs: number;
   codexKillGraceMs: number;
-  kimiCommand: string;
+  kimiAcpCommand: string;
+  geminiAcpCommand: string;
+  grokAcpCommand: string;
+  codexAcpCommand: string;
+  claudeAcpCommand: string;
   acpStartupTimeoutMs: number;
   acpKillGraceMs: number;
   acpMaxFileReadChars: number;

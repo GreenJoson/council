@@ -17,7 +17,11 @@ const REQUIRED_CODEX_SANDBOX_MODE = "read-only";
 const DEFAULT_CODEX_COMMAND = "codex";
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
-const DEFAULT_KIMI_COMMAND = "kimi";
+const DEFAULT_KIMI_ACP_COMMAND = "kimi";
+const DEFAULT_GEMINI_ACP_COMMAND = "gemini";
+const DEFAULT_GROK_ACP_COMMAND = "grok";
+const DEFAULT_CODEX_ACP_COMMAND = "codex-acp";
+const DEFAULT_CLAUDE_ACP_COMMAND = "claude-agent-acp";
 const DEFAULT_ACP_STARTUP_TIMEOUT_MS = 30_000;
 const DEFAULT_ACP_KILL_GRACE_MS = 3_000;
 const DEFAULT_ACP_MAX_FILE_READ_CHARS = 262_144;
@@ -241,7 +245,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_CODEX_KILL_GRACE_MS,
     ),
-    kimiCommand: env.COUNCIL_KIMI_COMMAND?.trim() || DEFAULT_KIMI_COMMAND,
+    kimiAcpCommand:
+      env.COUNCIL_KIMI_ACP_COMMAND?.trim()
+      || env.COUNCIL_KIMI_COMMAND?.trim()
+      || DEFAULT_KIMI_ACP_COMMAND,
+    geminiAcpCommand:
+      env.COUNCIL_GEMINI_ACP_COMMAND?.trim() || DEFAULT_GEMINI_ACP_COMMAND,
+    grokAcpCommand:
+      env.COUNCIL_GROK_ACP_COMMAND?.trim() || DEFAULT_GROK_ACP_COMMAND,
+    codexAcpCommand:
+      env.COUNCIL_CODEX_ACP_COMMAND?.trim() || DEFAULT_CODEX_ACP_COMMAND,
+    claudeAcpCommand:
+      env.COUNCIL_CLAUDE_ACP_COMMAND?.trim() || DEFAULT_CLAUDE_ACP_COMMAND,
     acpStartupTimeoutMs: parseAliasedOptionalTimer(
       "COUNCIL_ACP_STARTUP_TIMEOUT_MS",
       "COUNCIL_KIMI_STARTUP_TIMEOUT_MS",

@@ -20,8 +20,9 @@ export interface AcpLaunchContext {
 export interface AcpRuntimeDefinition {
   id: string;
   displayName: string;
-  command: string;
+  agentCommand: string;
   versionArgs: readonly string[];
+  modelSelection: "launch-args" | "session-config";
   buildLaunchArgs(context: AcpLaunchContext): string[];
   /** Runtime 声明能力；实际授权必须再与 Council policy 取交集。 */
   declaredCapabilities: readonly RuntimeCapabilityKey[];
@@ -37,8 +38,9 @@ function validateDefinition(
     !DEFINITION_ID_PATTERN.test(definition.id)
     || !definition.displayName.trim()
     || definition.displayName.length > 120
-    || !definition.command.trim()
-    || definition.command.includes("\0")
+    || !definition.agentCommand.trim()
+    || definition.agentCommand.includes("\0")
+    || !["launch-args", "session-config"].includes(definition.modelSelection)
     || !definition.versionArgs.every((value) =>
       typeof value === "string" && !value.includes("\0"))
     || !definition.declaredCapabilities.every((capability) =>
@@ -92,16 +94,10 @@ export function createProductionAcpRuntimeRegistry(
     {
       id: "kimi-code",
       displayName: "Kimi Code",
-      command: config.kimiCommand,
+      agentCommand: config.kimiAcpCommand,
       versionArgs: ["--version"],
-      buildLaunchArgs: ({ cwd, model }) => [
-        "--work-dir",
-        cwd,
-        "--model",
-        model,
-        "--plan",
-        "acp",
-      ],
+      modelSelection: "session-config",
+      buildLaunchArgs: () => ["acp"],
       declaredCapabilities: [
         "text",
         "repository_read",
@@ -110,6 +106,78 @@ export function createProductionAcpRuntimeRegistry(
       ],
       limitationWhenUnavailable:
         "Kimi Code 当前不可用或未登录；请检查本机安装和登录状态。",
+    },
+    {
+      id: "gemini-cli",
+      displayName: "Gemini CLI",
+      agentCommand: config.geminiAcpCommand,
+      versionArgs: ["--version"],
+      modelSelection: "launch-args",
+      buildLaunchArgs: ({ model }) => ["--model", model, "--acp"],
+      declaredCapabilities: [
+        "text",
+        "repository_read",
+        "git_diff",
+        "session_resume",
+      ],
+      limitationWhenUnavailable:
+        "Gemini CLI ACP 当前不可用或未登录；请检查本机安装和登录状态。",
+    },
+    {
+      id: "grok-build",
+      displayName: "Grok Build",
+      agentCommand: config.grokAcpCommand,
+      versionArgs: ["--version"],
+      modelSelection: "launch-args",
+      buildLaunchArgs: ({ cwd, model }) => [
+        "--no-auto-update",
+        "--cwd",
+        cwd,
+        "--model",
+        model,
+        "agent",
+        "stdio",
+      ],
+      declaredCapabilities: [
+        "text",
+        "repository_read",
+        "git_diff",
+        "session_resume",
+      ],
+      limitationWhenUnavailable:
+        "Grok Build ACP 当前不可用或未登录；请检查本机安装和登录状态。",
+    },
+    {
+      id: "codex-agent",
+      displayName: "Codex ACP",
+      agentCommand: config.codexAcpCommand,
+      versionArgs: ["--version"],
+      modelSelection: "session-config",
+      buildLaunchArgs: () => [],
+      declaredCapabilities: [
+        "text",
+        "repository_read",
+        "git_diff",
+        "session_resume",
+      ],
+      limitationWhenUnavailable:
+        "Codex ACP 适配器当前不可用；请安装并完成 Codex 登录。",
+    },
+    {
+      id: "claude-agent",
+      displayName: "Claude Agent ACP",
+      agentCommand: config.claudeAcpCommand,
+      versionArgs: ["--version"],
+      modelSelection: "session-config",
+      buildLaunchArgs: () => [],
+      declaredCapabilities: [
+        "text",
+        "repository_read",
+        "git_diff",
+        "session_resume",
+      ],
+      limitationWhenUnavailable:
+        "Claude Agent ACP 适配器当前不可用；请安装并完成 Claude 登录。",
     },
   ]);
 }

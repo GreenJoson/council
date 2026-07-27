@@ -18,6 +18,9 @@ import {
   ndJsonStream,
   type ClientConnection,
   type RequestPermissionRequest,
+  type SessionConfigOption,
+  type SessionConfigSelectGroup,
+  type SessionConfigSelectOption,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import {
@@ -169,6 +172,57 @@ function normalizeSession(
   );
 }
 
+function flattenSelectOptions(
+  option: SessionConfigOption,
+): SessionConfigSelectOption[] {
+  if (option.type !== "select") {
+    return [];
+  }
+  return (
+    option.options as Array<SessionConfigSelectOption | SessionConfigSelectGroup>
+  ).flatMap((candidate) =>
+    "options" in candidate ? candidate.options : [candidate]);
+}
+
+async function selectSessionModel(
+  connection: ClientConnection,
+  sessionId: string,
+  model: string,
+  configOptions: readonly SessionConfigOption[] | null | undefined,
+  definition: AcpRuntimeDefinition,
+  cancellationSignal: AbortSignal,
+): Promise<void> {
+  if (definition.modelSelection !== "session-config") {
+    return;
+  }
+  const selector = configOptions?.find((option) =>
+    option.type === "select"
+    && (option.category === "model" || option.id === "model"));
+  const selected = selector
+    ? flattenSelectOptions(selector).find((candidate) =>
+        candidate.value === model || candidate.name === model)
+    : undefined;
+  if (!selector || !selected) {
+    throw new AcpDelegatedRuntimeError(
+      `${definition.displayName} 没有公开可选择的模型 ${model}。`,
+      false,
+      "invalid_model",
+    );
+  }
+  if (selector.currentValue === selected.value) {
+    return;
+  }
+  await connection.agent.request(
+    methods.agent.session.setConfigOption,
+    {
+      sessionId,
+      configId: selector.id,
+      value: selected.value,
+    },
+    { cancellationSignal },
+  );
+}
+
 function withinRoot(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }
@@ -257,7 +311,7 @@ export class AcpDelegatedRuntime {
   ): Promise<AcpRuntimeAvailability> {
     try {
       const result = await runBoundedProcess({
-        command: definition.command,
+        command: definition.agentCommand,
         args: [...definition.versionArgs],
         input: "",
         timeoutMs: this.config.acpStartupTimeoutMs,
@@ -500,7 +554,7 @@ export class AcpDelegatedRuntime {
   ): Promise<ManagedAcpProcess> {
     const rootRealPath = realpathSync(cwd);
     const child = spawn(
-      definition.command,
+      definition.agentCommand,
       definition.buildLaunchArgs({ cwd, model }),
       {
         cwd,
@@ -574,6 +628,7 @@ export class AcpDelegatedRuntime {
               ? { fs: { readTextFile: true, writeTextFile: false } }
               : {}),
             terminal: false,
+            session: { configOptions: {} },
           },
           clientInfo: { name: "Council", version: "1" },
         },
@@ -582,37 +637,54 @@ export class AcpDelegatedRuntime {
       const mcpServers = grantedCapabilities.includes("git_diff")
         ? [readOnlyGitMcpServerConfig(rootRealPath, this.config)]
         : [];
-      const session = sessionId
-        ? await connection.agent.request(
+      let activeSessionId: string;
+      let configOptions: readonly SessionConfigOption[] | null | undefined;
+      if (sessionId) {
+        const resumed = await connection.agent.request(
             methods.agent.session.resume,
             { sessionId, cwd, mcpServers },
             { cancellationSignal: startupSignal },
-          ).then(() => ({ sessionId }))
-        : await connection.agent.request(
+          );
+        activeSessionId = sessionId;
+        configOptions = resumed.configOptions;
+      } else {
+        const created = await connection.agent.request(
             methods.agent.session.new,
             { cwd, mcpServers },
             { cancellationSignal: startupSignal },
           );
-      managed = {
+        activeSessionId = created.sessionId;
+        configOptions = created.configOptions;
+      }
+      await selectSessionModel(
+        connection,
+        activeSessionId,
+        model,
+        configOptions,
+        definition,
+        startupSignal,
+      );
+      const opened: ManagedAcpProcess = {
         definition,
         grantedCapabilities,
         bindingId,
         cwd,
         rootRealPath,
         model,
-        sessionId: session.sessionId,
+        sessionId: activeSessionId,
         child,
         connection,
         completion,
         promptActive: false,
       };
-      this.#processes.set(bindingId, managed);
+      managed = opened;
+      this.#processes.set(bindingId, opened);
       void completion.then(() => {
-        if (this.#processes.get(bindingId) === managed) {
+        if (this.#processes.get(bindingId) === opened) {
           this.#processes.delete(bindingId);
         }
       });
-      return managed;
+      return opened;
     } catch (error) {
       connection.close(error);
       await terminateProcessTree(child, completion, this.config.acpKillGraceMs);

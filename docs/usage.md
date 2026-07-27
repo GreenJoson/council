@@ -66,10 +66,21 @@ npm run build:desktop
 
 Kimi 有两个不同入口，不能混为一谈：
 
-- `Kimi Code`：通用 ACP DelegatedRuntime 的首个正式 RuntimeDefinition，不需要在 Council 填 API Key；先在本机完成 Kimi Code 登录，再从 catalog 添加 `Kimi Code` Provider 和 Agent。同一议题同一 Agent 会常驻复用一个 ACP 进程与 session，可读取当前项目内普通文本文件和受控已提交 Git diff；Council 拒绝未提交工作区读取、Shell、文件写入、提交、推送和部署。
+- `Kimi Code`：通用 ACP DelegatedRuntime 的一个 RuntimeDefinition，不需要在 Council 填 API Key；先在本机完成 Kimi Code 登录，再从 catalog 添加 `Kimi Code` Provider 和 Agent。同一议题同一 Agent 会常驻复用一个 ACP 进程与 session，可读取当前项目内普通文本文件和受控已提交 Git diff；Council 拒绝未提交工作区读取、Shell、文件写入、提交、推送和部署。
 - `Kimi`：OpenAI-compatible API 连接，需要单独 API Key；接收公开上下文，并通过 Council 只读 ToolLoop 按需读文件、列目录、搜索文本及核对已提交 Git diff。
 
-ACP 进程不会永久常驻：accepted 决策、配置变更、手动关闭或空闲回收都会关闭 RuntimeBinding 和进程。服务或 App 重启后会用 SQLite 保存的 ACP session ID 恢复，而不是重新发送全部历史。Provider 持久化 `runtimeDefinitionId`；注册表决定实际命令、启动参数与能力，Runtime 本体不按供应商分支。RuntimeBinding 的 session/cursor/epoch 仍是唯一真源，草稿和 ACP 事件不会绕过 lease/fencing 直接写消息。
+ACP 进程不会永久常驻：accepted 决策、配置变更、手动关闭或空闲回收都会关闭 RuntimeBinding 和进程。服务或 App 重启后会用 SQLite 保存的 ACP session ID 恢复，而不是重新发送全部历史。Provider 持久化 `runtimeDefinitionId`；注册表决定实际命令、启动参数、模型选择协议与能力，Runtime 本体不按供应商分支。catalog 当前提供 Kimi Code、Gemini CLI、Grok Build、Codex ACP 和 Claude Agent ACP；未安装的本机命令只显示为不可用，不会自动下载。RuntimeBinding 的 session/cursor/epoch 仍是唯一真源，草稿和 ACP 事件不会绕过 lease/fencing 直接写消息。
+
+生产注册表当前对应以下本机入口；可执行命令均可通过 `COUNCIL_*_ACP_COMMAND`
+集中配置，不在业务代码写绝对路径：
+
+```text
+Kimi    → kimi acp
+Gemini  → gemini --acp
+Grok    → grok agent stdio
+Codex   → codex-acp
+Claude  → claude-agent-acp
+```
 
 ## 圆桌能力与周期类型
 
@@ -84,7 +95,7 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 - 附件任务：可以额外声明媒体读取、视觉等能力。
 
 若任何参与者缺少所需能力，Council 会在启动模型前直接列出缺口，不消耗额度，也不允许
-模型声称执行了未授权操作。Claude/Codex resume Runtime 和 Kimi Code ACP Runtime 具备
+模型声称执行了未授权操作。Claude/Codex resume Runtime 和获授权的 ACP Runtime 具备
 只读项目与已提交 diff 能力；Kimi API、DeepSeek 等兼容 API Runtime 通过 Council ToolLoop
 获得受控 `repository_read + git_diff`，可读文件、列目录、搜索文本和指定 commit/ref 的
 安全 diff，但没有未提交工作区读取、Shell、写文件、提交、推送或部署能力。
@@ -100,7 +111,7 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 点击顶栏齿轮打开 Model Router。设置明确分为两层：
 
 - Provider 连接：保存协议、API Base URL、Keychain 凭据、品牌和启用状态；Claude Code、
-  Codex CLI 与 Kimi Code ACP 复用本机登录，远程连接使用兼容 Chat Completions API。
+  Codex CLI 与本机 ACP Agent 复用各自登录，远程连接使用兼容 Chat Completions API。
 - Agent：在某个 Provider 下保存独立名称、模型 ID、`@mentionAlias` 和启用状态。同一个
   Kimi、DeepSeek 或其他 Provider 可创建多个 Agent，每个 Agent 都拥有独立 Actor，
   不会统一显示成 `Other`。
@@ -115,8 +126,9 @@ cycle；服务重启后仍从冻结快照恢复，不再从消息里猜这是普
 Model Router 的配置写入由桌面应用内置 sidecar 独占。同一个日志库不能同时启动第二个配置写进程；Codex/Claude 的 stdio MCP 只能读取议题、发布公开结论和 proposed 决策，不能新增、修改或删除 Provider/Agent，也不能访问 Keychain。当前 HTTP 控制面只监听 loopback，并按本机单用户场景设计，没有实例令牌；不要端口转发或暴露给其他用户。未来若支持外部客户端，必须先增加每实例随机令牌和权限校验。
 
 完成设置后，编辑器的 `@` 补全和右侧 Agent 调用都会即时读取新的
-`mentionAlias`，无需重启服务。catalog 内置 Claude、Codex、OpenAI、Kimi API、Kimi Code
-ACP、DeepSeek、Grok 与自定义兼容模板；模板未添加时不占路由列表空间。系统 Provider 不可删除，已知模板的供应商名称和品牌不可修改。删除远程 Provider 会同步清除其受管 Keychain 凭据；Provider/Agent 使用软删除，
+`mentionAlias`，无需重启服务。catalog 内置 Claude、Codex、OpenAI、Kimi API、DeepSeek、
+Grok、自定义兼容模板，以及 Kimi Code、Gemini CLI、Grok Build、Codex、Claude 的 ACP
+模板；模板未添加时不占路由列表空间。系统 Provider 不可删除，已知模板的供应商名称和品牌不可修改。删除远程 Provider 会同步清除其受管 Keychain 凭据；Provider/Agent 使用软删除，
 活动 Run 正在引用时会失败关闭。
 
 ## 模式一：两个桌面手动接力

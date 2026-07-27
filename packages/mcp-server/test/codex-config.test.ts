@@ -1,7 +1,7 @@
 /**
- * @input  依赖：隔离数据目录、COUNCIL_CODEX_* 环境变量与 loadConfig
- * @output 导出：Codex 沙箱、默认值、参数和定时器安全配置测试
- * @pos    Codex 后台运行时启动前的配置边界单元验证
+ * @input  依赖：隔离数据目录、COUNCIL_CODEX_* / COUNCIL_*_ACP_COMMAND 环境变量与 loadConfig
+ * @output 导出：Codex 沙箱、通用 ACP 命令、默认值、参数和定时器安全配置测试
+ * @pos    CLI 与通用 ACP 后台运行时启动前的配置边界单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -40,6 +40,50 @@ test("Codex 配置未设置时使用安全默认值", () => {
     assert.equal(config.codexSandboxMode, "read-only");
     assert.equal(config.codexTimeoutMs, 600_000);
     assert.equal(config.codexKillGraceMs, 3_000);
+    assert.equal(config.kimiAcpCommand, "kimi");
+    assert.equal(config.geminiAcpCommand, "gemini");
+    assert.equal(config.grokAcpCommand, "grok");
+    assert.equal(config.codexAcpCommand, "codex-acp");
+    assert.equal(config.claudeAcpCommand, "claude-agent-acp");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ACP Agent 命令集中配置且 Kimi 兼容旧环境变量", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-config-"));
+  try {
+    const legacy = loadConfig({
+      ...createEnv(directory),
+      COUNCIL_KIMI_COMMAND: "legacy-kimi",
+    });
+    assert.equal(legacy.kimiAcpCommand, "legacy-kimi");
+
+    const explicit = loadConfig({
+      ...createEnv(directory),
+      COUNCIL_KIMI_COMMAND: "legacy-kimi",
+      COUNCIL_KIMI_ACP_COMMAND: "configured-kimi",
+      COUNCIL_GEMINI_ACP_COMMAND: "configured-gemini",
+      COUNCIL_GROK_ACP_COMMAND: "configured-grok",
+      COUNCIL_CODEX_ACP_COMMAND: "configured-codex-acp",
+      COUNCIL_CLAUDE_ACP_COMMAND: "configured-claude-acp",
+    });
+    assert.deepEqual(
+      [
+        explicit.kimiAcpCommand,
+        explicit.geminiAcpCommand,
+        explicit.grokAcpCommand,
+        explicit.codexAcpCommand,
+        explicit.claudeAcpCommand,
+      ],
+      [
+        "configured-kimi",
+        "configured-gemini",
+        "configured-grok",
+        "configured-codex-acp",
+        "configured-claude-acp",
+      ],
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -19,7 +19,9 @@ Council.app ───────── React UI ── Tauri IPC ── Rust co
                                               └──── ExecutionManager
                                                      ├── Claude/Codex CLI
                                                      └── ACP DelegatedRuntime
-                                                          └── Kimi Code（首个定义）
+                                                          └── 受控 RuntimeDefinition 注册表
+                                                               ├── Kimi / Gemini / Grok
+                                                               └── Codex / Claude ACP 适配器
 
 Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
                                       │
@@ -67,7 +69,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
 - 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。
 - 本机 Agent 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。Claude/Codex 当前按轮启动 CLI 并恢复 session；ACP DelegatedRuntime 让同一 RuntimeBinding 复用一个常驻进程与 ACP session。所有迟到回复都受 lease/fencing 阻止；兼容远程 Provider 的 ToolLoop 单轮无状态，但每一步工具调用都留在同一次模型对话内。
-- Council 已正式拆分 Agent、Provider、Runtime 三层：Provider 持久化 `runtimeDefinitionId`，受控注册表声明 ACP 命令、启动参数与 Runtime 能力，Council 独立 policy 再计算实际授权，通用 DelegatedRuntime 不含供应商分支。Kimi Code 是首个经过协议验收的定义；它自己拥有 AgentLoop，Council 只负责 RuntimeBinding、权限、取消、事件投影与原子公开提交。未注册或未授权能力不会出现在 ACP 握手中。accepted 决策、配置变更、手动关闭或空闲回收会终止对应进程。
+- Council 已正式拆分 Agent、Provider、Runtime 三层：Provider 持久化 `runtimeDefinitionId`，受控注册表声明 ACP 命令、模型选择协议、启动参数与 Runtime 能力，Council 独立 policy 再计算实际授权。`AcpDelegatedRuntime` 不含供应商分支，统一驱动 Kimi、Gemini、Grok、Codex 和 Claude ACP Agent；供应商自己的 AgentLoop 负责工具循环，Council 只负责 RuntimeBinding、权限、取消、事件投影与原子公开提交。未注册或未授权能力不会进入 ACP 握手。accepted 决策、配置变更、手动关闭或空闲回收会终止对应进程。
 - DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Kun 风格的只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 暴露项目内读文件、列目录、文本搜索和受控已提交 Git diff；AgentLoop 在统一步骤、上下文、文件、扫描与 diff 预算内迭代；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
 - 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。

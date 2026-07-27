@@ -47,6 +47,15 @@
       "sourceLabel": "Grok February 2025 mark · X.AI Corp. via Wikimedia Commons · public domain (trademarked)"
     },
     {
+      "id": "brand-gemini",
+      "slug": "gemini",
+      "displayName": "Gemini",
+      "glyphId": "simple-icons-googlegemini",
+      "colorToken": "brand-gemini",
+      "sourceKind": "project-curated",
+      "sourceLabel": "Simple Icons · CC0-1.0"
+    },
+    {
       "id": "brand-custom",
       "slug": "custom",
       "displayName": "Custom",
@@ -75,6 +84,50 @@
       "baseUrl": null,
       "requiresApiKey": false,
       "brandAssetId": "brand-openai",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "claude-agent-acp",
+      "slug": "claude-agent-acp",
+      "displayName": "Claude Agent ACP",
+      "protocol": "acp",
+      "runtimeDefinitionId": "claude-agent",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-claude",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "codex-acp",
+      "slug": "codex-acp",
+      "displayName": "OpenAI Codex ACP",
+      "protocol": "acp",
+      "runtimeDefinitionId": "codex-agent",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-openai",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "gemini-cli-acp",
+      "slug": "gemini-cli",
+      "displayName": "Gemini CLI",
+      "protocol": "acp",
+      "runtimeDefinitionId": "gemini-cli",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-gemini",
+      "modelCandidates": []
+    },
+    {
+      "templateId": "grok-build-acp",
+      "slug": "grok-build",
+      "displayName": "Grok Build",
+      "protocol": "acp",
+      "runtimeDefinitionId": "grok-build",
+      "baseUrl": null,
+      "requiresApiKey": false,
+      "brandAssetId": "brand-grok",
       "modelCandidates": []
     },
     {

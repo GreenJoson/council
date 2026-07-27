@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 v5 SQLite、ModelRouterService/Store 与内存 SecretStore
- * @output 验证：Provider/Agent 分层、多 Agent、品牌不可伪装、Keychain 强补偿、
+ * @output 验证：Provider/Agent 分层、五类 ACP 模板、多 Agent、品牌不可伪装、Keychain 强补偿、
  *               Provider 复活、alias/重启生命周期、系统身份保护与活动 Run fail-closed
  * @pos    动态模型路由控制面的核心安全回归测试
  *
@@ -159,6 +159,35 @@ test("Kimi Code ACP 作为独立 Provider 按需添加且不需要 API Key", asy
     });
     assert.equal(await fixture.service.isAgentReady(agent.id), true);
     assert.equal(fixture.secrets.values.size, 0);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("ACP Provider 目录按 Agent 品牌声明通用 RuntimeDefinition", async () => {
+  const fixture = await createFixture();
+  try {
+    const snapshot = await fixture.service.snapshot();
+    assert.equal(
+      snapshot.brands.find((brand) => brand.id === "brand-gemini")?.glyphId,
+      "simple-icons-googlegemini",
+    );
+    assert.deepEqual(
+      snapshot.catalog.providers
+        .filter((provider) => provider.protocol === "acp")
+        .map((provider) => [
+          provider.templateId,
+          provider.runtimeDefinitionId,
+          provider.brandAssetId,
+        ]),
+      [
+        ["claude-agent-acp", "claude-agent", "brand-claude"],
+        ["codex-acp", "codex-agent", "brand-openai"],
+        ["gemini-cli-acp", "gemini-cli", "brand-gemini"],
+        ["grok-build-acp", "grok-build", "brand-grok"],
+        ["kimi-code", "kimi-code", "brand-kimi"],
+      ],
+    );
   } finally {
     fixture.cleanup();
   }

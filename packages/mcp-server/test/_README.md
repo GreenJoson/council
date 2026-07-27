@@ -12,9 +12,9 @@
 | `agent-progress-hub.test.ts` | 单元测试 | 验证统一 RuntimeEvent 到临时草稿的兼容投影、顺序、有界追加、快照和完成清理 |
 | `claude-runtime.test.ts` | 单元测试 | 验证纯生成、公开 stream-json 增量、session 恢复、取消、超时、输出上限与脱敏错误 |
 | `codex-runtime.test.ts` | 单元测试 | 验证只读沙箱、公开 JSONL 消息增量、事件截断、最终正文限长、取消与脱敏错误分类 |
-| `acp-delegated-runtime.test.ts` | ACP 进程测试 | 用多个声明式 RuntimeDefinition 与真实 stdio 假 Agent 验证供应商无关启动、同 binding 进程/session 复用、服务重开 resume、只读工具、敏感文件阻断和执行权限拒绝 |
+| `acp-delegated-runtime.test.ts` | ACP 进程测试 | 用五 Agent 生产注册表与真实 stdio 假 Agent 验证供应商无关启动、launch/session 模型选择、同 binding 进程/session 复用、服务重开 resume、只读工具、敏感文件阻断和执行权限拒绝 |
 | `claude-config.test.ts` | 单元测试 | 验证 Claude 权限模式、stdio MCP 调用者身份必填、HTTP 配置隔离、保留参数和定时器边界 |
-| `codex-config.test.ts` | 单元测试 | 验证 Codex 只读沙箱、默认值、保留参数和定时器配置边界 |
+| `codex-config.test.ts` | 单元测试 | 验证 Codex 只读沙箱、五类 ACP 命令、默认值、保留参数和定时器配置边界 |
 | `claude-client.test.ts` | 集成测试 | 验证数据库兼容层的后台会话恢复及取消零写入 |
 | `server.test.ts` | 协议测试 | 通过内存传输验证 MCP 作者参数已移除、调用者 actorId 冻结、运行中 alias 重绑/同名 alias 不可劫持、停用后失败关闭、只能 proposed 决策、工具调用和取消零写入 |
 | `http-harness.ts` | 测试夹具 | 提供可注入动态编排工厂的隔离 HTTP 服务与统一 envelope 读取器 |
@@ -24,7 +24,7 @@
 | `claude-agent-adapter.test.ts` | 安全测试 | 验证可信指令保留、首轮历史裁剪、session 恢复、公开增量与显式安全失败原因 |
 | `codex-agent-adapter.test.ts` | 安全测试 | 验证可信指令、首轮历史裁剪、session 恢复、公开增量、失败恢复与安全原因分类 |
 | `acp-delegated-agent-adapter.test.ts` | Runtime 契约测试 | 验证通用 ACP session 续接、只读工具事件归 Runtime 所有、隐藏思考隔离与 binding 关闭桥 |
-| `model-router.test.ts` | 安全测试 | 验证同 Provider 多 Agent/独立 UUID Actor 与 alias、Kimi/DeepSeek 自定义 alias 与删除后自然 alias 重建跨迁移重开稳定、品牌不退化为 Other、Claude/Codex 身份不可变、Provider 软删除后原行复活与新凭据生效、API Key 零落盘、Keychain/alias 原子回滚及活动 Run 变更失败关闭 |
+| `model-router.test.ts` | 安全测试 | 验证同 Provider 多 Agent/独立 UUID Actor 与 alias、Kimi/Gemini/Grok/Codex/Claude ACP 目录、Kimi/DeepSeek 自定义 alias 与删除后自然 alias 重建跨迁移重开稳定、品牌不退化为 Other、Claude/Codex 身份不可变、Provider 软删除后原行复活与新凭据生效、API Key 零落盘、Keychain/alias 原子回滚及活动 Run 变更失败关闭 |
 | `keychain-secret-store.test.ts` | 安全测试 | 验证 Keychain 凭据不存在返回空值，命令故障必须 fail closed |
 | `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、错误脱敏与有界响应 |
 | `read-only-tool-host.test.ts` | ToolHost 安全测试 | 验证读文件、列目录、文本搜索、敏感配置拒绝与符号链接逃逸阻断 |

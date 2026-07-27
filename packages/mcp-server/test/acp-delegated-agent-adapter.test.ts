@@ -23,8 +23,9 @@ import { AcpDelegatedAgentAdapter } from "../src/orchestration/acp-delegated-age
 const DEFINITION: AcpRuntimeDefinition = {
   id: "kimi-code",
   displayName: "Kimi Code",
-  command: "kimi",
+  agentCommand: "kimi",
   versionArgs: ["--version"],
+  modelSelection: "launch-args",
   buildLaunchArgs: () => ["--plan", "acp"],
   declaredCapabilities: [
     "text",

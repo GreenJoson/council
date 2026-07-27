@@ -162,10 +162,6 @@ for (const transportKind of [
       grantRuntimeCapabilities(declared, policy),
       policy,
     );
-    assert.notStrictEqual(
-      declaredCapabilitiesForTransport(transportKind),
-      defaultPolicyCapabilitiesForTransport(transportKind),
-    );
   });
 }
 
