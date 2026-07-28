@@ -345,8 +345,18 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-small);
   background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
-  overflow-x: visible;
+  /*
+   * 这里原本写 overflow-x: visible，想让选中那格的横条能探出卡片。但只要
+   * overflow-y 不是 visible，visible 就会被提升成 auto——梯子因此变成了
+   * 两个方向的滚动容器，声明从未生效。横向明确关掉，只留纵向。
+   */
+  overflow-x: hidden;
   overflow-y: auto;
+  /*
+   * 选中格的横条会从 3px 长到 5px。梯子是滚动容器，浏览器默认的滚动锚定
+   * 会为了"稳住"这个变高的节点反过来挪 scrollTop——手感就是滚一下弹回去。
+   */
+  overflow-anchor: none;
   box-shadow: var(--shadow-small);
   transform: translateY(-50%);
 }
