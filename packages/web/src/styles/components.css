@@ -614,10 +614,13 @@
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 48px;
+  min-height: var(--composer-input-min-height);
+  max-height: var(--composer-input-max-height);
   margin: 6px 0 4px;
   padding: 4px;
-  resize: vertical;
+  /* 高度由草稿长度算出来，手动拖会被下一次输入覆盖，索性关掉 */
+  resize: none;
+  overflow-y: auto;
   border: 0;
   outline: 0;
   background: transparent;

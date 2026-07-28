@@ -13,7 +13,7 @@
  */
 
 import { Bot, Link2, Send, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   findActiveMentionQuery,
   getMentionToken,
@@ -87,6 +87,20 @@ export function Composer({
   const isOrchestrationOffline = orchestration?.sync.status === "offline";
   const runsForTopic = orchestration?.activeTopicId === topicId ? orchestration.runs : [];
   const mentionRunBlockedReason = getCreateRunBlockedReason(runsForTopic, orchestrationBusyAction);
+
+  /*
+   * 输入框高度跟着草稿走：两行起，到 CSS 里的上限封顶后自己滚。
+   * 挂在 content 上而不是 onChange 里，是因为引用回复、发布后清空这两条路
+   * 都是直接改 state 的——只认按键就会漏掉它们，把高度留在上一稿的尺寸上。
+   */
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    textarea.style.height = "auto";
+    textarea.style.height = `${String(textarea.scrollHeight)}px`;
+  }, [content]);
 
   // 引用回复：把消息卡片发起的引用文本追加到草稿开头，再聚焦并把光标移到末尾方便续写
   useEffect(() => {
@@ -277,7 +291,7 @@ export function Composer({
           onChange={handleContentChange}
           onKeyDown={handleTextareaKeyDown}
           placeholder="写下公开结论、证据或回应…输入 @ 可召唤 Agent 直接回应"
-          rows={4}
+          rows={2}
         />
         {isMentionMenuOpen ? (
           <div className="mention-menu" role="listbox" aria-label="召唤 Agent">
