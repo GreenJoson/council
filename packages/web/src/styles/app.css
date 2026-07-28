@@ -698,10 +698,14 @@ button.sync-offline:hover {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 26px 24px calc(20px + var(--discussion-tail-clearance));
+  /*
+   * 底部只留一个正常的呼吸位。曾经这里垫着一整块 composer 高度的净空，
+   * 那是输入框还浮在时间线上时的补偿；输入框改成同列的兄弟节点之后，
+   * 那块净空就成了纯死区——滚到底最后一条消息仍被顶在离底 178px 的地方。
+   */
+  padding: 26px 24px 20px;
   overflow-anchor: none;
   overscroll-behavior-y: contain;
-  scroll-padding-bottom: var(--discussion-tail-clearance);
 }
 
 .panel-scrim {

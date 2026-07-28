@@ -30,8 +30,10 @@
   --discussion-column-fluid: 86cqi;
   --discussion-column-max: 1280px;
   --discussion-column-gutter: 48px;
-  --discussion-tail-clearance: clamp(128px, 16vh, 180px);
   --topic-question-collapse-height: 152px;
+  /* 输入框：默认两行起，随草稿长高到八行封顶，再长就自己滚 */
+  --composer-input-min-height: 44px;
+  --composer-input-max-height: 176px;
   --media-preview-max-width: 640px;
   --image-preview-max-height: 280px;
   --diagram-preview-max-height: 340px;
