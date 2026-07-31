@@ -65,6 +65,13 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<TopicStatusFilter>("all");
   const [activeView, setActiveView] = useState<WorkspaceView>("topics");
   const [decisionFocus, setDecisionFocus] = useState<DecisionRecordFocusRequest | null>(null);
+  /*
+   * 右栏「查看全文」→ 主列「决策」tab。递增 nonce 而不是布尔量：同一议题里反复点也要
+   * 每次都生效，而 undefined 表示"从未请求过"，开局不会抢走讨论 tab。
+   */
+  const [topicDecisionFocusNonce, setTopicDecisionFocusNonce] = useState<number | undefined>(
+    undefined,
+  );
   const [themePreference, setThemePreference] = useState<ThemePreference>(resolveInitialPreference);
 
   // 跟随系统时监听操作系统深浅色变化并实时重放到根节点
@@ -719,6 +726,9 @@ export default function App() {
               onPublish={handlePublish}
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}
+              isAccepting={isAccepting}
+              onAccept={handleAccept}
+              decisionFocusNonce={topicDecisionFocusNonce}
             />
             <InspectorPanel
               topic={selectedTopic}
@@ -726,6 +736,8 @@ export default function App() {
               isAccepting={isAccepting}
               isOpen={isInspectorOpen}
               onAccept={handleAccept}
+              onOpenDecision={() =>
+                setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}
               onClose={() => setIsInspectorOpen(false)}
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}

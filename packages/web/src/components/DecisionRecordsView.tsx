@@ -4,7 +4,7 @@
  * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）、
  *         DecisionRecordArticle 单条冻结身份档案
  * @pos    Operator Console 决策记录视图：归档已接受/拟议中/已被取代的结构化决策
- *         （summary/rationale/原始问题按 Markdown 渲染、不折叠，含内嵌 mermaid 围栏），
+ *         （决策正文走共用的 DecisionCard，原始问题按 Markdown 渲染、不折叠，含 mermaid 围栏），
  *         详情经 useTopicDetails 按需懒加载并缓存；架构档案时间线点击某条 ADR 后
  *         通过 focusRequest 定位到对应条目
  *
@@ -14,22 +14,18 @@
 import {
   ArrowUpRight,
   Check,
-  CheckCircle2,
   FileCheck2,
   FileText,
-  History,
   RefreshCw,
-  ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTopicDetails } from "../hooks/useTopicDetails";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
+import { DecisionCard } from "./DecisionCard";
 import { MarkdownContent } from "./MarkdownContent";
 import {
   AgentAvatar,
-  decisionStatusLabels,
-  DecisionStatusBadge,
   participantFromActorSnapshot,
   StatusBadge,
 } from "./presentation";
@@ -167,8 +163,6 @@ export function DecisionRecordArticle({
   onOpenTopic,
 }: DecisionRecordArticleProps) {
   const decision = detail.decision;
-  const decisionAccepted = decision?.status === "accepted";
-  const decisionSuperseded = decision?.status === "superseded";
   const owner = participantFromActorSnapshot(
     detail.ownerSnapshot,
     participants.get(detail.owner),
@@ -191,29 +185,7 @@ export function DecisionRecordArticle({
       </header>
 
       {decision ? (
-        <section
-          className={`decision-card ${decisionAccepted ? "decision-accepted" : ""} ${decisionSuperseded ? "decision-superseded" : ""}`}
-        >
-          <div className="decision-title-row">
-            <div>
-              {decisionAccepted ? (
-                <CheckCircle2 size={17} />
-              ) : decisionSuperseded ? (
-                <History size={17} />
-              ) : (
-                <ShieldCheck size={17} />
-              )}
-              <span>{decisionStatusLabels[decision.status]}</span>
-            </div>
-            <DecisionStatusBadge status={decision.status} />
-          </div>
-          <h3>{decision.title}</h3>
-          <div className="decision-summary-block">
-            <MarkdownContent content={decision.summary} />
-          </div>
-          <div className="decision-rationale-block">
-            <MarkdownContent content={decision.rationale} />
-          </div>
+        <DecisionCard decision={decision}>
           <div className="decision-record-proposer">
             <AgentAvatar
               agent={decision.proposedBy}
@@ -222,7 +194,7 @@ export function DecisionRecordArticle({
             />
             <span>由 {proposer?.name ?? decision.proposedBy} 提出</span>
           </div>
-        </section>
+        </DecisionCard>
       ) : (
         <p className="decision-record-honest-notice">
           <TriangleAlert size={15} aria-hidden="true" />

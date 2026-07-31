@@ -1322,6 +1322,84 @@
   overflow-y: auto;
 }
 
+/*
+ * 决策 tab 跟着消息列走同一条流体宽度，不用元数据那条 640px 上限——决策里有
+ * 章节、表格和 mermaid，正是需要主列宽度的内容。
+ */
+.topic-decision-panel {
+  flex: 1;
+  min-height: 0;
+  width: min(
+    calc(100% - var(--discussion-column-gutter)),
+    clamp(
+      var(--discussion-column-min),
+      var(--discussion-column-fluid),
+      var(--discussion-column-max)
+    )
+  );
+  margin: 0 auto;
+  padding: 6px 0 32px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.topic-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--color-positive) 30%, transparent);
+}
+
+.topic-decision-proposer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+/* 右栏里按钮铺满是对的（那是唯一操作）；主列里它只是一行的右端，不该撑开 */
+.topic-decision-actions .accept-button {
+  width: auto;
+  margin-top: 0;
+}
+
+/* 右栏的决策入口：只引路，不承载正文 */
+.decision-open-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 34px;
+  margin-top: 12px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--color-positive) 42%, transparent);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface-raised) 76%, transparent);
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.decision-open-button:hover {
+  border-color: var(--color-positive);
+}
+
+.decision-open-button svg:last-child {
+  margin-left: auto;
+}
+
+/* 议题 tab 上的待办点：只有 proposed 才亮 */
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-positive);
+}
+
 .metadata-field {
   display: grid;
   gap: 7px;

@@ -1,14 +1,16 @@
 /**
  * @input  依赖：含 owner/备选冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、按议题状态控制的 Agent 调用和决策检查器
- * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策 summary/rationale
- *         按 Markdown 渲染（含内嵌 mermaid 围栏）；决策状态徽章走 presentation.tsx 的
- *         DecisionStatusBadge，proposed/accepted/superseded 三态共用同一套文案
+ * @output 导出：InspectorPanel 议题摘要、按议题状态控制的 Agent 调用和决策状态卡
+ * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
+ *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
+ *         决策状态徽章走 presentation.tsx 的 DecisionStatusBadge，三态共用同一套文案
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import {
+  ArrowRight,
+  BookOpen,
   Check,
   CheckCircle2,
   FileText,
@@ -26,7 +28,6 @@ import type {
 } from "../types/orchestration";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
 import { CyclePanel } from "./CyclePanel";
-import { MarkdownContent } from "./MarkdownContent";
 import {
   AgentAvatar,
   decisionStatusLabels,
@@ -41,6 +42,8 @@ export interface InspectorPanelProps {
   isAccepting: boolean;
   isOpen: boolean;
   onAccept: () => Promise<void>;
+  /** 切到主列「决策」tab 读全文 */
+  onOpenDecision: () => void;
   onClose: () => void;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
@@ -74,6 +77,7 @@ export function InspectorPanel({
   isAccepting,
   isOpen,
   onAccept,
+  onOpenDecision,
   onClose,
   orchestration,
   orchestrationBusyAction,
@@ -239,12 +243,15 @@ export function InspectorPanel({
             <DecisionStatusBadge status={decision.status} />
           </div>
           <h3>{decision.title}</h3>
-          <div className="decision-summary-block">
-            <MarkdownContent content={decision.summary} />
-          </div>
-          <div className="decision-rationale-block">
-            <MarkdownContent content={decision.rationale} />
-          </div>
+          {/*
+            右栏只放状态与入口，不放正文。决策是带章节、表格和 mermaid 的长文档，
+            340–440px 的窄栏读不了——正文交给主列的「决策」tab。
+          */}
+          <button className="decision-open-button" type="button" onClick={onOpenDecision}>
+            <BookOpen size={16} />
+            查看全文
+            <ArrowRight size={15} />
+          </button>
           <button
             className="accept-button"
             type="button"

@@ -1,14 +1,15 @@
 /**
  * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/元数据双 tab、
+ * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/决策/元数据三 tab、
  *         卡片阶梯导航、活动 Agent 状态、引用回复发起）
- * @pos    Operator Console 的主要阅读、元数据核查和回复区域；过长议题问题默认收起
+ * @pos    Operator Console 的主要阅读、决策通读、元数据核查和回复区域；过长议题问题默认
+ *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Check, Copy } from "lucide-react";
+import { Check, CheckCircle2, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
@@ -18,6 +19,7 @@ import {
   selectAgentReplyActivity,
 } from "./AgentReplyActivity";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
+import { DecisionCard } from "./DecisionCard";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
@@ -30,9 +32,13 @@ export interface DiscussionPanelProps {
   onPublish: (kind: MessageKind, content: string, mention?: MentionPublishRequest) => Promise<boolean>;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
+  isAccepting: boolean;
+  onAccept: () => Promise<void> | void;
+  /** 右栏「查看全文」发来的切换请求；nonce 变化即一次新请求，同一议题重复点也生效 */
+  decisionFocusNonce?: number;
 }
 
-type DiscussionTab = "discussion" | "metadata";
+type DiscussionTab = "discussion" | "decision" | "metadata";
 
 const QUOTE_LINE_LIMIT = 88;
 const TIMELINE_FOLLOW_THRESHOLD = 240;
@@ -61,6 +67,9 @@ export function DiscussionPanel({
   onPublish,
   orchestration,
   orchestrationBusyAction,
+  isAccepting,
+  onAccept,
+  decisionFocusNonce,
 }: DiscussionPanelProps) {
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
   const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
@@ -77,6 +86,14 @@ export function DiscussionPanel({
     setActiveMessageId(topic.messages[0]?.id);
     shouldFollowTimelineRef.current = false;
   }, [topic.id]);
+
+  // 右栏「查看全文」：nonce 变化即切到决策 tab。初值 undefined 不触发，避免开局抢走讨论
+  useEffect(() => {
+    if (decisionFocusNonce === undefined) {
+      return;
+    }
+    setActiveTab("decision");
+  }, [decisionFocusNonce]);
 
   useEffect(() => {
     if (activeTab !== "discussion") {
@@ -180,6 +197,12 @@ export function DiscussionPanel({
     topic.ownerSnapshot,
     participants.get(topic.owner),
   );
+  const decisionProposer = topic.decision
+    ? participantFromActorSnapshot(
+      topic.decision.proposedBySnapshot,
+      participants.get(topic.decision.proposedBy),
+    )
+    : undefined;
 
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
@@ -255,6 +278,21 @@ export function DiscussionPanel({
             <span className="count-pill">{topic.messageTotal ?? topic.messages.length}</span>
           </button>
           <button
+            className={activeTab === "decision" ? "active" : ""}
+            type="button"
+            role="tab"
+            id="decision-tab"
+            aria-selected={activeTab === "decision"}
+            aria-controls="decision-tabpanel"
+            onClick={() => setActiveTab("decision")}
+          >
+            决策
+            {/* 只有 proposed 才亮点：已接受/已取代不是待办，不该一直催 */}
+            {topic.decision?.status === "proposed" ? (
+              <span className="tab-dot" aria-label="有待审阅的拟议决策" />
+            ) : null}
+          </button>
+          <button
             className={activeTab === "metadata" ? "active" : ""}
             type="button"
             role="tab"
@@ -326,6 +364,52 @@ export function DiscussionPanel({
             orchestrationBusyAction={orchestrationBusyAction}
           />
         </>
+      ) : activeTab === "decision" ? (
+        <section
+          className="topic-decision-panel"
+          id="decision-tabpanel"
+          role="tabpanel"
+          aria-labelledby="decision-tab"
+          aria-label="议题决策"
+        >
+          {topic.decision ? (
+            <DecisionCard decision={topic.decision}>
+              <div className="topic-decision-actions">
+                <span className="topic-decision-proposer">
+                  <AgentAvatar
+                    agent={topic.decision.proposedBy}
+                    participant={decisionProposer}
+                    size="small"
+                  />
+                  <span>由 {decisionProposer?.name ?? topic.decision.proposedBy} 提出</span>
+                </span>
+                <button
+                  className="accept-button"
+                  type="button"
+                  disabled={topic.decision.status !== "proposed" || isAccepting}
+                  onClick={() => void onAccept()}
+                >
+                  <CheckCircle2 size={17} />
+                  {topic.decision.status === "accepted"
+                    ? "决策已接受"
+                    : topic.decision.status === "superseded"
+                      ? "决策已被取代"
+                      : isAccepting
+                        ? "记录中…"
+                        : "标记为 Accepted"}
+                </button>
+              </div>
+            </DecisionCard>
+          ) : (
+            <div className="empty-discussion">
+              <AgentAvatar agent="council" />
+              <div>
+                <h2>尚无拟议决策</h2>
+                <p>Agent 提交结构化决策后，可以在这里通读全文并接受。</p>
+              </div>
+            </div>
+          )}
+        </section>
       ) : (
         <section
           className="topic-metadata-panel"
