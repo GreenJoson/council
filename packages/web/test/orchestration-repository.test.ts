@@ -66,6 +66,7 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
     ],
     policy: {
       maxRounds: 4,
+      agentIdleTimeoutMs: 500,
       agentTimeoutMs: 1_000,
       maxAttemptsPerRound: 1,
       maxManualRecoveries: 1,
@@ -159,6 +160,7 @@ function createOrchestrationFixture(): OrchestrationFixture {
         ],
         defaultPolicy: {
           maxRounds: 4,
+          agentIdleTimeoutMs: 500,
           agentTimeoutMs: 1_000,
           maxAttemptsPerRound: 1,
           maxManualRecoveries: 1,

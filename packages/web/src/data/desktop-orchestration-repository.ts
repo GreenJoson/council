@@ -73,6 +73,7 @@ export function buildOfflineOrchestrationSnapshot(
       }],
       defaultPolicy: {
         maxRounds: 1,
+        agentIdleTimeoutMs: 1,
         agentTimeoutMs: 1,
         maxAttemptsPerRound: 1,
         maxManualRecoveries: 0,

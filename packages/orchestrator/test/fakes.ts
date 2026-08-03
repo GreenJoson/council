@@ -83,6 +83,8 @@ export class FakeCouncilStore implements CouncilStore {
   readonly #runtimeBindings = new Map<string, RuntimeBinding>();
   readonly #runtimeBindingLeases = new Map<string, RuntimeBindingLease>();
   readonly #consumedRequests = new Set<string>();
+  runtimeContextDelayMs = 0;
+  runtimeContextFailure?: Error;
   #runSequence = 0;
   #messageSequence = 0;
   #leaseSequence = 0;
@@ -309,6 +311,12 @@ export class FakeCouncilStore implements CouncilStore {
     bindingId: string,
     requestMessageId?: string,
   ): Promise<RuntimeBindingInvocationContext> {
+    if (this.runtimeContextDelayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.runtimeContextDelayMs));
+    }
+    if (this.runtimeContextFailure) {
+      throw this.runtimeContextFailure;
+    }
     const binding = await this.getRuntimeBinding(bindingId);
     const requestKey = requestMessageId ? `${binding.id}:${requestMessageId}` : undefined;
     if (requestKey && this.#consumedRequests.has(requestKey)) {

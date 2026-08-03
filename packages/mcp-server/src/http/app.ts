@@ -259,6 +259,7 @@ export function createCouncilHttpApp(
         adapters: [],
         defaultPolicy: {
           maxRounds: config.orchestrationDefaultMaxRounds,
+          agentIdleTimeoutMs: config.orchestrationDefaultAgentIdleTimeoutMs,
           agentTimeoutMs: config.orchestrationDefaultAgentTimeoutMs,
           maxAttemptsPerRound: config.orchestrationDefaultMaxAttempts,
           maxManualRecoveries: config.orchestrationDefaultMaxRecoveries,

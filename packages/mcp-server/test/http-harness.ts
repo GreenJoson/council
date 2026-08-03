@@ -82,6 +82,7 @@ export async function startHttpHarness(
     orchestrationDefaultMaxRounds: 10,
     orchestrationDefaultMaxAttempts: 1,
     orchestrationDefaultMaxRecoveries: 1,
+    orchestrationDefaultAgentIdleTimeoutMs: 1_000,
     orchestrationDefaultAgentTimeoutMs: 5_000,
     orchestrationAgentCleanupTimeoutMs: 100,
     orchestrationConfirmCompletion: false,

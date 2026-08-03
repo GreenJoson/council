@@ -436,6 +436,7 @@ export class CouncilOrchestrationService {
       adapters: this.#capabilities.map((capability) => ({ ...capability })),
       defaultPolicy: {
         maxRounds: this.config.orchestrationDefaultMaxRounds,
+        agentIdleTimeoutMs: this.config.orchestrationDefaultAgentIdleTimeoutMs,
         agentTimeoutMs: this.config.orchestrationDefaultAgentTimeoutMs,
         maxAttemptsPerRound: this.config.orchestrationDefaultMaxAttempts,
         maxManualRecoveries: this.config.orchestrationDefaultMaxRecoveries,
@@ -523,6 +524,7 @@ export class CouncilOrchestrationService {
       policy: {
         maxRounds: this.config.orchestrationDefaultMaxRounds,
         allowedAgents: [...this.#actors.keys()],
+        agentIdleTimeoutMs: this.config.orchestrationDefaultAgentIdleTimeoutMs,
         agentTimeoutMs: this.config.orchestrationDefaultAgentTimeoutMs,
         agentCleanupTimeoutMs: this.config.orchestrationAgentCleanupTimeoutMs,
         maxAttemptsPerRound: this.config.orchestrationDefaultMaxAttempts,

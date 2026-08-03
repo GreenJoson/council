@@ -242,10 +242,14 @@ test("CodexRuntime 从 JSONL 观察公开 agent_message 增量与完成项", asy
   writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
   try {
     const events: Array<{ operation: string; content?: string }> = [];
+    let activityCount = 0;
     const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "success"));
     const response = await runtime.generate({
       prompt: "public prompt",
       cwd: directory,
+      onActivity: () => {
+        activityCount += 1;
+      },
       onTextEvent: (event) => events.push(event),
     });
     assert.match(response.content, /^public prompt;read-only;/);
@@ -254,6 +258,7 @@ test("CodexRuntime 从 JSONL 观察公开 agent_message 增量与完成项", asy
       { operation: "append", content: "公开草稿" },
       { operation: "replace", content: response.content },
     ]);
+    assert.equal(activityCount, 6, "每个合法 Codex JSONL 事件都应刷新活动时间");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

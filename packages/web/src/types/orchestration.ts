@@ -55,6 +55,7 @@ export interface OrchestrationAdapter {
 
 export interface OrchestrationDefaultPolicy {
   maxRounds: number;
+  agentIdleTimeoutMs: number;
   agentTimeoutMs: number;
   maxAttemptsPerRound: number;
   maxManualRecoveries: number;

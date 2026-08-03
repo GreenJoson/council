@@ -56,8 +56,13 @@ export class AgentInvocationError extends Error {
 export class AgentTimeoutError extends AgentInvocationError {
   override readonly name = "AgentTimeoutError";
 
-  constructor() {
-    super("Agent 调用超过本轮配置的超时时间。", true);
+  constructor(readonly kind: "idle" | "hard" = "hard") {
+    super(
+      kind === "idle"
+        ? "Agent 长时间没有产生协议、工具或文本活动，调用已中止。"
+        : "Agent 达到本轮配置的总执行时长上限，调用已中止。",
+      true,
+    );
   }
 }
 

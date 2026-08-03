@@ -288,10 +288,14 @@ test("ClaudeRuntime 只转发 stream-json 的公开 text_delta 并以最终结�
   writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
   try {
     const events: Array<{ operation: string; content?: string }> = [];
+    let activityCount = 0;
     const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success"));
     const response = await runtime.generate({
       prompt: "public prompt",
       cwd: directory,
+      onActivity: () => {
+        activityCount += 1;
+      },
       onTextEvent: (event) => events.push(event),
     });
     assert.equal(response.content, "public prompt;none;none");
@@ -301,6 +305,7 @@ test("ClaudeRuntime 只转发 stream-json 的公开 text_delta 并以最终结�
       { operation: "append", content: "草稿" },
       { operation: "replace", content: "public prompt;none;none" },
     ]);
+    assert.equal(activityCount, 4, "每个合法 Claude stream-json 事件都应刷新活动时间");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -44,6 +44,7 @@ export interface ModelClientInput {
   messages: readonly ModelMessage[];
   tools?: readonly ModelToolDefinition[];
   signal?: AbortSignal;
+  onActivity?: () => void;
   onTextEvent?: (event:
     | { operation: "reset" }
     | { operation: "append"; content: string }
@@ -245,6 +246,7 @@ async function readStreamingCompletion(
   response: Response,
   maximum: number,
   onTextEvent?: ModelClientInput["onTextEvent"],
+  onActivity?: ModelClientInput["onActivity"],
 ): Promise<ModelClientResult> {
   const reader = response.body?.getReader();
   if (!reader) {
@@ -337,6 +339,7 @@ async function readStreamingCompletion(
     if (!data) {
       return;
     }
+    onActivity?.();
     if (data === "[DONE]") {
       completed = true;
       return;
@@ -501,6 +504,7 @@ export class OpenAICompatibleModelClient {
         response,
         this.maxOutputChars,
         input.onTextEvent,
+        input.onActivity,
       );
     } catch (error) {
       if (error instanceof OpenAICompatibleRuntimeError) {

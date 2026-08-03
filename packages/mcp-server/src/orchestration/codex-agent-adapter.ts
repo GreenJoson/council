@@ -147,6 +147,7 @@ export class CodexAgentAdapter implements AgentAdapter {
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(model ? { model } : {}),
         signal: options.signal,
+        onActivity: options.notifyActivity,
         onTextEvent: (event) => {
           options.runtimeEvents?.emit({
             ...eventMeta,

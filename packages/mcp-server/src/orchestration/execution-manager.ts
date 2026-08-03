@@ -263,7 +263,7 @@ export class RunExecutionManager {
       if (mode === "interrupt") {
         await this.orchestrator.markInterruptedAgent(runId, lease);
       } else {
-        await this.orchestrator.drive(runId, lease);
+        await this.orchestrator.drive(runId, lease, this.options.leaseTtlMs);
       }
     } finally {
       clearInterval(timer);

@@ -297,7 +297,7 @@ export function validateRunSnapshot(
       "maxManualRecoveries",
       "confirmation",
     ],
-    ["agentCleanupTimeoutMs"],
+    ["agentCleanupTimeoutMs", "agentIdleTimeoutMs"],
     "snapshot.policy",
   );
   if (!isRecord(value.policy.confirmation)) {
@@ -318,6 +318,11 @@ export function validateRunSnapshot(
     policy: {
       maxRounds: integerValue(value.policy.maxRounds, "snapshot.policy.maxRounds", 1),
       allowedAgents: stringArray(value.policy.allowedAgents, "snapshot.policy.allowedAgents"),
+      agentIdleTimeoutMs: integerValue(
+        value.policy.agentIdleTimeoutMs ?? value.policy.agentTimeoutMs,
+        "snapshot.policy.agentIdleTimeoutMs",
+        1,
+      ),
       agentTimeoutMs: integerValue(value.policy.agentTimeoutMs, "snapshot.policy.agentTimeoutMs", 1),
       agentCleanupTimeoutMs: integerValue(
         value.policy.agentCleanupTimeoutMs ?? LEGACY_AGENT_CLEANUP_TIMEOUT_MS,
@@ -402,6 +407,12 @@ export function validateRunSnapshot(
   }
   if (run.policy.agentTimeoutMs > MAX_TIMER_DELAY_MS) {
     fail("snapshot.policy.agentTimeoutMs 超过安全计时器上限。");
+  }
+  if (
+    run.policy.agentIdleTimeoutMs > run.policy.agentTimeoutMs
+    || run.policy.agentIdleTimeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    fail("snapshot.policy.agentIdleTimeoutMs 超过总时长或安全计时器上限。");
   }
   if (
     new Set(run.policy.confirmation.beforeRounds).size !==

@@ -191,6 +191,7 @@ async function createStoreInput(
     policy: {
       maxRounds: 1,
       allowedAgents: ["fake"],
+      agentIdleTimeoutMs: 1_000,
       agentTimeoutMs: 2_000,
       agentCleanupTimeoutMs: 100,
       maxAttemptsPerRound: 1,
@@ -231,6 +232,7 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
       }],
       defaultPolicy: {
         maxRounds: 10,
+        agentIdleTimeoutMs: 1_000,
         agentTimeoutMs: 5_000,
         maxAttemptsPerRound: 1,
         maxManualRecoveries: 1,

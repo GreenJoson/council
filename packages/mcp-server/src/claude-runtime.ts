@@ -64,6 +64,7 @@ export interface ClaudeRuntimeInput {
   sessionId?: string;
   model?: string;
   signal?: AbortSignal;
+  onActivity?: () => void;
   onTextEvent?: RuntimeTextListener;
 }
 
@@ -352,8 +353,13 @@ export class ClaudeRuntime {
       ...(model ? ["--model", model] : []),
       ...(sessionId ? ["--resume", sessionId] : []),
     ];
-    const decoder = input.onTextEvent
-      ? new JsonLineDecoder((value) => observeClaudeStreamEvent(value, input.onTextEvent!))
+    const decoder = input.onTextEvent || input.onActivity
+      ? new JsonLineDecoder((value) => {
+          input.onActivity?.();
+          if (input.onTextEvent) {
+            observeClaudeStreamEvent(value, input.onTextEvent);
+          }
+        })
       : undefined;
     const result = await this.#run(
       args,

@@ -274,6 +274,7 @@ function createInput(options?: {
     policy: {
       maxRounds: rounds,
       allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 1_000,
       agentTimeoutMs: 1_000,
       agentCleanupTimeoutMs: 100,
       maxAttemptsPerRound: 1,

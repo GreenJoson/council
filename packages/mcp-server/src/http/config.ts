@@ -47,6 +47,7 @@ const envSchema = z
     ),
     COUNCIL_ORCHESTRATION_DEFAULT_MAX_ATTEMPTS: positiveInteger,
     COUNCIL_ORCHESTRATION_DEFAULT_MAX_RECOVERIES: nonNegativeInteger,
+    COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS: timerInteger,
     COUNCIL_ORCHESTRATION_DEFAULT_AGENT_TIMEOUT_MS: timerInteger,
     COUNCIL_ORCHESTRATION_AGENT_CLEANUP_TIMEOUT_MS: timerInteger,
     COUNCIL_ORCHESTRATION_CONFIRM_COMPLETION: booleanString,
@@ -128,6 +129,14 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
       "COUNCIL_ORCHESTRATION_AGENT_CLEANUP_TIMEOUT_MS 不能超过编排关闭预算。",
     );
   }
+  if (
+    parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS >
+    parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_AGENT_TIMEOUT_MS
+  ) {
+    throw new Error(
+      "COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS 不能大于总执行时长上限。",
+    );
+  }
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 
   return {
@@ -157,6 +166,8 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
       parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_MAX_ATTEMPTS,
     orchestrationDefaultMaxRecoveries:
       parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_MAX_RECOVERIES,
+    orchestrationDefaultAgentIdleTimeoutMs:
+      parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS,
     orchestrationDefaultAgentTimeoutMs:
       parsed.data.COUNCIL_ORCHESTRATION_DEFAULT_AGENT_TIMEOUT_MS,
     orchestrationAgentCleanupTimeoutMs:

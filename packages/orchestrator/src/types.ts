@@ -40,6 +40,9 @@ export interface ConfirmationPolicy {
 export interface OrchestrationPolicy {
   maxRounds: number;
   allowedAgents: readonly string[];
+  /** 连续没有任何 Runtime 活动时中止；工具、协议和文本事件都会刷新。 */
+  agentIdleTimeoutMs: number;
+  /** 单次 Agent 调用的绝对时长上限；不会被活动刷新。 */
   agentTimeoutMs: number;
   agentCleanupTimeoutMs: number;
   maxAttemptsPerRound: number;
@@ -273,6 +276,8 @@ export interface AgentInvocation {
 
 export interface AgentInvocationOptions {
   signal: AbortSignal;
+  /** 不公开内容，只通知编排器本地 Runtime 仍有进展。 */
+  notifyActivity?: () => void;
   notifyStreaming?: () => void;
   runtimeEvents?: import("./runtime/contracts.js").RuntimeEventSink;
 }

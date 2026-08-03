@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；Node sidecar 独占生产 schema 迁移，Rust 只有收到 `ready=true` 后才验证并打开 Store。Rust 内容命令按 active alias 解析动态 Actor 并返回冻结快照；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.5.8`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本让单一 `AcpDelegatedRuntime` 通过受控注册表统一驱动 Kimi、Gemini、Grok、Codex 与 Claude Agent；模型可由启动参数或 ACP session config 选择，Provider catalog 同步提供真实品牌和按需添加入口。
+当前桌面发行版本为 `0.5.10`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本将 Agent 调用改为 5 分钟活动感知空闲超时与 60 分钟绝对上限，并修复长调用自动重试从旧 RunLease 推导出 1ms RuntimeBinding lease 的问题；Store 准备失败会在本地日志记录精确阶段。

@@ -30,6 +30,7 @@ export interface ReadOnlyAgentLoopInput {
   prompt: string;
   projectPath?: string;
   signal?: AbortSignal;
+  onActivity?: () => void;
   onTextEvent?: (event:
     | { operation: "reset" }
     | { operation: "append"; content: string }
@@ -116,6 +117,7 @@ export class ReadOnlyAgentLoop {
         messages,
         ...(host && !finalStep ? { tools: host.definitions } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.onActivity ? { onActivity: input.onActivity } : {}),
         ...(input.onTextEvent ? { onTextEvent: input.onTextEvent } : {}),
       });
       if (result.toolCalls.length === 0) {

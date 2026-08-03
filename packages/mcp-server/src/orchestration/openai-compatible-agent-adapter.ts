@@ -128,6 +128,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         prompt: buildPrompt(input, this.maxContextChars),
         ...(projectPath ? { projectPath } : {}),
         signal: options.signal,
+        onActivity: options.notifyActivity,
         onToolEvent: emitTool,
         onTextEvent: (event) => {
           options.runtimeEvents?.emit({

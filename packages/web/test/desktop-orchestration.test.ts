@@ -36,6 +36,7 @@ function liveSnapshot(label: string, activeTopicId?: string): OrchestrationSnaps
       }],
       defaultPolicy: {
         maxRounds: 8,
+        agentIdleTimeoutMs: 60_000,
         agentTimeoutMs: 180_000,
         maxAttemptsPerRound: 2,
         maxManualRecoveries: 2,

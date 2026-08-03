@@ -31,6 +31,7 @@ import { deferred, FakeAgentAdapter, FakeCouncilStore } from "./fakes.js";
 const BASE_POLICY: OrchestrationPolicy = {
   maxRounds: 4,
   allowedAgents: ["alpha", "beta"],
+  agentIdleTimeoutMs: 100,
   agentTimeoutMs: 100,
   agentCleanupTimeoutMs: 50,
   maxAttemptsPerRound: 1,
@@ -306,6 +307,7 @@ test("超时后 Adapter 永不 settle 会按 agent_cleanup_timeout 非重试失�
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 20,
       agentTimeoutMs: 20,
     },
   ));
@@ -343,6 +345,7 @@ test("超时取消先等待 Adapter 清理完成，再允许下一次调用", as
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 30,
       agentTimeoutMs: 30,
       maxAttemptsPerRound: 2,
     },
@@ -355,6 +358,124 @@ test("超时取消先等待 Adapter 清理完成，再允许下一次调用", as
   assert.equal(secondStartedBeforeCleanup, false);
 });
 
+test("持续 Runtime 活动会刷新空闲超时，但不改变总时长上限", async () => {
+  const store = new FakeCouncilStore();
+  const agent = new FakeAgentAdapter("alpha", async (_input, { notifyActivity }) => {
+    for (let pulse = 0; pulse < 4; pulse += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 12));
+      notifyActivity?.();
+    }
+    return { content: "持续活动后的完整回复" };
+  });
+  const orchestrator = new CouncilOrchestrator(store, [agent]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    {
+      ...BASE_POLICY,
+      allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 20,
+      agentTimeoutMs: 100,
+    },
+  ));
+
+  const completed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(completed.status, "completed");
+  assert.equal(store.messages.length, 1);
+});
+
+test("持续 Runtime 活动不能越过总时长上限", async () => {
+  const store = new FakeCouncilStore();
+  const agent = new FakeAgentAdapter(
+    "alpha",
+    async (_input, { signal, notifyActivity }) => await new Promise((_resolve, reject) => {
+      const timer = setInterval(() => notifyActivity?.(), 5);
+      signal.addEventListener("abort", () => {
+        clearInterval(timer);
+        reject(signal.reason);
+      }, { once: true });
+    }),
+  );
+  const orchestrator = new CouncilOrchestrator(store, [agent]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    {
+      ...BASE_POLICY,
+      allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 15,
+      agentTimeoutMs: 45,
+    },
+  ));
+
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure?.code, "agent_timeout");
+  assert.match(failed.failure?.message ?? "", /总执行时长上限/);
+});
+
+test("超时后的自动重试使用新 Binding TTL，不读取初始 RunLease 过期快照", async () => {
+  const store = new FakeCouncilStore();
+  store.runtimeContextDelayMs = 5;
+  const agent = new FakeAgentAdapter("alpha", async (_input, { signal }, callNumber) => {
+    if (callNumber === 1) {
+      return await new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
+    return { content: "第二次尝试成功" };
+  });
+  const orchestrator = new CouncilOrchestrator(store, [agent]);
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    {
+      ...BASE_POLICY,
+      allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 25,
+      agentTimeoutMs: 100,
+      maxAttemptsPerRound: 2,
+    },
+  ));
+
+  const completed = await orchestrator.start(created.id, {
+    ownerId: "retry-runner",
+    ttlMs: 20,
+    renewIntervalMs: 5,
+  });
+
+  assert.equal(completed.status, "completed");
+  assert.equal(agent.invocations.length, 2);
+  assert.equal(store.messages.length, 1);
+});
+
+test("CouncilStore 准备失败会记录真实阶段，公开失败保持脱敏", async () => {
+  const store = new FakeCouncilStore();
+  store.runtimeContextFailure = new Error("测试上下文读取失败");
+  const reported: Error[] = [];
+  const agent = new FakeAgentAdapter("alpha", async () => ({ content: "不应执行" }));
+  const orchestrator = new CouncilOrchestrator(store, [agent], {
+    onUnclassifiedError: (_context, error) => {
+      if (error instanceof Error) {
+        reported.push(error);
+      }
+    },
+  });
+  const created = await orchestrator.createRun(input(
+    [{ adapterId: "alpha", actorId: "claude", messageKind: "proposal", instruction: "提出方案" }],
+    { ...BASE_POLICY, allowedAgents: ["alpha"] },
+  ));
+
+  const failed = await orchestrator.start(created.id, LEASE_REQUEST);
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.failure?.code, "store_failed");
+  assert.match(failed.failure?.message ?? "", /读取共享议题上下文失败/);
+  assert.equal(reported.length, 1);
+  assert.match(reported[0]?.message ?? "", /load-runtime-context/);
+  assert.equal(reported[0]?.cause, store.runtimeContextFailure);
+  assert.equal(agent.invocations.length, 0);
+});
+
 test("Adapter 取消清理超过上限后非重试失败且捕获迟到 Promise", async () => {
   const store = new FakeCouncilStore();
   const agent = new FakeAgentAdapter("alpha", async () => await new Promise(() => undefined));
@@ -364,6 +485,7 @@ test("Adapter 取消清理超过上限后非重试失败且捕获迟到 Promise"
     {
       ...BASE_POLICY,
       allowedAgents: ["alpha"],
+      agentIdleTimeoutMs: 15,
       agentTimeoutMs: 15,
       maxAttemptsPerRound: 2,
     },
@@ -731,7 +853,7 @@ test("begin 只完成原子转换，drive 在独立 lease 下继续执行", asyn
     ownerId: "detached-runner",
     ttlMs: 60_000,
   });
-  const completed = await orchestrator.drive(running.id, lease);
+  const completed = await orchestrator.drive(running.id, lease, 60_000);
   assert.equal(completed.status, "completed");
   assert.equal(agent.invocations.length, 1);
   assert.equal(await orchestrator.releaseRunLease(lease), true);
@@ -786,7 +908,10 @@ test("重启分类不会自动重放 waiting_agent", async () => {
 
   assert.equal(classifyRestartDisposition(running), "resume_running");
   assert.equal(classifyRestartDisposition(waiting), "fail_interrupted_agent");
-  await assert.rejects(orchestrator.drive(waiting.id, lease), InvalidRunStateError);
+  await assert.rejects(
+    orchestrator.drive(waiting.id, lease, 60_000),
+    InvalidRunStateError,
+  );
   const interrupted = await orchestrator.markInterruptedAgent(waiting.id, lease);
   assert.equal(interrupted.status, "failed");
   assert.equal(interrupted.failure?.code, "execution_interrupted");
@@ -811,7 +936,7 @@ test("人工确认门拒绝非 human 批准者", async () => {
     ownerId: "gate-runner",
     ttlMs: 60_000,
   });
-  const gate = await orchestrator.drive(running.id, lease);
+  const gate = await orchestrator.drive(running.id, lease, 60_000);
   await assert.rejects(
     orchestrator.applyApproval({
       runId: gate.id,
@@ -936,7 +1061,7 @@ test("缺少 bindingRevision 的旧运行在所有执行入口均拒绝且重启
       ttlMs: 60_000,
     });
     const operation = status === "running"
-      ? active.orchestrator.drive(active.run.id, lease)
+      ? active.orchestrator.drive(active.run.id, lease, 60_000)
       : active.orchestrator.markInterruptedAgent(active.run.id, lease);
     await assert.rejects(
       operation,

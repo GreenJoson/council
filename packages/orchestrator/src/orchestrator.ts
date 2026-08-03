@@ -105,6 +105,12 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
   if (!isPositiveInteger(policy.agentTimeoutMs)) {
     throw new OrchestrationConfigError("agentTimeoutMs 必须是正整数。");
   }
+  if (!isPositiveInteger(policy.agentIdleTimeoutMs)) {
+    throw new OrchestrationConfigError("agentIdleTimeoutMs 必须是正整数。");
+  }
+  if (policy.agentIdleTimeoutMs > policy.agentTimeoutMs) {
+    throw new OrchestrationConfigError("agentIdleTimeoutMs 不能大于 agentTimeoutMs。");
+  }
   if (policy.agentTimeoutMs > MAX_TIMER_DELAY_MS) {
     throw new OrchestrationConfigError("agentTimeoutMs 超过 Node.js 安全计时器上限。");
   }
@@ -190,6 +196,7 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
     policy: {
       maxRounds: policy.maxRounds,
       allowedAgents,
+      agentIdleTimeoutMs: policy.agentIdleTimeoutMs,
       agentTimeoutMs: policy.agentTimeoutMs,
       agentCleanupTimeoutMs: policy.agentCleanupTimeoutMs,
       maxAttemptsPerRound: policy.maxAttemptsPerRound,
@@ -259,6 +266,7 @@ function assertPersistedRun(run: OrchestrationRun): void {
     normalized.topicId === run.topicId &&
     normalized.policy.maxRounds === run.policy.maxRounds &&
     normalized.policy.agentTimeoutMs === run.policy.agentTimeoutMs &&
+    normalized.policy.agentIdleTimeoutMs === run.policy.agentIdleTimeoutMs &&
     normalized.policy.agentCleanupTimeoutMs === run.policy.agentCleanupTimeoutMs &&
     normalized.policy.maxAttemptsPerRound === run.policy.maxAttemptsPerRound &&
     normalized.policy.maxManualRecoveries === run.policy.maxManualRecoveries &&
@@ -796,7 +804,16 @@ export class CouncilOrchestrator {
     return await this.#driveWithClaimedLease(recovered.id, leaseRequest);
   }
 
-  async drive(runId: string, lease: RunLease): Promise<OrchestrationRun> {
+  async drive(
+    runId: string,
+    lease: RunLease,
+    runtimeBindingLeaseTtlMs: number,
+  ): Promise<OrchestrationRun> {
+    if (!isPositiveInteger(runtimeBindingLeaseTtlMs)) {
+      throw new OrchestrationConfigError(
+        "runtimeBindingLeaseTtlMs 必须是正整数。",
+      );
+    }
     const run = await this.#loadRun(runId);
     assertExecutionBindingsFrozen(run);
     if (lease.runId !== run.id) {
@@ -813,7 +830,7 @@ export class CouncilOrchestrator {
     if (this.#hasStaleBinding(run)) {
       return await this.#fail(run, lease, unavailableFailure());
     }
-    return await this.#process(run, lease);
+    return await this.#process(run, lease, runtimeBindingLeaseTtlMs);
   }
 
   async markInterruptedAgent(runId: string, lease: RunLease): Promise<OrchestrationRun> {
@@ -888,7 +905,7 @@ export class CouncilOrchestrator {
     const timer = setInterval(renew, request.renewIntervalMs);
     timer.unref();
     try {
-      const result = await this.drive(runId, lease);
+      const result = await this.drive(runId, lease, request.ttlMs);
       if (renewalFailure) {
         throw renewalFailure;
       }
@@ -900,14 +917,18 @@ export class CouncilOrchestrator {
     }
   }
 
-  async #process(initialRun: OrchestrationRun, lease: RunLease): Promise<OrchestrationRun> {
+  async #process(
+    initialRun: OrchestrationRun,
+    lease: RunLease,
+    runtimeBindingLeaseTtlMs: number,
+  ): Promise<OrchestrationRun> {
     assertPersistedRun(initialRun);
     if (this.#processingRuns.has(initialRun.id)) {
       throw new RunBusyError("该运行已在当前进程中执行。");
     }
     this.#processingRuns.add(initialRun.id);
     try {
-      return await this.#runLoop(initialRun, lease);
+      return await this.#runLoop(initialRun, lease, runtimeBindingLeaseTtlMs);
     } finally {
       this.#processingRuns.delete(initialRun.id);
       this.#activeControllers.delete(initialRun.id);
@@ -915,7 +936,11 @@ export class CouncilOrchestrator {
     }
   }
 
-  async #runLoop(initialRun: OrchestrationRun, lease: RunLease): Promise<OrchestrationRun> {
+  async #runLoop(
+    initialRun: OrchestrationRun,
+    lease: RunLease,
+    runtimeBindingLeaseTtlMs: number,
+  ): Promise<OrchestrationRun> {
     let run = initialRun;
     while (run.status === "running") {
       const effectiveRoundCount = Math.min(run.policy.maxRounds, run.plan.length);
@@ -974,18 +999,21 @@ export class CouncilOrchestrator {
       let bindingLease: RuntimeBindingLease | undefined;
       let binding: RuntimeBinding;
       let context;
+      let storeStage = "claim-runtime-binding-lease";
       try {
         bindingLease = await this.store.claimRuntimeBindingLease({
           bindingId: runtimeBindingId,
           ownerId: `run:${run.id}`,
-          ttlMs: Math.max(1, lease.expiresAtMs - Date.now()),
+          ttlMs: runtimeBindingLeaseTtlMs,
           processInstanceId: lease.ownerId,
         });
         this.#activeBindingLeases.set(run.id, bindingLease);
+        storeStage = "load-runtime-context";
         const invocationContext = await this.store.getRuntimeBindingInvocationContext(
           runtimeBindingId,
           round.requestMessageId,
         );
+        storeStage = "transition-runtime-thinking";
         binding = await this.store.transitionRuntimeBinding({
           lease: bindingLease,
           expectedStateVersion: invocationContext.binding.stateVersion,
@@ -993,7 +1021,11 @@ export class CouncilOrchestrator {
           processInstanceId: lease.ownerId,
         });
         context = invocationContext;
-      } catch {
+      } catch (error) {
+        this.#onUnclassifiedError?.(
+          { runId: run.id, adapterId: round.adapterId },
+          new Error(`CouncilStore ${storeStage} 失败。`, { cause: error }),
+        );
         if (bindingLease) {
           await this.store.releaseRuntimeBindingLease(bindingLease);
           this.#activeBindingLeases.delete(run.id);
@@ -1050,6 +1082,7 @@ export class CouncilOrchestrator {
           adapterSlot.adapter,
           invocation,
           waiting.policy.agentTimeoutMs,
+          waiting.policy.agentIdleTimeoutMs,
           waiting.policy.agentCleanupTimeoutMs,
           notifyStreaming,
         );
@@ -1230,7 +1263,8 @@ export class CouncilOrchestrator {
     runId: string,
     adapter: AgentAdapter,
     invocation: AgentInvocation,
-    timeoutMs: number,
+    hardTimeoutMs: number,
+    idleTimeoutMs: number,
     cleanupTimeoutMs: number,
     notifyStreaming: () => void,
   ) {
@@ -1244,7 +1278,33 @@ export class CouncilOrchestrator {
     const controller = new AbortController();
     this.#activeControllers.set(runId, controller);
     this.#activeAdapterIds.set(runId, adapter.adapterId);
-    const timeout = setTimeout(() => controller.abort(new AgentTimeoutError()), timeoutMs);
+    const abortForTimeout = (kind: "idle" | "hard"): void => {
+      if (!controller.signal.aborted) {
+        controller.abort(new AgentTimeoutError(kind));
+      }
+    };
+    const hardTimeout = setTimeout(() => abortForTimeout("hard"), hardTimeoutMs);
+    let idleTimeout: ReturnType<typeof setTimeout> | undefined;
+    let idleDeadlineMs = Date.now() + idleTimeoutMs;
+    const checkIdleTimeout = (): void => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      const remainingMs = idleDeadlineMs - Date.now();
+      if (remainingMs <= 0) {
+        abortForTimeout("idle");
+        return;
+      }
+      idleTimeout = setTimeout(checkIdleTimeout, remainingMs);
+    };
+    const notifyActivity = (): void => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      // 高频文本 delta 只更新 deadline，不为每个 token 清理并新建定时器。
+      idleDeadlineMs = Date.now() + idleTimeoutMs;
+    };
+    idleTimeout = setTimeout(checkIdleTimeout, idleTimeoutMs);
     let abortListener: (() => void) | undefined;
     const aborted = new Promise<never>((_resolve, reject) => {
       abortListener = () => {
@@ -1257,9 +1317,13 @@ export class CouncilOrchestrator {
       async () =>
         await adapter.invoke(invocation, {
           signal: controller.signal,
+          notifyActivity,
           notifyStreaming,
           runtimeEvents: {
-            emit: (event) => this.#emitRuntimeEvent(event),
+            emit: (event) => {
+              notifyActivity();
+              this.#emitRuntimeEvent(event);
+            },
           },
         }),
     );
@@ -1295,7 +1359,10 @@ export class CouncilOrchestrator {
       }
       throw error;
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(hardTimeout);
+      if (idleTimeout) {
+        clearTimeout(idleTimeout);
+      }
       if (abortListener) {
         controller.signal.removeEventListener("abort", abortListener);
       }

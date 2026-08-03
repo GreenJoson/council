@@ -192,6 +192,7 @@ export class AcpDelegatedAgentAdapter implements AgentAdapter {
       options.runtimeEvents?.emit(event);
     };
     const onPermission = (request: RequestPermissionRequest): void => {
+      options.notifyActivity?.();
       const capability = toolCapability(
         request.toolCall.kind,
         request.toolCall.name,
@@ -207,6 +208,7 @@ export class AcpDelegatedAgentAdapter implements AgentAdapter {
       );
     };
     const onUpdate = (update: SessionUpdate): void => {
+      options.notifyActivity?.();
       if (
         update.sessionUpdate === "agent_message_chunk"
         && update.content.type === "text"

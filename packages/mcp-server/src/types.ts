@@ -86,6 +86,7 @@ export interface CouncilHttpConfig {
   orchestrationDefaultMaxRounds: number;
   orchestrationDefaultMaxAttempts: number;
   orchestrationDefaultMaxRecoveries: number;
+  orchestrationDefaultAgentIdleTimeoutMs: number;
   orchestrationDefaultAgentTimeoutMs: number;
   orchestrationAgentCleanupTimeoutMs: number;
   orchestrationConfirmCompletion: boolean;

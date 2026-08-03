@@ -51,11 +51,15 @@ test("兼容运行时发送流式 Chat Completions 并转发公开文本增量",
   }, async (baseUrl) => {
     const runtime = new OpenAICompatibleRuntime(1_000, 5_000);
     const events: Array<{ operation: string; content?: string }> = [];
+    let activityCount = 0;
     const content = await runtime.generate({
       baseUrl,
       model: "test-model",
       apiKey: "test-key",
       prompt: "test prompt",
+      onActivity: () => {
+        activityCount += 1;
+      },
       onTextEvent: (event) => events.push(event),
     });
     assert.equal(content, "OK");
@@ -64,6 +68,7 @@ test("兼容运行时发送流式 Chat Completions 并转发公开文本增量",
       { operation: "append", content: "  O" },
       { operation: "append", content: "K  " },
     ]);
+    assert.equal(activityCount, 3, "文本事件与 DONE 都应刷新远程 Runtime 活动时间");
   });
 });
 

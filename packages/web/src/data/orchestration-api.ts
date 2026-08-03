@@ -249,6 +249,7 @@ function parsePolicy(value: unknown): OrchestrationDefaultPolicy {
   const confirmation = recordValue(record.confirmation, "defaultPolicy.confirmation");
   return {
     maxRounds: integerValue(record, "maxRounds", 1),
+    agentIdleTimeoutMs: integerValue(record, "agentIdleTimeoutMs", 1),
     agentTimeoutMs: integerValue(record, "agentTimeoutMs", 1),
     maxAttemptsPerRound: integerValue(record, "maxAttemptsPerRound", 1),
     maxManualRecoveries: integerValue(record, "maxManualRecoveries"),

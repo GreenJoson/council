@@ -26,6 +26,7 @@ function createRun(overrides: Partial<OrchestrationRun> = {}): OrchestrationRun 
     }],
     policy: {
       maxRounds: 2,
+      agentIdleTimeoutMs: 500,
       agentTimeoutMs: 1_000,
       maxAttemptsPerRound: 1,
       maxManualRecoveries: 1,

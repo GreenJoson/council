@@ -19,6 +19,7 @@ export interface OpenAICompatibleGenerateInput {
   apiKey: string;
   prompt: string;
   signal?: AbortSignal;
+  onActivity?: () => void;
   onTextEvent?: (event:
     | { operation: "reset" }
     | { operation: "append"; content: string }
@@ -40,6 +41,7 @@ export class OpenAICompatibleRuntime {
       apiKey: input.apiKey,
       messages: [{ role: "user", content: input.prompt }],
       signal: input.signal,
+      onActivity: input.onActivity,
       onTextEvent: input.onTextEvent,
     });
     if (result.toolCalls.length > 0 || !result.content) {

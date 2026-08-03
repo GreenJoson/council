@@ -35,13 +35,16 @@ failed --显式恢复且未超预算--> running
 
 - 正常停止只由轮次计划耗尽或 `maxRounds` 达到触发。
 - 人工门可配置在指定轮次之前和完成之前；未确认时进入 `waiting_user`。批准必须同时携带 `expectedGateId`、`expectedVersion`、`approvalId` 和 `approvedBy`，由 Store 原子校验并幂等落库。
-- 每轮 Agent 调用有独立超时、取消后 cleanup 时限与自动尝试上限。
-- `agentTimeoutMs` 不得超过 Node.js 安全计时器上限，避免超大值被运行时截短后立即触发。
+- 每轮 Agent 调用同时具有 `agentIdleTimeoutMs` 无活动超时、`agentTimeoutMs` 绝对时长上限、
+  取消后 cleanup 时限与自动尝试上限。协议、工具和文本活动只刷新前者，不能绕过后者。
+- 两种超时都不得超过 Node.js 安全计时器上限，且无活动超时不能大于绝对上限。
 - timeout/cancel/lease abort 后必须先等待 Adapter cleanup；cleanup 超时使用稳定失败码
   `agent_cleanup_timeout` 且禁止重试。LeaseLost/显式取消保留原控制流，留给重启或取消收敛。
 - 自动尝试耗尽后进入 `failed`；显式 `prepareRecovery()` / `recover()` 还受 `maxManualRecoveries` 限制。
 - `failed` 不占用同 topic 活动槽位；旧 run 恢复为 `running` 时仍会经过单活动唯一约束。
 - 主动执行者必须 claim per-run lease，并在调用参数给定的 TTL 内续租。token 与 epoch 会 fence 所有执行态更新和轮次提交；claim、renew、release 不推进 `council_meta.revision`。
+- RuntimeBinding 的新 lease 使用当前执行器配置的 TTL，禁止从已被续租替换的旧 RunLease
+  快照推算剩余时间；否则长调用后的自动重试会退化成 1ms lease。
 - `running` 可由新执行者续跑；`waiting_agent` 表示外部结果未知，重启时必须先 `markInterruptedAgent()` 进入 `execution_interrupted`，不得自动重放付费调用。
 - `listRestartCandidates()` 直接按状态索引分页所有议题的 `running/waiting_agent`，避免旧议题
   或大量终态记录导致恢复遗漏；调用方应周期扫描，以在旧 lease 到期后自动接管。

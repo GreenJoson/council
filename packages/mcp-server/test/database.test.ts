@@ -238,6 +238,7 @@ test("content/orchestration revision 隔离且 lease 心跳不推进任何 revis
       policy: {
         maxRounds: 1,
         allowedAgents: ["fake"],
+        agentIdleTimeoutMs: 1_000,
         agentTimeoutMs: 1_000,
         agentCleanupTimeoutMs: 100,
         maxAttemptsPerRound: 1,

@@ -36,6 +36,7 @@ function createEnv(dataDir: string): NodeJS.ProcessEnv {
     COUNCIL_ORCHESTRATION_DEFAULT_MAX_ROUNDS: "10",
     COUNCIL_ORCHESTRATION_DEFAULT_MAX_ATTEMPTS: "2",
     COUNCIL_ORCHESTRATION_DEFAULT_MAX_RECOVERIES: "1",
+    COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS: "30000",
     COUNCIL_ORCHESTRATION_DEFAULT_AGENT_TIMEOUT_MS: "120000",
     COUNCIL_ORCHESTRATION_AGENT_CLEANUP_TIMEOUT_MS: "3000",
     COUNCIL_ORCHESTRATION_CONFIRM_COMPLETION: "true",
@@ -57,6 +58,11 @@ test("HTTP 配置只接受完整、有效且 exact 的 origin", () => {
     assert.equal(config.eventRetryMs, 3_000);
     assert.equal(config.orchestrationConfirmCompletion, true);
     assert.equal(config.orchestrationLeaseRenewMs, 10_000);
+    assert.equal(config.orchestrationDefaultAgentIdleTimeoutMs, 30_000);
+
+    const idleBeyondHardLimit = createEnv(directory);
+    idleBeyondHardLimit.COUNCIL_ORCHESTRATION_DEFAULT_AGENT_IDLE_TIMEOUT_MS = "120001";
+    assert.throws(() => loadHttpConfig(idleBeyondHardLimit), /不能大于总执行时长上限/);
 
     const missingMigrationAttempts = createEnv(directory);
     delete missingMigrationAttempts.COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS;

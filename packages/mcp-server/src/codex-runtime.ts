@@ -39,6 +39,7 @@ export interface CodexRuntimeInput {
   sessionId?: string;
   model?: string;
   signal?: AbortSignal;
+  onActivity?: () => void;
   onTextEvent?: RuntimeTextListener;
 }
 
@@ -330,8 +331,13 @@ export class CodexRuntime {
         ...(model ? ["--model", model] : []),
         "-",
       );
-      const decoder = input.onTextEvent
-        ? new JsonLineDecoder((value) => observeCodexEvent(value, input.onTextEvent!))
+      const decoder = input.onTextEvent || input.onActivity
+        ? new JsonLineDecoder((value) => {
+            input.onActivity?.();
+            if (input.onTextEvent) {
+              observeCodexEvent(value, input.onTextEvent);
+            }
+          })
         : undefined;
       const result = await this.#run(
         args,

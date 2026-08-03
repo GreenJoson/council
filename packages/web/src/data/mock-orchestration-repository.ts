@@ -65,6 +65,7 @@ const CAPABILITIES: OrchestrationCapabilities = {
   ],
   defaultPolicy: {
     maxRounds: 4,
+    agentIdleTimeoutMs: 60_000,
     agentTimeoutMs: 180_000,
     maxAttemptsPerRound: 1,
     maxManualRecoveries: 1,
