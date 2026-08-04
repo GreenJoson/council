@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构档案/决策记录）和三栏组件
- * @output 导出：App Operator Console 根组件
+ * @output 导出：含既有提案复用反馈的 App Operator Console 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
  *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
@@ -544,7 +544,16 @@ export default function App() {
         kind,
       });
       setOrchestration(snapshot);
-      setToastMessage("圆桌已开始，提案人正在发言");
+      const reusedProposal = snapshot.cycle?.cycle.turns.some(
+        (turn) =>
+          turn.stage === "proposal"
+          && selectedTopic?.messages.some((message) => message.id === turn.messageId),
+      ) ?? false;
+      setToastMessage(
+        reusedProposal
+          ? "已复用现有提案，首位评审正在审核"
+          : "圆桌已开始，提案人正在发言",
+      );
       return true;
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));

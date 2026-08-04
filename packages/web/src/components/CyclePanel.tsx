@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排快照里的活动圆桌、可用 Agent 名册与受控的开局/回答操作
- * @output 导出：CyclePanel 开局名册勾选、阶段进度、发言立场、阻塞提问作答台与累计度量
+ * @output 导出：CyclePanel 既有提案复用提示、名册勾选、阶段进度、阻塞提问与累计度量
  * @pos    Inspector 内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -140,7 +140,8 @@ function CycleStarter({
   return (
     <div className="cycle-starter">
       <p className="cycle-hint">
-        勾选参与者，第一位是提案人。开局后由编排层自动交接，只有被提问时才需要你介入。
+        勾选参与者，第一位是提案人。若它已在本议题公开 proposal 或开场 brief，
+        开局会直接复用并跳到首位评审；否则才召唤提案人。
       </p>
       <ul className="cycle-roster">
         {available.map((adapter) => {
@@ -181,9 +182,11 @@ function CycleStarter({
           disabled={!isTopicOpen || busy}
           onChange={() => { setIsFixReview((current) => !current); }}
         />
-        <span className="cycle-roster-name">bug 修复互审</span>
-        <span className="cycle-hint-inline">
-          需要提案人具备写仓库、测试和提交能力；能力不足会在调用模型前拒绝
+        <span className="cycle-mode-copy">
+          <span className="cycle-roster-name">bug 修复互审</span>
+          <span className="cycle-hint-inline">
+            只审核已公开真实 commit；审核未提交工作区请保持关闭
+          </span>
         </span>
       </label>
       <label className="cycle-budget">

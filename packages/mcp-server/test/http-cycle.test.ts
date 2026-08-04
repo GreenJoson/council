@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、两个确定性 Fake Agent 与完整编排执行面
- * @output 验证：一次开局跑完全程、提问处停住、决策正文与 synthesis 一致、diff 互审与运行度量
+ * @output 验证：既有提案直达评审、一次开局跑完全程、提问、commit 互审与运行度量
  * @pos    自动交接/决策同步/diff 互审/度量的端到端验收；单元语义另有 cycle-driver 与 convergence 测试
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -199,6 +199,45 @@ test("点一次开始圆桌即跑完全程，决策正文与最终 synthesis 逐
   }
 });
 
+test("公开已有提案会被冻结为首轮基线，HTTP 开局直接调用评审", async () => {
+  const proposer = new ScriptedAgent("claude", (kind) =>
+    `${kind} 正文。\n\n${verdict("agree")}`);
+  const reviewer = new ScriptedAgent("codex", (kind) =>
+    `${kind} 正文。\n\n${verdict("agree")}`);
+  const harness = await harnessWith(proposer, reviewer);
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    const seeded = harness.database.createMessageAsActor({
+      topicId,
+      actorId: "claude",
+      kind: "proposal",
+      content: "## 方案\n\n已有提案，直接交给其他 Agent 复审。",
+    });
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ participants: ["claude", "codex"] }),
+    });
+    assert.equal(response.status, 201);
+    const opened = await readEnvelope<CycleView>(response);
+    assert.match(opened.message, /复用现有提案/u);
+    assert.equal(opened.data?.cycle.turns[0]?.agentId, "claude");
+    assert.equal(opened.data?.cycle.turns[0]?.stage, "proposal");
+
+    assert.equal(await settle(harness.baseUrl, topicId), null);
+    assert.deepEqual(proposer.seen, ["synthesis"], "提案人不得被重复召唤 proposal");
+    assert.deepEqual(reviewer.seen, ["critique"]);
+    const detail = await readTopic(harness.baseUrl, topicId);
+    assert.equal(
+      detail.messages.filter((message) => message.id === seeded.id).length,
+      1,
+      "复用只写 cycle turn，不复制公开消息",
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
 test("Agent 提问时停在原地，用户回答后接着往下走且不重跑已说过的阶段", async () => {
   const question = [
     "```council-question",
@@ -327,6 +366,18 @@ test("bug 修复互审只读核对交互式任务产生的 commit，不要求 Ag
   );
   try {
     const topicId = await createTopic(harness.baseUrl);
+    harness.database.createMessageAsActor({
+      topicId,
+      actorId: "claude",
+      kind: "proposal",
+      content: [
+        "已有修复已由交互式任务提交。",
+        "",
+        "```council-fix",
+        `{"commit":"${reviewedCommit}","summary":"核对已有修复"}`,
+        "```",
+      ].join("\n"),
+    });
     const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
       method: "POST",
       headers: JSON_HEADERS,
@@ -337,11 +388,43 @@ test("bug 修复互审只读核对交互式任务产生的 commit，不要求 Ag
     });
     assert.equal(response.status, 201);
     assert.equal(await settle(harness.baseUrl, topicId), null);
-    assert.deepEqual(fixer.seen, ["proposal", "synthesis"]);
+    assert.deepEqual(fixer.seen, ["synthesis"]);
     assert.deepEqual(reviewer.seen, ["critique"]);
-    assert.match(fixer.instructions[0] ?? "", /只读 bug 修复互审/);
-    assert.doesNotMatch(fixer.instructions[0] ?? "", /先自审并提交/);
     assert.match(reviewer.instructions[0] ?? "", new RegExp(`git show ${reviewedCommit}`));
+  } finally {
+    await harness.close();
+  }
+});
+
+test("已提交修复互审缺少公开 commit 时在调用 Agent 前失败", async () => {
+  const proposer = new ScriptedAgent("claude", () => `正文。\n\n${verdict("agree")}`);
+  const reviewer = new ScriptedAgent("codex", () => `正文。\n\n${verdict("agree")}`);
+  const harness = await harnessWith(
+    proposer,
+    reviewer,
+    ["text", "repository_read", "git_diff"],
+  );
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    harness.database.createMessageAsActor({
+      topicId,
+      actorId: "claude",
+      kind: "proposal",
+      content: "只有工作区说明，没有真实 commit。",
+    });
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        participants: ["claude", "codex"],
+        kind: "fix_review",
+      }),
+    });
+    assert.equal(response.status, 400);
+    const envelope = await readEnvelope(response);
+    assert.match(envelope.message, /先公开真实 commit/u);
+    assert.deepEqual(proposer.seen, []);
+    assert.deepEqual(reviewer.seen, []);
   } finally {
     await harness.close();
   }

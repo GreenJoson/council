@@ -65,6 +65,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
   stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 圆桌开局会冻结周期类型、参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在任何模型调用前直接拒绝，避免让纯文本 Provider 假装已经读代码、跑测试或提交修复。
+- 选择的提案人若已在议题发布正式 `proposal`，或它同时是议题创建者并已发布开场 `brief`，圆桌会冻结该消息为首轮提案并直接召唤评审，不重复消耗一次提案人调用。普通讨论可用于具备项目读取能力的 Agent 审核未提交工作区；已提交修复互审缺少真实 commit 时会在模型调用前拒绝。
 - 普通讨论只要求文本能力；bug 修复互审只读核对交互式开发任务已经产生的 commit/diff，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime、获授权的 ACP DelegatedRuntime 与兼容 API ToolLoop 都可按 Council policy 读取已提交 diff；后两者只获得精确的 `council_git_diff`，不能读取未提交工作区、Shell、写文件或提交。
 - 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
 - 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。

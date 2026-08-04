@@ -1,6 +1,6 @@
 /**
- * @input  依赖：收敛阶段枚举与结构化尾块契约
- * @output 导出：四段协议下发给 Agent 的阶段指令、diff 互审要求与尾块格式说明
+ * @input  依赖：收敛阶段枚举、周期类型与结构化尾块契约
+ * @output 导出：四段协议、工作区审查/commit 互审边界与尾块格式说明
  * @pos    Agent 侧协议契约的唯一正本；改这里就等于改协议，必须同步 verdict.ts 的解析
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -125,8 +125,15 @@ function stageBody(input: StageInstructionInput): readonly string[] {
         "把「必须先解决」和「记录即可」分清楚：只有会让方案失败或不可回滚的问题",
         "才标 `blocking`。为了显得严谨而滥用 `blocking` 会让讨论永远收敛不了。",
         "",
-        "永远不要放行你验证不了的改动：对方声称改了或提交了代码，却没给出",
-        "`council-fix` 尾块里的 commit 引用时，直接判 `blocking` 并要求补上。",
+        ...(input.requiresCommitRef
+          ? [
+              "这是已提交修复互审。永远不要放行你验证不了的改动：缺少",
+              "`council-fix` 尾块里的 commit 引用时，直接判 `blocking` 并要求补上。",
+            ]
+          : [
+              "若议题要求审核未提交工作区，不要只复述提案人的描述；请自己读取当前",
+              "工作区 diff 与必要上下文，并明确说明结论针对的是可变工作区快照。",
+            ]),
         ...reviewBody(input),
       ];
     case "rebuttal":

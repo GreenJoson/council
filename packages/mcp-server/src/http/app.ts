@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、模型路由、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -551,7 +551,15 @@ export function createCouncilHttpApp(
         ? {}
         : { taskRequirements: input.taskRequirements }),
     });
-    sendSuccess(response, view, "圆桌讨论已开始，提案人正在发言。", 201);
+    const reusedProposal = view.cycle.turns.some((turn) => turn.stage === "proposal");
+    sendSuccess(
+      response,
+      view,
+      reusedProposal
+        ? "圆桌讨论已复用现有提案，首位评审正在审核。"
+        : "圆桌讨论已开始，提案人正在发言。",
+      201,
+    );
   });
 
   app.delete("/api/v1/topics/:topicId/cycle", (request, response) => {

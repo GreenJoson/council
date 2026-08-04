@@ -8,4 +8,5 @@
 | `orchestrator.test.ts` | 核心验证 | 覆盖双 lease、session 恢复、cleanup 屏障、begin/drive、取消、安全失败和恢复；未分类异常必须报给宿主且不进公开文案 |
 | `sqlite-council-store.test.ts` | 持久化验证 | 覆盖历史升级、v4 快照、RuntimeBinding 生命周期、稳定增量游标、跨物理 binding 逻辑请求账本、accepted fencing、空闲关闭、CAS 和损坏快照 |
 | `runtime-capabilities.test.ts` | 能力协议 | 验证周期需求推导、策略与 Runtime 声明取交集、只读修复互审与纯文本 Runtime 的能力缺口 |
+| `convergence.test.ts` | 收敛协议 | 验证既有提案后的阶段推进、工作区审查与已提交 commit 互审指令严格分流 |
 | `runtime-contracts.test.ts` | Runtime 协议 | 验证 session 投影单一真源、delegated/tool-loop 所有权、能力授权与只读边界 |

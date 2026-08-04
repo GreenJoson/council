@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实迁移库上的 SQLiteCouncilStore、伪 Run 执行器与伪决策写入
- * @output 验证：开局后自动交接到每一位、提问处停住、收敛写 proposed 决策、预算用尽放弃
+ * @output 验证：复用既有提案、自动交接、提问停住、收敛决策与预算放弃
  * @pos    自动交接的行为验收；Run/lease 那一半由 sqlite-council-store 的原子提交测试覆盖
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -73,6 +73,8 @@ interface Harness {
   replyWith: (stance: string, question?: boolean) => void;
   /** 以用户身份发一条公开消息，返回消息 id。 */
   postHumanMessage: (content: string) => string;
+  /** 在圆桌开局前发布 Agent 已有提案。 */
+  postAgentMessage: (actorId: string, kind: "brief" | "proposal", content: string) => string;
   cleanup: () => void;
 }
 
@@ -212,6 +214,19 @@ async function createHarness(): Promise<Harness> {
       `).run(messageId, TOPIC, content, NOW);
       return messageId;
     },
+    postAgentMessage: (actorId, kind, content) => {
+      messageSequence += 1;
+      const messageId = `message_${String(messageSequence)}`;
+      seed.prepare(`
+        INSERT INTO messages (
+          id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
+          kind, content, parent_message_id, created_at
+        )
+        SELECT ?, ?, id, ${ACTOR_SNAPSHOT_SQL}, NULL, ?, ?, NULL, ?
+        FROM actor_identities WHERE id = ?
+      `).run(messageId, TOPIC, kind, content, NOW, actorId);
+      return messageId;
+    },
     cleanup: () => {
       store.close();
       seed.close();
@@ -219,6 +234,44 @@ async function createHarness(): Promise<Harness> {
     },
   };
 }
+
+test("已有提案直接召唤首位评审，不重复调用提案人", async () => {
+  const harness = await createHarness();
+  try {
+    harness.postAgentMessage("claude", "proposal", "已有可执行方案。");
+    await harness.driver.start(cycleStartInput());
+    await drive(harness);
+
+    assert.deepEqual(
+      harness.invocations.map((item) => `${item.adapterId}/${item.messageKind}`),
+      ["codex/critique", "claude/synthesis"],
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("已提交修复互审缺少 commit 时开局即拒绝，不浪费 Agent 调用", async () => {
+  const harness = await createHarness();
+  try {
+    harness.postAgentMessage("claude", "proposal", "只有工作区说明，没有 commit。");
+    await assert.rejects(
+      () => harness.driver.start({
+        ...cycleStartInput(),
+        kind: "fix_review",
+        requirements: deriveCycleRequirements({
+          kind: "fix_review",
+          participants: PARTICIPANTS,
+        }),
+      }),
+      /需要提案人先公开真实 commit/u,
+    );
+    assert.deepEqual(harness.invocations, []);
+    assert.equal(harness.store.readActiveDiscussionCycle(TOPIC), undefined);
+  } finally {
+    harness.cleanup();
+  }
+});
 
 /** 反复推进直到没有 active cycle 或状态不再变化。 */
 async function drive(harness: Harness, maxSteps = 20): Promise<void> {

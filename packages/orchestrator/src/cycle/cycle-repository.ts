@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council SQLite、收敛 codec、状态机与编排错误
- * @output 导出：cycle 开局/推进/收敛/放弃与阻塞提问开单/回答的事务仓储
+ * @output 导出：可复用提案查询、cycle 开局/推进/收敛/放弃与阻塞提问事务仓储
  * @pos    收敛协议的持久化边界；所有写入走 state_version CAS，重放一律幂等
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -28,6 +28,7 @@ import {
   type RecordedTurn,
 } from "./cycle-codec.js";
 import type { AgentQuestion } from "./verdict.js";
+import { parseAgentReply } from "./verdict.js";
 import type {
   DiscussionCycleKind,
   FrozenCycleRequirements,
@@ -57,8 +58,27 @@ export interface StartDiscussionCycleInput {
   requirements: FrozenCycleRequirements;
   runtimeCapabilities: readonly RuntimeCapabilitySnapshot[];
   roundBudget: number;
+  /** 复用提案人已经公开的 proposal/开场 brief；仓储会再次校验作者、类型与 commit。 */
+  seedProposalMessageId?: string;
   contextCursor?: CycleCursor;
   now: string;
+}
+
+export interface ReusableProposalMessage {
+  messageId: string;
+  actorId: string;
+  kind: "brief" | "proposal";
+  createdAt: string;
+  commitRef?: string;
+}
+
+interface ReusableProposalRow {
+  id: unknown;
+  author_actor_id: unknown;
+  kind: unknown;
+  content: unknown;
+  created_at: unknown;
+  topic_created_by_actor_id: unknown;
 }
 
 export interface RecordCycleTurnInput {
@@ -150,6 +170,87 @@ function view(database: DatabaseSync, cycleId: string): DiscussionCycleView {
   };
 }
 
+function decodeReusableProposal(
+  row: ReusableProposalRow,
+  expectedActorId: string,
+): ReusableProposalMessage {
+  if (
+    typeof row.id !== "string"
+    || typeof row.author_actor_id !== "string"
+    || typeof row.kind !== "string"
+    || typeof row.content !== "string"
+    || typeof row.created_at !== "string"
+    || typeof row.topic_created_by_actor_id !== "string"
+    || row.author_actor_id !== expectedActorId
+    || (row.kind !== "proposal"
+      && !(row.kind === "brief" && row.topic_created_by_actor_id === expectedActorId))
+  ) {
+    throw new InvalidRunStateError("Council 已有提案消息不满足作者或类型约束。");
+  }
+  const fix = parseAgentReply(row.content).fix;
+  return {
+    messageId: row.id,
+    actorId: row.author_actor_id,
+    kind: row.kind,
+    createdAt: row.created_at,
+    ...(fix ? { commitRef: fix.commit } : {}),
+  };
+}
+
+/**
+ * 找到 selected proposer 最近一次可复用的公开提案。
+ *
+ * `brief` 只有在该 Agent 同时是议题创建者时才算开场提案；普通补充说明不能靠
+ * 作者相同就被提升为 proposal。最终写入 cycle 前还会按 messageId 重新校验。
+ */
+export function findReusableProposalMessage(
+  database: DatabaseSync,
+  topicId: string,
+  proposerActorId: string,
+): ReusableProposalMessage | undefined {
+  const row = database.prepare(`
+    SELECT messages.id, messages.author_actor_id, messages.kind,
+           messages.content, messages.created_at,
+           topics.created_by_actor_id AS topic_created_by_actor_id
+    FROM messages
+    INNER JOIN topics ON topics.id = messages.topic_id
+    WHERE messages.topic_id = ?
+      AND messages.author_actor_id = ?
+      AND (
+        messages.kind = 'proposal'
+        OR (
+          messages.kind = 'brief'
+          AND topics.created_by_actor_id = messages.author_actor_id
+        )
+      )
+    ORDER BY messages.created_at DESC, messages.rowid DESC
+    LIMIT 1
+  `).get(topicId, proposerActorId) as unknown as ReusableProposalRow | undefined;
+  return row ? decodeReusableProposal(row, proposerActorId) : undefined;
+}
+
+function readReusableProposalMessage(
+  database: DatabaseSync,
+  input: {
+    topicId: string;
+    proposerActorId: string;
+    messageId: string;
+  },
+): ReusableProposalMessage {
+  const row = database.prepare(`
+    SELECT messages.id, messages.author_actor_id, messages.kind,
+           messages.content, messages.created_at,
+           topics.created_by_actor_id AS topic_created_by_actor_id
+    FROM messages
+    INNER JOIN topics ON topics.id = messages.topic_id
+    WHERE messages.id = ? AND messages.topic_id = ?
+  `).get(input.messageId, input.topicId) as unknown as ReusableProposalRow | undefined;
+  if (!row) {
+    throw new InvalidRunStateError("Council 要复用的已有提案不存在或不属于当前议题。");
+  }
+  return decodeReusableProposal(row, input.proposerActorId);
+}
+
 /**
  * CAS 更新一行 cycle。返回 0 行说明版本已被其他执行者推进，
  * 调用方必须重新读取而不是重试同一份预期状态。
@@ -210,6 +311,35 @@ export function startDiscussionCycle(
   if (topic.status !== "open") {
     throw new InvalidRunStateError("Council 收敛只能在开放议题上开局。");
   }
+  const proposerAgentId = input.participants[0];
+  const proposerActorId = input.runtimeCapabilities.find(
+    (snapshot) => snapshot.adapterId === proposerAgentId,
+  )?.actorId;
+  if (!proposerAgentId || !proposerActorId) {
+    throw new InvalidRunStateError("Council 收敛缺少提案人的冻结 Actor 身份。");
+  }
+  const seed = input.seedProposalMessageId
+    ? readReusableProposalMessage(database, {
+        topicId: input.topicId,
+        proposerActorId,
+        messageId: input.seedProposalMessageId,
+      })
+    : undefined;
+  if (input.kind === "fix_review" && seed && !seed.commitRef) {
+    throw new InvalidRunStateError(
+      "已有提案没有真实 commit，不能开始已提交修复互审；审核未提交工作区请改用方案讨论。",
+    );
+  }
+  const initialTurns: RecordedTurn[] = seed
+    ? [{
+        agentId: proposerAgentId,
+        stage: "proposal",
+        round: 1,
+        stance: "agree",
+        messageId: seed.messageId,
+        ...(seed.commitRef ? { commitRef: seed.commitRef } : {}),
+      }]
+    : [];
   const id = `cycle_${randomUUID()}`;
   try {
     database.prepare(`
@@ -221,8 +351,8 @@ export function startDiscussionCycle(
         proposed_decision_id, state_version, epoch, stop_reason,
         created_at, updated_at, completed_at
       ) VALUES (
-        ?, ?, 'proposal', 'active', ?,
-        ?, ?, ?, '[]',
+        ?, ?, ?, 'active', ?,
+        ?, ?, ?, ?,
         ?, 1, NULL,
         ?, ?,
         NULL, 1, 0, NULL,
@@ -231,13 +361,15 @@ export function startDiscussionCycle(
     `).run(
       id,
       input.topicId,
+      seed ? "critique" : "proposal",
       JSON.stringify(input.participants),
       input.kind,
       JSON.stringify(input.requirements),
       JSON.stringify(input.runtimeCapabilities),
+      JSON.stringify(initialTurns),
       input.roundBudget,
-      input.contextCursor?.messageId ?? null,
-      input.contextCursor?.createdAt ?? null,
+      input.contextCursor?.messageId ?? seed?.messageId ?? null,
+      input.contextCursor?.createdAt ?? seed?.createdAt ?? null,
       input.now,
       input.now,
     );

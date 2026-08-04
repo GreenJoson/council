@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：议题、流体消息列、编辑器、检查器、对话框与决策记录归档样式
+ * @output 导出：议题、流体消息列、圆桌上下行模式项、检查器、对话框与决策归档样式
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -2197,11 +2197,31 @@
 }
 
 .cycle-mode {
+  align-items: flex-start;
   margin-top: 10px;
+}
+
+.cycle-mode > input {
+  flex: none;
+  margin-top: 2px;
+}
+
+.cycle-mode-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.cycle-mode .cycle-roster-name {
+  flex: none;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .cycle-mode .cycle-hint-inline {
   color: var(--color-text-muted);
+  line-height: 1.45;
 }
 
 .cycle-metrics {

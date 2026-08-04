@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Claude CLI、AbortController 与纯 ClaudeRuntime
- * @output 导出：stream-json 增量、生成、恢复、取消、超时、回合耗尽和安全错误边界测试
+ * @output 导出：stream-json 增量、生成、恢复、取消、抗并发调度超时、回合耗尽和安全错误边界测试
  * @pos    无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -183,12 +183,13 @@ function createConfig(
   };
 }
 
-async function waitForPid(pidFile: string): Promise<number> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitForPid(pidFile: string, timeoutMs = 3_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (existsSync(pidFile)) {
       return Number(readFileSync(pidFile, "utf8"));
     }
-    await delay(5);
+    await delay(10);
   }
   throw new Error("假 Claude 进程没有按时写入 PID。");
 }
@@ -399,7 +400,8 @@ test("ClaudeRuntime 超时后结束子进程", async () => {
   writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
   try {
     const config = createConfig(directory, fakeClaudePath, "hang", {
-      claudeTimeoutMs: 500,
+      // 全量测试并发启动多个 Node 进程；给启动握手留余量，仍验证同一超时终止路径。
+      claudeTimeoutMs: 2_500,
     });
     config.claudeArgs.push("--pid-file", pidFile);
     const runtime = new ClaudeRuntime(config);

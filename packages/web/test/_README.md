@@ -18,6 +18,6 @@
 | `desktop-bridge.test.ts` | 桌面边界 | 验证原生目录取消、设置解析和 invoke payload |
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
 | `mention-parser.test.ts` | 查询测试 | 验证动态 mentionAlias、同 Provider 多 Agent、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
-| `webui-smoke.py` | 浏览器测试 | 验证 Model Router 的 Claude/Codex Provider 与 Agent 身份只读、单一当前调用/折叠历史、默认免复核、时间线实时草稿、议题隔离、大屏讨论列、移动端抽屉、无横向滚动和控制台错误 |
+| `webui-smoke.py` | 浏览器测试 | 验证圆桌模式标题/说明上下排列、Model Router 身份只读、单一当前调用、实时草稿、议题隔离、大屏讨论列、移动端抽屉与控制台错误 |
 | `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、远程 Provider 双 Agent 热加载、别名/停用/删除恢复边界、Provider 滚动、外部 API 回帖经 SSE 自动出现、Claude 子进程编排、人工门与 Web 回写 |
 | `error-message.test.ts` | 单元测试 | 验证启动失败路径的文案归一化：Tauri 字符串 reject 与对象 message 必须保留，只有空白值才回落到通用文案 |

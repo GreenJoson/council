@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLiteCouncilStore 收敛入口、编排 Run 生命周期与阶段指令契约
- * @output 导出：开局、按状态机自动交接下一位 Agent、终态结算的圆桌驱动器
+ * @output 导出：复用既有提案、自动交接下一位 Agent、终态结算的圆桌驱动器
  * @pos    把「谁下一个说话」从用户手里接过来的唯一处；自身不召唤 Agent，只创建并启动 Run
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import {
   buildStageInstruction,
+  OrchestrationConfigError,
   type DiscussionCycleView,
   type DiscussionCycleKind,
   type FrozenCycleRequirements,
@@ -74,6 +75,22 @@ export class CycleDriver {
   }
 
   async start(input: StartCycleInput): Promise<DiscussionCycleView> {
+    const proposerAgentId = input.participants[0];
+    const proposerActorId = input.runtimeCapabilities.find(
+      (snapshot) => snapshot.adapterId === proposerAgentId,
+    )?.actorId;
+    if (!proposerAgentId || !proposerActorId) {
+      throw new OrchestrationConfigError("圆桌缺少提案人的冻结身份，尚未启动。");
+    }
+    const reusableProposal = this.#store.findReusableProposalMessage(
+      input.topicId,
+      proposerActorId,
+    );
+    if (input.kind === "fix_review" && !reusableProposal?.commitRef) {
+      throw new OrchestrationConfigError(
+        "已提交修复互审需要提案人先公开真实 commit；审核未提交工作区请关闭该选项。",
+      );
+    }
     const opened = this.#store.startDiscussionCycle({
       topicId: input.topicId,
       participants: input.participants,
@@ -81,6 +98,9 @@ export class CycleDriver {
       requirements: input.requirements,
       runtimeCapabilities: input.runtimeCapabilities,
       roundBudget: input.roundBudget ?? DEFAULT_ROUND_BUDGET,
+      ...(reusableProposal
+        ? { seedProposalMessageId: reusableProposal.messageId }
+        : {}),
       now: this.#now(),
     });
     await this.advance(input.topicId);

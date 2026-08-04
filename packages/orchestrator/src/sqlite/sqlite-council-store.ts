@@ -1,6 +1,6 @@
 /**
  * @input  依赖：含动态 Actor/RuntimeBinding 的 Council SQLite、编排端口与拆分后的上下文/原子提交模块
- * @output 导出：旧 Run 只读/取消、v4 绑定冻结、双 lease fencing 与 SQLiteCouncilStore
+ * @output 导出：旧 Run 只读/取消、双 lease fencing、可复用提案与 SQLiteCouncilStore
  * @pos    编排 Store 门面；把调用上下文和单轮原子提交委托给专职模块
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -61,6 +61,7 @@ import {
   abandonDiscussionCycle,
   answerBlockingQuestion,
   completeDiscussionCycle,
+  findReusableProposalMessage,
   hasActiveOrchestrationRun,
   readActiveDiscussionCycle,
   readLatestDiscussionCycle,
@@ -69,6 +70,7 @@ import {
   type AnswerBlockingQuestionInput,
   type CompleteDiscussionCycleInput,
   type DiscussionCycleView,
+  type ReusableProposalMessage,
   type StartDiscussionCycleInput,
 } from "../cycle/cycle-repository.js";
 import type { DiscussionCycle } from "../cycle/cycle-codec.js";
@@ -1057,6 +1059,13 @@ export class SQLiteCouncilStore implements CouncilStore {
 
   startDiscussionCycle(input: StartDiscussionCycleInput): DiscussionCycleView {
     return this.#transaction(() => startDiscussionCycle(this.#database, input));
+  }
+
+  findReusableProposalMessage(
+    topicId: string,
+    proposerActorId: string,
+  ): ReusableProposalMessage | undefined {
+    return findReusableProposalMessage(this.#database, topicId, proposerActorId);
   }
 
   readActiveDiscussionCycle(topicId: string): DiscussionCycleView | undefined {

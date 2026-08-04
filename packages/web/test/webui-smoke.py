@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、系统 Agent 身份只读、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
+@output 导出：桌面交互、圆桌模式上下行布局、系统 Agent 身份只读、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -200,6 +200,25 @@ def verify_compact_run_history(page) -> None:
     assert page.locator(".run-history-row").count() == 2
 
 
+def verify_cycle_mode_layout(page) -> None:
+    mode = page.locator(".cycle-mode")
+    title = mode.get_by_text("bug 修复互审", exact=True)
+    description = mode.get_by_text(
+        "只审核已公开真实 commit；审核未提交工作区请保持关闭",
+        exact=True,
+    )
+    title_box = title.bounding_box()
+    description_box = description.bounding_box()
+    assert title_box is not None
+    assert description_box is not None
+    assert title_box["height"] < 24, title_box
+    assert title_box["width"] > 70, title_box
+    assert description_box["y"] >= title_box["y"] + title_box["height"], (
+        title_box,
+        description_box,
+    )
+
+
 def verify_agent_reply_activity(page) -> None:
     activity = page.get_by_role("status", name="Claude 正在回复", exact=True)
     activity.wait_for()
@@ -319,6 +338,7 @@ def verify_desktop(browser) -> list[str]:
     verify_card_bottom_collapse_control(page)
     verify_media_preview_and_lightbox(page)
 
+    verify_cycle_mode_layout(page)
     verify_compact_run_history(page)
     verify_agent_reply_activity(page)
 

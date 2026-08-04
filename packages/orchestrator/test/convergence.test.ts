@@ -349,7 +349,7 @@ test("修复自述必须给出像 commit 的引用，分支名和残缺尾块一
   }
 });
 
-test("互审指令带上被审 commit，并且始终禁止放行读不到的改动", () => {
+test("已提交修复互审强制 commit，普通讨论允许独立读取未提交工作区", () => {
   const withDiff = buildStageInstruction({
     stage: "critique",
     round: 2,
@@ -357,22 +357,34 @@ test("互审指令带上被审 commit，并且始终禁止放行读不到的改�
     reviewers: ["codex"],
     proposer: "claude",
     reviewedCommitRef: "a1b2c3d4e5f6",
+    requiresCommitRef: true,
   });
   assert.ok(withDiff.includes("git show a1b2c3d4e5f6"), "复审者必须拿到可执行的读 diff 指令");
   assert.ok(withDiff.includes("只读复审"), "复审者不得改代码");
 
-  // 对方没按协议给引用时，这条规则仍要在——否则"互审"会退化成互相看描述。
-  const withoutDiff = buildStageInstruction({
+  const missingCommittedDiff = buildStageInstruction({
+    stage: "critique",
+    round: 1,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+    requiresCommitRef: true,
+  });
+  for (const instruction of [withDiff, missingCommittedDiff]) {
+    assert.ok(instruction.includes("council-fix"), "评审必须知道该向对方要什么");
+    assert.ok(instruction.includes("验证不了的改动"), "缺引用时的判定规则必须无条件下发");
+  }
+
+  const workspaceReview = buildStageInstruction({
     stage: "critique",
     round: 1,
     roundBudget: 3,
     reviewers: ["codex"],
     proposer: "claude",
   });
-  for (const instruction of [withDiff, withoutDiff]) {
-    assert.ok(instruction.includes("council-fix"), "评审必须知道该向对方要什么");
-    assert.ok(instruction.includes("验证不了的改动"), "缺引用时的判定规则必须无条件下发");
-  }
+  assert.ok(workspaceReview.includes("工作区 diff"));
+  assert.ok(workspaceReview.includes("可变工作区快照"));
+  assert.ok(!workspaceReview.includes("council-fix"));
 
   // 主审只传递交互式开发任务产生的 commit；Council headless 回合不得写代码。
   const leadReviewer = buildStageInstruction({

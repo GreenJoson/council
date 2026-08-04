@@ -76,4 +76,4 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续调用。
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 按持久化 cycle kind 决定下一位发言人并创建/启动 Run；提问处停住，收敛时写 proposed 决策，预算用尽原子保存结构化阻断分歧 |
+| `cycle-driver.ts` | 自动交接 | 冻结并复用提案人已有 proposal/开场 brief，按 cycle kind 直接交给首位评审；已提交修复缺 commit 时零调用拒绝，提问处停住，收敛时写 proposed 决策 |

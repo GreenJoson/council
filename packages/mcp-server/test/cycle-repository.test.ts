@@ -1,6 +1,6 @@
 /**
  * @input  依赖：生产迁移器产出的真实当前版本库与 council-orchestrator 收敛仓储
- * @output 验证：开局唯一性、能力快照重启恢复、发言推进与 CAS、提问挂起/回答幂等、收敛与放弃终态
+ * @output 验证：开场 brief 提案复用、开局唯一性、能力快照、CAS、提问与收敛终态
  * @pos    收敛协议的持久化验收；刻意跑在真实迁移库上而不是手搭 fixture 上
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -19,6 +19,7 @@ import {
   answerBlockingQuestion,
   completeDiscussionCycle,
   deriveCycleRequirements,
+  findReusableProposalMessage,
   openBlockingQuestion,
   readActiveDiscussionCycle,
   readLatestDiscussionCycle,
@@ -71,18 +72,85 @@ async function openSeeded(databasePath: string): Promise<DatabaseSync> {
 /** 写一条公开消息作为发言/提问/回答的锚点，返回消息 id。 */
 function postMessage(
   database: DatabaseSync,
-  input: { id: string; actorId: string; kind: string },
+  input: { id: string; actorId: string; kind: string; content?: string },
 ): string {
   database.prepare(`
     INSERT INTO messages (
       id, topic_id, author_actor_id, author_snapshot_json, author_legacy,
       kind, content, parent_message_id, created_at
     )
-    SELECT ?, ?, id, ${ACTOR_SNAPSHOT_SQL}, NULL, ?, '正文', NULL, ?
+    SELECT ?, ?, id, ${ACTOR_SNAPSHOT_SQL}, NULL, ?, ?, NULL, ?
     FROM actor_identities WHERE id = ?
-  `).run(input.id, TOPIC, input.kind, NOW, input.actorId);
+  `).run(input.id, TOPIC, input.kind, input.content ?? "正文", NOW, input.actorId);
   return input.id;
 }
+
+test("提案人创建议题时的开场 brief 可冻结为提案并直接进入首位评审", async () => {
+  const fixture = temporaryDatabase();
+  const database = await openSeeded(fixture.databasePath);
+  try {
+    database.prepare(`
+      UPDATE topics
+      SET created_by_actor_id = 'claude',
+          created_by_snapshot_json = (
+            SELECT ${ACTOR_SNAPSHOT_SQL} FROM actor_identities WHERE id = 'claude'
+          )
+      WHERE id = ?
+    `).run(TOPIC);
+    const messageId = postMessage(database, {
+      id: "message_existing_brief",
+      actorId: "claude",
+      kind: "brief",
+      content: "已有完整提案与验证证据。",
+    });
+    const reusable = findReusableProposalMessage(database, TOPIC, "claude");
+    assert.equal(reusable?.messageId, messageId);
+
+    const opened = startDiscussionCycle(database, {
+      topicId: TOPIC,
+      participants: PARTICIPANTS,
+      kind: "discussion",
+      requirements: deriveCycleRequirements({
+        kind: "discussion",
+        participants: PARTICIPANTS,
+      }),
+      runtimeCapabilities: PARTICIPANTS.map((adapterId) => ({
+        schemaVersion: 1,
+        adapterId,
+        actorId: adapterId,
+        agentConfigRevision: 1,
+        providerId: `provider-${adapterId}`,
+        providerConfigRevision: 1,
+        bindingRevision: `test:${adapterId}`,
+        transportKind: "test",
+        declared: ["text"],
+        granted: ["text"],
+      })),
+      roundBudget: 3,
+      seedProposalMessageId: messageId,
+      now: NOW,
+    });
+
+    assert.equal(opened.cycle.stage, "critique");
+    assert.deepEqual(opened.cycle.turns, [{
+      agentId: "claude",
+      stage: "proposal",
+      round: 1,
+      stance: "agree",
+      messageId,
+    }]);
+    assert.deepEqual(opened.action, {
+      kind: "invoke",
+      agentId: "codex",
+      stage: "critique",
+      messageKind: "critique",
+      round: 1,
+    });
+  } finally {
+    database.close();
+    fixture.cleanup();
+  }
+});
 
 function start(database: DatabaseSync, roundBudget = 3): DiscussionCycleView {
   return startDiscussionCycle(database, {
