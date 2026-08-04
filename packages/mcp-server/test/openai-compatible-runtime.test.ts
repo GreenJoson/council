@@ -1,6 +1,6 @@
 /**
  * @input  依赖：本地 HTTP 测试服务、OpenAICompatibleModelClient 与兼容 Runtime
- * @output 验证：兼容流式请求、Tool Call 增量、文本增量、JSON 回退、认证分类与输出上限
+ * @output 验证：兼容流式请求、Tool Call 增量、文本增量、JSON 回退、HTTP 安全原因与输出上限
  * @pos    DeepSeek/Kimi API ModelClient 与纯文本兼容层的协议回归测试
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -173,11 +173,70 @@ test("兼容运行时将认证失败分类为不可重试且不公开响应正�
         assert.ok(error instanceof OpenAICompatibleRuntimeError);
         assert.equal(error.retryable, false);
         assert.equal(error.diagnosticCode, "authentication");
+        assert.equal(error.message, "API Key 无效或已过期（HTTP 401），请检查 Provider 设置。");
         assert.equal(error.message.includes("sensitive upstream detail"), false);
         return true;
       },
     );
   });
+});
+
+test("兼容运行时将限流状态转换为可恢复的安全原因", async () => {
+  await withServer((_request, response) => {
+    response.statusCode = 429;
+    response.end(JSON.stringify({ error: { message: "private rate-limit detail" } }));
+  }, async (baseUrl) => {
+    const runtime = new OpenAICompatibleRuntime(1_000, 5_000);
+    await assert.rejects(
+      runtime.generate({
+        baseUrl,
+        model: "test-model",
+        apiKey: "test-key",
+        prompt: "test prompt",
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof OpenAICompatibleRuntimeError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.diagnosticCode, "rate_limited");
+        assert.match(error.message, /Provider 已限流（HTTP 429）/);
+        assert.equal(error.message.includes("private rate-limit detail"), false);
+        return true;
+      },
+    );
+  });
+});
+
+test("兼容运行时区分额度、权限、服务故障与请求参数", async () => {
+  const cases = [
+    { status: 402, code: "quota_exhausted", retryable: false, pattern: /API 额度不足/ },
+    { status: 403, code: "authentication", retryable: false, pattern: /没有该模型或接口权限/ },
+    { status: 503, code: "provider_unavailable", retryable: true, pattern: /服务暂时不可用/ },
+    { status: 400, code: "request_rejected", retryable: false, pattern: /模型 ID、API 地址与参数兼容性/ },
+  ] as const;
+  for (const expected of cases) {
+    await withServer((_request, response) => {
+      response.statusCode = expected.status;
+      response.end("private upstream response");
+    }, async (baseUrl) => {
+      const runtime = new OpenAICompatibleRuntime(1_000, 5_000);
+      await assert.rejects(
+        runtime.generate({
+          baseUrl,
+          model: "test-model",
+          apiKey: "test-key",
+          prompt: "test prompt",
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof OpenAICompatibleRuntimeError);
+          assert.equal(error.diagnosticCode, expected.code);
+          assert.equal(error.retryable, expected.retryable);
+          assert.match(error.message, expected.pattern);
+          assert.equal(error.message.includes("private upstream response"), false);
+          return true;
+        },
+      );
+    });
+  }
 });
 
 test("兼容运行时拒绝超过上限的远程响应", async () => {

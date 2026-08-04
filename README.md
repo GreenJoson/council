@@ -74,7 +74,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Kun 风格的只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 暴露项目内读文件、列目录、文本搜索和受控已提交 Git diff；AgentLoop 在统一步骤、上下文、文件、扫描与 diff 预算内迭代；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
 - 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
 - Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
-- Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、额度不足、模型不可用和工具回合耗尽可直接辨认，原始上游输出不会进入议题记录。
+- Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、模型不可用、工具回合耗尽，以及兼容 Provider 的认证、权限、额度、HTTP 429 限流、服务故障和请求拒绝均可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
 - Node 迁移器在服务就绪前执行连续版本镜像校验、WAL checkpoint、官方在线备份、只读备份验证、canonical schema 校验和排他事务迁移；桌面 Rust 层只有收到 `ready` 且数据库实例 UUID 与 Store 一致后才打开数据库。
 - 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。

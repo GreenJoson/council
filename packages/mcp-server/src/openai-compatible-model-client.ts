@@ -1,6 +1,6 @@
 /**
  * @input  依赖：OpenAI-compatible Chat Completions、消息、只读工具定义与 AbortSignal
- * @output 导出：有界 ModelClient、公开文本增量、结构化 Tool Call 与脱敏错误
+ * @output 导出：有界 ModelClient、公开文本增量、结构化 Tool Call 与按 HTTP 状态脱敏的错误原因
  * @pos    Provider 通信层；不访问项目文件、不执行工具、不管理 Council 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -123,19 +123,39 @@ async function readBoundedText(response: Response, maximum: number): Promise<str
 }
 
 function classifyResponseStatus(status: number): OpenAICompatibleRuntimeError {
-  const diagnosticCode = status === 401 || status === 403
-    ? "authentication"
-    : status === 402
-      ? "quota_exhausted"
-      : status === 429
-        ? "rate_limited"
-        : status >= 500
-          ? "provider_unavailable"
-          : "request_rejected";
+  const diagnostic = status === 401
+    ? {
+        code: "authentication",
+        message: "API Key 无效或已过期（HTTP 401），请检查 Provider 设置。",
+      }
+    : status === 403
+      ? {
+          code: "authentication",
+          message: "API Key 没有该模型或接口权限（HTTP 403），请检查 Provider 账户权限。",
+        }
+      : status === 402
+        ? {
+            code: "quota_exhausted",
+            message: "Provider API 额度不足或账户欠费（HTTP 402），请检查账户余额与套餐。",
+          }
+        : status === 429
+          ? {
+              code: "rate_limited",
+              message: "Provider 已限流（HTTP 429）：可能达到请求速率、Token 速率、并发或账户限制，请稍后恢复并检查 Provider 控制台。",
+            }
+          : status >= 500
+            ? {
+                code: "provider_unavailable",
+                message: `Provider 服务暂时不可用（HTTP ${String(status)}），请稍后恢复。`,
+              }
+            : {
+                code: "request_rejected",
+                message: `Provider 拒绝了请求（HTTP ${String(status)}），请检查模型 ID、API 地址与参数兼容性。`,
+              };
   return new OpenAICompatibleRuntimeError(
-    "远程模型返回失败状态。",
+    diagnostic.message,
     status === 429 || status >= 500,
-    diagnosticCode,
+    diagnostic.code,
   );
 }
 

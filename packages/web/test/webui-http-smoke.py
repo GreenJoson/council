@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE、远程 Provider、受控 Git ToolLoop、配置失效边界与 Claude 验收
+@output 导出：项目隔离、REST/SSE、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界与 Claude 验收
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -353,6 +353,10 @@ with sync_playwright() as playwright:
         "制造可恢复失败后停用 Agent。",
     )
     wait_for_run_status(disabled_run["id"], "failed")
+    page.get_by_text(
+        "Provider 服务暂时不可用（HTTP 503），请稍后恢复。",
+        exact=True,
+    ).wait_for()
     api_request(
         "PUT",
         f"/api/v1/settings/agents/{disabled_agent['id']}",

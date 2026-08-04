@@ -26,7 +26,7 @@
 | `acp-delegated-agent-adapter.test.ts` | Runtime 契约测试 | 验证通用 ACP session 续接、只读工具事件归 Runtime 所有、隐藏思考隔离与 binding 关闭桥 |
 | `model-router.test.ts` | 安全测试 | 验证同 Provider 多 Agent/独立 UUID Actor 与 alias、Kimi/Gemini/Grok/Codex/Claude ACP 目录、Kimi/DeepSeek 自定义 alias 与删除后自然 alias 重建跨迁移重开稳定、品牌不退化为 Other、Claude/Codex 身份不可变、Provider 软删除后原行复活与新凭据生效、API Key 零落盘、Keychain/alias 原子回滚及活动 Run 变更失败关闭 |
 | `keychain-secret-store.test.ts` | 安全测试 | 验证 Keychain 凭据不存在返回空值，命令故障必须 fail closed |
-| `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、错误脱敏与有界响应 |
+| `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、HTTP 安全原因映射、错误脱敏与有界响应 |
 | `read-only-tool-host.test.ts` | ToolHost 安全测试 | 验证读文件、列目录、文本搜索、敏感配置拒绝与符号链接逃逸阻断 |
 | `read-only-agent-loop.test.ts` | AgentLoop 行为测试 | 验证模型—工具多步循环、工具事件、公开文本替换与步骤预算耗尽 |
 | `read-only-git-diff.test.ts` | Git 安全测试 | 验证 commit/ref 固定解析、敏感文件及 rename 过滤、外部 diff 驱动禁用、预算降级和单工具 MCP 暴露 |
