@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；Node sidecar 独占生产 schema 迁移，Rust 只有收到 `ready=true` 后才验证并打开 Store。Rust 内容命令按 active alias 解析动态 Actor 并返回冻结快照；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.5.12`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本让兼容 Provider 的失败卡按 HTTP 状态显示脱敏原因与恢复建议：认证、权限、额度、限流、服务故障和请求拒绝不再退化为同一条通用文案。
+当前桌面发行版本为 `0.5.13`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本增加 Human / Accepted 人工决策入口：外部实现、验证或部署已经完成时，用户可零 Agent 调用直接记录结论、关闭议题及其 RuntimeBinding。

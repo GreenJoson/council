@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构档案/决策记录）和三栏组件
- * @output 导出：含既有提案复用反馈的 App Operator Console 根组件
+ * @output 导出：含既有提案复用与 Human Decision 直达路径的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
  *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
@@ -22,6 +22,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArchitectureView } from "./components/ArchitectureView";
 import { ModelRouterDialog } from "./components/ModelRouterDialog";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
+import {
+  ManualDecisionDialog,
+  type ManualDecisionDraft,
+} from "./components/ManualDecisionDialog";
 import { DecisionRecordsView, type DecisionRecordFocusRequest } from "./components/DecisionRecordsView";
 import { DesktopSetup } from "./components/DesktopSetup";
 import type { MentionPublishRequest } from "./components/Composer";
@@ -45,6 +49,7 @@ import type {
   CreateTopicInput,
   MessageKind,
   Participant,
+  RecordManualDecisionInput,
   WorkspaceSnapshot,
 } from "./types/council";
 import { getErrorMessage } from "./data/error-message";
@@ -87,8 +92,10 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isRecordingManualDecision, setIsRecordingManualDecision] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isManualDecisionOpen, setIsManualDecisionOpen] = useState(false);
   const [isTopicsOpen, setIsTopicsOpen] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [isModelRouterOpen, setIsModelRouterOpen] = useState(false);
@@ -471,6 +478,30 @@ export default function App() {
     }
   }
 
+  async function handleRecordManualDecision(draft: ManualDecisionDraft): Promise<boolean> {
+    if (!activeTopicId) {
+      return false;
+    }
+    setIsRecordingManualDecision(true);
+    setContentErrorMessage(null);
+    try {
+      const input: RecordManualDecisionInput = {
+        topicId: activeTopicId,
+        ...draft,
+      };
+      const snapshot = await repository.recordManualDecision(input);
+      setWorkspace(snapshot);
+      setSelectedTopicId(activeTopicId);
+      setToastMessage("人工决策已记录，议题已结束");
+      return true;
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+      return false;
+    } finally {
+      setIsRecordingManualDecision(false);
+    }
+  }
+
   async function handleCreateTopic(
     input: CreateTopicInput,
     targetProjectPath?: string,
@@ -737,14 +768,18 @@ export default function App() {
               orchestrationBusyAction={orchestrationBusyAction}
               isAccepting={isAccepting}
               onAccept={handleAccept}
+              isRecordingManualDecision={isRecordingManualDecision}
+              onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               decisionFocusNonce={topicDecisionFocusNonce}
             />
             <InspectorPanel
               topic={selectedTopic}
               participants={participants}
               isAccepting={isAccepting}
+              isRecordingManualDecision={isRecordingManualDecision}
               isOpen={isInspectorOpen}
               onAccept={handleAccept}
+              onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               onOpenDecision={() =>
                 setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}
               onClose={() => setIsInspectorOpen(false)}
@@ -793,6 +828,17 @@ export default function App() {
         onBrowseProject={nativeRepository
           ? () => handleDesktopSelection("project", { keepWorkspace: true })
           : undefined}
+      />
+      <ManualDecisionDialog
+        isOpen={isManualDecisionOpen}
+        isRecording={isRecordingManualDecision}
+        topicTitle={selectedTopic?.title ?? ""}
+        onClose={() => {
+          if (!isRecordingManualDecision) {
+            setIsManualDecisionOpen(false);
+          }
+        }}
+        onRecord={handleRecordManualDecision}
       />
       <ModelRouterDialog
         isOpen={isModelRouterOpen}

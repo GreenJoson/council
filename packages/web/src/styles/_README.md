@@ -14,4 +14,5 @@
 | `architecture.css` | 架构档案 | 独立定义项目概览、演进时间线、不变量和架构图集视觉 |
 | `mentions.css` | Agent 召唤 | 独立定义自动补全菜单、召唤状态提示和消息流召唤芯片 |
 | `model-router.css` | 设置 | 独立定义固定高度 Provider/Agent 路由台、紧凑目录、单项编辑工作台和移动视觉 |
+| `manual-decision.css` | 人工决策 | 定义零 Agent 调用提示、人工结束入口与紧凑确认表单的增量视觉 |
 | `responsive.css` | 适配 | 定义桌面设置卡、平板/手机讨论列回退、离线入口和低动态偏好规则 |

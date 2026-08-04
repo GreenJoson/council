@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpCouncilRepository、HTTP 客户端和可控 Fetch/SSE 替身
- * @output 导出：HTTP 错误、真实写入、事件合并刷新与只读议题详情加载测试
+ * @output 导出：HTTP 错误、人工 Accepted、真实写入、事件刷新与只读详情测试
  * @pos    Web 真实数据层的传输与实时同步回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -338,6 +338,42 @@ describe("HttpCouncilRepository", () => {
       question: "如何验证？",
       constraints: [],
       projectPath: "/path/to/project",
+    });
+  });
+
+  it("人工决策直接写 accepted，不经过消息或 Agent 入口", async () => {
+    const fixture = createApiFixture();
+    const repository = new HttpCouncilRepository({
+      ...HTTP_OPTIONS,
+      baseUrl: "https://example.com",
+      fetcher: fixture.fetcher,
+      eventStreamFactory: () => new FakeEventStream(),
+    });
+    await repository.loadWorkspace();
+
+    const snapshot = await repository.recordManualDecision({
+      topicId: "topic-one",
+      title: "外部修复已上线",
+      summary: "修复完成，线上验证通过。",
+      rationale: "部署记录和回滚点已经核对。",
+    });
+
+    expect(snapshot.topics[0]?.decision).toMatchObject({
+      title: "外部修复已上线",
+      summary: "修复完成，线上验证通过。",
+      status: "accepted",
+      proposedBy: "human",
+    });
+    const decisionRequest = fixture.requests.find(
+      (request) => request.url.pathname.endsWith("/decisions")
+        && request.init?.method === "POST",
+    );
+    expect(JSON.parse(String(decisionRequest?.init?.body))).toEqual({
+      title: "外部修复已上线",
+      decision: "修复完成，线上验证通过。",
+      rationale: "部署记录和回滚点已经核对。",
+      alternatives: [],
+      status: "accepted",
     });
   });
 

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 假实现与 Rust 同形领域响应
- * @output 导出：NativeCouncilRepository 加载、映射、项目切换与只读议题详情加载测试
+ * @output 导出：NativeCouncilRepository 加载、人工 Accepted、项目切换与只读详情测试
  * @pos    桌面内容闭环不依赖真实 Tauri 窗口的回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -131,6 +131,34 @@ describe("NativeCouncilRepository", () => {
     const settings = await repository.selectRecentProject("/workspace/project-beta");
     expect(settings.currentProjectPath).toBe("/workspace/project-beta");
     expect(injected.selectProject).toHaveBeenCalledWith("/workspace/project-beta");
+  });
+
+  it("人工决策调用 Rust record_decision 并固定 human accepted", async () => {
+    const injected = bridge();
+    const repository = new NativeCouncilRepository({
+      bridge: injected,
+      topicPageSize: 100,
+      messagePageSize: 100,
+      recoveryDelayMs: 60_000,
+    });
+    await repository.getDesktopSettings();
+    await repository.loadWorkspace();
+
+    await repository.recordManualDecision({
+      topicId: TOPIC.id,
+      title: "外部实施已完成",
+      summary: "修复已经部署。",
+      rationale: "线上验证通过。",
+    });
+
+    expect(injected.recordDecision).toHaveBeenCalledWith({
+      topicId: TOPIC.id,
+      title: "外部实施已完成",
+      decision: "修复已经部署。",
+      rationale: "线上验证通过。",
+      alternatives: [],
+      status: "accepted",
+    });
   });
 
   it("切换项目后丢弃旧项目的在途加载结果", async () => {

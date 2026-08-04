@@ -169,6 +169,11 @@ Codex 会读取 Claude 的公开方案，检查项目证据，并发布一条 `c
 当你明确接受方案后，在 Council 桌面端点击接受决策。MCP 工具只能记录 `proposed`，不能把
 Agent 身份伪装成用户并写入 `accepted`；桌面/HTTP 用户入口确认后，议题才标记为 `decided`。
 
+如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
+点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
+会以 Human 身份直接写入 `accepted`，关闭圆桌、持久会话和后续 Agent 入口；整个过程不会创建
+Run，也不会产生模型调用或额度消耗。
+
 ## 模式二：Codex 自动调用 Claude
 
 这种模式不需要切换窗口，但 Codex 会在后台调用 Claude Code CLI。
@@ -290,6 +295,7 @@ Operator Console 会显示每个 Agent 当前逻辑绑定的状态。手动关�
 - `proposal` 是方案，`critique` 是具体批评，`rebuttal` 是回应，`synthesis` 是综合。
 - 用户未明确接受时，决策状态必须是 `proposed`。
 - `accepted` 表示已经确认采用，不是“两个模型看起来意见一致”。
+- 外部工作已经完成时，可以由用户在“决策”页直接记录人工 `accepted` 并结束议题，无需先生成 Agent 决策。
 - 长期有效的最终结论应同步写入项目 ADR 或架构文档；SQLite 讨论记录不是项目文档的替代品。
 
 ## 隐私边界

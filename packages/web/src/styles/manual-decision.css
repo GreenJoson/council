@@ -1,0 +1,67 @@
+/**
+ * @input  依赖：theme.css、components.css 的 dialog 与按钮基础样式
+ * @output 导出：Human Decision 签署提示与紧凑操作入口视觉
+ * @pos    人工结束议题流程的独立增量样式层
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+.manual-decision-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.manual-decision-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-positive) 36%, var(--color-divider));
+  border-radius: var(--radius-small);
+  background:
+    linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--color-positive) 10%, transparent),
+      transparent 72%
+    ),
+    var(--color-surface-raised);
+  color: var(--color-text-secondary);
+}
+
+.manual-decision-notice > svg {
+  margin-top: 1px;
+  color: var(--color-positive);
+}
+
+.manual-decision-notice strong,
+.manual-decision-notice span {
+  display: block;
+}
+
+.manual-decision-notice strong {
+  font-size: 11px;
+  letter-spacing: 0.01em;
+}
+
+.manual-decision-notice span {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.manual-decision-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  margin-top: 12px;
+}
+
+.topic-decision-actions .manual-decision-entry {
+  margin-top: 0;
+}
+
+.decision-card > .manual-decision-entry {
+  width: 100%;
+}

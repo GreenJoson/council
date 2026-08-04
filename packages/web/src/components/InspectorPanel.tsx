@@ -1,6 +1,6 @@
 /**
  * @input  依赖：含 owner/备选冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、按议题状态控制的 Agent 调用和决策状态卡
+ * @output 导出：InspectorPanel 议题摘要、Agent 调用、人工签署入口和决策状态卡
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
  *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
  *         决策状态徽章走 presentation.tsx 的 DecisionStatusBadge，三态共用同一套文案
@@ -40,8 +40,10 @@ export interface InspectorPanelProps {
   topic: TopicDetail;
   participants: Map<string, Participant>;
   isAccepting: boolean;
+  isRecordingManualDecision: boolean;
   isOpen: boolean;
   onAccept: () => Promise<void>;
+  onRecordManualDecision: () => void;
   /** 切到主列「决策」tab 读全文 */
   onOpenDecision: () => void;
   onClose: () => void;
@@ -75,8 +77,10 @@ export function InspectorPanel({
   topic,
   participants,
   isAccepting,
+  isRecordingManualDecision,
   isOpen,
   onAccept,
+  onRecordManualDecision,
   onOpenDecision,
   onClose,
   orchestration,
@@ -267,6 +271,17 @@ export function InspectorPanel({
                   ? "记录中…"
                   : "标记为 Accepted"}
           </button>
+          {decision.status === "proposed" ? (
+            <button
+              className="secondary-button manual-decision-entry"
+              type="button"
+              disabled={isAccepting || isRecordingManualDecision}
+              onClick={onRecordManualDecision}
+            >
+              <FileText size={15} />
+              记录独立人工决策
+            </button>
+          ) : null}
         </section>
       ) : (
         <section className="decision-card">
@@ -277,7 +292,16 @@ export function InspectorPanel({
             </div>
           </div>
           <h3>尚无拟议决策</h3>
-          <p>Agent 提交结构化决策后，可以在这里审阅和接受。</p>
+          <p>无需等待 Agent，你可以直接记录外部实施结果并结束议题。</p>
+          <button
+            className="primary-button manual-decision-entry"
+            type="button"
+            disabled={isRecordingManualDecision}
+            onClick={onRecordManualDecision}
+          >
+            <FileText size={15} />
+            人工记录并结束
+          </button>
         </section>
       )}
     </aside>

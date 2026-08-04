@@ -1,7 +1,7 @@
 /**
  * @input  依赖：无
  * @output 导出：Council Web 的动态 Actor、Topic/Message/Decision 行快照、
- *         superseded/decidedAt 与仓储边界类型
+ *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
  *         同时供讨论面板、决策记录与架构档案三处消费
  *
@@ -96,6 +96,13 @@ export interface CouncilDecision {
    * workspace-mapper.ts 顶部注释），UI 需要在缺省时优雅降级为"仅显示已取代状态，不提供跳转"。
    */
   supersededByTopicId?: string;
+}
+
+export interface RecordManualDecisionInput {
+  topicId: string;
+  title: string;
+  summary: string;
+  rationale: string;
 }
 
 export interface TopicDetail extends TopicSummary {

@@ -44,6 +44,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 创建、查询和分页列出架构议题。
 - 发布带类型的方案、批评、反驳、综合与备注。
 - 记录可追踪的架构决策及其状态。
+- 用户可直接记录 Human / Accepted 人工决策并结束议题；该路径不创建 Run、不调用 Agent，适合外部修复、验证或部署已经完成的场景。
 - 以动态 Actor Identity、大小写不敏感 alias 和冻结快照记录公开身份；Claude、Codex、
   DeepSeek、Kimi 各自独立，历史 `other` 只进入待审计兼容身份。
 - 让多个 MCP 客户端共享同一份本地 SQLite 数据。

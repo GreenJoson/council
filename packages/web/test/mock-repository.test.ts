@@ -1,6 +1,6 @@
 /**
  * @input  依赖：MockCouncilRepository 和 mock 工作区
- * @output 导出：建议题、发帖、订阅、接受决策与只读议题详情加载测试
+ * @output 导出：建议题、发帖、人工 Accepted、接受决策与只读详情测试
  * @pos    WebUI 数据状态转换的单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,7 @@ describe("MockCouncilRepository", () => {
 
     expect(snapshot.topics[0]?.title).toBe("缓存一致性边界");
     expect(snapshot.topics[0]?.constraints).toHaveLength(1);
+    expect(snapshot.topics[0]?.decision).toBeUndefined();
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
@@ -46,6 +47,31 @@ describe("MockCouncilRepository", () => {
     const decidedTopic = afterDecision.topics.find((topic) => topic.id === topicId);
     expect(decidedTopic?.decision.status).toBe("accepted");
     expect(decidedTopic?.status).toBe("decided");
+  });
+
+  it("没有 Agent 提案时由用户直接记录 Accepted 并结束议题", async () => {
+    const repository = new MockCouncilRepository(0);
+    const created = await repository.createTopic({
+      title: "外部修复确认",
+      question: "修复部署后如何结束议题？",
+      constraints: [],
+    });
+    const topicId = created.activeTopicId ?? "";
+
+    const snapshot = await repository.recordManualDecision({
+      topicId,
+      title: "修复已上线",
+      summary: "外部实施完成，线上验证通过。",
+      rationale: "用户人工确认。",
+    });
+    const topic = snapshot.topics.find((candidate) => candidate.id === topicId);
+
+    expect(topic?.status).toBe("decided");
+    expect(topic?.decision).toMatchObject({
+      title: "修复已上线",
+      status: "accepted",
+      proposedBy: "human",
+    });
   });
 
   it("只读加载议题详情，不改变当前选中议题也不通知订阅者", async () => {

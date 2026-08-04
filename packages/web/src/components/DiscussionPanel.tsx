@@ -1,15 +1,14 @@
 /**
  * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央讨论工作区（可折叠议题摘要、讨论/决策/元数据三 tab、
- *         卡片阶梯导航、活动 Agent 状态、引用回复发起）
+ * @output 导出：DiscussionPanel 中央工作区（讨论/决策/元数据、人工签署、阶梯导航与引用回复）
  * @pos    Operator Console 的主要阅读、决策通读、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Check, CheckCircle2, Copy } from "lucide-react";
+import { Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
@@ -34,6 +33,8 @@ export interface DiscussionPanelProps {
   orchestrationBusyAction: string | null;
   isAccepting: boolean;
   onAccept: () => Promise<void> | void;
+  isRecordingManualDecision: boolean;
+  onRecordManualDecision: () => void;
   /** 右栏「查看全文」发来的切换请求；nonce 变化即一次新请求，同一议题重复点也生效 */
   decisionFocusNonce?: number;
 }
@@ -69,6 +70,8 @@ export function DiscussionPanel({
   orchestrationBusyAction,
   isAccepting,
   onAccept,
+  isRecordingManualDecision,
+  onRecordManualDecision,
   decisionFocusNonce,
 }: DiscussionPanelProps) {
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
@@ -398,6 +401,17 @@ export function DiscussionPanel({
                         ? "记录中…"
                         : "标记为 Accepted"}
                 </button>
+                {topic.decision.status === "proposed" ? (
+                  <button
+                    className="secondary-button manual-decision-entry"
+                    type="button"
+                    disabled={isRecordingManualDecision || isAccepting}
+                    onClick={onRecordManualDecision}
+                  >
+                    <FileCheck2 size={16} />
+                    记录独立人工决策
+                  </button>
+                ) : null}
               </div>
             </DecisionCard>
           ) : (
@@ -405,7 +419,16 @@ export function DiscussionPanel({
               <AgentAvatar agent="council" />
               <div>
                 <h2>尚无拟议决策</h2>
-                <p>Agent 提交结构化决策后，可以在这里通读全文并接受。</p>
+                <p>可以等待 Agent 提案，也可以由你直接记录结论并结束议题。</p>
+                <button
+                  className="primary-button manual-decision-entry"
+                  type="button"
+                  disabled={isRecordingManualDecision}
+                  onClick={onRecordManualDecision}
+                >
+                  <FileCheck2 size={16} />
+                  记录人工决策
+                </button>
               </div>
             </div>
           )}

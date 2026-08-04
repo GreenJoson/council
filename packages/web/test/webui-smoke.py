@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、圆桌模式上下行布局、系统 Agent 身份只读、单一当前 Agent 调用/折叠历史、Agent 回复动态、过长议题折叠、大屏流体讨论列、
+@output 导出：桌面交互、人工零调用决策、圆桌模式布局、系统 Agent 身份只读、单一当前调用/历史、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -219,6 +219,33 @@ def verify_cycle_mode_layout(page) -> None:
     )
 
 
+def verify_manual_decision_without_agent_run(page) -> None:
+    page.get_by_role("tab", name="决策", exact=True).click()
+    assert page.locator(".run-card").count() == 0
+    page.get_by_role("button", name="记录人工决策", exact=True).click()
+
+    dialog = page.get_by_role("dialog", name="记录结论并结束议题")
+    dialog.wait_for()
+    dialog.get_by_text("不会调用任何 Agent", exact=True).wait_for()
+    dialog.get_by_label("最终结论", exact=True).fill(
+        "外部修复已经部署，线上验证通过，本议题结束。"
+    )
+    dialog.get_by_label("验证 / 部署说明 可选", exact=True).fill(
+        "已核对发布版本、健康检查和回滚点。"
+    )
+    dialog.get_by_role("button", name="记录并结束议题", exact=True).click()
+
+    page.get_by_text("人工决策已记录，议题已结束", exact=True).wait_for()
+    dialog.wait_for(state="hidden")
+    decision_panel = page.locator("#decision-tabpanel")
+    decision_panel.get_by_text(
+        "外部修复已经部署，线上验证通过，本议题结束。",
+        exact=True,
+    ).wait_for()
+    decision_panel.get_by_text("Accepted", exact=True).wait_for()
+    assert page.locator(".run-card").count() == 0
+
+
 def verify_agent_reply_activity(page) -> None:
     activity = page.get_by_role("status", name="Claude 正在回复", exact=True)
     activity.wait_for()
@@ -432,6 +459,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("button", name="创建议题", exact=True).click()
     page.get_by_role("heading", name="本地事件同步策略", exact=True).wait_for()
     verify_topic_question_collapse_control(page)
+    verify_manual_decision_without_agent_run(page)
 
     page.close()
     return errors

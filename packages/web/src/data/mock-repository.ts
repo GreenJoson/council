@@ -1,6 +1,6 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
- * @output 导出：写入时冻结 Mock Actor 快照的同构可交互数据实现
+ * @output 导出：写入时冻结 Mock Actor 快照、支持人工 Accepted 的同构数据实现
  * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受（同时写入 decidedAt 供架构档案
  *         ADR 编号排序）与只读议题详情加载
  *
@@ -12,6 +12,7 @@ import type { CouncilRepository, WorkspaceListener } from "./repository";
 import type {
   CreateTopicInput,
   PublishMessageInput,
+  RecordManualDecisionInput,
   TopicDetail,
   WorkspaceSnapshot,
 } from "../types/council";
@@ -71,14 +72,6 @@ export class MockCouncilRepository implements CouncilRepository {
       })),
       evidence: [],
       alternatives: [],
-      decision: {
-        title: "等待讨论",
-        summary: "议题已创建，等待参与者提交方案和批评。",
-        rationale: "用户尚未接受任何方案。",
-        status: "proposed",
-        proposedBy: "council",
-        proposedBySnapshot: mockActorSnapshot("council"),
-      },
     };
     this.#snapshot.topics.unshift(topic);
     this.#snapshot.activeTopicId = topicId;
@@ -116,6 +109,24 @@ export class MockCouncilRepository implements CouncilRepository {
     }
     topic.decision.status = "accepted";
     topic.decision.decidedAt = new Date().toISOString();
+    topic.status = "decided";
+    topic.updatedLabel = "刚刚";
+    return this.#publishSnapshot();
+  }
+
+  async recordManualDecision(input: RecordManualDecisionInput): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    const topic = this.#findTopic(input.topicId);
+    this.#snapshot.activeTopicId = input.topicId;
+    topic.decision = {
+      title: input.title,
+      summary: input.summary,
+      rationale: input.rationale,
+      status: "accepted",
+      proposedBy: "human",
+      proposedBySnapshot: mockActorSnapshot("human"),
+      decidedAt: new Date().toISOString(),
+    };
     topic.status = "decided";
     topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();

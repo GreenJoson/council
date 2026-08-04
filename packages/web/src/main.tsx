@@ -1,5 +1,5 @@
 /**
- * @input  依赖：React、App、主题初始化和分层全局样式（含 Agent 调用、动态与独立媒体浏览层）
+ * @input  依赖：React、App、主题初始化和分层全局样式（含人工决策、Agent 调用与媒体浏览层）
  * @output 导出：挂载到浏览器根节点的 Council Web 应用
  * @pos    Operator Console 客户端启动入口
  *
@@ -22,6 +22,7 @@ import "./styles/media.css";
 import "./styles/architecture.css";
 import "./styles/mentions.css";
 import "./styles/model-router.css";
+import "./styles/manual-decision.css";
 import "./styles/responsive.css";
 
 initTheme();
