@@ -1,13 +1,13 @@
 /**
  * @input  依赖：自动轮次快照、当前议题开放状态和受控运行操作
- * @output 导出：AutoRoundsPanel 单一当前调用卡、折叠历史、已决禁用与按需复核操作台
- * @pos    Inspector 内创建、观察、批准、恢复和取消 Agent 调用的紧凑控制台
+ * @output 导出：AutoRoundsPanel 按需运行状态、单一当前调用卡、折叠历史与恢复控制
+ * @pos    Inspector 内仅在存在 Run/Binding 时出现的观察、批准、恢复和取消控制台；
+ *         单次创建统一由 Composer @Agent 承担
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import {
-  Bot,
   CheckCircle2,
   ChevronDown,
   CircleStop,
@@ -18,26 +18,12 @@ import {
   ShieldAlert,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
 import type {
-  OrchestrationMessageKind,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
 } from "../types/orchestration";
 import { BrandGlyph } from "./BrandGlyph";
-
-const KIND_OPTIONS: ReadonlyArray<{
-  value: OrchestrationMessageKind;
-  label: string;
-}> = [
-  { value: "brief", label: "Brief" },
-  { value: "proposal", label: "Proposal" },
-  { value: "critique", label: "Critique" },
-  { value: "rebuttal", label: "Rebuttal" },
-  { value: "synthesis", label: "Synthesis" },
-  { value: "note", label: "Note" },
-];
 
 const STATUS_LABELS: Readonly<Record<OrchestrationRun["status"], string>> = {
   idle: "待启动",
@@ -135,12 +121,6 @@ export interface AutoRoundsPanelProps {
   isTopicOpen: boolean;
   snapshot: OrchestrationSnapshot | null;
   busyAction: string | null;
-  onCreateAndStart: (
-    adapterId: string,
-    messageKind: OrchestrationMessageKind,
-    instruction: string,
-    confirmationBeforeCompletion: boolean,
-  ) => Promise<boolean>;
   onStart: (runId: string) => Promise<void>;
   onApprove: (run: OrchestrationRun) => Promise<void>;
   onCancel: (runId: string) => Promise<void>;
@@ -154,7 +134,6 @@ export function AutoRoundsPanel({
   isTopicOpen,
   snapshot,
   busyAction,
-  onCreateAndStart,
   onStart,
   onApprove,
   onCancel,
@@ -163,93 +142,26 @@ export function AutoRoundsPanel({
   onReopenBinding,
 }: AutoRoundsPanelProps) {
   const adapters = snapshot?.capabilities?.adapters ?? [];
-  const availableAdapters = useMemo(
-    () => adapters.filter((adapter) => adapter.available),
-    [adapters],
-  );
-  const [adapterId, setAdapterId] = useState("");
-  const [messageKind, setMessageKind] = useState<OrchestrationMessageKind>("proposal");
-  const [instruction, setInstruction] = useState("");
-  const defaultConfirmation =
-    snapshot?.capabilities?.defaultPolicy.confirmation.beforeCompletion
-    ?? false;
-  const [confirmationBeforeCompletion, setConfirmationBeforeCompletion] =
-    useState(defaultConfirmation);
-
-  useEffect(() => {
-    if (!availableAdapters.some((adapter) => adapter.id === adapterId)) {
-      setAdapterId(availableAdapters[0]?.id ?? "");
-    }
-  }, [adapterId, availableAdapters]);
-
-  useEffect(() => {
-    setConfirmationBeforeCompletion(defaultConfirmation);
-  }, [defaultConfirmation]);
-
   const runs = snapshot?.activeTopicId === topicId ? snapshot.runs : [];
   const runtimeBindings = snapshot?.activeTopicId === topicId
     ? latestRuntimeBindings(snapshot.runtimeBindings ?? [])
     : [];
   const { primaryRun, historyRuns } = partitionRunsForDisplay(runs);
-  const createBlockedReason = getTopicAgentCallBlockedReason(isTopicOpen)
-    ?? getCreateRunBlockedReason(runs, busyAction);
-  const isCreateBlocked = createBlockedReason !== undefined;
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const normalizedInstruction = instruction.trim();
-    if (isCreateBlocked || !adapterId || !normalizedInstruction) {
-      return;
-    }
-    const succeeded = await onCreateAndStart(
-      adapterId,
-      messageKind,
-      normalizedInstruction,
-      confirmationBeforeCompletion,
-    );
-    if (succeeded) {
-      setInstruction("");
-    }
+  if (!primaryRun && runtimeBindings.length === 0) {
+    return null;
   }
 
   return (
     <section className="auto-rounds-card" aria-labelledby="auto-rounds-title">
       <header className="auto-rounds-heading">
         <div>
-          <span className="auto-rounds-kicker"><Zap size={12} /> Orchestration</span>
-          <h3 id="auto-rounds-title">Agent 调用</h3>
+          <span className="auto-rounds-kicker"><Zap size={12} /> Activity</span>
+          <h3 id="auto-rounds-title">运行状态</h3>
         </div>
         <span className={`mini-sync mini-sync-${snapshot?.sync.status ?? "syncing"}`}>
           {snapshot?.sync.status === "offline" ? "离线" : "LIVE"}
         </span>
       </header>
-
-      <div className="adapter-ledger" aria-label="Agent 主动调用能力">
-        {adapters.length > 0 ? adapters.map((adapter) => (
-          <div className="adapter-ledger-row" key={adapter.id}>
-            <span className="adapter-ledger-brand">
-              <BrandGlyph brand={adapter.brand} size={16} />
-              <i className={`adapter-light ${adapter.available ? "is-available" : "is-limited"}`} />
-            </span>
-            <div>
-              <strong>{adapter.label}</strong>
-              <small>
-                {adapter.available
-                  ? "可由 Web 主动调用"
-                  : adapter.limitation ?? "当前不可主动调用"}
-              </small>
-            </div>
-          </div>
-        )) : (
-          <p className="auto-rounds-empty">正在读取 Agent 能力…</p>
-        )}
-      </div>
-
-      <p className="runtime-boundary">
-        {availableAdapters.length > 0
-          ? `可主动调用：${availableAdapters.map((adapter) => adapter.label).join("、")}`
-          : adapters[0]?.limitation ?? "当前没有可主动调用的 Agent。"}
-      </p>
 
       {runtimeBindings.length > 0 ? (
         <div className="runtime-binding-list" aria-label="当前议题持久会话">
@@ -289,81 +201,8 @@ export function AutoRoundsPanel({
         </div>
       ) : null}
 
-      {isTopicOpen ? (
-      <form className="auto-round-form" onSubmit={(event) => void handleSubmit(event)}>
-        <div className="auto-round-fields">
-          <label>
-            <span>Agent</span>
-            <select
-              value={adapterId}
-              disabled={isCreateBlocked || availableAdapters.length === 0}
-              onChange={(event) => setAdapterId(event.target.value)}
-            >
-              {availableAdapters.map((adapter) => (
-                <option value={adapter.id} key={adapter.id}>{adapter.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>消息类型</span>
-            <select
-              value={messageKind}
-              disabled={isCreateBlocked}
-              onChange={(event) => setMessageKind(event.target.value as OrchestrationMessageKind)}
-            >
-              {KIND_OPTIONS.map((kind) => (
-                <option value={kind.value} key={kind.value}>{kind.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="auto-round-instruction">
-          <span>本轮指令</span>
-          <textarea
-            value={instruction}
-            disabled={isCreateBlocked}
-            rows={3}
-            placeholder="例如：先给出可回滚的最小架构方案，并列出失败条件。"
-            onChange={(event) => setInstruction(event.target.value)}
-          />
-        </label>
-        <label className="completion-review-option">
-          <input
-            type="checkbox"
-            checked={confirmationBeforeCompletion}
-            disabled={isCreateBlocked}
-            onChange={(event) => setConfirmationBeforeCompletion(event.target.checked)}
-          />
-          <span>
-            <strong>完成前需要我确认</strong>
-            <small>关闭时，Agent 回复完成后自动归档。</small>
-          </span>
-        </label>
-        {createBlockedReason ? (
-          <p className="auto-round-blocked">{createBlockedReason}</p>
-        ) : null}
-        <button
-          className="auto-round-launch"
-          type="submit"
-          disabled={isCreateBlocked || !adapterId || !instruction.trim()}
-        >
-          {busyAction === "create"
-            ? <LoaderCircle className="spinning" size={15} />
-            : <Play size={15} />}
-          {busyAction === "create" ? "正在启动 Agent…" : "启动 Agent"}
-        </button>
-      </form>
-      ) : (
-        <p className="auto-rounds-empty">议题已经决策，Agent 调用与会话重开已关闭。</p>
-      )}
-
-      <div className="run-stack" aria-live="polite">
-        {!primaryRun ? (
-          <div className="auto-rounds-empty">
-            <Bot size={17} />
-            <span>当前议题还没有 Agent 调用。</span>
-          </div>
-        ) : (
+      {primaryRun ? (
+        <div className="run-stack" aria-live="polite">
           <RunCard
             run={primaryRun}
             busyAction={busyAction}
@@ -372,26 +211,26 @@ export function AutoRoundsPanel({
             onCancel={onCancel}
             onRecover={onRecover}
           />
-        )}
-        {historyRuns.length > 0 ? (
-          <details className="run-history">
-            <summary>
-              <span><History size={13} /> 历史调用</span>
-              <span>{historyRuns.length} <ChevronDown size={13} /></span>
-            </summary>
-            <div className="run-history-list">
-              {historyRuns.map((run) => (
-                <RunHistoryRow
-                  key={run.id}
-                  run={run}
-                  busyAction={busyAction}
-                  onRecover={onRecover}
-                />
-              ))}
-            </div>
-          </details>
-        ) : null}
-      </div>
+          {historyRuns.length > 0 ? (
+            <details className="run-history">
+              <summary>
+                <span><History size={13} /> 历史调用</span>
+                <span>{historyRuns.length} <ChevronDown size={13} /></span>
+              </summary>
+              <div className="run-history-list">
+                {historyRuns.map((run) => (
+                  <RunHistoryRow
+                    key={run.id}
+                    run={run}
+                    busyAction={busyAction}
+                    onRecover={onRecover}
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

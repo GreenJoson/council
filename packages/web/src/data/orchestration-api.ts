@@ -8,6 +8,7 @@
 
 import type {
   CycleMetrics,
+  CycleReviewScope,
   CycleStage,
   CycleTurn,
   DiscussionCycle,
@@ -97,6 +98,11 @@ const RUNTIME_CAPABILITY_KEYS: readonly RuntimeCapabilityKey[] = [
 const CYCLE_KINDS: readonly DiscussionCycle["kind"][] = [
   "discussion",
   "fix_review",
+];
+const CYCLE_REVIEW_SCOPES: readonly CycleReviewScope[] = [
+  "discussion",
+  "workspace",
+  "commit",
 ];
 const CYCLE_STOP_REASONS = [
   "converged",
@@ -383,6 +389,9 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
     requirements: {
       schemaVersion: schemaVersionOne(requirementsRecord, "cycle.requirements"),
       cycleKind: enumValue(requirementsRecord, "cycleKind", CYCLE_KINDS),
+      reviewScope: requirementsRecord.reviewScope === undefined
+        ? kind === "fix_review" ? "commit" : "discussion"
+        : enumValue(requirementsRecord, "reviewScope", CYCLE_REVIEW_SCOPES),
       task: {
         all: parseCapabilityArray(taskRecord, "all"),
         proposer: parseCapabilityArray(taskRecord, "proposer"),
@@ -394,6 +403,15 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
     turns: arrayValue(cycleRecord, "turns", (item) => {
       const turn = recordValue(item, "turn");
       const commitRef = optionalString(turn, "commitRef");
+      const commitTargets = turn.commitTargets === undefined
+        ? undefined
+        : arrayValue(turn, "commitTargets", (target, index) => {
+            const record = recordValue(target, `commitTargets[${String(index)}]`);
+            return {
+              repository: stringValue(record, "repository"),
+              commit: stringValue(record, "commit"),
+            };
+          });
       const verdictDeclared = optionalBoolean(turn, "verdictDeclared");
       return {
         agentId: stringValue(turn, "agentId"),
@@ -402,6 +420,7 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
         stance: enumValue(turn, "stance", VERDICT_STANCES),
         messageId: stringValue(turn, "messageId"),
         ...(commitRef ? { commitRef } : {}),
+        ...(commitTargets ? { commitTargets } : {}),
         ...(verdictDeclared === undefined ? {} : { verdictDeclared }),
       };
     }),

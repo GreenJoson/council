@@ -18,14 +18,20 @@ import {
   type DebateStage,
 } from "./convergence.js";
 import {
+  CYCLE_REVIEW_SCOPES,
   DISCUSSION_CYCLE_KINDS,
   RUNTIME_CAPABILITY_KEYS,
+  type CycleReviewScope,
   type DiscussionCycleKind,
   type FrozenCycleRequirements,
   type RuntimeCapabilityKey,
   type RuntimeCapabilitySnapshot,
 } from "./runtime-capabilities.js";
-import { VERDICT_STANCES, type VerdictStance } from "./verdict.js";
+import {
+  VERDICT_STANCES,
+  type AgentFixTarget,
+  type VerdictStance,
+} from "./verdict.js";
 
 export const BLOCKING_QUESTION_STATUSES = [
   "open",
@@ -38,7 +44,7 @@ export const CYCLE_STATUSES = ["active", "completed", "abandoned"] as const;
 export type BlockingQuestionStatus = (typeof BLOCKING_QUESTION_STATUSES)[number];
 export type CycleStatus = (typeof CYCLE_STATUSES)[number];
 
-/** 已完成发言，附带公开消息 id，使状态可以回溯到公开记录。 */
+/** 已完成发言，附带公开来源 id；复用议题正文时为 topic id，其余为 message id。 */
 export interface RecordedTurn extends CycleTurn {
   messageId: string;
   /**
@@ -46,6 +52,7 @@ export interface RecordedTurn extends CycleTurn {
    * 该列的 CHECK 只约束"是 JSON 数组"，加字段不动 DDL，也就不用再抬 schema 版本。
    */
   commitRef?: string;
+  commitTargets?: readonly AgentFixTarget[];
   /** `false` 代表本轮缺少结构化 verdict 尾块；legacy 发言保持 undefined。 */
   verdictDeclared?: boolean;
 }
@@ -211,6 +218,37 @@ function decodeTurn(value: unknown, label: string): RecordedTurn {
     throw new InvalidRunStateError(`Council 收敛 ${label} 必须是对象。`);
   }
   const record = value as Record<string, unknown>;
+  const commitRef = record.commitRef === undefined || record.commitRef === null
+    ? undefined
+    : text(record.commitRef, `${label}.commitRef`);
+  const rawCommitTargets = record.commitTargets;
+  if (
+    rawCommitTargets !== undefined
+    && rawCommitTargets !== null
+    && !Array.isArray(rawCommitTargets)
+  ) {
+    throw new InvalidRunStateError(`Council 收敛 ${label}.commitTargets 必须是数组。`);
+  }
+  const commitTargets = !Array.isArray(rawCommitTargets)
+    ? commitRef ? [{ repository: ".", commit: commitRef }] : undefined
+    : rawCommitTargets.map((item, index) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          throw new InvalidRunStateError(
+            `Council 收敛 ${label}.commitTargets[${String(index)}] 无效。`,
+          );
+        }
+        const target = item as Record<string, unknown>;
+        return {
+          repository: text(
+            target.repository,
+            `${label}.commitTargets[${String(index)}].repository`,
+          ),
+          commit: text(
+            target.commit,
+            `${label}.commitTargets[${String(index)}].commit`,
+          ),
+        };
+      });
   return {
     agentId: text(record.agentId, `${label}.agentId`),
     stage: member(record.stage, DEBATE_STAGES, `${label}.stage`) as DebateStage,
@@ -221,9 +259,8 @@ function decodeTurn(value: unknown, label: string): RecordedTurn {
       `${label}.stance`,
     ) as VerdictStance,
     messageId: text(record.messageId, `${label}.messageId`),
-    ...(record.commitRef === undefined || record.commitRef === null
-      ? {}
-      : { commitRef: text(record.commitRef, `${label}.commitRef`) }),
+    ...(commitRef ? { commitRef } : {}),
+    ...(commitTargets ? { commitTargets } : {}),
     ...(record.verdictDeclared === undefined || record.verdictDeclared === null
       ? {}
       : typeof record.verdictDeclared === "boolean"
@@ -268,6 +305,22 @@ function decodeRequirements(
     throw new InvalidRunStateError("Council 收敛任务需求无效。");
   }
   const task = record.task as Record<string, unknown>;
+  const defaultReviewScope: CycleReviewScope = cycleKind === "fix_review"
+    ? "commit"
+    : "discussion";
+  const reviewScope = record.reviewScope === undefined
+    ? defaultReviewScope
+    : member(
+        record.reviewScope,
+        CYCLE_REVIEW_SCOPES,
+        "requirements.reviewScope",
+      ) as CycleReviewScope;
+  if (
+    (cycleKind === "fix_review" && reviewScope !== "commit")
+    || (cycleKind === "discussion" && reviewScope === "commit")
+  ) {
+    throw new InvalidRunStateError("Council 收敛类型与审查范围冲突。");
+  }
   if (
     typeof record.byParticipant !== "object"
     || record.byParticipant === null
@@ -289,6 +342,7 @@ function decodeRequirements(
   return {
     schemaVersion: 1,
     cycleKind,
+    reviewScope,
     task: {
       all: capabilityArray(task.all, "requirements.task.all"),
       proposer: capabilityArray(task.proposer, "requirements.task.proposer"),

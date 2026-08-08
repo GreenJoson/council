@@ -177,14 +177,17 @@ export interface CycleTurn {
   stance: "agree" | "non_blocking" | "blocking";
   messageId: string;
   commitRef?: string;
+  commitTargets?: Array<{ repository: string; commit: string }>;
   verdictDeclared?: boolean;
 }
 
 export type DiscussionCycleKind = "discussion" | "fix_review";
+export type CycleReviewScope = "discussion" | "workspace" | "commit";
 
 export interface FrozenCycleRequirements {
   schemaVersion: 1;
   cycleKind: DiscussionCycleKind;
+  reviewScope: CycleReviewScope;
   task: {
     all: RuntimeCapabilityKey[];
     proposer: RuntimeCapabilityKey[];
@@ -250,6 +253,7 @@ export interface StartCycleInput {
   participants: string[];
   roundBudget?: number;
   kind?: DiscussionCycleKind;
+  reviewScope?: CycleReviewScope;
   taskRequirements?: {
     all?: RuntimeCapabilityKey[];
     proposer?: RuntimeCapabilityKey[];

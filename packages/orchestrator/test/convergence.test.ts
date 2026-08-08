@@ -13,6 +13,7 @@ import {
   buildStageInstruction,
   nextCycleAction,
   parseAgentReply,
+  parseCommitTargetsFromEvidence,
   stageAfterAction,
   type ConvergenceState,
   type CycleAction,
@@ -327,7 +328,24 @@ test("修复自述必须给出像 commit 的引用，分支名和残缺尾块一
     "```",
   ].join("\n"));
   // 大小写归一化：git 对象名是小写，复审者要能直接把它拼进 git show。
-  assert.deepEqual(good.fix, { commit: "a1b2c3d4e5f6", summary: "修正边界判断" });
+  assert.deepEqual(good.fix, {
+    targets: [{ repository: ".", commit: "a1b2c3d4e5f6" }],
+    summary: "修正边界判断",
+  });
+
+  const multiple = parseAgentReply([
+    "```council-fix",
+    '{"targets":[{"repository":".","commit":"a1b2c3d4"},{"repository":"../client","commit":"d4c3b2a1"}],"summary":"联合修复"}',
+    "```",
+    "",
+    "```council-verdict",
+    '{"stance":"agree","summary":"已核对"}',
+    "```",
+  ].join("\n"));
+  assert.deepEqual(multiple.fix?.targets, [
+    { repository: ".", commit: "a1b2c3d4" },
+    { repository: "../client", commit: "d4c3b2a1" },
+  ]);
 
   for (const raw of [
     '{"commit":"main","summary":"修好了"}',
@@ -335,6 +353,8 @@ test("修复自述必须给出像 commit 的引用，分支名和残缺尾块一
     '{"commit":"abc123","summary":"太短不足以定位"}',
     '{"commit":"a1b2c3d4","summary":"   "}',
     '{"summary":"没给引用"}',
+    '{"targets":[{"repository":"../../private","commit":"a1b2c3d4"}],"summary":"越界仓库"}',
+    '{"targets":[{"repository":"../client","commit":"a1b2c3d4"},{"repository":"../client","commit":"a1b2c3d4"}],"summary":"重复目标"}',
   ]) {
     const reply = parseAgentReply([
       "```council-fix",
@@ -349,17 +369,44 @@ test("修复自述必须给出像 commit 的引用，分支名和残缺尾块一
   }
 });
 
-test("已提交修复互审强制 commit，普通讨论允许独立读取未提交工作区", () => {
+test("议题自然语言证据按仓库标签提取多提交，后续说明覆盖旧引用", () => {
+  assert.deepEqual(
+    parseCommitTargetsFromEvidence([
+      [
+        "- 客户端仓库：同级目录 `../client`，提交 `1111111`",
+        "- 后端仓库：当前目录，提交 `2222222`",
+      ].join("\n"),
+      [
+        "- 客户端提交：`aaaaaaa`",
+        "- 后端提交：`bbbbbbb`",
+      ].join("\n"),
+    ]),
+    [
+      { repository: "../client", commit: "aaaaaaa" },
+      { repository: ".", commit: "bbbbbbb" },
+    ],
+  );
+  assert.deepEqual(
+    parseCommitTargetsFromEvidence(["校验码 deadbeef，但没有仓库或提交标记。"]),
+    [],
+  );
+});
+
+test("已提交互审传递多仓库 commit，工作区互审明确读取可变快照", () => {
   const withDiff = buildStageInstruction({
     stage: "critique",
     round: 2,
     roundBudget: 3,
     reviewers: ["codex"],
     proposer: "claude",
-    reviewedCommitRef: "a1b2c3d4e5f6",
-    requiresCommitRef: true,
+    reviewedCommitTargets: [
+      { repository: ".", commit: "a1b2c3d4e5f6" },
+      { repository: "../client", commit: "d4c3b2a1f6e5" },
+    ],
+    reviewScope: "commit",
   });
-  assert.ok(withDiff.includes("git show a1b2c3d4e5f6"), "复审者必须拿到可执行的读 diff 指令");
+  assert.ok(withDiff.includes("git -C . show a1b2c3d4e5f6"));
+  assert.ok(withDiff.includes("git -C ../client show d4c3b2a1f6e5"));
   assert.ok(withDiff.includes("只读复审"), "复审者不得改代码");
 
   const missingCommittedDiff = buildStageInstruction({
@@ -368,7 +415,7 @@ test("已提交修复互审强制 commit，普通讨论允许独立读取未提�
     roundBudget: 3,
     reviewers: ["codex"],
     proposer: "claude",
-    requiresCommitRef: true,
+    reviewScope: "commit",
   });
   for (const instruction of [withDiff, missingCommittedDiff]) {
     assert.ok(instruction.includes("council-fix"), "评审必须知道该向对方要什么");
@@ -381,9 +428,10 @@ test("已提交修复互审强制 commit，普通讨论允许独立读取未提�
     roundBudget: 3,
     reviewers: ["codex"],
     proposer: "claude",
+    reviewScope: "workspace",
   });
-  assert.ok(workspaceReview.includes("工作区 diff"));
-  assert.ok(workspaceReview.includes("可变工作区快照"));
+  assert.ok(workspaceReview.includes("当前工作区互审"));
+  assert.ok(workspaceReview.includes("可变快照"));
   assert.ok(!workspaceReview.includes("council-fix"));
 
   // 主审只传递交互式开发任务产生的 commit；Council headless 回合不得写代码。
@@ -393,7 +441,7 @@ test("已提交修复互审强制 commit，普通讨论允许独立读取未提�
     roundBudget: 3,
     reviewers: ["codex"],
     proposer: "claude",
-    requiresCommitRef: true,
+    reviewScope: "commit",
   });
   assert.ok(
     leadReviewer.includes("```council-fix\n"),
@@ -411,7 +459,7 @@ test("已提交修复互审强制 commit，普通讨论允许独立读取未提�
       roundBudget: 3,
       reviewers: ["codex"],
       proposer: "claude",
-      requiresCommitRef: true,
+      reviewScope: "commit",
     }).includes("```council-fix\n"),
     "独立评审只消费主审传来的 commit，不重复生成引用规格",
   );

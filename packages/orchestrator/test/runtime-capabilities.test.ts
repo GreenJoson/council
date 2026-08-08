@@ -53,6 +53,23 @@ test("普通讨论只需要文本，CLI 与 sessionless Runtime 都能开局", (
   );
 });
 
+test("当前工作区互审要求每位参与者真实读取项目，不接受纯文本 Runtime", () => {
+  const requirements = deriveCycleRequirements({
+    kind: "discussion",
+    reviewScope: "workspace",
+    participants: ["claude", "remote"],
+  });
+  assert.equal(requirements.reviewScope, "workspace");
+  assert.deepEqual(requirements.byParticipant.claude, ["text", "repository_read"]);
+  assert.deepEqual(
+    findCapabilityGaps(requirements, [
+      snapshot("claude", "claude-resume"),
+      snapshot("remote", "openai-sessionless"),
+    ]),
+    [{ adapterId: "remote", missing: ["repository_read"] }],
+  );
+});
+
 test("修复互审只审查已有 commit/diff，当前只读 CLI 可以开局", () => {
   const requirements = deriveCycleRequirements({
     kind: "fix_review",

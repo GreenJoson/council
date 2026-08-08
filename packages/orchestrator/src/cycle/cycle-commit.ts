@@ -70,7 +70,12 @@ export function commitCycleTurn(
       round: action.round,
       stance: reply.verdict.stance,
       messageId: input.messageId,
-      ...(reply.fix ? { commitRef: reply.fix.commit } : {}),
+      ...(reply.fix
+        ? {
+            commitRef: reply.fix.targets[0]!.commit,
+            commitTargets: reply.fix.targets,
+          }
+        : {}),
       verdictDeclared: reply.verdictDeclared,
     },
     contextCursor: cursor,

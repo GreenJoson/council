@@ -34,7 +34,7 @@
 | `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、项目内只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |
 | `read-only-tool-host.ts` | ToolHost | 以 realpath 限制项目根目录，提供读文本、列目录、搜索文本和受控已提交 Git diff，拒绝敏感配置、符号链接逃逸与所有写操作 |
-| `read-only-agent-loop.ts` | AgentLoop | 在统一步骤、上下文、文件和扫描预算内循环执行模型请求与 Council 只读工具 |
+| `read-only-agent-loop.ts` | AgentLoop | 让同轮工具共享结果预算，保留本轮原始证据并将已读旧结果压成带哈希的首尾凭据；上下文吃紧时收回工具强制收尾并追加 blocking 覆盖保护，只有初始可信提示自身超限才失败关闭 |
 | `read-only-git-diff.ts` | Git 安全边界 | 将 commit/ref 解析为 OID，先过滤敏感路径，再用禁用外部驱动的固定 argv 生成有界 patch 或统计摘要 |
 | `read-only-git-mcp.ts` | Delegated 工具桥 | 只向获授权 ACP Runtime 暴露 `council_git_diff`；复用同一 sidecar，不暴露 Council 写工具或 Shell |
 | `openai-compatible-runtime.ts` | 兼容层 | 复用 ModelClient 提供连接测试与旧绑定所需的纯文本生成接口 |

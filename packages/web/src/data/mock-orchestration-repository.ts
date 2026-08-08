@@ -357,6 +357,10 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     if (!proposer) {
       throw new Error("参与名册不能为空");
     }
+    const reviewScope = input.reviewScope
+      ?? (input.kind === "fix_review" ? "commit" : "discussion");
+    const kind = input.kind
+      ?? (reviewScope === "commit" ? "fix_review" : "discussion");
     this.#snapshot.cycle = {
       cycle: {
         id: `cycle_${crypto.randomUUID()}`,
@@ -364,13 +368,21 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
         stage: "proposal",
         status: "active",
         participants: [...input.participants],
-        kind: input.kind ?? "discussion",
+        kind,
         requirements: {
           schemaVersion: 1,
-          cycleKind: input.kind ?? "discussion",
-          task: { all: [], proposer: [], reviewers: [] },
+          cycleKind: kind,
+          reviewScope,
+          task: {
+            all: reviewScope === "workspace" ? ["repository_read"] : [],
+            proposer: [],
+            reviewers: [],
+          },
           byParticipant: Object.fromEntries(
-            input.participants.map((participant) => [participant, ["text"]]),
+            input.participants.map((participant) => [
+              participant,
+              reviewScope === "workspace" ? ["text", "repository_read"] : ["text"],
+            ]),
           ),
         },
         runtimeCapabilities: input.participants.map((adapterId) => {

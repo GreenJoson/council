@@ -1,15 +1,18 @@
 /**
  * @input  依赖：OpenAICompatibleModelClient、ReadOnlyToolHost、项目路径与 ToolLoop 配置
- * @output 导出：模型请求→只读工具→结果回填→最终公开文本的有界 AgentLoop
- * @pos    Council-owned Runtime；模型只选择工具，工具执行与安全边界始终归 Council
+ * @output 导出：模型请求→共享批次预算→证据凭据压缩→强制收尾的有界 AgentLoop
+ * @pos    Council-owned Runtime；模型只选择工具，原始证据留在本轮内存，发送上下文始终受 Council 预算控制
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import { createHash } from "node:crypto";
 
 import {
   OpenAICompatibleModelClient,
   OpenAICompatibleRuntimeError,
   type ModelMessage,
+  type ModelToolCall,
 } from "./openai-compatible-model-client.js";
 import {
   ReadOnlyToolHost,
@@ -47,6 +50,28 @@ const FINAL_STEP_INSTRUCTION =
   "工具轮数已用尽，本轮不再提供工具。请基于以上已获得的信息直接给出最终回复；"
   + "若证据不足以支撑结论，请写明还缺什么，不要再请求工具。";
 
+const CONTEXT_PRESSURE_FINAL_STEP_INSTRUCTION =
+  "Council 上下文预算即将耗尽，本轮不再提供工具。请基于当前可见证据直接给出最终回复；"
+  + "带有“工具证据已压缩”标记的内容不是完整原文。若缺失部分会影响结论，必须明确判定证据不足，"
+  + "列出需要重新读取的 commit、文件或行范围，不得据此宣称审核通过。";
+
+const CONTEXT_COVERAGE_GUARD = [
+  "> Council 覆盖保护：本轮因上下文预算耗尽提前收回工具，结论只覆盖当前可见证据。",
+  "",
+  "```council-verdict",
+  '{"stance":"blocking","summary":"工具上下文预算耗尽，必须按列出的 commit、文件或行范围重新审核。"}',
+  "```",
+].join("\n");
+
+interface ToolEvidenceEntry {
+  call: ModelToolCall;
+  rawContent: string;
+}
+
+interface ToolEvidenceBatch {
+  entries: ToolEvidenceEntry[];
+}
+
 function contextChars(messages: readonly ModelMessage[]): number {
   return messages.reduce((total, message) => {
     const toolChars = message.role === "assistant"
@@ -59,6 +84,135 @@ function contextChars(messages: readonly ModelMessage[]): number {
         : 0;
     return total + message.content.length + toolChars;
   }, 0);
+}
+
+function messageChars(message: ModelMessage): number {
+  return contextChars([message]);
+}
+
+function allocateSharedBudgets(
+  lengths: readonly number[],
+  maximum: number,
+): number[] {
+  const budgets = lengths.map(() => 0);
+  let remaining = Math.max(0, maximum);
+  let pending = lengths.map((_, index) => index);
+
+  while (pending.length > 0 && remaining > 0) {
+    const share = Math.floor(remaining / pending.length);
+    if (share <= 0) {
+      for (const index of pending.slice(0, remaining)) {
+        budgets[index] = 1;
+      }
+      break;
+    }
+    const satisfied = pending.filter((index) => (lengths[index] ?? 0) <= share);
+    if (satisfied.length === 0) {
+      for (const index of pending) {
+        budgets[index] = share;
+        remaining -= share;
+      }
+      for (const index of pending) {
+        if (remaining <= 0) {
+          break;
+        }
+        budgets[index] = (budgets[index] ?? 0) + 1;
+        remaining -= 1;
+      }
+      break;
+    }
+    const satisfiedSet = new Set(satisfied);
+    for (const index of satisfied) {
+      const length = lengths[index] ?? 0;
+      budgets[index] = length;
+      remaining -= length;
+    }
+    pending = pending.filter((index) => !satisfiedSet.has(index));
+  }
+
+  return budgets;
+}
+
+function compactEvidence(
+  entry: ToolEvidenceEntry,
+  maximum: number,
+): string {
+  if (maximum <= 0) {
+    return "";
+  }
+  if (entry.rawContent.length <= maximum) {
+    return entry.rawContent;
+  }
+  const receipt = [
+    "[Council：工具证据已压缩]",
+    JSON.stringify({
+      tool: entry.call.name,
+      arguments: entry.call.arguments,
+      originalChars: entry.rawContent.length,
+      sha256: createHash("sha256").update(entry.rawContent).digest("hex"),
+    }),
+    "以下仅为首尾摘录；需要完整证据时请缩小文件、行范围或 diff 范围后重新读取。",
+    "",
+  ].join("\n");
+  if (receipt.length >= maximum) {
+    return receipt.slice(0, maximum);
+  }
+  const omission = "\n[Council：中间证据已省略]\n";
+  const excerptBudget = maximum - receipt.length;
+  if (excerptBudget <= omission.length) {
+    return `${receipt}${omission}`.slice(0, maximum);
+  }
+  const visibleBudget = excerptBudget - omission.length;
+  const headLength = Math.ceil(visibleBudget / 2);
+  const tailLength = visibleBudget - headLength;
+  return `${receipt}${entry.rawContent.slice(0, headLength)}${omission}${
+    tailLength > 0 ? entry.rawContent.slice(-tailLength) : ""
+  }`;
+}
+
+function toolMessageIndex(
+  messages: readonly ModelMessage[],
+  callId: string,
+): number {
+  return messages.findIndex((message) =>
+    message.role === "tool" && message.toolCallId === callId);
+}
+
+function compactBatch(
+  messages: ModelMessage[],
+  batch: ToolEvidenceBatch,
+  maximum: number,
+): void {
+  const budgets = allocateSharedBudgets(
+    batch.entries.map((entry) => entry.rawContent.length),
+    maximum,
+  );
+  batch.entries.forEach((entry, index) => {
+    const messageIndex = toolMessageIndex(messages, entry.call.id);
+    if (messageIndex < 0) {
+      return;
+    }
+    messages[messageIndex] = {
+      role: "tool",
+      toolCallId: entry.call.id,
+      content: compactEvidence(entry, budgets[index] ?? 0),
+    };
+  });
+}
+
+function compactSeenBatchesUntil(
+  messages: ModelMessage[],
+  batches: readonly ToolEvidenceBatch[],
+  maximumContextChars: number,
+  requiredAdditionalChars: number,
+  compactedBatchChars: number,
+): void {
+  for (const batch of batches) {
+    if (contextChars(messages) + requiredAdditionalChars <= maximumContextChars) {
+      return;
+    }
+    compactBatch(messages, batch, compactedBatchChars);
+  }
 }
 
 function toolErrorContent(error: unknown): string {
@@ -77,6 +231,19 @@ function toolErrorContent(error: unknown): string {
   });
 }
 
+function applyContextCoverageGuard(content: string, maximum: number): string {
+  if (CONTEXT_COVERAGE_GUARD.length >= maximum) {
+    return CONTEXT_COVERAGE_GUARD.slice(0, maximum);
+  }
+  const separator = "\n\n";
+  if (CONTEXT_COVERAGE_GUARD.length + separator.length >= maximum) {
+    return CONTEXT_COVERAGE_GUARD;
+  }
+  const bodyBudget = maximum - CONTEXT_COVERAGE_GUARD.length - separator.length;
+  const body = content.trim().slice(0, bodyBudget);
+  return `${body}${separator}${CONTEXT_COVERAGE_GUARD}`;
+}
+
 export class ReadOnlyAgentLoop {
   constructor(
     private readonly client: OpenAICompatibleModelClient,
@@ -90,11 +257,29 @@ export class ReadOnlyAgentLoop {
     const messages: ModelMessage[] = [
       { role: "user", content: input.prompt },
     ];
+    const evidenceBatches: ToolEvidenceBatch[] = [];
+    const compactedBatchChars = Math.floor(
+      this.config.maxOutputChars / this.config.toolLoopMaxSteps,
+    );
+    let forceContextFinal = false;
 
     for (let step = 1; step <= this.config.toolLoopMaxSteps; step += 1) {
-      if (contextChars(messages) > this.config.toolLoopMaxContextChars) {
+      const finalInstruction = forceContextFinal
+        ? CONTEXT_PRESSURE_FINAL_STEP_INSTRUCTION
+        : FINAL_STEP_INSTRUCTION;
+      compactSeenBatchesUntil(
+        messages,
+        evidenceBatches,
+        this.config.toolLoopMaxContextChars,
+        finalInstruction.length,
+        compactedBatchChars,
+      );
+      if (
+        contextChars(messages) + finalInstruction.length
+        > this.config.toolLoopMaxContextChars
+      ) {
         throw new OpenAICompatibleRuntimeError(
-          "只读 ToolLoop 上下文超过配置上限。",
+          "只读 ToolLoop 的初始提示与必要收尾指令超过配置上限。",
           false,
           "tool_context_limit",
         );
@@ -106,9 +291,9 @@ export class ReadOnlyAgentLoop {
        * 通常已经有足够材料写结论——它只是没有任何理由停下来：工具一直摆在
        * 那里，也没人告诉它还剩几轮。
        */
-      const finalStep = step === this.config.toolLoopMaxSteps;
+      const finalStep = forceContextFinal || step === this.config.toolLoopMaxSteps;
       if (finalStep && host) {
-        messages.push({ role: "user", content: FINAL_STEP_INSTRUCTION });
+        messages.push({ role: "user", content: finalInstruction });
       }
       const result = await this.client.complete({
         baseUrl: input.baseUrl,
@@ -132,7 +317,9 @@ export class ReadOnlyAgentLoop {
             "empty_response",
           );
         }
-        return result.content;
+        return forceContextFinal
+          ? applyContextCoverageGuard(result.content, this.config.maxOutputChars)
+          : result.content;
       }
       if (finalStep) {
         // 工具已收回却仍在请求工具：不执行，落到循环外的失败关闭。
@@ -153,12 +340,13 @@ export class ReadOnlyAgentLoop {
         );
       }
       input.onTextEvent?.({ operation: "reset" });
-      messages.push({
+      const assistantMessage: ModelMessage = {
         role: "assistant",
         content: result.content,
         toolCalls: result.toolCalls,
-      });
+      };
       const seenCallIds = new Set<string>();
+      const entries: ToolEvidenceEntry[] = [];
       for (const call of result.toolCalls) {
         if (seenCallIds.has(call.id)) {
           throw new OpenAICompatibleRuntimeError(
@@ -189,11 +377,53 @@ export class ReadOnlyAgentLoop {
           callId: call.id,
           toolName: call.name,
         });
+        entries.push({ call, rawContent: content });
+      }
+      const toolMessageOverhead = entries.reduce(
+        (total, entry) => total + entry.call.id.length,
+        0,
+      );
+      const desiredBatchChars = Math.min(
+        this.config.maxOutputChars,
+        entries.reduce((total, entry) => total + entry.rawContent.length, 0),
+      );
+      const requiredAdditionalChars = messageChars(assistantMessage)
+        + toolMessageOverhead
+        + desiredBatchChars
+        + CONTEXT_PRESSURE_FINAL_STEP_INSTRUCTION.length;
+      compactSeenBatchesUntil(
+        messages,
+        evidenceBatches,
+        this.config.toolLoopMaxContextChars,
+        requiredAdditionalChars,
+        compactedBatchChars,
+      );
+      messages.push(assistantMessage);
+      const remainingContextChars = Math.max(
+        0,
+        this.config.toolLoopMaxContextChars
+          - contextChars(messages)
+          - toolMessageOverhead
+          - CONTEXT_PRESSURE_FINAL_STEP_INSTRUCTION.length,
+      );
+      const sharedBatchBudget = Math.min(
+        this.config.maxOutputChars,
+        remainingContextChars,
+      );
+      const budgets = allocateSharedBudgets(
+        entries.map((entry) => entry.rawContent.length),
+        sharedBatchBudget,
+      );
+      entries.forEach((entry, index) => {
         messages.push({
           role: "tool",
-          toolCallId: call.id,
-          content,
+          toolCallId: entry.call.id,
+          content: compactEvidence(entry, budgets[index] ?? 0),
         });
+      });
+      evidenceBatches.push({ entries });
+      if (sharedBatchBudget < desiredBatchChars) {
+        forceContextFinal = true;
       }
     }
 

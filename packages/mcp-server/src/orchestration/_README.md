@@ -62,9 +62,9 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 未提交工作区读取、文件写入、提交、推送或部署能力，所有工具事件归 `owner=council`。事件不接受
 模型自报能力；Adapter 必须按本地 ToolHost 注册表从工具名解析能力，未知工具立即失败。
 
-桌面默认在正式回复原子落库后自动完成运行。Composer 的 `@Agent` 调用也会显式关闭完成门；
-只有手动调用请求显式设置 `confirmationBeforeCompletion=true` 时才进入 `before_completion`
-人工复核，其他执行策略仍由服务端固定。
+桌面默认在正式回复原子落库后自动完成运行。Composer 的 `@Agent` 调用显式关闭完成门；
+底层 API 仍保留 `confirmationBeforeCompletion=true` 的兼容能力，但 Web 不再暴露与 Composer
+重复的手工启动表单，其他执行策略仍由服务端固定。
 
 编排器和适配器只发出统一 `RuntimeEvent`；`AgentProgressHub` 是面向旧 SSE 草稿协议的兼容
 投影，键由 `runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经
@@ -76,4 +76,4 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续调用。
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 冻结并复用提案人已有 proposal/开场 brief，按 cycle kind 直接交给首位评审；已提交修复缺 commit 时零调用拒绝，提问处停住，收敛时写 proposed 决策 |
+| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审传递议题中的多仓库提交，提问处停住，收敛时写 proposed 决策 |

@@ -31,6 +31,11 @@ failed --显式恢复且未超预算--> running
 
 终态为 `completed`、`failed`、`cancelled`。编排器只会发布协议消息，不提供写入决策的接口，因此不会自动产生 `accepted` 决策。
 
+圆桌需求快照另外冻结 `discussion / workspace / commit` 审查范围。方案讨论只要求文本；
+工作区互审要求所有参与者具备 `repository_read`，结论针对可变本地快照；commit 互审要求
+`repository_read + git_diff`，并以 `council-fix` 结构化传递一个或多个相对仓库路径与提交。
+单 commit 旧尾块继续兼容为当前仓库目标。
+
 ## 停止与恢复边界
 
 - 正常停止只由轮次计划耗尽或 `maxRounds` 达到触发。

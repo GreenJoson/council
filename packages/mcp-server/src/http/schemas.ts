@@ -8,6 +8,7 @@
 
 import path from "node:path";
 import {
+  CYCLE_REVIEW_SCOPES,
   DISCUSSION_CYCLE_KINDS,
   RUNTIME_CAPABILITY_KEYS,
 } from "council-orchestrator";
@@ -254,6 +255,7 @@ export const startCycleBodySchema = z
       ),
     roundBudget: z.number().int().positive().max(MAX_CYCLE_ROUND_BUDGET).optional(),
     kind: z.enum(DISCUSSION_CYCLE_KINDS).optional(),
+    reviewScope: z.enum(CYCLE_REVIEW_SCOPES).optional(),
     taskRequirements: z
       .object({
         all: z.array(z.enum(RUNTIME_CAPABILITY_KEYS)).max(20).optional(),
@@ -272,6 +274,20 @@ export const startCycleBodySchema = z
       || value.requiresCommitRef === undefined
       || value.kind === (value.requiresCommitRef ? "fix_review" : "discussion"),
     { message: "kind 与 requiresCommitRef 冲突" },
+  )
+  .refine(
+    (value) =>
+      value.kind === undefined
+      || value.reviewScope === undefined
+      || value.kind === (value.reviewScope === "commit" ? "fix_review" : "discussion"),
+    { message: "kind 与 reviewScope 冲突" },
+  )
+  .refine(
+    (value) =>
+      value.requiresCommitRef === undefined
+      || value.reviewScope === undefined
+      || value.reviewScope === (value.requiresCommitRef ? "commit" : "discussion"),
+    { message: "reviewScope 与 requiresCommitRef 冲突" },
   );
 
 export const answerCycleQuestionBodySchema = z

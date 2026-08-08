@@ -28,7 +28,7 @@
 | `keychain-secret-store.test.ts` | 安全测试 | 验证 Keychain 凭据不存在返回空值，命令故障必须 fail closed |
 | `openai-compatible-runtime.test.ts` | ModelClient 协议测试 | 验证远程流式 Chat Completions、Tool Call 增量合并、JSON 回退、HTTP 安全原因映射、错误脱敏与有界响应 |
 | `read-only-tool-host.test.ts` | ToolHost 安全测试 | 验证读文件、列目录、文本搜索、敏感配置拒绝与符号链接逃逸阻断 |
-| `read-only-agent-loop.test.ts` | AgentLoop 行为测试 | 验证模型—工具多步循环、工具事件、公开文本替换与步骤预算耗尽 |
+| `read-only-agent-loop.test.ts` | AgentLoop 行为测试 | 验证模型—工具多步循环、同批共享预算、已读证据凭据压缩、上下文压力强制收尾与 blocking 覆盖保护、初始提示超限失败关闭及工具事件 |
 | `read-only-git-diff.test.ts` | Git 安全测试 | 验证 commit/ref 固定解析、敏感文件及 rename 过滤、外部 diff 驱动禁用、预算降级和单工具 MCP 暴露 |
 | `openai-compatible-agent-adapter.test.ts` | ToolLoop 适配测试 | 验证 `repository_read` 与 Council 所有权工具事件、远程脱敏原因可公开且未知异常继续隔离 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |

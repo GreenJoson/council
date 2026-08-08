@@ -7,6 +7,8 @@
  */
 
 import type { DebateStage } from "./convergence.js";
+import type { CycleReviewScope } from "./runtime-capabilities.js";
+import type { AgentFixTarget } from "./verdict.js";
 
 export interface StageInstructionInput {
   stage: DebateStage;
@@ -20,9 +22,9 @@ export interface StageInstructionInput {
    * 被复审的那次发言自述的 commit 引用。存在就说明这一轮是 diff 互审，
    * 复审者必须去读真实改动而不是读描述。
    */
-  reviewedCommitRef?: string;
-  /** 本轮是不是只读 bug 修复互审；决定要不要要求主审传递已有 commit 引用。 */
-  requiresCommitRef?: boolean;
+  reviewedCommitTargets?: readonly AgentFixTarget[];
+  /** 决定本轮审的是方案、可变工作区还是冻结 commit。 */
+  reviewScope?: CycleReviewScope;
 }
 
 /**
@@ -61,27 +63,40 @@ const TRAILER_SPEC = [
 const FIX_SPEC = [
   "## 这是一次只读 bug 修复互审",
   "",
-  "本轮不负责修改代码。先从议题公开记录里找到交互式开发任务已经产生的 commit 引用，",
-  "用 `git show <commit>` 和必要的上下文文件核对真实 diff；不要修改文件、运行写操作、",
-  "创建提交、推送或部署。正文之后必须原样传递被审 commit：",
+  "本轮不负责修改代码。先通读议题标题、问题、约束和公开记录，从中找到每个本地仓库",
+  "及其 commit 引用；逐一验证仓库路径、对象存在性、真实 diff 和必要上下文。不要修改文件、",
+  "运行写操作、创建提交、推送或部署。正文之后必须结构化传递全部被审目标：",
   "",
   "```council-fix",
-  '{"commit":"<被审 commit sha>","summary":"这次改动解决了什么"}',
+  '{"targets":[{"repository":".","commit":"<sha>"},{"repository":"../sibling-repo","commit":"<sha>"}],"summary":"这些改动解决了什么"}',
   "```",
   "",
-  "commit 必须是本仓库中已经存在的对象名（7 位以上十六进制），不能填分支名或 tag。",
-  "找不到明确 commit、对象不存在或无法读取 diff 时，不要猜；标记 `blocking`，并通过",
-  "`council-question` 要求用户或交互式开发任务补充真实 commit。",
+  "repository 使用相对议题项目目录的路径，当前仓库写 `.`；commit 必须是对应仓库中",
+  "已经存在的对象名（7 位以上十六进制），不能填分支名或 tag。找不到明确引用、对象",
+  "不存在或任一仓库无法读取时，不要猜；标记 `blocking`，并通过 `council-question` 补证据。",
+].join("\n");
+
+const WORKSPACE_SPEC = [
+  "## 这是一次当前工作区只读互审",
+  "",
+  "本轮审查议题项目目录中的当前文件，包括未提交改动。先读取真实代码；Runtime 支持时",
+  "同时检查 `git status --short`、暂存与未暂存 diff。不要修改文件、创建提交、推送或部署。",
+  "",
+  "工作区不是冻结证据：结论只对本轮读取到的可变快照负责。若审查期间文件发生变化，",
+  "必须明确标记 `blocking` 并要求重新开局，不能把前后两个状态拼成同一份结论。",
 ].join("\n");
 
 function reviewBody(input: StageInstructionInput): readonly string[] {
-  if (input.reviewedCommitRef) {
+  if (input.reviewedCommitTargets?.length) {
+    const commands = input.reviewedCommitTargets.map(
+      (target) => `- \`git -C ${target.repository} show ${target.commit}\``,
+    );
     return [
       "",
-      `本轮复审的改动：\`${input.reviewedCommitRef}\``,
+      "本轮复审的冻结改动：",
+      ...commands,
       "",
-      "先读真实 diff 再下判断——",
-      `\`git show ${input.reviewedCommitRef}\` 和必要的上下文文件都要看过。`,
+      "逐一读完真实 diff 和必要的上下文文件再下判断。",
       "不要凭提交说明或对方的描述判断改动是否正确。",
       "",
       "你是只读复审：不要修改任何文件、不要提交、不要部署。",
@@ -96,15 +111,25 @@ function reviewerList(reviewers: readonly string[]): string {
 }
 
 function stageBody(input: StageInstructionInput): readonly string[] {
+  const reviewScope = input.reviewScope ?? "discussion";
   switch (input.stage) {
     case "proposal":
-      if (input.requiresCommitRef) {
+      if (reviewScope === "commit") {
         return [
           "你是本次修复的只读主审。修复已由交互式开发任务完成；你只审查已有 commit/diff，",
           "不修改文件、不运行写操作、不创建提交。",
           "",
           `随后 ${reviewerList(input.reviewers)} 会独立复审你的判断并可以否决它，`,
           "所以结论必须引用真实 diff，写清修复是否命中根因、边界风险和验证证据。",
+        ];
+      }
+      if (reviewScope === "workspace") {
+        return [
+          "你是当前工作区的只读主审。不要先写方案摘要；先检查真实代码和当前改动，",
+          "再判断实现是否命中根因、是否引入边界回归，以及验证证据是否充分。",
+          "",
+          `随后 ${reviewerList(input.reviewers)} 会独立复审你的代码判断并可以否决它，`,
+          "所以每个结论必须指向具体文件、机制、触发输入和可执行验证。",
         ];
       }
       return [
@@ -125,22 +150,33 @@ function stageBody(input: StageInstructionInput): readonly string[] {
         "把「必须先解决」和「记录即可」分清楚：只有会让方案失败或不可回滚的问题",
         "才标 `blocking`。为了显得严谨而滥用 `blocking` 会让讨论永远收敛不了。",
         "",
-        ...(input.requiresCommitRef
+        ...(reviewScope === "commit"
           ? [
               "这是已提交修复互审。永远不要放行你验证不了的改动：缺少",
-              "`council-fix` 尾块里的 commit 引用时，直接判 `blocking` 并要求补上。",
+              "`council-fix` 尾块里的仓库/commit 目标时，直接判 `blocking` 并要求补上。",
             ]
-          : [
-              "若议题要求审核未提交工作区，不要只复述提案人的描述；请自己读取当前",
-              "工作区 diff 与必要上下文，并明确说明结论针对的是可变工作区快照。",
-            ]),
+          : reviewScope === "workspace"
+            ? [
+                "这是当前工作区互审。不要只复述主审描述；请独立读取当前文件、",
+                "可用的工作区 diff 与必要上下文，并明确说明结论针对可变快照。",
+              ]
+            : []),
         ...reviewBody(input),
       ];
     case "rebuttal":
-      if (input.requiresCommitRef) {
+      if (reviewScope === "commit") {
         return [
           "评审对被审 commit 提出了阻塞级异议。基于同一份真实 diff 逐条回应，",
           "接受问题或用代码证据反驳；不要修改文件或另建提交。",
+          "",
+          `回应之后 ${reviewerList(input.reviewers)} 会再看一轮——`,
+          "分歧是否解决由评审判定，不由你宣布。",
+        ];
+      }
+      if (reviewScope === "workspace") {
+        return [
+          "评审对当前工作区提出了阻塞级异议。重新读取相关文件，逐条用当前代码证据回应；",
+          "不要假设工作区仍与上一轮相同，也不要修改文件。",
           "",
           `回应之后 ${reviewerList(input.reviewers)} 会再看一轮——`,
           "分歧是否解决由评审判定，不由你宣布。",
@@ -166,14 +202,17 @@ function stageBody(input: StageInstructionInput): readonly string[] {
 
 /** 组装某一阶段下发给 Agent 的完整指令。 */
 export function buildStageInstruction(input: StageInstructionInput): string {
+  const reviewScope = input.reviewScope ?? "discussion";
   // 主审在 proposal/rebuttal 中传递同一 immutable commit；critique 只消费该引用。
-  const wantsFixSpec = input.requiresCommitRef
+  const wantsFixSpec = reviewScope === "commit"
     && (input.stage === "proposal" || input.stage === "rebuttal");
+  const wantsWorkspaceSpec = reviewScope === "workspace";
   return [
     `# 当前阶段：${input.stage}（第 ${String(input.round)}/${String(input.roundBudget)} 轮）`,
     "",
     ...stageBody(input),
     "",
+    ...(wantsWorkspaceSpec ? [WORKSPACE_SPEC, ""] : []),
     ...(wantsFixSpec ? [FIX_SPEC, ""] : []),
     TRAILER_SPEC,
   ].join("\n");

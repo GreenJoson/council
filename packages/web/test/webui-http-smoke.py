@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界与 Claude 验收
+@output 导出：项目隔离、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界与 Claude 验收
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -64,12 +64,17 @@ def api_expect_error(
     raise AssertionError(f"API {method} {path} 应返回 {expected_status}")
 
 
-def create_and_start_run(topic_id: str, agent_id: str, instruction: str):
+def create_and_start_run(
+    topic_id: str,
+    agent_id: str,
+    instruction: str,
+    confirmation_before_completion: bool = False,
+):
     run = api_request(
         "POST",
         f"/api/v1/topics/{topic_id}/runs",
         {
-            "confirmationBeforeCompletion": False,
+            "confirmationBeforeCompletion": confirmation_before_completion,
             "plan": [
                 {
                     "adapterId": agent_id,
@@ -274,11 +279,11 @@ with sync_playwright() as playwright:
     # 配置由外部 API 客户端写入；重新加载浏览器快照，但不重启 Agent Service。
     page.reload(wait_until="domcontentloaded")
     page.get_by_role("heading", name="真实同步验收", exact=True).wait_for()
-    capability_ledger = page.get_by_label("Agent 主动调用能力")
-    capability_ledger.get_by_text("Router Alpha", exact=True).wait_for()
-    capability_ledger.get_by_text("Router Beta", exact=True).wait_for()
-    capability_ledger.get_by_text("Router Tool", exact=True).wait_for()
-    capability_ledger.get_by_text("Router Git", exact=True).wait_for()
+    roundtable_roster = page.locator(".cycle-roster")
+    roundtable_roster.get_by_text("Router Alpha", exact=True).wait_for()
+    roundtable_roster.get_by_text("Router Beta", exact=True).wait_for()
+    roundtable_roster.get_by_text("Router Tool", exact=True).wait_for()
+    roundtable_roster.get_by_text("Router Git", exact=True).wait_for()
 
     alpha_run = create_and_start_run(
         topic_id,
@@ -436,27 +441,16 @@ with sync_playwright() as playwright:
     assert page.locator('svg[aria-label="Grok"]').count() > 0
     page.get_by_role("button", name="关闭模型路由", exact=True).click()
 
-    capability_ledger = page.get_by_label("Agent 主动调用能力")
-    claude_capability = capability_ledger.locator(
-        ".adapter-ledger-row", has_text="Claude"
-    )
-    claude_capability.get_by_text("Claude", exact=True).wait_for()
-    claude_capability.get_by_text("可由 Web 主动调用", exact=True).wait_for()
-    page.locator(".auto-round-form select").first.select_option("claude")
-    page.get_by_placeholder(
-        "例如：先给出可回滚的最小架构方案，并列出失败条件。"
-    ).fill("真实编排 E2E：请给出可回滚的最小方案。")
-    page.get_by_role("button", name="启动 Agent", exact=True).click()
-    page.get_by_text("Agent 调用已启动", exact=True).wait_for()
-    claude_runs = api_request("GET", f"/api/v1/topics/{topic_id}/runs")
-    claude_run = next(
-        run
-        for run in claude_runs["runs"]
-        if run["plan"][0]["adapterId"] == "claude"
+    claude_run = create_and_start_run(
+        topic_id,
+        "claude",
+        "真实编排 E2E：请给出可回滚的最小方案。",
+        confirmation_before_completion=True,
     )
     wait_for_run_status(claude_run["id"], "waiting_user")
     agent_message = "自动 Claude 回帖：先固定状态机不变量，再验证可回滚的最小方案。"
     page.get_by_text(agent_message, exact=True).wait_for(timeout=15_000)
+    page.get_by_role("heading", name="运行状态", exact=True).wait_for()
     page.get_by_text("等待确认", exact=True).wait_for()
     page.get_by_role("button", name="确认并完成", exact=True).click()
     page.get_by_text("确认已提交，自动轮次继续", exact=True).wait_for()

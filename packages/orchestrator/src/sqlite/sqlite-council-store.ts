@@ -65,6 +65,7 @@ import {
   hasActiveOrchestrationRun,
   readActiveDiscussionCycle,
   readLatestDiscussionCycle,
+  readTopicProposalSeed,
   startDiscussionCycle,
   type AbandonDiscussionCycleInput,
   type AnswerBlockingQuestionInput,
@@ -72,6 +73,7 @@ import {
   type DiscussionCycleView,
   type ReusableProposalMessage,
   type StartDiscussionCycleInput,
+  type TopicProposalSeed,
 } from "../cycle/cycle-repository.js";
 import type { DiscussionCycle } from "../cycle/cycle-codec.js";
 import {
@@ -1066,6 +1068,10 @@ export class SQLiteCouncilStore implements CouncilStore {
     proposerActorId: string,
   ): ReusableProposalMessage | undefined {
     return findReusableProposalMessage(this.#database, topicId, proposerActorId);
+  }
+
+  readTopicProposalSeed(topicId: string): TopicProposalSeed | undefined {
+    return readTopicProposalSeed(this.#database, topicId);
   }
 
   readActiveDiscussionCycle(topicId: string): DiscussionCycleView | undefined {

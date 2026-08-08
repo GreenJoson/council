@@ -52,7 +52,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 明确隔离私有聊天历史，只共享主动发布的公开结论与证据。
 - 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
 - Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
-- Operator Console 与桌面应用可创建、启动、取消和恢复 Claude/Codex 调用；右栏只展示当前调用，旧调用折叠为紧凑历史。
+- Operator Console 与桌面应用通过 Composer `@Agent` 发起单次调用、通过圆桌发起多 Agent 自动互审；右栏只在存在调用或持久会话时展示紧凑运行状态、取消、恢复与历史。
 - Agent 进入准备或调用阶段时，讨论时间线末尾会显示具体 Agent 的动态回复状态与实时草稿；Claude 和兼容远程模型转发公开文本增量，Codex 转发公开 JSONL 消息并平滑展示较大输出块。草稿按议题隔离、不落 SQLite，运行结束、失败或取消后由正式消息接替。
 - 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
 - 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
@@ -65,16 +65,16 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - Model Router 写入只由桌面内置 HTTP sidecar 持有；同一日志库只允许一个配置写进程。
   stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
-- 圆桌开局会冻结周期类型、参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在任何模型调用前直接拒绝，避免让纯文本 Provider 假装已经读代码、跑测试或提交修复。
-- 选择的提案人若已在议题发布正式 `proposal`，或它同时是议题创建者并已发布开场 `brief`，圆桌会冻结该消息为首轮提案并直接召唤评审，不重复消耗一次提案人调用。普通讨论可用于具备项目读取能力的 Agent 审核未提交工作区；已提交修复互审缺少真实 commit 时会在模型调用前拒绝。
-- 普通讨论只要求文本能力；bug 修复互审只读核对交互式开发任务已经产生的 commit/diff，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime、获授权的 ACP DelegatedRuntime 与兼容 API ToolLoop 都可按 Council policy 读取已提交 diff；后两者只获得精确的 `council_git_diff`，不能读取未提交工作区、Shell、写文件或提交。
+- 圆桌开局会冻结方案讨论、当前工作区或已提交 commit 三种审查范围，以及参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在模型调用前直接拒绝，避免纯文本 Provider 假装已经读过代码。
+- 议题发起人入选时由服务端按 Actor 身份自动置为提案人，议题正文直接冻结为首轮提案，不受勾选顺序影响，也不重复召唤发起人；Commit 互审会从议题正文及发起人的最新说明提取一个或多个本地仓库/commit，首个真实调用直接交给其他评审。发起人未入选时才由首位 Agent 形成提案。
+- 工作区与 commit 互审都保持只读，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime 可读取当前代码并在只读 Shell 中检查工作区 diff；获授权 ACP 与兼容 API ToolLoop 可读取当前项目文件和受控已提交 diff，但没有 Shell，跨仓库或未提交 diff 不可验证时必须明确阻断。
 - 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
 - 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。
 - 本机 Agent 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。Claude/Codex 当前按轮启动 CLI 并恢复 session；ACP DelegatedRuntime 让同一 RuntimeBinding 复用一个常驻进程与 ACP session。所有迟到回复都受 lease/fencing 阻止；兼容远程 Provider 的 ToolLoop 单轮无状态，但每一步工具调用都留在同一次模型对话内。
 - Council 已正式拆分 Agent、Provider、Runtime 三层：Provider 持久化 `runtimeDefinitionId`，受控注册表声明 ACP 命令、模型选择协议、启动参数与 Runtime 能力，Council 独立 policy 再计算实际授权。`AcpDelegatedRuntime` 不含供应商分支，统一驱动 Kimi、Gemini、Grok、Codex 和 Claude ACP Agent；供应商自己的 AgentLoop 负责工具循环，Council 只负责 RuntimeBinding、权限、取消、事件投影与原子公开提交。未注册或未授权能力不会进入 ACP 握手。accepted 决策、配置变更、手动关闭或空闲回收会终止对应进程。
-- DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Kun 风格的只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 暴露项目内读文件、列目录、文本搜索和受控已提交 Git diff；AgentLoop 在统一步骤、上下文、文件、扫描与 diff 预算内迭代；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
+- DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Council-owned 只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 暴露项目内读文件、列目录、文本搜索和受控已提交 Git diff；AgentLoop 让同轮工具共享结果预算，按需把模型已经读过的旧结果压成带调用参数、原文长度、哈希和首尾摘录的证据凭据。上下文吃紧时会收回工具并要求基于现有证据收尾，同时追加最后一个 `blocking` 覆盖保护，避免不完整审核误收敛，不再把整轮直接报成上下文超限；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
 - 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
-- Composer 的 `@Agent` 回复完成后默认自动归档；只有在手动调用面板显式勾选“完成前需要我确认”时，才会停在人工确认门。
+- Composer 的 `@Agent` 回复完成后自动归档；运行状态面板只负责观察、取消、恢复、历史和持久会话关闭，不再提供重复的手工启动表单。
 - Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、模型不可用、工具回合耗尽，以及兼容 Provider 的认证、权限、额度、HTTP 429 限流、服务故障和请求拒绝均可直接辨认，原始上游输出不会进入议题记录。
 - 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
 - Node 迁移器在服务就绪前执行连续版本镜像校验、WAL checkpoint、官方在线备份、只读备份验证、canonical schema 校验和排他事务迁移；桌面 Rust 层只有收到 `ready` 且数据库实例 UUID 与 Store 一致后才打开数据库。
@@ -139,4 +139,4 @@ SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全]
 1. 将最终决策导出为项目 ADR。
 2. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
 3. 增加运行诊断日志入口和自定义 Provider 增删界面。
-4. 为长议题增加可审计的上下文检查点，进一步压缩 session 恢复时的公开增量。
+4. 将 ToolLoop 的本轮证据凭据扩展为可跨运行查询的持久审计视图。

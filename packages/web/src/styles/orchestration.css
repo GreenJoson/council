@@ -1,71 +1,10 @@
 /**
  * @input  依赖：theme.css、components.css 与 AutoRoundsPanel 的调用历史语义类名
- * @output 导出：品牌化能力账本、单次完成复核和紧凑历史调用的增量视觉
- * @pos    Agent 调用控制台新增交互的独立样式层
+ * @output 导出：紧凑历史调用和 Runtime 诊断的增量视觉
+ * @pos    按需运行状态面板的独立样式层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
-
-.adapter-ledger-brand {
-  position: relative;
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-small);
-  background: var(--color-surface-raised);
-}
-
-.adapter-ledger-brand .adapter-light {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  margin: 0;
-  border: 2px solid var(--color-surface);
-}
-
-.auto-round-form .completion-review-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-small);
-  background: color-mix(in srgb, var(--color-canvas-deep) 58%, transparent);
-  cursor: pointer;
-}
-
-.completion-review-option input {
-  width: 14px;
-  height: 14px;
-  margin: 1px 0 0;
-  accent-color: var(--color-primary);
-}
-
-.completion-review-option span,
-.completion-review-option strong,
-.completion-review-option small {
-  display: block;
-}
-
-.completion-review-option span {
-  min-width: 0;
-}
-
-.completion-review-option strong {
-  color: var(--color-text-secondary);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.completion-review-option small {
-  margin-top: 2px;
-  color: var(--color-text-muted);
-  font-size: 8px;
-  line-height: 1.4;
-}
 
 .run-history {
   overflow: hidden;

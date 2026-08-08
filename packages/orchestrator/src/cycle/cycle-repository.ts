@@ -28,7 +28,11 @@ import {
   type RecordedTurn,
 } from "./cycle-codec.js";
 import type { AgentQuestion } from "./verdict.js";
-import { parseAgentReply } from "./verdict.js";
+import {
+  parseAgentReply,
+  parseCommitTargetsFromEvidence,
+} from "./verdict.js";
+import type { AgentFixTarget } from "./verdict.js";
 import type {
   DiscussionCycleKind,
   FrozenCycleRequirements,
@@ -60,6 +64,8 @@ export interface StartDiscussionCycleInput {
   roundBudget: number;
   /** 复用提案人已经公开的 proposal/开场 brief；仓储会再次校验作者、类型与 commit。 */
   seedProposalMessageId?: string;
+  /** 议题由本轮提案人创建时，直接把议题正文冻结为首轮提案，不再次召唤发起人。 */
+  seedFromTopic?: boolean;
   contextCursor?: CycleCursor;
   now: string;
 }
@@ -70,6 +76,14 @@ export interface ReusableProposalMessage {
   kind: "brief" | "proposal";
   createdAt: string;
   commitRef?: string;
+  commitTargets?: readonly AgentFixTarget[];
+}
+
+export interface TopicProposalSeed {
+  topicId: string;
+  actorId: string;
+  createdAt: string;
+  commitTargets?: readonly AgentFixTarget[];
 }
 
 interface ReusableProposalRow {
@@ -79,6 +93,14 @@ interface ReusableProposalRow {
   content: unknown;
   created_at: unknown;
   topic_created_by_actor_id: unknown;
+}
+
+interface TopicProposalSeedRow {
+  id: unknown;
+  question: unknown;
+  created_by_actor_id: unknown;
+  created_at: unknown;
+  latest_creator_content: unknown;
 }
 
 export interface RecordCycleTurnInput {
@@ -193,7 +215,12 @@ function decodeReusableProposal(
     actorId: row.author_actor_id,
     kind: row.kind,
     createdAt: row.created_at,
-    ...(fix ? { commitRef: fix.commit } : {}),
+    ...(fix
+      ? {
+          commitRef: fix.targets[0]!.commit,
+          commitTargets: fix.targets,
+        }
+      : {}),
   };
 }
 
@@ -227,6 +254,55 @@ export function findReusableProposalMessage(
     LIMIT 1
   `).get(topicId, proposerActorId) as unknown as ReusableProposalRow | undefined;
   return row ? decodeReusableProposal(row, proposerActorId) : undefined;
+}
+
+/**
+ * 议题正文由创建者公开，天然就是首轮提案。发起人后续最近一次 proposal/brief
+ * 仅用于补充或覆盖 commit 证据，不改变提案归属。
+ */
+export function readTopicProposalSeed(
+  database: DatabaseSync,
+  topicId: string,
+): TopicProposalSeed | undefined {
+  const row = database.prepare(`
+    SELECT topics.id, topics.question, topics.created_by_actor_id, topics.created_at,
+      (
+        SELECT messages.content
+        FROM messages
+        WHERE messages.topic_id = topics.id
+          AND messages.author_actor_id = topics.created_by_actor_id
+          AND messages.kind IN ('brief', 'proposal')
+        ORDER BY messages.created_at DESC, messages.rowid DESC
+        LIMIT 1
+      ) AS latest_creator_content
+    FROM topics
+    WHERE topics.id = ?
+  `).get(topicId) as unknown as TopicProposalSeedRow | undefined;
+  if (!row) {
+    return undefined;
+  }
+  if (
+    typeof row.id !== "string"
+    || typeof row.question !== "string"
+    || typeof row.created_by_actor_id !== "string"
+    || typeof row.created_at !== "string"
+    || (row.latest_creator_content !== null
+      && typeof row.latest_creator_content !== "string")
+  ) {
+    throw new InvalidRunStateError("Council 议题提案种子损坏。");
+  }
+  const commitTargets = parseCommitTargetsFromEvidence([
+    row.question,
+    ...(typeof row.latest_creator_content === "string"
+      ? [row.latest_creator_content]
+      : []),
+  ]);
+  return {
+    topicId: row.id,
+    actorId: row.created_by_actor_id,
+    createdAt: row.created_at,
+    ...(commitTargets.length > 0 ? { commitTargets } : {}),
+  };
 }
 
 function readReusableProposalMessage(
@@ -325,19 +401,37 @@ export function startDiscussionCycle(
         messageId: input.seedProposalMessageId,
       })
     : undefined;
-  if (input.kind === "fix_review" && seed && !seed.commitRef) {
+  if (input.seedProposalMessageId && input.seedFromTopic) {
+    throw new InvalidRunStateError("Council 首轮提案不能同时复用议题和消息。");
+  }
+  const topicSeed = input.seedFromTopic
+    ? readTopicProposalSeed(database, input.topicId)
+    : undefined;
+  if (input.seedFromTopic && topicSeed?.actorId !== proposerActorId) {
+    throw new InvalidRunStateError("Council 议题发起人与本轮提案人不一致。");
+  }
+  const seededCommitTargets = seed?.commitTargets ?? topicSeed?.commitTargets;
+  if (
+    input.kind === "fix_review"
+    && (seed || topicSeed)
+    && !seededCommitTargets?.length
+  ) {
     throw new InvalidRunStateError(
-      "已有提案没有真实 commit，不能开始已提交修复互审；审核未提交工作区请改用方案讨论。",
+      "议题与发起人说明中没有可验证的仓库/commit，不能开始 Commit 互审。",
     );
   }
-  const initialTurns: RecordedTurn[] = seed
+  const hasSeed = Boolean(seed || topicSeed);
+  const initialTurns: RecordedTurn[] = hasSeed
     ? [{
         agentId: proposerAgentId,
         stage: "proposal",
         round: 1,
         stance: "agree",
-        messageId: seed.messageId,
-        ...(seed.commitRef ? { commitRef: seed.commitRef } : {}),
+        messageId: seed?.messageId ?? topicSeed!.topicId,
+        ...(seededCommitTargets?.[0]
+          ? { commitRef: seededCommitTargets[0].commit }
+          : {}),
+        ...(seededCommitTargets ? { commitTargets: seededCommitTargets } : {}),
       }]
     : [];
   const id = `cycle_${randomUUID()}`;
@@ -361,7 +455,7 @@ export function startDiscussionCycle(
     `).run(
       id,
       input.topicId,
-      seed ? "critique" : "proposal",
+      hasSeed ? "critique" : "proposal",
       JSON.stringify(input.participants),
       input.kind,
       JSON.stringify(input.requirements),

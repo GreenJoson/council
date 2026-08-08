@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、人工零调用决策、圆桌模式布局、系统 Agent 身份只读、单一当前调用/历史、Agent 动态、大屏流体讨论列、
+@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -8,7 +8,6 @@
 """
 
 import os
-import re
 from pathlib import Path
 
 from playwright.sync_api import ConsoleMessage, sync_playwright
@@ -173,19 +172,14 @@ def verify_message_jump_rail(page) -> None:
 
 def start_mock_agent_run(page, instruction: str) -> None:
     page.get_by_placeholder(
-        "例如：先给出可回滚的最小架构方案，并列出失败条件。"
-    ).fill(instruction)
-    page.get_by_role("button", name="启动 Agent", exact=True).click()
-    page.get_by_text("Agent 调用已启动", exact=True).wait_for()
+        "写下公开结论、证据或回应…输入 @ 可召唤 Agent 直接回应"
+    ).fill(f"@claude {instruction}")
+    page.get_by_role("button", name="发布并召唤 Claude", exact=True).click()
+    page.get_by_text("消息已发布，Agent 正在回复", exact=True).wait_for()
     page.get_by_text("等待 Agent", exact=True).wait_for()
 
 
 def verify_compact_run_history(page) -> None:
-    review_checkbox = page.get_by_role(
-        "checkbox", name=re.compile(r"完成前需要我确认")
-    )
-    assert not review_checkbox.is_checked()
-
     for instruction in ("检查第一次调用。", "检查第二次调用。"):
         start_mock_agent_run(page, instruction)
         page.locator(".run-card").get_by_role("button", name="取消", exact=True).click()
@@ -201,12 +195,10 @@ def verify_compact_run_history(page) -> None:
 
 
 def verify_cycle_mode_layout(page) -> None:
-    mode = page.locator(".cycle-mode")
-    title = mode.get_by_text("bug 修复互审", exact=True)
-    description = mode.get_by_text(
-        "只审核已公开真实 commit；审核未提交工作区请保持关闭",
-        exact=True,
-    )
+    scope = page.locator(".cycle-review-scope")
+    assert scope.get_by_role("radio").count() == 3
+    title = scope.get_by_text("Commit", exact=True)
+    description = scope.get_by_text("审冻结提交", exact=True)
     title_box = title.bounding_box()
     description_box = description.bounding_box()
     assert title_box is not None

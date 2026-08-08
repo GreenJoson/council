@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Agent 提交的公开消息正文
- * @output 导出：立场/阻塞提问/修复 commit 引用的结构化尾块解析与失败关闭判定
+ * @output 导出：立场/阻塞提问/修复 commit 引用的结构化尾块、议题证据解析与失败关闭判定
  * @pos    自然语言回复与收敛状态机之间唯一的结构化边界；解析不了一律按最保守立场处理
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -21,6 +21,8 @@ export const MAX_QUESTION_CHARS = 1_000;
 export const MAX_QUESTION_OPTIONS = 6;
 export const MAX_QUESTION_OPTION_CHARS = 200;
 export const MAX_FIX_SUMMARY_CHARS = 400;
+export const MAX_FIX_TARGETS = 8;
+export const MAX_FIX_REPOSITORY_CHARS = 200;
 
 export interface AgentVerdict {
   stance: VerdictStance;
@@ -37,9 +39,16 @@ export interface AgentQuestion {
  * 修复者对自己改动的自述。复审者据此读 diff——
  * 没有 commit 引用，"互审"就退化成互相看对方讲故事。
  */
-export interface AgentFixClaim {
+export interface AgentFixTarget {
+  /** 相对议题项目目录的仓库路径；当前仓库使用 `.`。 */
+  repository: string;
   /** 已提交的 commit 引用；复审者用它 git show 出真实 diff。 */
   commit: string;
+}
+
+export interface AgentFixClaim {
+  /** 一个议题可以同时审查当前仓库和明确列出的同级仓库。 */
+  targets: readonly AgentFixTarget[];
   /** 这次改动想解决什么，一句话。 */
   summary: string;
 }
@@ -64,6 +73,12 @@ const FIX_FENCE = "council-fix";
  * 分支名和 tag 会随时间移动，复审者过几分钟读到的就不是被审的那份 diff。
  */
 const COMMIT_REF_PATTERN = /^[0-9a-f]{7,40}$/u;
+// 只允许当前仓库、仓库内相对路径或一层同级仓库；禁止绝对路径与连续向上穿越。
+const REPOSITORY_SEGMENT = String.raw`(?!\.{1,2}(?:/|$))[A-Za-z0-9._-]+`;
+const REPOSITORY_REF_PATTERN = new RegExp(
+  String.raw`^(?:\.|(?:\.\./)?${REPOSITORY_SEGMENT}(?:/${REPOSITORY_SEGMENT})*)$`,
+  "u",
+);
 
 /**
  * 只接受行首围栏，避免正文里引用协议示例时被误判。
@@ -183,14 +198,142 @@ function parseFix(content: string): AgentFixClaim | undefined {
   if (!record) {
     return undefined;
   }
-  const commit = typeof record.commit === "string"
-    ? record.commit.trim().toLowerCase()
-    : "";
   const summary = boundedText(record.summary, MAX_FIX_SUMMARY_CHARS);
-  if (!COMMIT_REF_PATTERN.test(commit) || summary === undefined) {
+  if (summary === undefined) {
     return undefined;
   }
-  return { commit, summary };
+  const rawTargets = Array.isArray(record.targets)
+    ? record.targets
+    : [{ repository: ".", commit: record.commit }];
+  if (rawTargets.length === 0 || rawTargets.length > MAX_FIX_TARGETS) {
+    return undefined;
+  }
+  const targets: AgentFixTarget[] = [];
+  for (const rawTarget of rawTargets) {
+    if (typeof rawTarget !== "object" || rawTarget === null || Array.isArray(rawTarget)) {
+      return undefined;
+    }
+    const target = rawTarget as Record<string, unknown>;
+    const repository = boundedText(target.repository, MAX_FIX_REPOSITORY_CHARS);
+    const commit = typeof target.commit === "string"
+      ? target.commit.trim().toLowerCase()
+      : "";
+    if (
+      repository === undefined
+      || !REPOSITORY_REF_PATTERN.test(repository)
+      || !COMMIT_REF_PATTERN.test(commit)
+    ) {
+      return undefined;
+    }
+    targets.push({ repository, commit });
+  }
+  const uniqueTargets = new Set(
+    targets.map((target) => `${target.repository}\u0000${target.commit}`),
+  );
+  return uniqueTargets.size === targets.length ? { targets, summary } : undefined;
+}
+
+const COMMIT_MARKER_PATTERN = /(?:提交|commit(?:\s+sha)?)/iu;
+const REPOSITORY_MARKER_PATTERN = /(?:仓库|repository|repo)/iu;
+const CURRENT_REPOSITORY_PATTERN = /(?:当前(?:仓库|目录)|current\s+(?:repository|repo|directory)|this\s+(?:repository|repo))/iu;
+const CODE_SPAN_PATTERN = /`([^`\r\n]+)`/gu;
+const PLAIN_REPOSITORY_PATTERN = /(?:^|[：:,，\s])((?:\.\.\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*|\.)(?=$|[，,；;\s])/u;
+
+function evidenceLabel(line: string, markerIndex: number): string {
+  return line
+    .slice(0, markerIndex)
+    .replace(/^[\s>*#\-+\d.()（）]+/u, "")
+    .trim()
+    .toLowerCase();
+}
+
+function repositoryFromEvidenceLine(line: string): string | undefined {
+  if (CURRENT_REPOSITORY_PATTERN.test(line)) {
+    return ".";
+  }
+  const marker = REPOSITORY_MARKER_PATTERN.exec(line);
+  if (!marker) {
+    return undefined;
+  }
+  for (const match of line.matchAll(CODE_SPAN_PATTERN)) {
+    const candidate = match[1]?.trim();
+    if (candidate && REPOSITORY_REF_PATTERN.test(candidate)) {
+      return candidate;
+    }
+  }
+  const candidate = PLAIN_REPOSITORY_PATTERN.exec(
+    line.slice(marker.index + marker[0].length),
+  )?.[1];
+  return candidate && REPOSITORY_REF_PATTERN.test(candidate)
+    ? candidate
+    : undefined;
+}
+
+function commitFromEvidenceLine(line: string): string | undefined {
+  const marker = COMMIT_MARKER_PATTERN.exec(line);
+  if (!marker) {
+    return undefined;
+  }
+  const candidate = /`?([0-9a-f]{7,40})`?/iu.exec(
+    line.slice(marker.index + marker[0].length),
+  )?.[1]?.toLowerCase();
+  return candidate && COMMIT_REF_PATTERN.test(candidate) ? candidate : undefined;
+}
+
+/**
+ * 从议题正文与发起人的公开说明中提取“仓库 + commit”证据。
+ *
+ * 结构化 `council-fix` 优先；自然语言只接受显式“仓库/提交”标记和安全相对路径，
+ * 不会把正文里任意十六进制字符串猜成 commit。相同仓库后出现的证据覆盖旧值，
+ * 使发起人后续补充的新提交能替代议题创建时的旧引用。
+ */
+export function parseCommitTargetsFromEvidence(
+  contents: readonly string[],
+): readonly AgentFixTarget[] {
+  for (const content of [...contents].reverse()) {
+    const structured = parseFix(content);
+    if (structured) {
+      return structured.targets;
+    }
+  }
+
+  const lines = contents.flatMap((content) => content.split(/\r?\n/u));
+  const repositoriesByLabel = new Map<string, string>();
+  for (const line of lines) {
+    const marker = REPOSITORY_MARKER_PATTERN.exec(line);
+    if (!marker) {
+      continue;
+    }
+    const repository = repositoryFromEvidenceLine(line);
+    if (!repository) {
+      continue;
+    }
+    repositoriesByLabel.set(evidenceLabel(line, marker.index), repository);
+  }
+
+  const targetsByRepository = new Map<string, AgentFixTarget>();
+  for (const line of lines) {
+    const marker = COMMIT_MARKER_PATTERN.exec(line);
+    if (!marker) {
+      continue;
+    }
+    const commit = commitFromEvidenceLine(line);
+    if (!commit) {
+      continue;
+    }
+    const label = evidenceLabel(line, marker.index);
+    const directRepository = repositoryFromEvidenceLine(line);
+    const repository = directRepository
+      ?? repositoriesByLabel.get(label)
+      ?? (repositoriesByLabel.size === 1
+        ? [...repositoriesByLabel.values()][0]
+        : repositoriesByLabel.size === 0 ? "." : undefined);
+    if (!repository || !REPOSITORY_REF_PATTERN.test(repository)) {
+      continue;
+    }
+    targetsByRepository.set(repository, { repository, commit });
+  }
+  return [...targetsByRepository.values()].slice(0, MAX_FIX_TARGETS);
 }
 
 /**

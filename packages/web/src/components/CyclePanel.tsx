@@ -1,6 +1,6 @@
 /**
- * @input  依赖：编排快照里的活动圆桌、可用 Agent 名册与受控的开局/回答操作
- * @output 导出：CyclePanel 既有提案复用提示、名册勾选、阶段进度、阻塞提问与累计度量
+ * @input  依赖：议题发起人、编排快照里的活动圆桌、可用 Agent 名册与受控开局/回答操作
+ * @output 导出：CyclePanel 三段审查范围、名册能力校验、阶段进度、阻塞提问与累计度量
  * @pos    Inspector 内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -19,6 +19,7 @@ import {
 import { useMemo, useState, type ReactElement } from "react";
 import type {
   CycleMetrics,
+  CycleReviewScope,
   CycleStage,
   CycleTurn,
   DiscussionCycleView,
@@ -52,15 +53,32 @@ const STOP_REASON_LABELS: Readonly<Record<string, string>> = {
 /** 默认轮次预算与服务端 DEFAULT_ROUND_BUDGET 一致：提案 + 一轮反驳 + 一轮复核。 */
 const DEFAULT_ROUND_BUDGET = 3;
 
+const REVIEW_SCOPE_OPTIONS: ReadonlyArray<{
+  value: CycleReviewScope;
+  label: string;
+  description: string;
+}> = [
+  { value: "discussion", label: "方案", description: "审设计与取舍" },
+  { value: "workspace", label: "工作区", description: "审当前本地代码" },
+  { value: "commit", label: "Commit", description: "审冻结提交" },
+];
+
+const REVIEW_SCOPE_LABELS: Readonly<Record<CycleReviewScope, string>> = {
+  discussion: "方案讨论",
+  workspace: "工作区互审",
+  commit: "Commit 互审",
+};
+
 export interface CyclePanelProps {
   topicId: string;
+  initiatorActorId: string;
   isTopicOpen: boolean;
   snapshot: OrchestrationSnapshot | null;
   busyAction: string | null;
   onStart: (
     participants: string[],
     roundBudget: number,
-    kind: "discussion" | "fix_review",
+    reviewScope: CycleReviewScope,
   ) => Promise<boolean>;
   onAnswer: (questionMessageId: string, content: string) => Promise<boolean>;
   onAbandon: () => Promise<void>;
@@ -109,11 +127,13 @@ function StageTrack({ view }: { view: DiscussionCycleView }): ReactElement {
 
 function CycleStarter({
   adapters,
+  initiatorActorId,
   isTopicOpen,
   busy,
   onStart,
 }: {
   adapters: readonly OrchestrationAdapter[];
+  initiatorActorId: string;
   isTopicOpen: boolean;
   busy: boolean;
   onStart: CyclePanelProps["onStart"];
@@ -122,10 +142,10 @@ function CycleStarter({
     () => adapters.filter((adapter) => adapter.available),
     [adapters],
   );
-  // 勾选顺序即发言顺序：第一位是提案人，其余是评审。用数组而非 Set 就是为了留住顺序。
+  // 发起人入选时固定置首但不再次调用；其余 Agent 仍按勾选顺序评审。
   const [roster, setRoster] = useState<string[]>([]);
   const [roundBudget, setRoundBudget] = useState(DEFAULT_ROUND_BUDGET);
-  const [isFixReview, setIsFixReview] = useState(false);
+  const [reviewScope, setReviewScope] = useState<CycleReviewScope>("discussion");
 
   const toggle = (adapterId: string): void => {
     setRoster((current) =>
@@ -135,17 +155,68 @@ function CycleStarter({
     );
   };
 
-  const canStart = isTopicOpen && !busy && roster.length >= 2;
+  const initiatorAdapterId = available.find(
+    (adapter) => adapter.actorId === initiatorActorId,
+  )?.id;
+  const orderedRoster = initiatorAdapterId && roster.includes(initiatorAdapterId)
+    ? [initiatorAdapterId, ...roster.filter((item) => item !== initiatorAdapterId)]
+    : roster;
+  const initiatorSelected = Boolean(
+    initiatorAdapterId && orderedRoster[0] === initiatorAdapterId,
+  );
+
+  const missingScopeCapability = orderedRoster
+    .map((adapterId) => available.find((adapter) => adapter.id === adapterId))
+    .filter((adapter): adapter is OrchestrationAdapter => adapter !== undefined)
+    .filter((adapter) =>
+      reviewScope === "workspace"
+        ? !adapter.runtimeCapabilities.includes("repository_read")
+        : reviewScope === "commit"
+          ? !adapter.runtimeCapabilities.includes("repository_read")
+            || !adapter.runtimeCapabilities.includes("git_diff")
+          : false,
+    );
+  const canStart = isTopicOpen
+    && !busy
+    && orderedRoster.length >= 2
+    && missingScopeCapability.length === 0;
 
   return (
     <div className="cycle-starter">
+      <fieldset className="cycle-review-scope" disabled={!isTopicOpen || busy}>
+        <legend>审查范围</legend>
+        <div className="cycle-scope-segments">
+          {REVIEW_SCOPE_OPTIONS.map((option) => (
+            <label
+              className={`cycle-scope-option ${reviewScope === option.value ? "is-active" : ""}`}
+              key={option.value}
+            >
+              <input
+                type="radio"
+                name="cycle-review-scope"
+                value={option.value}
+                checked={reviewScope === option.value}
+                onChange={() => setReviewScope(option.value)}
+              />
+              <strong>{option.label}</strong>
+              <small>{option.description}</small>
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <p className="cycle-hint">
-        勾选参与者，第一位是提案人。若它已在本议题公开 proposal 或开场 brief，
-        开局会直接复用并跳到首位评审；否则才召唤提案人。
+        {initiatorSelected
+          ? "议题发起人已冻结为提案人并跳过首轮；第一条调用从评审开始。"
+          : reviewScope === "workspace"
+            ? "发起人未入选；首位 Agent 提案后，其他评审读取当前工作区。"
+          : reviewScope === "commit"
+            ? "发起人未入选；首位 Agent 先从议题读取并验证仓库与 commit。"
+            : "发起人未入选；第一位 Agent 作为提案人，其余按顺序评审。"}
       </p>
       <ul className="cycle-roster">
         {available.map((adapter) => {
-          const order = roster.indexOf(adapter.id);
+          const order = orderedRoster.indexOf(adapter.id);
+          const isInitiator = adapter.id === initiatorAdapterId;
           return (
             <li key={adapter.id}>
               <label className="cycle-roster-item">
@@ -160,8 +231,14 @@ function CycleStarter({
                 <span className="cycle-hint-inline">
                   {runtimeCapabilityLabel(adapter)}
                 </span>
-                {order === 0 ? <span className="cycle-badge">提案人</span> : null}
-                {order > 0 ? (
+                {isInitiator ? (
+                  <span className={`cycle-badge ${order < 0 ? "is-muted" : ""}`}>
+                    {order >= 0 ? "发起人 · 跳过首轮" : "发起人"}
+                  </span>
+                ) : order === 0 ? (
+                  <span className="cycle-badge">提案人</span>
+                ) : null}
+                {!isInitiator && order > 0 ? (
                   <span className="cycle-badge is-muted">评审 {order}</span>
                 ) : null}
               </label>
@@ -175,20 +252,13 @@ function CycleStarter({
           可用 Agent 不足两位，无法互审。请先在设置里连接第二个 Provider。
         </p>
       ) : null}
-      <label className="cycle-roster-item cycle-mode">
-        <input
-          type="checkbox"
-          checked={isFixReview}
-          disabled={!isTopicOpen || busy}
-          onChange={() => { setIsFixReview((current) => !current); }}
-        />
-        <span className="cycle-mode-copy">
-          <span className="cycle-roster-name">bug 修复互审</span>
-          <span className="cycle-hint-inline">
-            只审核已公开真实 commit；审核未提交工作区请保持关闭
-          </span>
-        </span>
-      </label>
+      {missingScopeCapability.length > 0 ? (
+        <p className="cycle-warning">
+          <TriangleAlert size={14} />
+          {missingScopeCapability.map((adapter) => adapter.label).join("、")}
+          不具备当前审查范围所需的项目读取能力。
+        </p>
+      ) : null}
       <label className="cycle-budget">
         轮次预算
         <input
@@ -210,9 +280,9 @@ function CycleStarter({
         disabled={!canStart}
         onClick={() => {
           void onStart(
-            roster,
+            orderedRoster,
             roundBudget,
-            isFixReview ? "fix_review" : "discussion",
+            reviewScope,
           );
         }}
       >
@@ -388,6 +458,7 @@ function MetricsLedger({ metrics }: { metrics: CycleMetrics }): ReactElement | n
 
 export function CyclePanel({
   topicId,
+  initiatorActorId,
   isTopicOpen,
   snapshot,
   busyAction,
@@ -417,7 +488,7 @@ export function CyclePanel({
           <span className="cycle-round">
             第 {view.cycle.currentRound}/{view.cycle.roundBudget} 轮 ·{" "}
             {STAGE_LABELS[view.cycle.stage]} ·{" "}
-            {view.cycle.kind === "fix_review" ? "修复互审" : "方案讨论"}
+            {REVIEW_SCOPE_LABELS[view.cycle.requirements.reviewScope]}
           </span>
         ) : null}
       </header>
@@ -459,6 +530,7 @@ export function CyclePanel({
           {view ? <CycleOutcome view={view} adapters={adapters} /> : null}
           <CycleStarter
             adapters={adapters}
+            initiatorActorId={initiatorActorId}
             isTopicOpen={isTopicOpen}
             busy={busy}
             onStart={onStart}

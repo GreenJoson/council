@@ -1,6 +1,6 @@
 /**
  * @input  依赖：含 owner/备选冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、Agent 调用、人工签署入口和决策状态卡
+ * @output 导出：InspectorPanel 议题摘要、圆桌/按需运行状态、人工签署入口和决策状态卡
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
  *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
  *         决策状态徽章走 presentation.tsx 的 DecisionStatusBadge，三态共用同一套文案
@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { Participant, TopicDetail } from "../types/council";
 import type {
-  OrchestrationMessageKind,
+  CycleReviewScope,
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
@@ -49,16 +49,10 @@ export interface InspectorPanelProps {
   onClose: () => void;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
-  onCreateAndStartRun: (
-    adapterId: string,
-    messageKind: OrchestrationMessageKind,
-    instruction: string,
-    confirmationBeforeCompletion: boolean,
-  ) => Promise<boolean>;
   onStartCycle: (
     participants: string[],
     roundBudget: number,
-    kind: "discussion" | "fix_review",
+    reviewScope: CycleReviewScope,
   ) => Promise<boolean>;
   onAnswerCycleQuestion: (
     questionMessageId: string,
@@ -85,7 +79,6 @@ export function InspectorPanel({
   onClose,
   orchestration,
   orchestrationBusyAction,
-  onCreateAndStartRun,
   onStartCycle,
   onAnswerCycleQuestion,
   onAbandonCycle,
@@ -146,6 +139,7 @@ export function InspectorPanel({
 
       <CyclePanel
         topicId={topic.id}
+        initiatorActorId={topic.owner}
         isTopicOpen={topic.status !== "decided"}
         snapshot={orchestration}
         busyAction={orchestrationBusyAction}
@@ -159,7 +153,6 @@ export function InspectorPanel({
         isTopicOpen={topic.status !== "decided"}
         snapshot={orchestration}
         busyAction={orchestrationBusyAction}
-        onCreateAndStart={onCreateAndStartRun}
         onStart={onStartRun}
         onApprove={onApproveRun}
         onCancel={onCancelRun}

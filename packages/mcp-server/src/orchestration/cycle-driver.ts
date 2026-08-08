@@ -22,7 +22,7 @@ export const DEFAULT_ROUND_BUDGET = 3;
 
 export interface StartCycleInput {
   topicId: string;
-  /** 首位是提案人；由用户在开局时勾选并冻结。 */
+  /** 首位是提案人；议题发起人入选时由服务端自动置首，否则保留用户勾选顺序。 */
   participants: readonly string[];
   roundBudget?: number;
   /** 开局冻结，后续推进不得再从 commit 或调用参数猜测。 */
@@ -82,15 +82,21 @@ export class CycleDriver {
     if (!proposerAgentId || !proposerActorId) {
       throw new OrchestrationConfigError("圆桌缺少提案人的冻结身份，尚未启动。");
     }
-    const reusableProposal = this.#store.findReusableProposalMessage(
-      input.topicId,
-      proposerActorId,
-    );
-    if (input.kind === "fix_review" && !reusableProposal?.commitRef) {
-      throw new OrchestrationConfigError(
-        "已提交修复互审需要提案人先公开真实 commit；审核未提交工作区请关闭该选项。",
-      );
-    }
+    const reviewScope = input.requirements.reviewScope;
+    const topicSeed = this.#store.readTopicProposalSeed(input.topicId);
+    // 议题创建者已经公开了问题、约束和修复证据。它入选时直接冻结议题为提案，
+    // 首个真实调用从其他评审开始；只有阻塞异议才会再次召回发起人。
+    const seedFromTopic = topicSeed?.actorId === proposerActorId;
+    // 非发起人的工作区旧提案不能证明它看过当前可变状态，仍需重新召唤主审。
+    const reusableCandidate = seedFromTopic || reviewScope === "workspace"
+      ? undefined
+      : this.#store.findReusableProposalMessage(input.topicId, proposerActorId);
+    // Commit 可能已明确写在议题正文而不是旧提案尾块里。此时应召唤主审读取议题并验证，
+    // 而不是在任何 Agent 看到上下文前就误判“没有 commit”。
+    const reusableProposal = reviewScope === "commit"
+      && !reusableCandidate?.commitTargets?.length
+      ? undefined
+      : reusableCandidate;
     const opened = this.#store.startDiscussionCycle({
       topicId: input.topicId,
       participants: input.participants,
@@ -98,7 +104,9 @@ export class CycleDriver {
       requirements: input.requirements,
       runtimeCapabilities: input.runtimeCapabilities,
       roundBudget: input.roundBudget ?? DEFAULT_ROUND_BUDGET,
-      ...(reusableProposal
+      ...(seedFromTopic
+        ? { seedFromTopic: true }
+        : reusableProposal
         ? { seedProposalMessageId: reusableProposal.messageId }
         : {}),
       now: this.#now(),
@@ -157,7 +165,7 @@ export class CycleDriver {
           (participant) => participant !== action.agentId,
         );
         const proposer = cycle.participants[0] ?? action.agentId;
-        const isFixCycle = cycle.kind === "fix_review";
+        const reviewScope = cycle.requirements.reviewScope;
         const reviewed = action.stage === "critique"
           ? [...cycle.turns]
             .reverse()
@@ -172,8 +180,10 @@ export class CycleDriver {
             roundBudget: cycle.roundBudget,
             reviewers,
             proposer,
-            ...(isFixCycle ? { requiresCommitRef: true } : {}),
-            ...(reviewed?.commitRef ? { reviewedCommitRef: reviewed.commitRef } : {}),
+            reviewScope,
+            ...(reviewScope === "commit" && reviewed?.commitTargets?.length
+              ? { reviewedCommitTargets: reviewed.commitTargets }
+              : {}),
           }),
         }]);
         await this.#runner.startRun(run.id);

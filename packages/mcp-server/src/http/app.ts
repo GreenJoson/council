@@ -546,7 +546,13 @@ export function createCouncilHttpApp(
       participants: input.participants,
       ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
       kind: input.kind
-        ?? (input.requiresCommitRef ? "fix_review" : "discussion"),
+        ?? (input.reviewScope === "commit" || input.requiresCommitRef
+          ? "fix_review"
+          : "discussion"),
+      reviewScope: input.reviewScope
+        ?? (input.kind === "fix_review" || input.requiresCommitRef
+          ? "commit"
+          : "discussion"),
       ...(input.taskRequirements === undefined
         ? {}
         : { taskRequirements: input.taskRequirements }),

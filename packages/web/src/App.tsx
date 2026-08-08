@@ -54,7 +54,7 @@ import type {
 } from "./types/council";
 import { getErrorMessage } from "./data/error-message";
 import type {
-  OrchestrationMessageKind,
+  CycleReviewScope,
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "./types/orchestration";
@@ -533,37 +533,10 @@ export default function App() {
     }
   }
 
-  async function handleCreateAndStartRun(
-    adapterId: string,
-    messageKind: OrchestrationMessageKind,
-    instruction: string,
-    confirmationBeforeCompletion: boolean,
-  ): Promise<boolean> {
-    setOrchestrationBusyAction("create");
-    setRunsErrorMessage(null);
-    try {
-      const created = await orchestrationRepository.createRun({
-        topicId: activeTopicId,
-        confirmationBeforeCompletion,
-        plan: [{ adapterId, messageKind, instruction }],
-      });
-      setOrchestrationBusyAction(`start:${created.id}`);
-      const snapshot = await orchestrationRepository.startRun(created.id);
-      setOrchestration(snapshot);
-      setToastMessage("Agent 调用已启动");
-      return true;
-    } catch (error: unknown) {
-      setRunsErrorMessage(getErrorMessage(error));
-      return false;
-    } finally {
-      setOrchestrationBusyAction(null);
-    }
-  }
-
   async function handleStartCycle(
     participants: string[],
     roundBudget: number,
-    kind: "discussion" | "fix_review",
+    reviewScope: CycleReviewScope,
   ): Promise<boolean> {
     setOrchestrationBusyAction("cycle");
     setRunsErrorMessage(null);
@@ -572,13 +545,12 @@ export default function App() {
         topicId: activeTopicId,
         participants,
         roundBudget,
-        kind,
+        kind: reviewScope === "commit" ? "fix_review" : "discussion",
+        reviewScope,
       });
       setOrchestration(snapshot);
       const reusedProposal = snapshot.cycle?.cycle.turns.some(
-        (turn) =>
-          turn.stage === "proposal"
-          && selectedTopic?.messages.some((message) => message.id === turn.messageId),
+        (turn) => turn.stage === "proposal",
       ) ?? false;
       setToastMessage(
         reusedProposal
@@ -785,7 +757,6 @@ export default function App() {
               onClose={() => setIsInspectorOpen(false)}
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}
-              onCreateAndStartRun={handleCreateAndStartRun}
               onStartCycle={handleStartCycle}
               onAnswerCycleQuestion={handleAnswerCycleQuestion}
               onAbandonCycle={handleAbandonCycle}

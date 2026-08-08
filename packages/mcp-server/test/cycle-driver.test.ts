@@ -75,6 +75,8 @@ interface Harness {
   postHumanMessage: (content: string) => string;
   /** 在圆桌开局前发布 Agent 已有提案。 */
   postAgentMessage: (actorId: string, kind: "brief" | "proposal", content: string) => string;
+  /** 把议题改为指定 Agent 发起，并替换正文证据。 */
+  setTopicInitiator: (actorId: string, question: string) => void;
   cleanup: () => void;
 }
 
@@ -227,6 +229,17 @@ async function createHarness(): Promise<Harness> {
       `).run(messageId, TOPIC, kind, content, NOW, actorId);
       return messageId;
     },
+    setTopicInitiator: (actorId, question) => {
+      seed.prepare(`
+        UPDATE topics
+        SET question = ?,
+            created_by_actor_id = ?,
+            created_by_snapshot_json = (
+              SELECT ${ACTOR_SNAPSHOT_SQL} FROM actor_identities WHERE id = ?
+            )
+        WHERE id = ?
+      `).run(question, actorId, actorId, TOPIC);
+    },
     cleanup: () => {
       store.close();
       seed.close();
@@ -251,23 +264,89 @@ test("已有提案直接召唤首位评审，不重复调用提案人", async ()
   }
 });
 
-test("已提交修复互审缺少 commit 时开局即拒绝，不浪费 Agent 调用", async () => {
+test("议题发起人入选时正文直接作为提案，第一轮从其他评审开始", async () => {
+  const harness = await createHarness();
+  try {
+    harness.setTopicInitiator("claude", "修复已经完成，请独立复审。\n");
+    await harness.driver.start(cycleStartInput());
+
+    assert.equal(harness.invocations[0]?.adapterId, "codex");
+    assert.equal(harness.invocations[0]?.messageKind, "critique");
+    const view = harness.store.readActiveDiscussionCycle(TOPIC);
+    assert.equal(view?.cycle.turns[0]?.agentId, "claude");
+    assert.equal(view?.cycle.turns[0]?.messageId, TOPIC);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("发起人的多仓库 Commit 议题跳过自审，并把冻结目标交给评审", async () => {
+  const harness = await createHarness();
+  try {
+    harness.setTopicInitiator("claude", [
+      "- 客户端仓库：同级目录 `../client`，提交 `aaaaaaa`",
+      "- 后端仓库：当前目录，提交 `bbbbbbb`",
+    ].join("\n"));
+    await harness.driver.start({
+      ...cycleStartInput(),
+      kind: "fix_review",
+      requirements: deriveCycleRequirements({
+        kind: "fix_review",
+        participants: PARTICIPANTS,
+      }),
+    });
+
+    assert.equal(harness.invocations[0]?.adapterId, "codex");
+    assert.equal(harness.invocations[0]?.messageKind, "critique");
+    assert.match(
+      harness.invocations[0]?.instruction ?? "",
+      /git -C \.\.\/client show aaaaaaa/u,
+    );
+    assert.match(
+      harness.invocations[0]?.instruction ?? "",
+      /git -C \. show bbbbbbb/u,
+    );
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("当前工作区互审不复用旧提案，必须重新召唤主审读取可变代码", async () => {
+  const harness = await createHarness();
+  try {
+    harness.postAgentMessage("claude", "proposal", "昨天读取工作区形成的旧结论。");
+    await harness.driver.start({
+      ...cycleStartInput(),
+      requirements: deriveCycleRequirements({
+        kind: "discussion",
+        reviewScope: "workspace",
+        participants: PARTICIPANTS,
+      }),
+    });
+
+    assert.equal(harness.invocations[0]?.adapterId, "claude");
+    assert.equal(harness.invocations[0]?.messageKind, "proposal");
+    assert.match(harness.invocations[0]?.instruction ?? "", /当前工作区的只读主审/u);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("已提交互审未结构化 commit 时召唤主审读取议题，不在开局前误拒绝", async () => {
   const harness = await createHarness();
   try {
     harness.postAgentMessage("claude", "proposal", "只有工作区说明，没有 commit。");
-    await assert.rejects(
-      () => harness.driver.start({
-        ...cycleStartInput(),
+    await harness.driver.start({
+      ...cycleStartInput(),
+      kind: "fix_review",
+      requirements: deriveCycleRequirements({
         kind: "fix_review",
-        requirements: deriveCycleRequirements({
-          kind: "fix_review",
-          participants: PARTICIPANTS,
-        }),
+        participants: PARTICIPANTS,
       }),
-      /需要提案人先公开真实 commit/u,
-    );
-    assert.deepEqual(harness.invocations, []);
-    assert.equal(harness.store.readActiveDiscussionCycle(TOPIC), undefined);
+    });
+    assert.equal(harness.invocations[0]?.adapterId, "claude");
+    assert.equal(harness.invocations[0]?.messageKind, "proposal");
+    assert.match(harness.invocations[0]?.instruction ?? "", /通读议题标题、问题、约束/u);
   } finally {
     harness.cleanup();
   }

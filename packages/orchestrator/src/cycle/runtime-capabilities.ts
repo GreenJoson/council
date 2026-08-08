@@ -8,6 +8,8 @@
 
 export const DISCUSSION_CYCLE_KINDS = ["discussion", "fix_review"] as const;
 
+export const CYCLE_REVIEW_SCOPES = ["discussion", "workspace", "commit"] as const;
+
 export const RUNTIME_CAPABILITY_KEYS = [
   "text",
   "repository_read",
@@ -23,6 +25,7 @@ export const RUNTIME_CAPABILITY_KEYS = [
 ] as const;
 
 export type DiscussionCycleKind = (typeof DISCUSSION_CYCLE_KINDS)[number];
+export type CycleReviewScope = (typeof CYCLE_REVIEW_SCOPES)[number];
 export type RuntimeCapabilityKey = (typeof RUNTIME_CAPABILITY_KEYS)[number];
 
 export interface CycleTaskRequirements {
@@ -37,6 +40,8 @@ export interface CycleTaskRequirements {
 export interface FrozenCycleRequirements {
   schemaVersion: 1;
   cycleKind: DiscussionCycleKind;
+  /** 方案、当前工作区或冻结 commit；旧快照缺省时由 cycleKind 兼容推导。 */
+  reviewScope: CycleReviewScope;
   task: {
     all: RuntimeCapabilityKey[];
     proposer: RuntimeCapabilityKey[];
@@ -113,6 +118,11 @@ const FIX_REVIEWER_REQUIREMENTS: readonly RuntimeCapabilityKey[] = [
   "git_diff",
 ];
 
+const WORKSPACE_REVIEW_REQUIREMENTS: readonly RuntimeCapabilityKey[] = [
+  "text",
+  "repository_read",
+];
+
 function uniqueCapabilities(
   values: readonly RuntimeCapabilityKey[],
 ): RuntimeCapabilityKey[] {
@@ -122,6 +132,7 @@ function uniqueCapabilities(
 
 function requirementsForRole(
   kind: DiscussionCycleKind,
+  reviewScope: CycleReviewScope,
   role: "proposer" | "reviewer",
   task: CycleTaskRequirements,
 ): RuntimeCapabilityKey[] {
@@ -129,7 +140,9 @@ function requirementsForRole(
     ? role === "proposer"
       ? FIX_PROPOSER_REQUIREMENTS
       : FIX_REVIEWER_REQUIREMENTS
-    : [];
+    : reviewScope === "workspace"
+      ? WORKSPACE_REVIEW_REQUIREMENTS
+      : [];
   return uniqueCapabilities([
     ...STAGE_BASELINE_CAPABILITIES,
     ...cycleRequirements,
@@ -183,14 +196,19 @@ export function defaultPolicyCapabilitiesForTransport(
 
 export function deriveCycleRequirements(input: {
   kind: DiscussionCycleKind;
+  reviewScope?: CycleReviewScope;
   participants: readonly string[];
   task?: CycleTaskRequirements;
 }): FrozenCycleRequirements {
   const task = input.task ?? {};
+  const reviewScope = input.kind === "fix_review"
+    ? "commit"
+    : input.reviewScope ?? "discussion";
   const byParticipant: Record<string, RuntimeCapabilityKey[]> = {};
   input.participants.forEach((participant, index) => {
     byParticipant[participant] = requirementsForRole(
       input.kind,
+      reviewScope,
       index === 0 ? "proposer" : "reviewer",
       task,
     );
@@ -198,6 +216,7 @@ export function deriveCycleRequirements(input: {
   return {
     schemaVersion: 1,
     cycleKind: input.kind,
+    reviewScope,
     task: {
       all: uniqueCapabilities(task.all ?? []),
       proposer: uniqueCapabilities(task.proposer ?? []),

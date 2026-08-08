@@ -282,6 +282,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         participants: input.participants,
         ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
         ...(input.kind === undefined ? {} : { kind: input.kind }),
+        ...(input.reviewScope === undefined ? {} : { reviewScope: input.reviewScope }),
         ...(input.taskRequirements === undefined
           ? {}
           : { taskRequirements: input.taskRequirements }),

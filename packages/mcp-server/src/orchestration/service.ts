@@ -21,6 +21,7 @@ import {
   deriveCycleRequirements,
   type DiscussionCycleView,
   type DiscussionCycleKind,
+  type CycleReviewScope,
   findCapabilityGaps,
   grantRuntimeCapabilities,
   type MessageKind,
@@ -277,12 +278,13 @@ export class CouncilOrchestrationService {
     this.#decisions = writer;
   }
 
-  /** 用户点「开始圆桌」：冻结名册，随即召唤提案人，此后无需再点。 */
+  /** 用户点「开始圆桌」：发起人入选时冻结为提案人并跳过首轮，随后自动交接。 */
   async startCycle(input: {
     topicId: string;
     participants: readonly string[];
     roundBudget?: number;
     kind?: DiscussionCycleKind;
+    reviewScope?: CycleReviewScope;
     taskRequirements?: CycleTaskRequirements;
   }): Promise<DiscussionCycleView> {
     if (!this.#decisions) {
@@ -290,7 +292,17 @@ export class CouncilOrchestrationService {
     }
     await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability();
-    for (const participant of input.participants) {
+    const topicSeed = this.#store.readTopicProposalSeed(input.topicId);
+    const initiatorAdapterId = input.participants.find(
+      (participant) => this.#actors.get(participant) === topicSeed?.actorId,
+    );
+    const participants = initiatorAdapterId
+      ? [
+          initiatorAdapterId,
+          ...input.participants.filter((participant) => participant !== initiatorAdapterId),
+        ]
+      : [...input.participants];
+    for (const participant of participants) {
       if (!this.#actors.has(participant)) {
         throw new OrchestrationConfigError("参与名册包含未注册的 Agent 适配器。");
       }
@@ -303,13 +315,23 @@ export class CouncilOrchestrationService {
         );
       }
     }
-    const kind = input.kind ?? "discussion";
+    const reviewScope = input.reviewScope
+      ?? (input.kind === "fix_review" ? "commit" : "discussion");
+    const kind = input.kind
+      ?? (reviewScope === "commit" ? "fix_review" : "discussion");
+    if (
+      (kind === "fix_review" && reviewScope !== "commit")
+      || (kind === "discussion" && reviewScope === "commit")
+    ) {
+      throw new OrchestrationConfigError("圆桌类型与审查范围冲突。");
+    }
     const requirements = deriveCycleRequirements({
       kind,
-      participants: input.participants,
+      reviewScope,
+      participants,
       ...(input.taskRequirements ? { task: input.taskRequirements } : {}),
     });
-    const runtimeCapabilities = input.participants.map((participant) =>
+    const runtimeCapabilities = participants.map((participant) =>
       this.#freezeRuntimeCapabilities(participant));
     const gaps = findCapabilityGaps(requirements, runtimeCapabilities);
     if (gaps.length > 0) {
@@ -317,12 +339,12 @@ export class CouncilOrchestrationService {
         .map((gap) => `${gap.adapterId}: ${gap.missing.join(", ")}`)
         .join("；");
       throw new OrchestrationConfigError(
-        `圆桌尚未启动：Runtime 能力不足（${summary}）。请更换具备所需能力的 Agent，或改用普通讨论。`,
+        `圆桌尚未启动：Runtime 能力不足（${summary}）。请更换具备所需能力的 Agent，或调整审查范围。`,
       );
     }
     return await this.#cycles.start({
       topicId: input.topicId,
-      participants: input.participants,
+      participants,
       ...(input.roundBudget === undefined ? {} : { roundBudget: input.roundBudget }),
       kind,
       requirements,
