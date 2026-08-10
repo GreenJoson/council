@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Composer 输入的仓库相对路径与不可变 commit SHA；同仓库可关联多轮不同提交
- * @output 导出：关联提交校验、council-fix 协议编码与消息展示解码
+ * @input  依赖：Composer 输入的仓库相对路径与可批量粘贴的不可变 commit SHA
+ * @output 导出：批量 SHA 展开、关联提交校验、council-fix 协议编码与消息展示解码
  * @pos    Web 消息附件与 Council 修复互审协议之间的唯一转换边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,6 +13,11 @@ export interface CommitAssociationTarget {
   commit: string;
 }
 
+export interface CommitAssociationDraft {
+  repository: string;
+  commits: string;
+}
+
 export interface CommitAssociation {
   body: string;
   summary: string;
@@ -20,6 +25,7 @@ export interface CommitAssociation {
 }
 
 const COMMIT_REF_PATTERN = /^[0-9a-f]{7,40}$/u;
+const COMMIT_REF_SEPARATOR_PATTERN = /[\s,，、;；]+/u;
 const REPOSITORY_SEGMENT = String.raw`(?!\.{1,2}(?:/|$))[A-Za-z0-9._-]+`;
 const REPOSITORY_REF_PATTERN = new RegExp(
   String.raw`^(?:\.|(?:\.\./)?${REPOSITORY_SEGMENT}(?:/${REPOSITORY_SEGMENT})*)$`,
@@ -34,6 +40,37 @@ function normalizeTarget(target: CommitAssociationTarget): CommitAssociationTarg
     return undefined;
   }
   return { repository, commit };
+}
+
+function splitCommitReferences(value: string): string[] {
+  const trimmed = value.trim();
+  return trimmed ? trimmed.split(COMMIT_REF_SEPARATOR_PATTERN).filter(Boolean) : [];
+}
+
+export function expandCommitAssociationDrafts(
+  drafts: readonly CommitAssociationDraft[],
+): CommitAssociationTarget[] {
+  return drafts.flatMap((draft) => splitCommitReferences(draft.commits).map((commit) => ({
+    repository: draft.repository,
+    commit,
+  })));
+}
+
+export function validateCommitAssociationDrafts(
+  drafts: readonly CommitAssociationDraft[],
+): string | undefined {
+  if (drafts.length === 0) {
+    return undefined;
+  }
+  for (const [index, draft] of drafts.entries()) {
+    if (!REPOSITORY_REF_PATTERN.test(draft.repository.trim())) {
+      return `第 ${String(index + 1)} 项仓库必须是 .、仓库内相对路径或一层同级仓库`;
+    }
+    if (splitCommitReferences(draft.commits).length === 0) {
+      return `第 ${String(index + 1)} 项至少填写一个 commit SHA`;
+    }
+  }
+  return validateCommitAssociationTargets(expandCommitAssociationDrafts(drafts));
 }
 
 export function validateCommitAssociationTargets(

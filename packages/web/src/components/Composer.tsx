@@ -16,9 +16,10 @@ import { Bot, FolderGit2, GitCommitHorizontal, Link2, Plus, Send, TriangleAlert,
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   buildCommitAssociationContent,
+  expandCommitAssociationDrafts,
   MAX_COMMIT_ASSOCIATIONS,
-  type CommitAssociationTarget,
-  validateCommitAssociationTargets,
+  type CommitAssociationDraft,
+  validateCommitAssociationDrafts,
 } from "../data/commit-association";
 import {
   findActiveMentionQuery,
@@ -92,7 +93,7 @@ export function Composer({
   const [mentionStart, setMentionStart] = useState<number | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [isCommitEditorOpen, setIsCommitEditorOpen] = useState(false);
-  const [commitTargets, setCommitTargets] = useState<CommitAssociationTarget[]>([]);
+  const [commitDrafts, setCommitDrafts] = useState<CommitAssociationDraft[]>([]);
 
   const mentionAdapters: OrchestrationAdapter[] = orchestration?.capabilities?.adapters ?? [];
   const isOrchestrationOffline = orchestration?.sync.status === "offline";
@@ -180,8 +181,13 @@ export function Composer({
     mentionStatus = { kind: "blocked", reason: "自动编排当前离线，暂时无法通过 @ 召唤 Agent。" };
   }
 
-  const commitAssociationError = validateCommitAssociationTargets(commitTargets);
+  const commitTargets = useMemo(
+    () => expandCommitAssociationDrafts(commitDrafts),
+    [commitDrafts],
+  );
+  const commitAssociationError = validateCommitAssociationDrafts(commitDrafts);
   const hasCommitAssociations = commitTargets.length > 0 && !commitAssociationError;
+  const hasCurrentProjectDraft = commitDrafts.some((draft) => draft.repository.trim() === ".");
   const canPublish = (content.trim().length > 0 || hasCommitAssociations)
     && !isPublishing
     && mentionStatus.kind !== "blocked"
@@ -189,29 +195,29 @@ export function Composer({
 
   function toggleCommitEditor(): void {
     if (isCommitEditorOpen) {
-      if (validateCommitAssociationTargets(commitTargets)) {
-        setCommitTargets([]);
+      if (validateCommitAssociationDrafts(commitDrafts)) {
+        setCommitDrafts([]);
       }
       setIsCommitEditorOpen(false);
       return;
     }
-    if (commitTargets.length === 0) {
-      setCommitTargets([{ repository: ".", commit: "" }]);
+    if (commitDrafts.length === 0) {
+      setCommitDrafts([{ repository: ".", commits: "" }]);
     }
     setIsCommitEditorOpen(true);
   }
 
-  function updateCommitTarget(
+  function updateCommitDraft(
     index: number,
-    field: keyof CommitAssociationTarget,
+    field: keyof CommitAssociationDraft,
     value: string,
   ): void {
-    setCommitTargets((current) => current.map((target, targetIndex) =>
+    setCommitDrafts((current) => current.map((target, targetIndex) =>
       targetIndex === index ? { ...target, [field]: value } : target));
   }
 
-  function removeCommitTarget(index: number): void {
-    setCommitTargets((current) => current.filter((_target, targetIndex) => targetIndex !== index));
+  function removeCommitDraft(index: number): void {
+    setCommitDrafts((current) => current.filter((_target, targetIndex) => targetIndex !== index));
   }
 
   function applyMentionCandidate(candidate: OrchestrationAdapter): void {
@@ -308,7 +314,7 @@ export function Composer({
     if (published) {
       setContent("");
       setIsMentionMenuOpen(false);
-      setCommitTargets([]);
+      setCommitDrafts([]);
       setIsCommitEditorOpen(false);
     }
   }
@@ -386,12 +392,12 @@ export function Composer({
           <div className="commit-association-heading">
             <div>
               <strong>关联修复提交</strong>
-              <small>当前项目已自动绑定；仅跨仓库时填写相对路径</small>
+              <small>一个仓库可粘贴多个 SHA；逗号、空格或换行均可分隔</small>
             </div>
-            <span>{commitTargets.length}/{MAX_COMMIT_ASSOCIATIONS}</span>
+            <span>{commitTargets.length}/{MAX_COMMIT_ASSOCIATIONS} 个提交</span>
           </div>
           <div className="commit-association-rows">
-            {commitTargets.map((target, index) => (
+            {commitDrafts.map((target, index) => (
               <div className="commit-association-row" key={index}>
                 {target.repository === "." ? (
                   <div className="commit-repository-context">
@@ -407,28 +413,28 @@ export function Composer({
                       disabled={isPublishing}
                       placeholder="../another-repository"
                       aria-label={`第 ${String(index + 1)} 个仓库路径`}
-                      onChange={(event) => updateCommitTarget(index, "repository", event.target.value)}
+                      onChange={(event) => updateCommitDraft(index, "repository", event.target.value)}
                     />
                   </label>
                 )}
                 <label className="commit-sha-field">
-                  <span>Commit SHA</span>
-                  <input
-                    type="text"
-                    value={target.commit}
+                  <span>Commit SHA（可多个）</span>
+                  <textarea
+                    rows={1}
+                    value={target.commits}
                     disabled={isPublishing}
-                    placeholder="7–40 位 commit SHA"
+                    placeholder="如 abc1234, def5678 或用空格分隔"
                     spellCheck={false}
-                    aria-label={`第 ${String(index + 1)} 个 commit SHA`}
-                    onChange={(event) => updateCommitTarget(index, "commit", event.target.value)}
+                    aria-label={`第 ${String(index + 1)} 个仓库的 commit SHA 列表`}
+                    onChange={(event) => updateCommitDraft(index, "commits", event.target.value)}
                   />
                 </label>
                 <button
                   className="icon-button compact commit-remove-button"
                   type="button"
                   disabled={isPublishing}
-                  aria-label={`移除第 ${String(index + 1)} 个关联提交`}
-                  onClick={() => removeCommitTarget(index)}
+                  aria-label={`移除第 ${String(index + 1)} 个仓库的关联提交`}
+                  onClick={() => removeCommitDraft(index)}
                 >
                   <X size={15} />
                 </button>
@@ -437,25 +443,29 @@ export function Composer({
           </div>
           <div className="commit-association-footer">
             <div className="commit-add-actions">
+              {!hasCurrentProjectDraft ? (
+                <button
+                  className="commit-add-button"
+                  type="button"
+                  disabled={isPublishing || commitDrafts.length >= MAX_COMMIT_ASSOCIATIONS}
+                  onClick={() => setCommitDrafts((current) => [
+                    { repository: ".", commits: "" },
+                    ...current,
+                  ])}
+                >
+                  <Plus size={14} />
+                  关联当前项目
+                </button>
+              ) : null}
               <button
                 className="commit-add-button"
                 type="button"
-                disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
-                onClick={() => setCommitTargets((current) => [
+                disabled={isPublishing
+                  || commitDrafts.length >= MAX_COMMIT_ASSOCIATIONS
+                  || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
+                onClick={() => setCommitDrafts((current) => [
                   ...current,
-                  { repository: ".", commit: "" },
-                ])}
-              >
-                <Plus size={14} />
-                添加当前项目提交
-              </button>
-              <button
-                className="commit-add-button"
-                type="button"
-                disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
-                onClick={() => setCommitTargets((current) => [
-                  ...current,
-                  { repository: "", commit: "" },
+                  { repository: "", commits: "" },
                 ])}
               >
                 <FolderGit2 size={14} />
@@ -467,7 +477,7 @@ export function Composer({
                 <TriangleAlert size={13} />
                 {commitAssociationError}
               </span>
-            ) : commitTargets.length > 0 ? (
+            ) : commitDrafts.length > 0 ? (
               <span className="commit-association-ready">
                 修复互审将直接读取这些不可变提交
               </span>

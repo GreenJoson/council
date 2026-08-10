@@ -728,7 +728,8 @@
   white-space: nowrap;
 }
 
-.commit-association-row input {
+.commit-association-row input,
+.commit-association-row textarea {
   width: 100%;
   min-height: 30px;
   padding: 5px 8px;
@@ -741,7 +742,14 @@
   font-size: 11px;
 }
 
-.commit-association-row input:focus {
+.commit-association-row textarea {
+  max-height: 62px;
+  line-height: 1.55;
+  resize: none;
+}
+
+.commit-association-row input:focus,
+.commit-association-row textarea:focus {
   border-color: var(--color-focus);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 12%, transparent);
 }
