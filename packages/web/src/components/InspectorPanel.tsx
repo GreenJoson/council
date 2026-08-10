@@ -1,5 +1,5 @@
 /**
- * @input  依赖：含 owner/备选/实施进度冻结快照的当前议题、参与者回退、自动轮次与决策操作
+ * @input  依赖：界面语言上下文、含 owner/备选/实施进度冻结快照的当前议题、参与者回退、自动轮次与决策操作
  * @output 导出：InspectorPanel 议题摘要、紧凑实施进度、圆桌/按需运行状态、人工签署入口和决策状态卡
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
  *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
@@ -26,6 +26,7 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "../types/orchestration";
+import { useI18n } from "../i18n/I18nProvider";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
 import { CyclePanel } from "./CyclePanel";
 import { ImplementationSummary } from "./ImplementationProgress";
@@ -90,6 +91,7 @@ export function InspectorPanel({
   onCloseRuntimeBinding,
   onReopenRuntimeBinding,
 }: InspectorPanelProps) {
+  const { t } = useI18n();
   const owner = participantFromActorSnapshot(
     topic.ownerSnapshot,
     participants.get(topic.owner),
@@ -99,28 +101,28 @@ export function InspectorPanel({
   const decisionSuperseded = decision?.status === "superseded";
 
   return (
-    <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label="议题摘要">
+    <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label={t("议题摘要")}>
       <div className="inspector-heading">
-        <h2>概要</h2>
-        <button className="icon-button inspector-close" type="button" aria-label="关闭议题摘要" onClick={onClose}>
+        <h2>{t("概要")}</h2>
+        <button className="icon-button inspector-close" type="button" aria-label={t("关闭议题摘要")} onClick={onClose}>
           <X size={18} />
         </button>
       </div>
 
       <dl className="summary-grid">
         <div>
-          <dt>状态</dt>
+          <dt>{t("状态")}</dt>
           <dd><StatusBadge status={topic.status} /></dd>
         </div>
         <div>
-          <dt>所有者</dt>
+          <dt>{t("所有者")}</dt>
           <dd>
             <AgentAvatar agent={topic.owner} participant={owner} size="small" />
             <span>{owner?.name ?? topic.owner}</span>
           </dd>
         </div>
         <div>
-          <dt>参与者</dt>
+          <dt>{t("参与者")}</dt>
           <dd className="summary-participants">
             {topic.participants.map((agent) => (
               <AgentAvatar
@@ -133,7 +135,7 @@ export function InspectorPanel({
           </dd>
         </div>
         <div>
-          <dt>更新</dt>
+          <dt>{t("更新")}</dt>
           <dd>{topic.updatedLabel}</dd>
         </div>
       </dl>
@@ -193,7 +195,7 @@ export function InspectorPanel({
             ))}
           </ul>
         ) : (
-          <p className="empty-copy">尚未添加证据。</p>
+          <p className="empty-copy">{t("尚未添加证据。")}</p>
         )}
       </InspectorSection>
 
@@ -221,7 +223,7 @@ export function InspectorPanel({
             })}
           </ol>
         ) : (
-          <p className="empty-copy">尚未提出备选方案。</p>
+          <p className="empty-copy">{t("尚未提出备选方案。")}</p>
         )}
       </InspectorSection>
 
@@ -238,7 +240,7 @@ export function InspectorPanel({
               ) : (
                 <ShieldCheck size={17} />
               )}
-              <span>{decisionStatusLabels[decision.status]}</span>
+              <span>{t(decisionStatusLabels[decision.status])}</span>
             </div>
             <DecisionStatusBadge status={decision.status} />
           </div>
@@ -249,7 +251,7 @@ export function InspectorPanel({
           */}
           <button className="decision-open-button" type="button" onClick={onOpenDecision}>
             <BookOpen size={16} />
-            查看全文
+            {t("查看全文")}
             <ArrowRight size={15} />
           </button>
           <button
@@ -260,12 +262,12 @@ export function InspectorPanel({
           >
             <CheckCircle2 size={17} />
             {decisionAccepted
-              ? "决策已接受"
+              ? t("决策已接受")
               : decisionSuperseded
-                ? "决策已被取代"
+                ? t("决策已被取代")
                 : isAccepting
-                  ? "记录中…"
-                  : "标记为 Accepted"}
+                  ? t("记录中…")
+                  : t("标记为 Accepted")}
           </button>
           {decision.status === "proposed" ? (
             <button
@@ -275,7 +277,7 @@ export function InspectorPanel({
               onClick={onRecordManualDecision}
             >
               <FileText size={15} />
-              记录独立人工决策
+              {t("记录独立人工决策")}
             </button>
           ) : null}
         </section>
@@ -284,11 +286,11 @@ export function InspectorPanel({
           <div className="decision-title-row">
             <div>
               <ShieldCheck size={17} />
-              <span>决策</span>
+              <span>{t("决策")}</span>
             </div>
           </div>
-          <h3>尚无拟议决策</h3>
-          <p>无需等待 Agent，你可以直接记录外部实施结果并结束议题。</p>
+          <h3>{t("尚无拟议决策")}</h3>
+          <p>{t("无需等待 Agent，你可以直接记录外部实施结果并结束议题。")}</p>
           <button
             className="primary-button manual-decision-entry"
             type="button"
@@ -296,7 +298,7 @@ export function InspectorPanel({
             onClick={onRecordManualDecision}
           >
             <FileText size={15} />
-            人工记录并结束
+            {t("人工记录并结束")}
           </button>
         </section>
       )}
@@ -311,14 +313,15 @@ interface InspectorSectionProps {
 }
 
 function InspectorSection({ title, count, children }: InspectorSectionProps) {
+  const { t } = useI18n();
   return (
     <section className="inspector-section">
       <header>
         <div>
-          <h3>{title}</h3>
+          <h3>{t(title)}</h3>
           <span className="count-pill">{count}</span>
         </div>
-        <button className="icon-button compact" type="button" aria-label={`添加${title}`}>
+        <button className="icon-button compact" type="button" aria-label={t("添加{title}", { title: t(title) })}>
           <Plus size={16} />
         </button>
       </header>

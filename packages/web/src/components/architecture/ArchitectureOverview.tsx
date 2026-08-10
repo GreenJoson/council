@@ -1,5 +1,5 @@
 /**
- * @input  依赖：项目名称/路径与已加载议题详情统计出的决策计数
+ * @input  依赖：界面语言上下文、项目名称/路径与已加载议题详情统计出的决策计数
  * @output 导出：ArchitectureOverview 架构档案第一区块——项目概览统计卡片
  * @pos    ArchitectureView 的顶部区块；纯展示，不发起请求
  *
@@ -7,6 +7,7 @@
  */
 
 import { CheckCircle2, FolderGit2, Layers, ShieldCheck } from "lucide-react";
+import { useI18n } from "../../i18n/I18nProvider";
 
 export interface ArchitectureOverviewProps {
   projectName: string;
@@ -27,8 +28,9 @@ export function ArchitectureOverview({
   proposedCount,
   loadingProgressLabel,
 }: ArchitectureOverviewProps) {
+  const { t } = useI18n();
   return (
-    <section className="architecture-overview" aria-label="项目概览">
+    <section className="architecture-overview" aria-label={t("项目概览")}>
       <div className="architecture-overview-heading">
         <div className="architecture-overview-project">
           <FolderGit2 size={18} aria-hidden="true" />
@@ -47,21 +49,21 @@ export function ArchitectureOverview({
         <div className="architecture-stat">
           <dt>
             <Layers size={15} aria-hidden="true" />
-            议题数
+            {t("议题数")}
           </dt>
           <dd>{topicCount}</dd>
         </div>
         <div className="architecture-stat">
           <dt>
             <CheckCircle2 size={15} aria-hidden="true" />
-            已接受决策
+            {t("已接受决策")}
           </dt>
           <dd>{acceptedCount}</dd>
         </div>
         <div className="architecture-stat">
           <dt>
             <ShieldCheck size={15} aria-hidden="true" />
-            提案中
+            {t("提案中")}
           </dt>
           <dd>{proposedCount}</dd>
         </div>

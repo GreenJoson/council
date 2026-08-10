@@ -1,5 +1,5 @@
 /**
- * @input  依赖：带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent、
+ * @input  依赖：界面语言上下文、带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent、
  *         召唤标记与结构化关联提交解析
  * @output 导出：含关联提交证据卡的 MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
@@ -13,6 +13,7 @@ import { GitCommitHorizontal, Reply } from "lucide-react";
 import { extractCommitAssociation } from "../data/commit-association";
 import { extractLeadingMentionChip } from "../data/mention-parser";
 import type { CouncilMessage, Participant } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 import { MarkdownContent } from "./MarkdownContent";
 import { AgentAvatar, messageKindLabels } from "./presentation";
 
@@ -32,6 +33,7 @@ export function MessageCard({
   elementId,
   onQuote,
 }: MessageCardProps) {
+  const { t } = useI18n();
   const commitAssociation = extractCommitAssociation(message.content);
   const visibleContent = commitAssociation?.body ?? message.content;
   const mentionChip = extractLeadingMentionChip(visibleContent);
@@ -63,8 +65,8 @@ export function MessageCard({
             <button
               className="icon-button compact"
               type="button"
-              aria-label="引用回复"
-              title="引用回复"
+              aria-label={t("引用回复")}
+              title={t("引用回复")}
               onClick={() => onQuote(message)}
             >
               <Reply size={16} />
@@ -84,16 +86,16 @@ export function MessageCard({
           <MarkdownContent content={mentionChip ? mentionChip.remainder : visibleContent} collapsible />
         ) : null}
         {commitAssociation ? (
-          <aside className="commit-association-card" aria-label="关联提交">
+          <aside className="commit-association-card" aria-label={t("关联提交")}>
             <div className="commit-association-card-heading">
               <GitCommitHorizontal size={15} />
-              <strong>关联提交</strong>
-              <span>{commitAssociation.targets.length} 个提交</span>
+              <strong>{t("关联提交")}</strong>
+              <span>{t("{count} 个提交", { count: commitAssociation.targets.length })}</span>
             </div>
             <ul>
               {commitAssociation.targets.map((target) => (
                 <li key={`${target.repository}:${target.commit}`}>
-                  <span>{target.repository === "." ? "当前项目" : target.repository}</span>
+                  <span>{target.repository === "." ? t("当前项目") : target.repository}</span>
                   <code>{target.commit}</code>
                 </li>
               ))}

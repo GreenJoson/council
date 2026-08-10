@@ -1,5 +1,5 @@
 /**
- * @input  依赖：react-markdown、remark-gfm、rehype-raw、rehype-sanitize、MermaidDiagram、
+ * @input  依赖：界面语言上下文、react-markdown、remark-gfm、rehype-raw、rehype-sanitize、MermaidDiagram、
  *         Lightbox 与 theme.css 语义类名
  * @output 导出：MarkdownContent 统一 Markdown 渲染组件（GFM、内嵌 HTML 安全渲染、
  *         ```mermaid 围栏内联渲染成缩略图、图片/图表大图浏览、长内容折叠）
@@ -17,6 +17,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Options as Schema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import { useI18n } from "../i18n/I18nProvider";
 import { Lightbox, type LightboxContent } from "./Lightbox";
 import { MermaidDiagram } from "./MermaidDiagram";
 
@@ -79,6 +80,7 @@ export function MarkdownContent({
   collapsible = false,
   collapseVariant = "content",
 }: MarkdownContentProps) {
+  const { t } = useI18n();
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -186,11 +188,11 @@ export function MarkdownContent({
       return (
         <MermaidDiagram
           code={mermaidSource}
-          onOpen={(svg) => setLightboxContent({ kind: "diagram", svg, alt: "架构图放大视图" })}
+          onOpen={(svg) => setLightboxContent({ kind: "diagram", svg, alt: t("架构图放大视图") })}
         />
       );
     },
-  }), []);
+  }), [t]);
 
   const collapseLabels = COLLAPSE_LABELS[collapseVariant];
 
@@ -226,7 +228,7 @@ export function MarkdownContent({
               <ChevronDown size={14} aria-hidden="true" />
             )
           ) : null}
-          {isExpanded ? collapseLabels.collapse : collapseLabels.expand}
+          {t(isExpanded ? collapseLabels.collapse : collapseLabels.expand)}
         </button>
       ) : null}
 
@@ -246,13 +248,14 @@ interface MarkdownImageProps {
 
 /** 缩略图：加载失败时退化为占位提示，不留一个破图标 */
 function MarkdownImage({ src, alt, title, onOpen }: MarkdownImageProps) {
+  const { t } = useI18n();
   const [hasError, setHasError] = useState(false);
 
   if (!src || hasError) {
     return (
-      <span className="markdown-image-fallback" role="img" aria-label={alt || "图片加载失败"}>
+      <span className="markdown-image-fallback" role="img" aria-label={alt || t("图片加载失败")}>
         <ImageOff size={15} aria-hidden="true" />
-        <span>{alt ? `${alt}（加载失败）` : "图片加载失败"}</span>
+        <span>{alt ? t("{alt}（加载失败）", { alt }) : t("图片加载失败")}</span>
       </span>
     );
   }

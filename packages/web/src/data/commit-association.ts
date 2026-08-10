@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Composer 输入的仓库相对路径与可批量粘贴的不可变 commit SHA
+ * @input  依赖：Composer 输入的仓库相对路径、可批量粘贴的不可变 commit SHA 与本地化默认正文
  * @output 导出：批量 SHA 展开、关联提交校验、council-fix 协议编码与消息展示解码
  * @pos    Web 消息附件与 Council 修复互审协议之间的唯一转换边界
  *
@@ -104,13 +104,14 @@ export function validateCommitAssociationTargets(
 export function buildCommitAssociationContent(
   content: string,
   targets: readonly CommitAssociationTarget[],
+  fallbackBody = "补充本次修复对应的提交记录。",
 ): string {
   const error = validateCommitAssociationTargets(targets);
   if (error || targets.length === 0) {
     throw new Error(error ?? "至少需要一个关联提交");
   }
   const normalizedTargets = targets.map((target) => normalizeTarget(target)!);
-  const body = content.trim() || "补充本次修复对应的提交记录。";
+  const body = content.trim() || fallbackBody;
   const summary = body.replace(/\s+/gu, " ").slice(0, 400);
   const trailer = JSON.stringify({ targets: normalizedTargets, summary });
   return `${body}\n\n\`\`\`council-fix\n${trailer}\n\`\`\``;

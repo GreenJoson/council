@@ -1,5 +1,5 @@
 /**
- * @input  依赖：议题列表、选中状态、状态筛选、工作区视图路由与关闭回调
+ * @input  依赖：界面语言上下文、议题列表、选中状态、状态筛选、工作区视图路由与关闭回调
  * @output 导出：WorkspaceView 视图路由类型与 TopicSidebar 项目和议题导航
  * @pos    Operator Console 左侧高密度导航区域，三个工作区视图共用
  *
@@ -16,6 +16,7 @@ import {
 import type { ComponentType } from "react";
 import type { TopicStatusFilter } from "../data/selectors";
 import type { TopicSummary } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 import { StatusBadge } from "./presentation";
 
 /** Operator Console 三个工作区视图：议题讨论、架构总览看板、决策归档 */
@@ -56,16 +57,17 @@ export function TopicSidebar({
   onSelectTopic,
   onClose,
 }: TopicSidebarProps) {
+  const { t } = useI18n();
   return (
-    <aside className={`topic-sidebar ${isOpen ? "panel-open" : ""}`} aria-label="议题导航">
+    <aside className={`topic-sidebar ${isOpen ? "panel-open" : ""}`} aria-label={t("议题导航")}>
       <div className="sidebar-mobile-heading">
-        <span>议题导航</span>
-        <button className="icon-button" type="button" aria-label="关闭议题导航" onClick={onClose}>
+        <span>{t("议题导航")}</span>
+        <button className="icon-button" type="button" aria-label={t("关闭议题导航")} onClick={onClose}>
           <X size={18} />
         </button>
       </div>
 
-      <nav className="project-navigation" aria-label="项目视图">
+      <nav className="project-navigation" aria-label={t("项目视图")}>
         {workspaceViewOptions.map(({ id, label, Icon }) => (
           <button
             key={id}
@@ -78,7 +80,7 @@ export function TopicSidebar({
             }}
           >
             <Icon size={18} />
-            <span>{label}</span>
+            <span>{t(label)}</span>
           </button>
         ))}
       </nav>
@@ -90,7 +92,7 @@ export function TopicSidebar({
         </div>
       </div>
 
-      <div className="topic-filter-chips" role="group" aria-label="按状态筛选议题">
+      <div className="topic-filter-chips" role="group" aria-label={t("按状态筛选议题")}>
         {statusFilterOptions.map((option) => (
           <button
             key={option.id}
@@ -99,7 +101,7 @@ export function TopicSidebar({
             aria-pressed={statusFilter === option.id}
             onClick={() => onStatusFilterChange(option.id)}
           >
-            {option.label}
+            {t(option.label)}
           </button>
         ))}
       </div>
@@ -125,7 +127,7 @@ export function TopicSidebar({
         ) : (
           <div className="empty-topics">
             <SearchX size={24} />
-            <p>没有匹配的议题</p>
+            <p>{t("没有匹配的议题")}</p>
           </div>
         )}
       </div>

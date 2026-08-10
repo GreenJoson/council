@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、工作区视图路由和三栏组件
+ * @input  依赖：界面语言上下文、Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、工作区视图路由和三栏组件
  * @output 导出：含既有提案复用、Human Decision、AI 任务拆分与证据化进度路径的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
@@ -60,9 +60,11 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
 } from "./types/orchestration";
+import { useI18n } from "./i18n/I18nProvider";
 
 
 export default function App() {
+  const { t } = useI18n();
   const repository = useMemo(() => createCouncilRepository(), []);
   const orchestrationRepository = useMemo(() => createOrchestrationRepository(), []);
   const nativeRepository = isNativeCouncilRepository(repository) ? repository : undefined;
@@ -427,7 +429,7 @@ export default function App() {
         content,
       });
       if (!mention) {
-        setToastMessage("回复已发布并同步");
+        setToastMessage(t("回复已发布并同步"));
         return true;
       }
       const requestMessageId = published.topics
@@ -437,7 +439,7 @@ export default function App() {
         .at(-1)
         ?.id;
       if (!requestMessageId) {
-        throw new Error("公开请求已发布，但无法冻结对应消息，Agent 调用未启动。");
+        throw new Error(t("公开请求已发布，但无法冻结对应消息，Agent 调用未启动。"));
       }
       await triggerMentionRun(mention, requestMessageId);
       return true;
@@ -469,9 +471,11 @@ export default function App() {
       setOrchestrationBusyAction(`start:${created.id}`);
       const snapshot = await orchestrationRepository.startRun(created.id);
       setOrchestration(snapshot);
-      setToastMessage("消息已发布，Agent 正在回复");
+      setToastMessage(t("消息已发布，Agent 正在回复"));
     } catch (error: unknown) {
-      setRunsErrorMessage(`消息已发布，但自动回应启动失败：${getErrorMessage(error)}`);
+      setRunsErrorMessage(t("消息已发布，但自动回应启动失败：{message}", {
+        message: getErrorMessage(error),
+      }));
     } finally {
       setOrchestrationBusyAction(null);
     }
@@ -482,7 +486,7 @@ export default function App() {
     try {
       const snapshot = await repository.acceptDecision(activeTopicId);
       setWorkspace(snapshot);
-      setToastMessage("决策已接受，正在生成实施计划");
+      setToastMessage(t("决策已接受，正在生成实施计划"));
       void generateImplementationPlan(activeTopicId, snapshot);
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -505,7 +509,7 @@ export default function App() {
       (adapter) => adapter.runtimeCapabilities.includes("repository_read"),
     ) ?? available[0];
     if (!agent) {
-      setToastMessage("决策已接受；没有可用 Agent，可手动添加任务");
+      setToastMessage(t("决策已接受；没有可用 Agent，可手动添加任务"));
       return;
     }
 
@@ -520,11 +524,16 @@ export default function App() {
       setWorkspace(refreshed);
       setToastMessage(
         result.createdCount > 0
-          ? `${agent.label} 已生成 ${String(result.createdCount)} 个实施任务`
-          : `${agent.label} 未发现需要补充的新任务`,
+          ? t("{agent} 已生成 {count} 个实施任务", {
+            agent: agent.label,
+            count: result.createdCount,
+          })
+          : t("{agent} 未发现需要补充的新任务", { agent: agent.label }),
       );
     } catch (error: unknown) {
-      setContentErrorMessage(`AI 拆分任务失败：${getErrorMessage(error)}`);
+      setContentErrorMessage(t("AI 拆分任务失败：{message}", {
+        message: getErrorMessage(error),
+      }));
     } finally {
       setWorkItemBusyAction(null);
     }
@@ -546,7 +555,7 @@ export default function App() {
         items: [{ title, ...(details ? { details } : {}) }],
       });
       setWorkspace(snapshot);
-      setToastMessage("实施项已加入执行账本");
+      setToastMessage(t("实施项已加入执行账本"));
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -575,7 +584,7 @@ export default function App() {
         expectedVersion: item.version,
       });
       setWorkspace(snapshot);
-      setToastMessage(status === "completed" ? "实施项已标记完成" : "实施状态已更新");
+      setToastMessage(status === "completed" ? t("实施项已标记完成") : t("实施状态已更新"));
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
     } finally {
@@ -597,7 +606,7 @@ export default function App() {
       const snapshot = await repository.recordManualDecision(input);
       setWorkspace(snapshot);
       setSelectedTopicId(activeTopicId);
-      setToastMessage("人工决策已记录，正在生成实施计划");
+      setToastMessage(t("人工决策已记录，正在生成实施计划"));
       void generateImplementationPlan(activeTopicId, snapshot);
       return true;
     } catch (error: unknown) {
@@ -629,7 +638,7 @@ export default function App() {
         setSelectedTopicId(createdTopicId);
       }
       setIsCreateDialogOpen(false);
-      setToastMessage("新议题已创建并同步");
+      setToastMessage(t("新议题已创建并同步"));
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -660,8 +669,8 @@ export default function App() {
       ) ?? false;
       setToastMessage(
         reusedProposal
-          ? "已复用现有提案，首位评审正在审核"
-          : "圆桌已开始，提案人正在发言",
+          ? t("已复用现有提案，首位评审正在审核")
+          : t("圆桌已开始，提案人正在发言"),
       );
       return true;
     } catch (error: unknown) {
@@ -685,7 +694,7 @@ export default function App() {
         content,
       });
       setOrchestration(snapshot);
-      setToastMessage("回答已发布，讨论继续");
+      setToastMessage(t("回答已发布，讨论继续"));
       return true;
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
@@ -700,7 +709,7 @@ export default function App() {
     setRunsErrorMessage(null);
     try {
       setOrchestration(await orchestrationRepository.abandonCycle(activeTopicId));
-      setToastMessage("圆桌已放弃，议题可以重新开局");
+      setToastMessage(t("圆桌已放弃，议题可以重新开局"));
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
     } finally {
@@ -722,7 +731,11 @@ export default function App() {
           : await orchestrationRepository.recoverRun(runId);
       setOrchestration(snapshot);
       setToastMessage(
-        action === "cancel" ? "自动轮次已取消" : action === "recover" ? "恢复已提交" : "自动轮次已启动",
+        action === "cancel"
+          ? t("自动轮次已取消")
+          : action === "recover"
+            ? t("恢复已提交")
+            : t("自动轮次已启动"),
       );
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
@@ -745,7 +758,7 @@ export default function App() {
         approvalId: crypto.randomUUID(),
       });
       setOrchestration(snapshot);
-      setToastMessage("确认已提交，自动轮次继续");
+      setToastMessage(t("确认已提交，自动轮次继续"));
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
     } finally {
@@ -767,7 +780,7 @@ export default function App() {
       }
       const snapshot = await orchestrationRepository.selectTopic(activeTopicId);
       setOrchestration(snapshot);
-      setToastMessage(action === "close" ? "持久会话已关闭" : "持久会话已重新打开");
+      setToastMessage(action === "close" ? t("持久会话已关闭") : t("持久会话已重新打开"));
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
     } finally {
@@ -884,11 +897,11 @@ export default function App() {
           </>
         ) : (
           <main className="empty-workspace" id="main-content">
-            <h1>这个工作区还没有议题</h1>
-            <p>创建第一个架构议题，Agent 的回复将写回同一条共享时间线。</p>
+            <h1>{t("这个工作区还没有议题")}</h1>
+            <p>{t("创建第一个架构议题，Agent 的回复将写回同一条共享时间线。")}</p>
             <button className="primary-button" type="button" onClick={() => setIsCreateDialogOpen(true)}>
               <Plus size={17} />
-              创建议题
+              {t("创建议题")}
             </button>
           </main>
         )}
@@ -897,7 +910,7 @@ export default function App() {
         <button
           className="panel-scrim"
           type="button"
-          aria-label="关闭侧边面板"
+          aria-label={t("关闭侧边面板")}
           onClick={closeResponsivePanels}
         />
       ) : null}
@@ -953,15 +966,16 @@ interface RecoverableErrorProps {
 }
 
 function RecoverableError({ message, onRetry, onClose }: RecoverableErrorProps) {
+  const { t } = useI18n();
   return (
     <div className="error-banner" role="alert">
       <TriangleAlert size={17} />
-      <span>{message}</span>
+      <span>{t(message)}</span>
       <button className="secondary-button" type="button" onClick={onRetry}>
         <RefreshCw size={15} />
-        重试
+        {t("重试")}
       </button>
-      <button className="icon-button compact" type="button" aria-label="关闭错误提示" onClick={onClose}>
+      <button className="icon-button compact" type="button" aria-label={t("关闭错误提示")} onClick={onClose}>
         <X size={16} />
       </button>
     </div>
@@ -983,15 +997,16 @@ function FatalState({
   onChooseLogLibrary,
   onChooseProject,
 }: FatalStateProps) {
+  const { t } = useI18n();
   return (
     <main className="full-state">
       <TriangleAlert size={28} />
-      <h1>无法加载 Council</h1>
-      <p>{message}</p>
+      <h1>{t("无法加载 Council")}</h1>
+      <p>{t(message)}</p>
       <div className="full-state-actions">
         <button className="primary-button" type="button" disabled={Boolean(busyAction)} onClick={onRetry}>
           <RefreshCw size={17} />
-          重试
+          {t("重试")}
         </button>
         {onChooseLogLibrary ? (
           <button
@@ -1001,7 +1016,7 @@ function FatalState({
             onClick={() => void onChooseLogLibrary()}
           >
             {busyAction === "logs" ? <LoaderCircle className="spinner" size={17} /> : <Database size={17} />}
-            重选日志库
+            {t("重选日志库")}
           </button>
         ) : null}
         {onChooseProject ? (
@@ -1012,7 +1027,7 @@ function FatalState({
             onClick={() => void onChooseProject()}
           >
             {busyAction === "project" ? <LoaderCircle className="spinner" size={17} /> : <FolderOpen size={17} />}
-            重选项目
+            {t("重选项目")}
           </button>
         ) : null}
       </div>
@@ -1021,11 +1036,12 @@ function FatalState({
 }
 
 function LoadingState() {
+  const { t } = useI18n();
   return (
     <main className="full-state" aria-busy="true">
       <LoaderCircle className="spinner" size={28} />
-      <h1>正在连接 Council</h1>
-      <p>加载 Operator Console 工作区…</p>
+      <h1>{t("正在连接 Council")}</h1>
+      <p>{t("加载 Operator Console 工作区…")}</p>
     </main>
   );
 }

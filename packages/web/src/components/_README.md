@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `HeaderBar.tsx` | 导航 | 提供品牌 logo、原生项目切换、日志库设置、模型设置、⌘K 搜索、主题切换和同步状态 |
+| `HeaderBar.tsx` | 导航 | 提供品牌 logo、原生项目切换、日志库设置、模型设置、⌘K 搜索、中/EN 持久语言切换、主题切换和同步状态 |
 | `ModelRouterDialog.tsx` | 设置 | 以固定高度左侧路由管理 Provider 与其 Agent；未配置模板仅在添加目录中按需出现，Claude/Codex 系统 Provider/Agent 均锁定身份且不显示删除入口 |
 | `ModelRouterEditor.tsx` | 设置 | 右侧一次只编辑一个 Provider 连接或 Agent 身份；已知模板与系统 Provider 锁定供应商身份，Claude/Codex Agent 锁定名称与 alias，远程 Agent 可独立编辑身份 |
 | `BrandGlyph.tsx` | 品牌 | 离线渲染受控 glyph、供应商名称和语义色；未知品牌使用通用网络图形，不写成 Other |

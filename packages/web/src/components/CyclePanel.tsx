@@ -1,5 +1,5 @@
 /**
- * @input  依赖：议题发起人、编排快照里的活动圆桌、可用 Agent 名册与受控开局/回答操作
+ * @input  依赖：界面语言上下文、议题发起人、编排快照里的活动圆桌、可用 Agent 名册与受控开局/回答操作
  * @output 导出：CyclePanel 三段审查范围、名册能力校验、阶段进度、阻塞提问与累计度量
  * @pos    Inspector 内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问
  *
@@ -17,6 +17,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
+import { useI18n, type TranslationParams } from "../i18n/I18nProvider";
 import type {
   CycleMetrics,
   CycleReviewScope,
@@ -102,6 +103,7 @@ function runtimeCapabilityLabel(adapter: OrchestrationAdapter): string {
 }
 
 function StageTrack({ view }: { view: DiscussionCycleView }): ReactElement {
+  const { t } = useI18n();
   const { cycle } = view;
   const stages: CycleStage[] = ["proposal", "critique", "rebuttal", "synthesis"];
   const activeIndex = stages.indexOf(cycle.stage as CycleStage);
@@ -118,7 +120,7 @@ function StageTrack({ view }: { view: DiscussionCycleView }): ReactElement {
                 : "cycle-track-step"
           }
         >
-          {STAGE_LABELS[stage]}
+          {t(STAGE_LABELS[stage])}
         </li>
       ))}
     </ol>
@@ -138,6 +140,7 @@ function CycleStarter({
   busy: boolean;
   onStart: CyclePanelProps["onStart"];
 }): ReactElement {
+  const { t } = useI18n();
   const available = useMemo(
     () => adapters.filter((adapter) => adapter.available),
     [adapters],
@@ -184,7 +187,7 @@ function CycleStarter({
   return (
     <div className="cycle-starter">
       <fieldset className="cycle-review-scope" disabled={!isTopicOpen || busy}>
-        <legend>审查范围</legend>
+        <legend>{t("审查范围")}</legend>
         <div className="cycle-scope-segments">
           {REVIEW_SCOPE_OPTIONS.map((option) => (
             <label
@@ -198,20 +201,20 @@ function CycleStarter({
                 checked={reviewScope === option.value}
                 onChange={() => setReviewScope(option.value)}
               />
-              <strong>{option.label}</strong>
-              <small>{option.description}</small>
+              <strong>{t(option.label)}</strong>
+              <small>{t(option.description)}</small>
             </label>
           ))}
         </div>
       </fieldset>
       <p className="cycle-hint">
         {initiatorSelected
-          ? "议题发起人已冻结为提案人并跳过首轮；第一条调用从评审开始。"
+          ? t("议题发起人已冻结为提案人并跳过首轮；第一条调用从评审开始。")
           : reviewScope === "workspace"
-            ? "发起人未入选；首位 Agent 提案后，其他评审读取当前工作区。"
+            ? t("发起人未入选；首位 Agent 提案后，其他评审读取当前工作区。")
           : reviewScope === "commit"
-            ? "发起人未入选；首位 Agent 先从议题读取并验证仓库与 commit。"
-            : "发起人未入选；第一位 Agent 作为提案人，其余按顺序评审。"}
+            ? t("发起人未入选；首位 Agent 先从议题读取并验证仓库与 commit。")
+            : t("发起人未入选；第一位 Agent 作为提案人，其余按顺序评审。")}
       </p>
       <ul className="cycle-roster">
         {available.map((adapter) => {
@@ -229,17 +232,17 @@ function CycleStarter({
                 <BrandGlyph brand={adapter.brand} size={16} />
                 <span className="cycle-roster-name">{adapter.label}</span>
                 <span className="cycle-hint-inline">
-                  {runtimeCapabilityLabel(adapter)}
+                  {t(runtimeCapabilityLabel(adapter))}
                 </span>
                 {isInitiator ? (
                   <span className={`cycle-badge ${order < 0 ? "is-muted" : ""}`}>
-                    {order >= 0 ? "发起人 · 跳过首轮" : "发起人"}
+                    {order >= 0 ? t("发起人 · 跳过首轮") : t("发起人")}
                   </span>
                 ) : order === 0 ? (
-                  <span className="cycle-badge">提案人</span>
+                  <span className="cycle-badge">{t("提案人")}</span>
                 ) : null}
                 {!isInitiator && order > 0 ? (
-                  <span className="cycle-badge is-muted">评审 {order}</span>
+                  <span className="cycle-badge is-muted">{t("评审 {order}", { order })}</span>
                 ) : null}
               </label>
             </li>
@@ -249,18 +252,19 @@ function CycleStarter({
       {available.length < 2 ? (
         <p className="cycle-warning">
           <TriangleAlert size={14} />
-          可用 Agent 不足两位，无法互审。请先在设置里连接第二个 Provider。
+          {t("可用 Agent 不足两位，无法互审。请先在设置里连接第二个 Provider。")}
         </p>
       ) : null}
       {missingScopeCapability.length > 0 ? (
         <p className="cycle-warning">
           <TriangleAlert size={14} />
-          {missingScopeCapability.map((adapter) => adapter.label).join("、")}
-          不具备当前审查范围所需的项目读取能力。
+          {t("{agents} 不具备当前审查范围所需的项目读取能力。", {
+            agents: missingScopeCapability.map((adapter) => adapter.label).join(", "),
+          })}
         </p>
       ) : null}
       <label className="cycle-budget">
-        轮次预算
+        {t("轮次预算")}
         <input
           type="number"
           min={1}
@@ -272,7 +276,7 @@ function CycleStarter({
             setRoundBudget(Number.isNaN(parsed) ? DEFAULT_ROUND_BUDGET : parsed);
           }}
         />
-        <span className="cycle-hint-inline">预算耗尽时输出阻断清单并交回给你</span>
+        <span className="cycle-hint-inline">{t("预算耗尽时输出阻断清单并交回给你")}</span>
       </label>
       <button
         type="button"
@@ -287,7 +291,7 @@ function CycleStarter({
         }}
       >
         {busy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
-        开始圆桌
+        {t("开始圆桌")}
       </button>
     </div>
   );
@@ -302,6 +306,7 @@ function BlockingQuestion({
   busy: boolean;
   onAnswer: CyclePanelProps["onAnswer"];
 }): ReactElement | null {
+  const { t } = useI18n();
   const question = view.openQuestion;
   const [answer, setAnswer] = useState("");
   if (!question) {
@@ -322,7 +327,7 @@ function BlockingQuestion({
     <div className="cycle-question">
       <p className="cycle-question-title">
         <CircleHelp size={15} />
-        讨论停在这里等你回答
+        {t("讨论停在这里等你回答")}
       </p>
       <p className="cycle-question-body">{question.question}</p>
       <p className="cycle-question-rationale">{question.rationale}</p>
@@ -346,7 +351,7 @@ function BlockingQuestion({
         rows={3}
         value={answer}
         disabled={busy}
-        placeholder="给出你的判断；这条会作为公开回复留在讨论里。"
+        placeholder={t("给出你的判断；这条会作为公开回复留在讨论里。")}
         onChange={(event) => { setAnswer(event.target.value); }}
       />
       <button
@@ -356,7 +361,7 @@ function BlockingQuestion({
         onClick={() => { submit(answer); }}
       >
         {busy ? <LoaderCircle className="spin" size={15} /> : <Gavel size={15} />}
-        提交回答并继续
+        {t("提交回答并继续")}
       </button>
     </div>
   );
@@ -369,6 +374,7 @@ function CycleOutcome({
   view: DiscussionCycleView;
   adapters: readonly OrchestrationAdapter[];
 }): ReactElement {
+  const { t } = useI18n();
   const { cycle } = view;
   return (
     <div className={`cycle-question cycle-outcome is-${cycle.status}`}>
@@ -376,12 +382,12 @@ function CycleOutcome({
         {cycle.status === "completed"
           ? <ThumbsUp size={15} />
           : <TriangleAlert size={15} />}
-        {STOP_REASON_LABELS[cycle.stopReason ?? ""] ?? "圆桌已经结束"}
+        {t(STOP_REASON_LABELS[cycle.stopReason ?? ""] ?? "圆桌已经结束")}
       </p>
       {cycle.outcome?.kind === "blocking_disagreements" ? (
         <>
           <p className="cycle-question-rationale">
-            下面这些公开发言仍为 blocking，未被静默当作共识：
+            {t("下面这些公开发言仍为 blocking，未被静默当作共识：")}
           </p>
           <ul className="cycle-turns">
             {cycle.outcome.items.map((item) => (
@@ -389,7 +395,7 @@ function CycleOutcome({
                 <span className="cycle-turn-agent">
                   {adapterLabel(adapters, item.agentId)}
                 </span>
-                <span className="cycle-turn-stage">第 {item.round} 轮</span>
+                <span className="cycle-turn-stage">{t("第 {round} 轮", { round: item.round })}</span>
                 <span className="cycle-turn-stance">
                   <TriangleAlert size={13} />
                   {item.messageId.slice(0, 18)}
@@ -403,15 +409,19 @@ function CycleOutcome({
   );
 }
 
-function formatDuration(milliseconds: number): string {
+function formatDuration(
+  milliseconds: number,
+  t: (source: string, params?: TranslationParams) => string,
+): string {
   if (milliseconds < 60_000) {
-    return `${String(Math.round(milliseconds / 1_000))} 秒`;
+    return t("{count} 秒", { count: Math.round(milliseconds / 1_000) });
   }
-  return `${String(Math.round(milliseconds / 60_000))} 分`;
+  return t("{count} 分钟", { count: Math.round(milliseconds / 60_000) });
 }
 
 /** 累计度量：这套流程到底有没有比手工来回搬运快，只能靠这几个数说话。 */
 function MetricsLedger({ metrics }: { metrics: CycleMetrics }): ReactElement | null {
+  const { t } = useI18n();
   if (metrics.cycles.total === 0) {
     return null;
   }
@@ -419,37 +429,37 @@ function MetricsLedger({ metrics }: { metrics: CycleMetrics }): ReactElement | n
   return (
     <dl className="cycle-metrics">
       <div>
-        <dt>收敛 / 放弃</dt>
+        <dt>{t("收敛 / 放弃")}</dt>
         <dd>
           {metrics.cycles.converged} / {metrics.cycles.abandoned}
         </dd>
       </div>
       <div>
-        <dt>轮次中位数</dt>
+        <dt>{t("轮次中位数")}</dt>
         <dd>{metrics.rounds.count > 0 ? metrics.rounds.median : "—"}</dd>
       </div>
       <div>
-        <dt>耗时中位数</dt>
+        <dt>{t("耗时中位数")}</dt>
         <dd>
           {metrics.wallClockMs.count > 0
-            ? formatDuration(metrics.wallClockMs.median)
+            ? formatDuration(metrics.wallClockMs.median, t)
             : "—"}
         </dd>
       </div>
       <div>
-        <dt>平均打断</dt>
-        <dd>{metrics.questions.perCycle} 次</dd>
+        <dt>{t("平均打断")}</dt>
+        <dd>{t("{count} 次", { count: metrics.questions.perCycle })}</dd>
       </div>
       <div className={metrics.verdicts.missing > 0 ? "cycle-metric-alert" : undefined}>
-        <dt>协议缺失</dt>
+        <dt>{t("协议缺失")}</dt>
         <dd>{metrics.verdicts.missing} / {metrics.verdicts.checked}</dd>
       </div>
       <div className={diverged > 0 ? "cycle-metric-alert" : undefined}>
-        <dt>决策一致性</dt>
+        <dt>{t("决策一致性")}</dt>
         <dd>
           {diverged > 0
-            ? `${String(diverged)} 条与讨论不符`
-            : `${String(metrics.decisionConsistency.checked)} 条全部一致`}
+            ? t("{count} 条与讨论不符", { count: diverged })
+            : t("{count} 条全部一致", { count: metrics.decisionConsistency.checked })}
         </dd>
       </div>
     </dl>
@@ -466,6 +476,7 @@ export function CyclePanel({
   onAnswer,
   onAbandon,
 }: CyclePanelProps): ReactElement | null {
+  const { t } = useI18n();
   const adapters = snapshot?.capabilities?.adapters ?? [];
   const view = snapshot?.activeTopicId === topicId ? snapshot.cycle : undefined;
   const activeView = view?.cycle.status === "active" ? view : undefined;
@@ -482,13 +493,16 @@ export function CyclePanel({
           <span className="auto-rounds-kicker">
             <MessagesSquare size={12} /> Roundtable
           </span>
-          <h3 id="cycle-title">圆桌讨论</h3>
+          <h3 id="cycle-title">{t("圆桌讨论")}</h3>
         </div>
         {view ? (
           <span className="cycle-round">
-            第 {view.cycle.currentRound}/{view.cycle.roundBudget} 轮 ·{" "}
-            {STAGE_LABELS[view.cycle.stage]} ·{" "}
-            {REVIEW_SCOPE_LABELS[view.cycle.requirements.reviewScope]}
+            {t("第 {current}/{budget} 轮", {
+              current: view.cycle.currentRound,
+              budget: view.cycle.roundBudget,
+            })} ·{" "}
+            {t(STAGE_LABELS[view.cycle.stage])} ·{" "}
+            {t(REVIEW_SCOPE_LABELS[view.cycle.requirements.reviewScope])}
           </span>
         ) : null}
       </header>
@@ -503,14 +517,14 @@ export function CyclePanel({
                 <span className="cycle-turn-agent">
                   {adapterLabel(adapters, turn.agentId)}
                 </span>
-                <span className="cycle-turn-stage">{STAGE_LABELS[turn.stage]}</span>
+                <span className="cycle-turn-stage">{t(STAGE_LABELS[turn.stage])}</span>
                 <span className="cycle-turn-stance">
                   {turn.stance === "agree" ? <ThumbsUp size={13} /> : null}
                   {turn.stance === "blocking" ? <TriangleAlert size={13} /> : null}
-                  {STANCE_LABELS[turn.stance]}
+                  {t(STANCE_LABELS[turn.stance])}
                 </span>
                 {turn.verdictDeclared === false ? (
-                  <span className="cycle-badge is-warning">缺少 verdict</span>
+                  <span className="cycle-badge is-warning">{t("缺少 verdict")}</span>
                 ) : null}
               </li>
             ))}
@@ -522,7 +536,7 @@ export function CyclePanel({
             onClick={() => { void onAbandon(); }}
           >
             <CircleStop size={14} />
-            放弃这次圆桌
+            {t("放弃这次圆桌")}
           </button>
         </>
       ) : (

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Agent、冻结 Actor 快照、消息、议题状态与决策状态类型
+ * @input  依赖：界面语言上下文、Agent、冻结 Actor 快照、消息、议题状态与决策状态类型
  * @output 导出：BrandLogo、AgentAvatar、StatusBadge、DecisionStatusBadge、messageKindLabels、
  *         participantFromActorSnapshot、topicStatusLabels 与 decisionStatusLabels 展示标签
  * @pos    Operator Console 跨区域复用的基础展示组件；DecisionStatusBadge 供检查器、
@@ -16,6 +16,7 @@ import type {
   Participant,
   TopicStatus,
 } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 
 export function participantFromActorSnapshot(
   snapshot: ActorSnapshot | undefined,
@@ -135,10 +136,11 @@ export interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
+  const { t } = useI18n();
   return (
     <span className={`status-badge status-${status}`}>
       <span className="status-dot" aria-hidden="true" />
-      {topicStatusLabels[status]}
+      {t(topicStatusLabels[status])}
     </span>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：selectors.ts 的 ArchitectureTimelineEntry 列表与议题/决策记录跳转回调
+ * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureTimelineEntry 列表与议题/决策记录跳转回调
  * @output 导出：ArchitectureTimeline 架构档案第二区块——按时间排列的决策演进时间线
  * @pos    ArchitectureView 的第二区块；已接受/被取代条目带稳定 ADR 编号并可跳转决策记录，
  *         仍在提案中的条目跳转回讨论视图；不发起请求，纯展示 + 回调
@@ -9,6 +9,7 @@
 
 import { CheckCircle2, GitCommitHorizontal, History, ShieldCheck } from "lucide-react";
 import type { ArchitectureTimelineEntry } from "../../data/selectors";
+import { useI18n } from "../../i18n/I18nProvider";
 
 export interface ArchitectureTimelineProps {
   entries: ArchitectureTimelineEntry[];
@@ -19,19 +20,20 @@ export interface ArchitectureTimelineProps {
 }
 
 export function ArchitectureTimeline({ entries, onOpenTopic, onOpenDecisionRecord }: ArchitectureTimelineProps) {
+  const { t } = useI18n();
   return (
-    <section className="architecture-timeline" aria-label="架构演进时间线">
+    <section className="architecture-timeline" aria-label={t("架构演进时间线")}>
       <header className="architecture-section-header">
         <h2>
           <GitCommitHorizontal size={17} aria-hidden="true" />
-          架构演进时间线
+          {t("架构演进时间线")}
         </h2>
         <span className="count-pill">{entries.length}</span>
       </header>
 
       {entries.length === 0 ? (
         <p className="architecture-section-empty">
-          还没有决策记录。在决策里写下 summary/rationale 并接受后，会按时间出现在这里。
+          {t("还没有决策记录。在决策里写下 summary/rationale 并接受后，会按时间出现在这里。")}
         </p>
       ) : (
         <ol className="architecture-timeline-list">
@@ -65,7 +67,7 @@ export function ArchitectureTimeline({ entries, onOpenTopic, onOpenDecisionRecor
                   </span>
                   <span className="architecture-timeline-body">
                     <span className="architecture-timeline-heading">
-                      <span className="architecture-timeline-adr">{entry.adrNumber ?? "提案中"}</span>
+                      <span className="architecture-timeline-adr">{entry.adrNumber ?? t("提案中")}</span>
                       <span className="architecture-timeline-title">{entry.decisionTitle}</span>
                     </span>
                     <span className="architecture-timeline-meta">
@@ -83,10 +85,10 @@ export function ArchitectureTimeline({ entries, onOpenTopic, onOpenDecisionRecor
                         onOpenDecisionRecord(entry.supersededByTopicId ?? entry.topicId);
                       }}
                     >
-                      已被 {entry.supersededByAdrNumber} 取代
+                      {t("已被 {adr} 取代", { adr: entry.supersededByAdrNumber })}
                     </button>
                   ) : entry.status === "superseded" ? (
-                    <span className="architecture-superseded-badge">已被取代</span>
+                    <span className="architecture-superseded-badge">{t("已被取代")}</span>
                   ) : null}
                 </div>
               </li>

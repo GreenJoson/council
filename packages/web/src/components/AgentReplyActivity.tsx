@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前议题、自动轮次快照与 AgentAvatar
+ * @input  依赖：界面语言上下文、当前议题、自动轮次快照与 AgentAvatar
  * @output 导出：活动 Agent 选择器和讨论时间线“正在回复”动态卡
  * @pos    把编排器真实运行状态翻译成讨论区内可感知、可访问的即时反馈
  *
@@ -8,6 +8,7 @@
 
 import type { AgentId } from "../types/council";
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "../i18n/I18nProvider";
 import type {
   OrchestrationRun,
   OrchestrationSnapshot,
@@ -90,12 +91,13 @@ export interface AgentReplyActivityProps {
 }
 
 export function AgentReplyActivity({ activity }: AgentReplyActivityProps) {
+  const { t } = useI18n();
   const title = activity.phase === "replying"
-    ? `${activity.label} 正在回复`
-    : `${activity.label} 正在准备`;
+    ? t("{agent} 正在回复", { agent: activity.label })
+    : t("{agent} 正在准备", { agent: activity.label });
   const detail = activity.phase === "replying"
-    ? "已接收本轮任务，回复完成后会自动加入讨论。"
-    : "正在整理公开上下文并准备下一轮调用。";
+    ? t("已接收本轮任务，回复完成后会自动加入讨论。")
+    : t("正在整理公开上下文并准备下一轮调用。");
 
   return (
     <article
@@ -123,7 +125,7 @@ export function AgentReplyActivity({ activity }: AgentReplyActivityProps) {
         </div>
         {activity.content ? (
           <>
-            <span className="agent-reply-draft-label">实时草稿 · 尚未发布</span>
+            <span className="agent-reply-draft-label">{t("实时草稿 · 尚未发布")}</span>
             <StreamedDraft content={activity.content} />
           </>
         ) : (
