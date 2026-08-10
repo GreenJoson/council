@@ -13,11 +13,11 @@
 | `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/决策/元数据 tab（所有者优先使用议题冻结快照）、一卡一节点的阶梯导航、独立时间线、真实 Agent 回复动态、历史总数、人工决策入口、引用回复和编辑器；过长议题问题默认收起，并把自动轮次状态透传给 Composer |
 | `AgentReplyActivity.tsx` | 状态 | 从当前议题真实 `running/waiting_agent` Run 中选择最新活动 Agent，在时间线末尾显示 Provider 品牌、具体名称、阶段与同议题实时草稿；较大输出块逐帧平滑展开，完成后由正式消息接替，不进入阶梯节点计数 |
 | `MessageJumpRail.tsx` | 导航 | 按当前议题实际消息卡数量渲染一一对应的阶梯节点；点击平滑跳转到对应卡片，当前阅读卡跟随滚动高亮 |
-| `MessageCard.tsx` | 核心 | 以消息行冻结 Actor 快照展示历史作者，避免身份重命名改写旧卡片；渲染公开 proposal/critique/rebuttal/synthesis，并提供正文折叠、Markdown/Mermaid 与引用回复 |
+| `MessageCard.tsx` | 核心 | 以消息行冻结 Actor 快照展示历史作者，避免身份重命名改写旧卡片；渲染公开 proposal/critique/rebuttal/synthesis，把 `council-fix` 尾块呈现为关联提交证据卡，并提供正文折叠、Markdown/Mermaid 与引用回复 |
 | `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览，以及正文/议题两种语义化底部折叠；折叠高度从主题 token 读取，内容切换后恢复默认收起；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
 | `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成固定上限缩略 SVG；按 data-theme 联动主题，securityLevel 显式声明为 strict；点击放大，失败降级为原始代码块 + 错误提示 |
 | `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
-| `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、引用回复和动态 `@actor-id` 召唤；Claude、Codex、DeepSeek、Kimi API 与 Kimi Code 均使用独立 Actor 身份；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
+| `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、结构化多仓库关联提交、引用回复和动态 `@actor-id` 召唤；Claude、Codex、DeepSeek、Kimi API 与 Kimi Code 均使用独立 Actor 身份；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
 | `InspectorPanel.tsx` | 决策 | 组织自动轮次、真实约束、证据、备选方案、可空拟议决策和 Human / Accepted 人工结束入口；owner/备选作者优先使用各自行冻结快照 |
 | `CyclePanel.tsx` | 圆桌 | 开局勾选参与名册，按 Actor 标出发起人并展示“首轮跳过”后的真实顺序；以分段控件选择方案/当前工作区/Commit 三种范围，并展示能力缺口、阶段轨道、阻断结果与累计度量 |
 | `AutoRoundsPanel.tsx` | 编排 | 仅在存在 Run 或持久会话时展示紧凑运行状态、单一当前调用卡、折叠历史及会话关闭/重开；单次启动统一由 Composer `@Agent` 承担 |

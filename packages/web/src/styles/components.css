@@ -642,6 +642,206 @@
   color: var(--color-text-muted);
 }
 
+.commit-association-editor {
+  display: grid;
+  gap: 9px;
+  margin: 8px 0 6px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface) 76%, var(--color-surface-raised));
+}
+
+.commit-association-heading,
+.commit-association-footer,
+.commit-association-card-heading,
+.composer-tools {
+  display: flex;
+  align-items: center;
+}
+
+.commit-association-heading {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.commit-association-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.commit-association-heading strong {
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.commit-association-heading small,
+.commit-association-heading > span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.commit-association-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.commit-association-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.55fr) minmax(220px, 1fr) 28px;
+  gap: 8px;
+  align-items: end;
+}
+
+.commit-association-row label {
+  display: grid;
+  gap: 3px;
+  cursor: text;
+}
+
+.commit-association-row label > span {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commit-association-row input {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.commit-association-row input:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 12%, transparent);
+}
+
+.commit-remove-button {
+  margin-bottom: 1px;
+}
+
+.commit-association-footer {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.commit-add-button,
+.commit-association-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.commit-add-button {
+  min-height: 26px;
+  padding: 3px 8px;
+}
+
+.commit-association-toggle {
+  min-height: 28px;
+  padding: 4px 9px;
+}
+
+.commit-add-button:hover:not(:disabled),
+.commit-association-toggle:hover,
+.commit-association-toggle.is-active {
+  border-color: var(--color-focus);
+  color: var(--color-focus);
+}
+
+.commit-association-toggle.is-active {
+  background: color-mix(in srgb, var(--color-focus) 8%, var(--color-surface-raised));
+}
+
+.commit-association-error,
+.commit-association-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.commit-association-error {
+  color: var(--color-danger);
+}
+
+.commit-association-ready {
+  color: var(--color-positive);
+}
+
+.composer-tools {
+  gap: 9px;
+}
+
+.commit-association-card {
+  display: grid;
+  gap: 8px;
+  max-width: 76ch;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-positive);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-positive) 5%, var(--color-surface));
+}
+
+.commit-association-card-heading {
+  gap: 6px;
+  color: var(--color-positive);
+}
+
+.commit-association-card-heading strong {
+  font-size: 11px;
+}
+
+.commit-association-card-heading span {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.commit-association-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commit-association-card li {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.45fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.commit-association-card code {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .publish-button {
   min-width: 155px;
 }

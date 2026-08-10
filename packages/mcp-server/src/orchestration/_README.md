@@ -79,4 +79,4 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审传递议题中的多仓库提交，提问处停住，收敛时写 proposed 决策 |
+| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |

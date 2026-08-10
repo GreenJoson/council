@@ -1,7 +1,7 @@
 /**
- * @input  依赖：带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent 与
- *         data/mention-parser 的 extractLeadingMentionChip
- * @output 导出：MessageCard 讨论时间线卡片
+ * @input  依赖：带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent、
+ *         召唤标记与结构化关联提交解析
+ * @output 导出：含关联提交证据卡的 MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
  *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
  *         高亮芯片，其余正文照常交给 MarkdownContent
@@ -9,7 +9,8 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Reply } from "lucide-react";
+import { GitCommitHorizontal, Reply } from "lucide-react";
+import { extractCommitAssociation } from "../data/commit-association";
 import { extractLeadingMentionChip } from "../data/mention-parser";
 import type { CouncilMessage, Participant } from "../types/council";
 import { MarkdownContent } from "./MarkdownContent";
@@ -31,7 +32,9 @@ export function MessageCard({
   elementId,
   onQuote,
 }: MessageCardProps) {
-  const mentionChip = extractLeadingMentionChip(message.content);
+  const commitAssociation = extractCommitAssociation(message.content);
+  const visibleContent = commitAssociation?.body ?? message.content;
+  const mentionChip = extractLeadingMentionChip(visibleContent);
   const frozenParticipant: Participant = {
     id: message.actorSnapshot.actorId,
     slug: message.actorSnapshot.slug,
@@ -77,7 +80,26 @@ export function MessageCard({
             @{mentionChip.token}
           </span>
         ) : null}
-        <MarkdownContent content={mentionChip ? mentionChip.remainder : message.content} collapsible />
+        {(mentionChip ? mentionChip.remainder : visibleContent) ? (
+          <MarkdownContent content={mentionChip ? mentionChip.remainder : visibleContent} collapsible />
+        ) : null}
+        {commitAssociation ? (
+          <aside className="commit-association-card" aria-label="关联提交">
+            <div className="commit-association-card-heading">
+              <GitCommitHorizontal size={15} />
+              <strong>关联提交</strong>
+              <span>{commitAssociation.targets.length} 个仓库</span>
+            </div>
+            <ul>
+              {commitAssociation.targets.map((target) => (
+                <li key={`${target.repository}:${target.commit}`}>
+                  <span>{target.repository === "." ? "当前仓库" : target.repository}</span>
+                  <code>{target.commit}</code>
+                </li>
+              ))}
+            </ul>
+          </aside>
+        ) : null}
       </div>
     </article>
   );

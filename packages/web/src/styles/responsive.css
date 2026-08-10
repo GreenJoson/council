@@ -278,6 +278,31 @@
     align-items: flex-end;
   }
 
+  .commit-association-row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .commit-association-row .commit-sha-field {
+    grid-column: 1;
+  }
+
+  .commit-remove-button {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .commit-association-footer,
+  .composer-tools {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .commit-association-card li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
   .publish-button {
     min-width: 46px;
     width: 46px;

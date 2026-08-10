@@ -529,6 +529,123 @@ test("已提交互审从议题说明读取多仓库 commit，再结构化传给�
   }
 });
 
+test("发起人第二条 Note 关联的多仓库 commit 会直接成为修复互审基线", async () => {
+  const reviewer = new ScriptedAgent("claude", (kind) =>
+    `${kind} 已独立复核关联提交。\n\n${verdict("agree")}`);
+  const fixer = new ScriptedAgent("codex", (kind) =>
+    `${kind} 已处理复审结论。\n\n${verdict("agree")}`);
+  const harness = await harnessWith(
+    reviewer,
+    fixer,
+    ["text", "repository_read", "git_diff"],
+  );
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    const database = new DatabaseSync(harness.databasePath);
+    try {
+      database.prepare(`
+        UPDATE topics
+        SET created_by_actor_id = 'codex',
+            created_by_snapshot_json = (
+              SELECT json_object(
+                'schemaVersion', 1,
+                'actorId', id,
+                'slug', slug,
+                'displayName', display_name,
+                'shortName', short_name,
+                'role', role
+              )
+              FROM actor_identities
+              WHERE id = 'codex'
+            )
+        WHERE id = ?
+      `).run(topicId);
+    } finally {
+      database.close();
+    }
+    harness.database.createMessageAsActor({
+      topicId,
+      actorId: "codex",
+      kind: "note",
+      content: [
+        "实现和测试完成后补充提交记录。",
+        "",
+        "```council-fix",
+        '{"targets":[{"repository":".","commit":"f0fe5c5"},{"repository":"../admin","commit":"352bfa5"}],"summary":"两个仓库的权限修复"}',
+        "```",
+      ].join("\n"),
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        participants: ["claude", "codex"],
+        kind: "fix_review",
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(await settle(harness.baseUrl, topicId), null);
+    assert.deepEqual(reviewer.seen, ["critique"]);
+    assert.deepEqual(fixer.seen, ["synthesis"]);
+    assert.match(reviewer.instructions[0] ?? "", /git -C \. show f0fe5c5/u);
+    assert.match(reviewer.instructions[0] ?? "", /git -C \.\.\/admin show 352bfa5/u);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("发起人没有关联 commit 时返回可操作冲突而不是服务器内部错误", async () => {
+  const fixer = new ScriptedAgent("claude", (kind) =>
+    `${kind} 不应被调用。\n\n${verdict("agree")}`);
+  const reviewer = new ScriptedAgent("codex", (kind) =>
+    `${kind} 不应被调用。\n\n${verdict("agree")}`);
+  const harness = await harnessWith(
+    fixer,
+    reviewer,
+    ["text", "repository_read", "git_diff"],
+  );
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    const database = new DatabaseSync(harness.databasePath);
+    try {
+      database.prepare(`
+        UPDATE topics
+        SET created_by_actor_id = 'claude',
+            created_by_snapshot_json = (
+              SELECT json_object(
+                'schemaVersion', 1,
+                'actorId', id,
+                'slug', slug,
+                'displayName', display_name,
+                'shortName', short_name,
+                'role', role
+              )
+              FROM actor_identities
+              WHERE id = 'claude'
+            )
+        WHERE id = ?
+      `).run(topicId);
+    } finally {
+      database.close();
+    }
+
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ participants: ["claude", "codex"], kind: "fix_review" }),
+    });
+    assert.equal(response.status, 409);
+    const envelope = await readEnvelope(response);
+    assert.match(envelope.message, /没有可验证的仓库\/commit/u);
+    assert.deepEqual(fixer.seen, []);
+    assert.deepEqual(reviewer.seen, []);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("task 附件能力同样在开局前检查，文本 Runtime 不能假装读取媒体", async () => {
   const fixer = new ScriptedAgent("claude", (kind) =>
     `我已经改好并提交了，请复审。\n\n${verdict("agree")}\n\n${kind}`);

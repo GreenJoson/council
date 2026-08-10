@@ -1,7 +1,7 @@
 /**
- * @input  依赖：当前消息类型、议题开放状态、同步/发布状态、提交回调、引用种子与自动轮次快照
+ * @input  依赖：当前消息类型、议题开放状态、同步/发布状态、提交回调、关联 commit、引用种子与自动轮次快照
  *         （用于 @claude/@codex 召唤自动补全、可用性与"每议题一个活动 run"冲突判断）
- * @output 导出：Composer 公开回复编辑器与已决议题 @Agent 禁用边界
+ * @output 导出：Composer 公开回复编辑器、结构化关联提交与已决议题 @Agent 禁用边界
  * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
  *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次单轮自动 run
  *         （召唤解析见 data/mention-parser.ts，冲突判断复用 AutoRoundsPanel 的
@@ -12,8 +12,14 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Bot, Link2, Send, TriangleAlert } from "lucide-react";
+import { Bot, GitCommitHorizontal, Link2, Plus, Send, TriangleAlert, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  buildCommitAssociationContent,
+  MAX_COMMIT_ASSOCIATIONS,
+  type CommitAssociationTarget,
+  validateCommitAssociationTargets,
+} from "../data/commit-association";
 import {
   findActiveMentionQuery,
   getMentionToken,
@@ -82,6 +88,8 @@ export function Composer({
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionStart, setMentionStart] = useState<number | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [isCommitEditorOpen, setIsCommitEditorOpen] = useState(false);
+  const [commitTargets, setCommitTargets] = useState<CommitAssociationTarget[]>([]);
 
   const mentionAdapters: OrchestrationAdapter[] = orchestration?.capabilities?.adapters ?? [];
   const isOrchestrationOffline = orchestration?.sync.status === "offline";
@@ -169,7 +177,39 @@ export function Composer({
     mentionStatus = { kind: "blocked", reason: "自动编排当前离线，暂时无法通过 @ 召唤 Agent。" };
   }
 
-  const canPublish = content.trim().length > 0 && !isPublishing && mentionStatus.kind !== "blocked";
+  const commitAssociationError = validateCommitAssociationTargets(commitTargets);
+  const hasCommitAssociations = commitTargets.length > 0 && !commitAssociationError;
+  const canPublish = (content.trim().length > 0 || hasCommitAssociations)
+    && !isPublishing
+    && mentionStatus.kind !== "blocked"
+    && !commitAssociationError;
+
+  function toggleCommitEditor(): void {
+    if (isCommitEditorOpen) {
+      if (validateCommitAssociationTargets(commitTargets)) {
+        setCommitTargets([]);
+      }
+      setIsCommitEditorOpen(false);
+      return;
+    }
+    if (commitTargets.length === 0) {
+      setCommitTargets([{ repository: ".", commit: "" }]);
+    }
+    setIsCommitEditorOpen(true);
+  }
+
+  function updateCommitTarget(
+    index: number,
+    field: keyof CommitAssociationTarget,
+    value: string,
+  ): void {
+    setCommitTargets((current) => current.map((target, targetIndex) =>
+      targetIndex === index ? { ...target, [field]: value } : target));
+  }
+
+  function removeCommitTarget(index: number): void {
+    setCommitTargets((current) => current.filter((_target, targetIndex) => targetIndex !== index));
+  }
 
   function applyMentionCandidate(candidate: OrchestrationAdapter): void {
     if (mentionStart === null || !candidate.available) {
@@ -254,10 +294,19 @@ export function Composer({
         : undefined;
     // 召唤成功时，这条讨论消息本身固定记录为 note——它是"指令性发言"，
     // 不是用户在 kind 选择器里点的那个提案类型；kind 选择器此时改为描述 Agent 回应的类型。
-    const published = await onPublish(mentionPayload ? "note" : kind, trimmed, mentionPayload);
+    const publishedContent = hasCommitAssociations
+      ? buildCommitAssociationContent(trimmed, commitTargets)
+      : trimmed;
+    const published = await onPublish(
+      mentionPayload || hasCommitAssociations ? "note" : kind,
+      publishedContent,
+      mentionPayload,
+    );
     if (published) {
       setContent("");
       setIsMentionMenuOpen(false);
+      setCommitTargets([]);
+      setIsCommitEditorOpen(false);
     }
   }
 
@@ -329,6 +378,80 @@ export function Composer({
         ) : null}
       </label>
 
+      {isCommitEditorOpen ? (
+        <section className="commit-association-editor" aria-label="关联提交">
+          <div className="commit-association-heading">
+            <div>
+              <strong>关联修复提交</strong>
+              <small>仓库使用相对议题项目目录的路径；当前仓库填写 .</small>
+            </div>
+            <span>{commitTargets.length}/{MAX_COMMIT_ASSOCIATIONS}</span>
+          </div>
+          <div className="commit-association-rows">
+            {commitTargets.map((target, index) => (
+              <div className="commit-association-row" key={index}>
+                <label>
+                  <span>仓库</span>
+                  <input
+                    type="text"
+                    value={target.repository}
+                    disabled={isPublishing}
+                    placeholder={index === 0 ? "." : "../another-repository"}
+                    aria-label={`第 ${String(index + 1)} 个仓库路径`}
+                    onChange={(event) => updateCommitTarget(index, "repository", event.target.value)}
+                  />
+                </label>
+                <label className="commit-sha-field">
+                  <span>Commit SHA</span>
+                  <input
+                    type="text"
+                    value={target.commit}
+                    disabled={isPublishing}
+                    placeholder="7–40 位 commit SHA"
+                    spellCheck={false}
+                    aria-label={`第 ${String(index + 1)} 个 commit SHA`}
+                    onChange={(event) => updateCommitTarget(index, "commit", event.target.value)}
+                  />
+                </label>
+                <button
+                  className="icon-button compact commit-remove-button"
+                  type="button"
+                  disabled={isPublishing}
+                  aria-label={`移除第 ${String(index + 1)} 个关联提交`}
+                  onClick={() => removeCommitTarget(index)}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="commit-association-footer">
+            <button
+              className="commit-add-button"
+              type="button"
+              disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
+              onClick={() => setCommitTargets((current) => [
+                ...current,
+                { repository: "", commit: "" },
+              ])}
+            >
+              <Plus size={14} />
+              添加仓库提交
+            </button>
+            {commitAssociationError ? (
+              <span className="commit-association-error" role="alert">
+                <TriangleAlert size={13} />
+                {commitAssociationError}
+              </span>
+            ) : commitTargets.length > 0 ? (
+              <span className="commit-association-ready">
+                修复互审将直接读取这些不可变提交
+              </span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {mentionStatus.kind === "ready" ? (
         <p className="composer-mention-hint">
           <Bot size={13} />
@@ -343,14 +466,29 @@ export function Composer({
       ) : null}
 
       <div className="composer-toolbar">
-        <span className="composer-hint">⌘ Enter 快速发布</span>
+        <div className="composer-tools">
+          <button
+            className={`commit-association-toggle ${isCommitEditorOpen ? "is-active" : ""}`}
+            type="button"
+            aria-expanded={isCommitEditorOpen}
+            onClick={toggleCommitEditor}
+          >
+            <GitCommitHorizontal size={15} />
+            {hasCommitAssociations
+              ? `已关联 ${String(commitTargets.length)} 个提交`
+              : "关联提交"}
+          </button>
+          <span className="composer-hint">⌘ Enter 快速发布</span>
+        </div>
         <button className="publish-button" type="submit" disabled={!canPublish}>
           <span>
             {isPublishing
               ? "发布中…"
               : mentionStatus.kind === "ready"
                 ? `发布并召唤 ${mentionStatus.adapter.label}`
-                : `发布 ${messageKindLabels[kind]}`}
+                : hasCommitAssociations
+                  ? "发布提交记录"
+                  : `发布 ${messageKindLabels[kind]}`}
           </span>
           <Send size={16} />
         </button>

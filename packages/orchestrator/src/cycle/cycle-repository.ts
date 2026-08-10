@@ -8,7 +8,11 @@
 
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { InvalidRunStateError, StoreConflictError } from "../errors.js";
+import {
+  InvalidRunStateError,
+  RunStateConflictError,
+  StoreConflictError,
+} from "../errors.js";
 import {
   nextCycleAction,
   stageAfterAction,
@@ -100,7 +104,10 @@ interface TopicProposalSeedRow {
   question: unknown;
   created_by_actor_id: unknown;
   created_at: unknown;
-  latest_creator_content: unknown;
+}
+
+interface CommitEvidenceRow {
+  content: unknown;
 }
 
 export interface RecordCycleTurnInput {
@@ -257,24 +264,15 @@ export function findReusableProposalMessage(
 }
 
 /**
- * 议题正文由创建者公开，天然就是首轮提案。发起人后续最近一次 proposal/brief
- * 仅用于补充或覆盖 commit 证据，不改变提案归属。
+ * 议题正文由创建者公开，天然就是首轮提案。commit 可以在实现结束后的任意公开消息
+ * （尤其是 Note）里补充；证据归属不改变首轮提案归属，后出现的安全引用覆盖旧值。
  */
 export function readTopicProposalSeed(
   database: DatabaseSync,
   topicId: string,
 ): TopicProposalSeed | undefined {
   const row = database.prepare(`
-    SELECT topics.id, topics.question, topics.created_by_actor_id, topics.created_at,
-      (
-        SELECT messages.content
-        FROM messages
-        WHERE messages.topic_id = topics.id
-          AND messages.author_actor_id = topics.created_by_actor_id
-          AND messages.kind IN ('brief', 'proposal')
-        ORDER BY messages.created_at DESC, messages.rowid DESC
-        LIMIT 1
-      ) AS latest_creator_content
+    SELECT topics.id, topics.question, topics.created_by_actor_id, topics.created_at
     FROM topics
     WHERE topics.id = ?
   `).get(topicId) as unknown as TopicProposalSeedRow | undefined;
@@ -286,16 +284,22 @@ export function readTopicProposalSeed(
     || typeof row.question !== "string"
     || typeof row.created_by_actor_id !== "string"
     || typeof row.created_at !== "string"
-    || (row.latest_creator_content !== null
-      && typeof row.latest_creator_content !== "string")
   ) {
     throw new InvalidRunStateError("Council 议题提案种子损坏。");
   }
+  const evidenceRows = database.prepare(`
+    SELECT content
+    FROM messages
+    WHERE topic_id = ?
+      AND kind IN ('brief', 'proposal', 'rebuttal', 'synthesis', 'note')
+    ORDER BY created_at ASC, rowid ASC
+  `).all(topicId) as unknown as CommitEvidenceRow[];
+  if (evidenceRows.some((evidence) => typeof evidence.content !== "string")) {
+    throw new InvalidRunStateError("Council 议题提交证据损坏。");
+  }
   const commitTargets = parseCommitTargetsFromEvidence([
     row.question,
-    ...(typeof row.latest_creator_content === "string"
-      ? [row.latest_creator_content]
-      : []),
+    ...evidenceRows.map((evidence) => evidence.content as string),
   ]);
   return {
     topicId: row.id,
@@ -416,7 +420,7 @@ export function startDiscussionCycle(
     && (seed || topicSeed)
     && !seededCommitTargets?.length
   ) {
-    throw new InvalidRunStateError(
+    throw new RunStateConflictError(
       "议题与发起人说明中没有可验证的仓库/commit，不能开始 Commit 互审。",
     );
   }
