@@ -837,6 +837,7 @@ export default function App() {
         ) : selectedTopic ? (
           <>
             <DiscussionPanel
+              projectName={workspace.project.name}
               topic={selectedTopic}
               participants={participants}
               sync={workspace.sync}

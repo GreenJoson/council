@@ -298,6 +298,10 @@
     flex-direction: column;
   }
 
+  .commit-add-actions {
+    width: 100%;
+  }
+
   .commit-association-card li {
     grid-template-columns: 1fr;
     gap: 2px;

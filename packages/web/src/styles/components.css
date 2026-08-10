@@ -699,12 +699,33 @@
   cursor: text;
 }
 
-.commit-association-row label > span {
+.commit-association-row label > span,
+.commit-repository-context > span {
   color: var(--color-text-muted);
   font-size: 9px;
   font-weight: 650;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.commit-repository-context {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.commit-repository-context > strong {
+  min-height: 30px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-positive) 5%, var(--color-surface-raised));
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .commit-association-row input {
@@ -733,6 +754,12 @@
   justify-content: space-between;
   gap: 12px;
   min-height: 24px;
+}
+
+.commit-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .commit-add-button,

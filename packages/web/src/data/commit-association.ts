@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Composer 输入的仓库相对路径与不可变 commit SHA
+ * @input  依赖：Composer 输入的仓库相对路径与不可变 commit SHA；同仓库可关联多轮不同提交
  * @output 导出：关联提交校验、council-fix 协议编码与消息展示解码
  * @pos    Web 消息附件与 Council 修复互审协议之间的唯一转换边界
  *
@@ -45,7 +45,7 @@ export function validateCommitAssociationTargets(
   if (targets.length > MAX_COMMIT_ASSOCIATIONS) {
     return `一次最多关联 ${String(MAX_COMMIT_ASSOCIATIONS)} 个提交`;
   }
-  const repositories = new Set<string>();
+  const targetKeys = new Set<string>();
   for (const [index, target] of targets.entries()) {
     const repository = target.repository.trim();
     const commit = target.commit.trim().toLowerCase();
@@ -55,10 +55,11 @@ export function validateCommitAssociationTargets(
     if (!COMMIT_REF_PATTERN.test(commit)) {
       return `第 ${String(index + 1)} 项 commit 必须是 7–40 位十六进制 SHA`;
     }
-    if (repositories.has(repository)) {
-      return `仓库 ${repository} 已经关联，请保留需要互审的最终提交`;
+    const targetKey = `${repository}\u0000${commit}`;
+    if (targetKeys.has(targetKey)) {
+      return `第 ${String(index + 1)} 项与前面的仓库和 commit 完全重复`;
     }
-    repositories.add(repository);
+    targetKeys.add(targetKey);
   }
   return undefined;
 }

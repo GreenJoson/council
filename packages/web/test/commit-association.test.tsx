@@ -1,6 +1,6 @@
 /**
  * @input  依赖：关联提交协议编解码与 MessageCard 服务端渲染
- * @output 验证：多仓库 SHA 校验、协议尾块隐藏及可读提交证据卡
+ * @output 验证：同仓库多轮 SHA、多仓库校验、协议尾块隐藏及可读提交证据卡
  * @pos    Composer 关联提交不会退化为不可识别普通文本的前端回归证据
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,11 +18,12 @@ import type { CouncilMessage } from "../src/types/council";
 
 const TARGETS = [
   { repository: ".", commit: "F0FE5C5" },
+  { repository: ".", commit: "4D7E416" },
   { repository: "../admin", commit: "352BFA5A1" },
 ];
 
 describe("关联提交", () => {
-  it("把多个仓库提交编码成修复互审协议并无损解码", () => {
+  it("把同仓库多轮提交及跨仓库提交编码成修复互审协议并无损解码", () => {
     const content = buildCommitAssociationContent("权限修复已经提交。", TARGETS);
     const association = extractCommitAssociation(content);
 
@@ -32,12 +33,13 @@ describe("关联提交", () => {
       summary: "权限修复已经提交。",
       targets: [
         { repository: ".", commit: "f0fe5c5" },
+        { repository: ".", commit: "4d7e416" },
         { repository: "../admin", commit: "352bfa5a1" },
       ],
     });
   });
 
-  it("拒绝分支名、过短 SHA、越界仓库与重复仓库", () => {
+  it("允许同仓库不同 SHA，拒绝分支名、过短 SHA、越界仓库与完全重复项", () => {
     expect(validateCommitAssociationTargets([{ repository: ".", commit: "main" }]))
       .toContain("7–40");
     expect(validateCommitAssociationTargets([{ repository: ".", commit: "abc123" }]))
@@ -47,7 +49,11 @@ describe("关联提交", () => {
     expect(validateCommitAssociationTargets([
       { repository: ".", commit: "abcdef1" },
       { repository: ".", commit: "abcdef2" },
-    ])).toContain("已经关联");
+    ])).toBeUndefined();
+    expect(validateCommitAssociationTargets([
+      { repository: ".", commit: "ABCDEF1" },
+      { repository: ".", commit: "abcdef1" },
+    ])).toContain("完全重复");
   });
 
   it("消息卡隐藏协议 JSON，只展示仓库与 commit", () => {
@@ -73,7 +79,7 @@ describe("关联提交", () => {
     );
 
     expect(html).toContain("关联提交");
-    expect(html).toContain("当前仓库");
+    expect(html).toContain("当前项目");
     expect(html).toContain("../admin");
     expect(html).toContain("f0fe5c5");
     expect(html).not.toContain("council-fix");

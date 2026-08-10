@@ -1,5 +1,5 @@
 /**
- * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
+ * @input  依赖：当前项目名、含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
  * @output 导出：DiscussionPanel 中央工作区（讨论/决策/元数据、人工签署、阶梯导航与引用回复）
  * @pos    Operator Console 的主要阅读、决策通读、元数据核查和回复区域；过长议题问题默认
@@ -24,6 +24,7 @@ import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
 
 export interface DiscussionPanelProps {
+  projectName: string;
   topic: TopicDetail;
   participants: Map<string, Participant>;
   sync: SyncState;
@@ -61,6 +62,7 @@ function buildQuoteText(message: CouncilMessage, participants: Map<string, Parti
 }
 
 export function DiscussionPanel({
+  projectName,
   topic,
   participants,
   sync,
@@ -357,6 +359,7 @@ export function DiscussionPanel({
           </div>
 
           <Composer
+            currentProjectName={projectName}
             isPublishing={isPublishing}
             allowAgentCalls={topic.status !== "decided"}
             sync={sync}

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：当前消息类型、议题开放状态、同步/发布状态、提交回调、关联 commit、引用种子与自动轮次快照
+ * @input  依赖：当前项目名、消息类型、议题开放状态、同步/发布状态、提交回调、关联 commit、引用种子与自动轮次快照
  *         （用于 @claude/@codex 召唤自动补全、可用性与"每议题一个活动 run"冲突判断）
  * @output 导出：Composer 公开回复编辑器、结构化关联提交与已决议题 @Agent 禁用边界
  * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
@@ -12,7 +12,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Bot, GitCommitHorizontal, Link2, Plus, Send, TriangleAlert, X } from "lucide-react";
+import { Bot, FolderGit2, GitCommitHorizontal, Link2, Plus, Send, TriangleAlert, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   buildCommitAssociationContent,
@@ -54,6 +54,8 @@ export interface MentionPublishRequest {
 }
 
 export interface ComposerProps {
+  /** 当前议题所属项目；当前项目提交在协议中固定保存为相对路径 . */
+  currentProjectName: string;
   isPublishing: boolean;
   allowAgentCalls: boolean;
   sync: SyncState;
@@ -71,6 +73,7 @@ export interface ComposerProps {
 }
 
 export function Composer({
+  currentProjectName,
   isPublishing,
   allowAgentCalls,
   sync,
@@ -383,24 +386,31 @@ export function Composer({
           <div className="commit-association-heading">
             <div>
               <strong>关联修复提交</strong>
-              <small>仓库使用相对议题项目目录的路径；当前仓库填写 .</small>
+              <small>当前项目已自动绑定；仅跨仓库时填写相对路径</small>
             </div>
             <span>{commitTargets.length}/{MAX_COMMIT_ASSOCIATIONS}</span>
           </div>
           <div className="commit-association-rows">
             {commitTargets.map((target, index) => (
               <div className="commit-association-row" key={index}>
-                <label>
-                  <span>仓库</span>
-                  <input
-                    type="text"
-                    value={target.repository}
-                    disabled={isPublishing}
-                    placeholder={index === 0 ? "." : "../another-repository"}
-                    aria-label={`第 ${String(index + 1)} 个仓库路径`}
-                    onChange={(event) => updateCommitTarget(index, "repository", event.target.value)}
-                  />
-                </label>
+                {target.repository === "." ? (
+                  <div className="commit-repository-context">
+                    <span>项目</span>
+                    <strong title={currentProjectName}>{currentProjectName}</strong>
+                  </div>
+                ) : (
+                  <label>
+                    <span>其他仓库</span>
+                    <input
+                      type="text"
+                      value={target.repository}
+                      disabled={isPublishing}
+                      placeholder="../another-repository"
+                      aria-label={`第 ${String(index + 1)} 个仓库路径`}
+                      onChange={(event) => updateCommitTarget(index, "repository", event.target.value)}
+                    />
+                  </label>
+                )}
                 <label className="commit-sha-field">
                   <span>Commit SHA</span>
                   <input
@@ -426,18 +436,32 @@ export function Composer({
             ))}
           </div>
           <div className="commit-association-footer">
-            <button
-              className="commit-add-button"
-              type="button"
-              disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
-              onClick={() => setCommitTargets((current) => [
-                ...current,
-                { repository: "", commit: "" },
-              ])}
-            >
-              <Plus size={14} />
-              添加仓库提交
-            </button>
+            <div className="commit-add-actions">
+              <button
+                className="commit-add-button"
+                type="button"
+                disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
+                onClick={() => setCommitTargets((current) => [
+                  ...current,
+                  { repository: ".", commit: "" },
+                ])}
+              >
+                <Plus size={14} />
+                添加当前项目提交
+              </button>
+              <button
+                className="commit-add-button"
+                type="button"
+                disabled={isPublishing || commitTargets.length >= MAX_COMMIT_ASSOCIATIONS}
+                onClick={() => setCommitTargets((current) => [
+                  ...current,
+                  { repository: "", commit: "" },
+                ])}
+              >
+                <FolderGit2 size={14} />
+                关联其他仓库
+              </button>
+            </div>
             {commitAssociationError ? (
               <span className="commit-association-error" role="alert">
                 <TriangleAlert size={13} />

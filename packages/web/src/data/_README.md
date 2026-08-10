@@ -28,7 +28,7 @@
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 | `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
-| `commit-association.ts` | 协议 | 校验仓库相对路径与不可变 commit SHA，把 Composer 关联提交编码为 `council-fix` 尾块，并为消息卡安全解码 |
+| `commit-association.ts` | 协议 | 校验仓库相对路径与不可变 commit SHA（允许同仓库多轮不同提交），把 Composer 关联提交编码为 `council-fix` 尾块，并为消息卡安全解码 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。
 

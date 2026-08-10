@@ -93,7 +93,7 @@ export function MessageCard({
             <ul>
               {commitAssociation.targets.map((target) => (
                 <li key={`${target.repository}:${target.commit}`}>
-                  <span>{target.repository === "." ? "当前仓库" : target.repository}</span>
+                  <span>{target.repository === "." ? "当前项目" : target.repository}</span>
                   <code>{target.commit}</code>
                 </li>
               ))}
