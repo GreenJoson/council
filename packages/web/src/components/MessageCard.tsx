@@ -88,7 +88,7 @@ export function MessageCard({
             <div className="commit-association-card-heading">
               <GitCommitHorizontal size={15} />
               <strong>关联提交</strong>
-              <span>{commitAssociation.targets.length} 个仓库</span>
+              <span>{commitAssociation.targets.length} 个提交</span>
             </div>
             <ul>
               {commitAssociation.targets.map((target) => (

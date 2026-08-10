@@ -112,6 +112,8 @@ describe("关联提交", () => {
     );
 
     expect(html).toContain("关联提交");
+    expect(html).toContain("3 个提交");
+    expect(html).not.toContain("3 个仓库");
     expect(html).toContain("当前项目");
     expect(html).toContain("../admin");
     expect(html).toContain("f0fe5c5");
