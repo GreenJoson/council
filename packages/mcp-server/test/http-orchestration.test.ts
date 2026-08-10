@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、SQLite Store、Fake Agent 与后台执行管理器
- * @output 导出：编排与持久会话 REST、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
+ * @output 导出：编排、AI 实施计划与持久会话 REST、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
  * @pos    Web 已冻结协议和跨进程自动执行语义的主验收套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -300,6 +300,79 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
     assert.equal(illegalStart.status, 409);
     const missing = await fetch(`${harness.baseUrl}/api/v1/runs/run_missing`);
     assert.equal(missing.status, 404);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("AI 可为 Accepted 决策拆分实施任务并按 Agent 身份写入，重复补充保持幂等", async () => {
+  const agent = new FakeAgent("planner", async (input) => {
+    assert.match(input.instruction, /council-work-plan/u);
+    assert.match(input.context.messages.at(-1)?.content ?? "", /已接受的架构决策/u);
+    return {
+      content: [
+        "```council-work-plan",
+        JSON.stringify({
+          items: [
+            {
+              title: "实现共享接口",
+              details: "范围：增加共享接口；验收：集成测试覆盖成功与失败路径；依赖：无",
+            },
+            {
+              title: "补齐桌面交互",
+              details: "范围：接入任务列表；验收：用户可查看并更新状态；依赖：实现共享接口",
+            },
+          ],
+        }),
+        "```",
+      ].join("\n"),
+    };
+  });
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    actorAlias: "claude",
+    label: "Planner",
+  }]);
+  try {
+    const topic = harness.database.createTopic({
+      title: "AI 实施计划",
+      question: "如何从决策进入实施？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    harness.database.createDecision({
+      topicId: topic.id,
+      title: "采用结构化任务计划",
+      decision: "由 AI 拆分、服务端校验后写入。",
+      rationale: "任务应当可执行、可验证。",
+      alternatives: [],
+      status: "accepted",
+      createdByAlias: "human",
+    });
+
+    const generate = async (): Promise<Response> => await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/work-items/actions/generate`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ adapterId: "planner" }),
+      },
+    );
+    const firstResponse = await generate();
+    assert.equal(firstResponse.status, 201);
+    const first = await readEnvelope<Array<{ title: string; createdByActorId: string }>>(
+      firstResponse,
+    );
+    assert.deepEqual(first.data?.map((item) => item.title), ["实现共享接口", "补齐桌面交互"]);
+    assert.deepEqual(first.data?.map((item) => item.createdByActorId), ["claude", "claude"]);
+    assert.equal(agent.invocations.length, 1);
+    assert.equal((await harness.orchestration?.listRuns(topic.id, 20, 0))?.total, 0);
+
+    const secondResponse = await generate();
+    assert.equal(secondResponse.status, 200);
+    const second = await readEnvelope<unknown[]>(secondResponse);
+    assert.deepEqual(second.data, []);
+    assert.equal(harness.database.getTopicDetail(topic.id, 20).workItems.length, 2);
   } finally {
     await harness.close();
   }

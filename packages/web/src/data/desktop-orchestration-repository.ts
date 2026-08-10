@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 编排命令、OrchestrationRepository 协议与可注入的 HTTP 委托工厂
- * @output 导出：DesktopOrchestrationRepository、离线快照构造与桥接子接口
+ * @output 导出：DesktopOrchestrationRepository、AI 实施计划、离线快照构造与桥接子接口
  * @pos    桌面模式的自动轮次接入层——探测本地 Agent 服务并在其可达时切换为 HTTP 直连，
  *         不可达时保持诚实的离线快照并周期重试，服务起来后自动转 LIVE，无需重启应用
  *
@@ -15,6 +15,8 @@ import type {
   AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  GenerateWorkItemsInput,
+  GenerateWorkItemsResult,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
@@ -142,6 +144,10 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async createRun(input: CreateOrchestrationRunInput): Promise<OrchestrationRun> {
     return (await this.#requireLive()).createRun(input);
+  }
+
+  async generateWorkItems(input: GenerateWorkItemsInput): Promise<GenerateWorkItemsResult> {
+    return (await this.#requireLive()).generateWorkItems(input);
   }
 
   async startRun(runId: string): Promise<OrchestrationSnapshot> {

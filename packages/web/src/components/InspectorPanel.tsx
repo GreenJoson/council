@@ -1,6 +1,6 @@
 /**
- * @input  依赖：含 owner/备选/实施项冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、实施进度、圆桌/按需运行状态、人工签署入口和决策状态卡
+ * @input  依赖：含 owner/备选/实施计划冻结快照的当前议题、参与者回退、自动轮次与决策操作
+ * @output 导出：InspectorPanel 议题摘要、AI 实施计划、圆桌/按需运行状态、人工签署入口和决策状态卡
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
  *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
  *         决策状态徽章走 presentation.tsx 的 DecisionStatusBadge，三态共用同一套文案
@@ -45,8 +45,14 @@ export interface InspectorPanelProps {
   isOpen: boolean;
   onAccept: () => Promise<void>;
   workItemBusyAction: string | null;
+  planningAgentLabel?: string;
+  onGenerateWorkItems: () => Promise<void>;
   onAddWorkItem: (title: string, details: string) => Promise<boolean>;
-  onUpdateWorkItem: (item: CouncilWorkItem, status: WorkItemStatus) => Promise<void>;
+  onUpdateWorkItem: (
+    item: CouncilWorkItem,
+    status: WorkItemStatus,
+    statusNote: string,
+  ) => Promise<void>;
   onRecordManualDecision: () => void;
   /** 切到主列「决策」tab 读全文 */
   onOpenDecision: () => void;
@@ -79,6 +85,8 @@ export function InspectorPanel({
   isOpen,
   onAccept,
   workItemBusyAction,
+  planningAgentLabel,
+  onGenerateWorkItems,
   onAddWorkItem,
   onUpdateWorkItem,
   onRecordManualDecision,
@@ -148,6 +156,8 @@ export function InspectorPanel({
         topic={topic}
         participants={participants}
         busyAction={workItemBusyAction}
+        planningAgentLabel={planningAgentLabel}
+        onGenerate={onGenerateWorkItems}
         onAdd={onAddWorkItem}
         onUpdate={onUpdateWorkItem}
       />

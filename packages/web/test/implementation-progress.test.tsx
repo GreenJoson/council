@@ -1,6 +1,6 @@
 /**
  * @input  依赖：ImplementationProgress、服务端静态 React 渲染与实施项夹具
- * @output 导出：派生完成度、阻塞提示、证据和最后更新 Actor 的 UI 回归测试
+ * @output 导出：AI 任务拆分入口、派生完成度、阻塞提示、证据和最后更新 Actor 的 UI 回归测试
  * @pos    决策执行账本不退化为手填百分比的前端验收证据
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -92,6 +92,8 @@ describe("ImplementationProgress", () => {
         topic={topic}
         participants={participants}
         busyAction={null}
+        planningAgentLabel="Codex"
+        onGenerate={async () => undefined}
         onAdd={async () => true}
         onUpdate={async () => undefined}
       />,
@@ -102,5 +104,50 @@ describe("ImplementationProgress", () => {
     expect(html).toContain("测试通过");
     expect(html).toContain("Codex");
     expect(html).toContain("aria-valuenow=\"50\"");
+    expect(html).toContain("AI 补充遗漏任务");
+    expect(html).toContain("实施计划");
+  });
+
+  it("Accepted 决策没有任务时优先提供 AI 拆分和手动补充入口", () => {
+    const human = snapshot("human", "User");
+    const topic: TopicDetail = {
+      id: "topic-empty-plan",
+      title: "待拆分",
+      status: "decided",
+      updatedLabel: "现在",
+      question: "如何实施？",
+      createdLabel: "今天",
+      owner: "human",
+      ownerSnapshot: human,
+      participants: ["human"],
+      messages: [],
+      constraints: [],
+      evidence: [],
+      alternatives: [],
+      workItems: [],
+      decision: {
+        title: "采用新方案",
+        summary: "按决策实施。",
+        rationale: "已经收敛。",
+        status: "accepted",
+        proposedBy: "human",
+        proposedBySnapshot: human,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <ImplementationProgress
+        topic={topic}
+        participants={new Map()}
+        busyAction={null}
+        planningAgentLabel="Claude"
+        onGenerate={async () => undefined}
+        onAdd={async () => true}
+        onUpdate={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("AI 拆分任务");
+    expect(html).toContain("手动添加任务");
+    expect(html).toContain("尚无任务");
   });
 });

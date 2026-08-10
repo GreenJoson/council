@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Council/Orchestration Repository、主题偏好、实施项写入、工作区视图路由和三栏组件
- * @output 导出：含既有提案复用、Human Decision 与实施进度路径的 App 根组件
+ * @input  依赖：Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、工作区视图路由和三栏组件
+ * @output 导出：含既有提案复用、Human Decision、AI 任务拆分与证据化进度路径的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
  *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
@@ -214,6 +214,14 @@ export default function App() {
     ? workspace.topics.find((topic) => topic.id === selectedTopicId) ?? workspace.topics[0]
     : undefined;
   const activeTopicId = selectedTopic?.id ?? "";
+  const availablePlanningAgents = orchestration?.capabilities?.adapters.filter(
+    (adapter) => adapter.available,
+  ) ?? [];
+  const planningAgent = availablePlanningAgents.find(
+    (adapter) => adapter.actorId === selectedTopic?.decision?.proposedBy,
+  ) ?? availablePlanningAgents.find(
+    (adapter) => adapter.runtimeCapabilities.includes("repository_read"),
+  ) ?? availablePlanningAgents[0];
 
   useEffect(() => {
     if (!activeTopicId) {
@@ -474,12 +482,59 @@ export default function App() {
     try {
       const snapshot = await repository.acceptDecision(activeTopicId);
       setWorkspace(snapshot);
-      setToastMessage("决策已记录为 Accepted");
+      setToastMessage("决策已接受，正在生成实施计划");
+      void generateImplementationPlan(activeTopicId, snapshot);
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
     } finally {
       setIsAccepting(false);
     }
+  }
+
+  async function generateImplementationPlan(
+    topicId: string,
+    snapshot: WorkspaceSnapshot,
+  ): Promise<void> {
+    const topic = snapshot.topics.find((candidate) => candidate.id === topicId);
+    const available = orchestration?.capabilities?.adapters.filter(
+      (adapter) => adapter.available,
+    ) ?? [];
+    const agent = available.find(
+      (adapter) => adapter.actorId === topic?.decision?.proposedBy,
+    ) ?? available.find(
+      (adapter) => adapter.runtimeCapabilities.includes("repository_read"),
+    ) ?? available[0];
+    if (!agent) {
+      setToastMessage("决策已接受；没有可用 Agent，可手动添加任务");
+      return;
+    }
+
+    setWorkItemBusyAction("generate");
+    setContentErrorMessage(null);
+    try {
+      const result = await orchestrationRepository.generateWorkItems({
+        topicId,
+        adapterId: agent.id,
+      });
+      const refreshed = await repository.loadWorkspace();
+      setWorkspace(refreshed);
+      setToastMessage(
+        result.createdCount > 0
+          ? `${agent.label} 已生成 ${String(result.createdCount)} 个实施任务`
+          : `${agent.label} 未发现需要补充的新任务`,
+      );
+    } catch (error: unknown) {
+      setContentErrorMessage(`AI 拆分任务失败：${getErrorMessage(error)}`);
+    } finally {
+      setWorkItemBusyAction(null);
+    }
+  }
+
+  async function handleGenerateWorkItems(): Promise<void> {
+    if (!workspace || !activeTopicId) {
+      return;
+    }
+    await generateImplementationPlan(activeTopicId, workspace);
   }
 
   async function handleAddWorkItem(title: string, details: string): Promise<boolean> {
@@ -504,8 +559,9 @@ export default function App() {
   async function handleUpdateWorkItem(
     item: CouncilWorkItem,
     status: WorkItemStatus,
+    statusNote: string,
   ): Promise<void> {
-    if (status === item.status) {
+    if (status === item.status && statusNote === (item.statusNote ?? "")) {
       return;
     }
     setWorkItemBusyAction(`update:${item.id}`);
@@ -515,6 +571,7 @@ export default function App() {
         topicId: activeTopicId,
         workItemId: item.id,
         status,
+        statusNote,
         expectedVersion: item.version,
       });
       setWorkspace(snapshot);
@@ -540,7 +597,8 @@ export default function App() {
       const snapshot = await repository.recordManualDecision(input);
       setWorkspace(snapshot);
       setSelectedTopicId(activeTopicId);
-      setToastMessage("人工决策已记录，议题已结束");
+      setToastMessage("人工决策已记录，正在生成实施计划");
+      void generateImplementationPlan(activeTopicId, snapshot);
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -800,6 +858,8 @@ export default function App() {
               isOpen={isInspectorOpen}
               onAccept={handleAccept}
               workItemBusyAction={workItemBusyAction}
+              planningAgentLabel={planningAgent?.label}
+              onGenerateWorkItems={handleGenerateWorkItems}
               onAddWorkItem={handleAddWorkItem}
               onUpdateWorkItem={handleUpdateWorkItem}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}

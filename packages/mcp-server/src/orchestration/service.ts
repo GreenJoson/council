@@ -1,7 +1,7 @@
 /**
  * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
  *         增量草稿中心、统一日志与 ExecutionManager
- * @output 导出：带配置互斥的编排产品服务、安全 Model Router 入口及临时 Agent 草稿流
+ * @output 导出：带配置互斥的编排产品服务、安全 Model Router 入口、一次性任务规划及临时草稿流
  * @pos    REST/SSE 契约使用的编排与模型配置一致性聚合根、生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   CouncilOrchestrator,
+  AgentTimeoutError,
   OrchestrationConfigError,
   RunNotFoundError,
   RunStateConflictError,
@@ -151,6 +152,7 @@ export class CouncilOrchestrationService {
   readonly #fallbackRouterStore?: ModelRouterStore;
   readonly #processInstanceId = `council_${randomUUID()}`;
   readonly #actors = new Map<string, string>();
+  readonly #agentAdapters = new Map<string, AgentAdapter>();
   readonly #capabilities: PublicAgentCapability[] = [];
   readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
   readonly #unavailableLimitations = new Map<string, string>();
@@ -193,6 +195,7 @@ export class CouncilOrchestrationService {
       }
       const actorId = this.#store.resolveActorAlias(registration.actorAlias);
       this.#actors.set(registration.adapter.adapterId, actorId);
+      this.#agentAdapters.set(registration.adapter.adapterId, registration.adapter);
       this.#staticAdapterIds.add(registration.adapter.adapterId);
       this.#capabilities.push({
         id: registration.adapter.adapterId,
@@ -596,6 +599,97 @@ export class CouncilOrchestrationService {
     return await this.manager.start(runId);
   }
 
+  /**
+   * 直接执行一次只读任务规划，不创建通用 Run，因此已决议题也能补充实施任务。
+   * 模型输出只作为草案返回；调用方必须严格解析并通过 CouncilDatabase 写入。
+   */
+  async generateWorkItemPlan(input: {
+    topicId: string;
+    adapterId: string;
+    instruction: string;
+    contextMessage: string;
+    signal?: AbortSignal;
+  }): Promise<{ actorId: string; content: string }> {
+    const target = await this.#withConfigurationLock(async () => {
+      await this.#syncDynamicAgents();
+      await this.#ensureFreshAvailability(true);
+      const capability = this.#capabilities.find((item) => item.id === input.adapterId);
+      const adapter = this.#agentAdapters.get(input.adapterId);
+      const actorId = this.#actors.get(input.adapterId);
+      if (!capability || !adapter || !actorId) {
+        throw new OrchestrationConfigError("任务规划 Agent 不存在或已停用。");
+      }
+      if (!capability.available) {
+        throw new OrchestrationConfigError(
+          capability.limitation ?? "任务规划 Agent 当前不可用。",
+        );
+      }
+      return { adapter, actorId };
+    });
+
+    const context = await this.#store.getTopicContext(input.topicId);
+    const invocationId = `planner_${randomUUID()}`;
+    const runtimeBindingId = `binding_${randomUUID()}`;
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort(input.signal?.reason);
+    input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    if (input.signal?.aborted) {
+      abortFromCaller();
+    }
+    const timeout = globalThis.setTimeout(
+      () => controller.abort(new AgentTimeoutError("hard")),
+      this.config.orchestrationDefaultAgentTimeoutMs
+        + this.config.orchestrationAgentCleanupTimeoutMs,
+    );
+    timeout.unref();
+    try {
+      const result = await target.adapter.invoke({
+        runId: invocationId,
+        topicId: input.topicId,
+        roundNumber: 1,
+        attempt: 1,
+        adapterId: input.adapterId,
+        actorId: target.actorId,
+        runtimeBindingId,
+        firstTurn: true,
+        instruction: input.instruction,
+        messageKind: "note",
+        context: {
+          ...context,
+          messages: [
+            ...context.messages,
+            {
+              id: `message_${randomUUID()}`,
+              topicId: input.topicId,
+              actorId: this.#store.resolveActorAlias("human"),
+              kind: "note",
+              content: input.contextMessage,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+      }, {
+        signal: controller.signal,
+        notifyActivity: () => undefined,
+        notifyStreaming: () => undefined,
+      });
+      const content = result.content.trim();
+      if (!content) {
+        throw new OrchestrationConfigError("AI 返回了空的任务规划结果。");
+      }
+      if (content.length > MAX_MESSAGE_CHARS) {
+        throw new OrchestrationConfigError("AI 返回的任务规划结果超过长度上限。");
+      }
+      return { actorId: target.actorId, content };
+    } finally {
+      globalThis.clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abortFromCaller);
+      await target.adapter.closeBinding?.(runtimeBindingId).catch((error: unknown) => {
+        logger.warn("work-item-planner", "一次性任务规划会话清理失败", error);
+      });
+    }
+  }
+
   async approve(runId: string, input: PublicApprovalInput): Promise<ApproveGateResult> {
     return await this.manager.approve({
       runId,
@@ -950,6 +1044,7 @@ export class CouncilOrchestrationService {
         }
         binding = this.ephemeralAgentFactory(agent, provider);
         this.orchestrator.upsertAdapter(binding.adapter, fingerprint);
+        this.#agentAdapters.set(agent.id, binding.adapter);
         this.#dynamicAdapterFingerprints.set(agent.id, fingerprint);
         if (binding.runtimeCapabilities) {
           this.#runtimeCapabilityOverrides.set(
@@ -1005,6 +1100,7 @@ export class CouncilOrchestrationService {
       await this.#closeAgentRuntimeBindings(capability.id, "configuration-changed");
       this.#capabilities.splice(this.#capabilities.indexOf(capability), 1);
       this.orchestrator.removeAdapter(capability.id);
+      this.#agentAdapters.delete(capability.id);
       this.#actors.delete(capability.id);
       this.#dynamicAdapterFingerprints.delete(capability.id);
       this.#availabilityChecks.delete(capability.id);

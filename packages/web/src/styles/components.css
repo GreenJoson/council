@@ -698,10 +698,13 @@
 .implementation-heading > div,
 .implementation-kicker,
 .implementation-alert,
-.work-item,
+.work-item-main,
 .work-item-form-heading,
 .work-item-add,
-.work-item-submit {
+.work-item-submit,
+.work-item-generate,
+.work-item-update-toggle,
+.work-item-update-actions {
   display: flex;
   align-items: center;
 }
@@ -779,11 +782,14 @@
 
 .work-item {
   position: relative;
-  align-items: flex-start;
-  gap: 8px;
   min-width: 0;
   padding: 10px 4px;
   border-top: 1px solid var(--color-divider);
+}
+
+.work-item-main {
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .work-item-marker {
@@ -850,29 +856,88 @@
   font-size: 8px;
 }
 
-.work-item-status-select {
+.work-item-update-toggle {
   flex: none;
-  width: 72px;
+  justify-content: center;
+  gap: 4px;
   min-height: 26px;
-  padding: 0 5px;
+  padding: 0 6px;
   border: 1px solid var(--color-border);
   border-radius: 5px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+  background: transparent;
+  color: var(--color-text-muted);
   font-size: 9px;
 }
 
-.work-item-saving {
-  position: absolute;
-  right: 5px;
-  bottom: 1px;
+.work-item-update-toggle:hover:not(:disabled),
+.work-item-update-toggle[aria-expanded="true"] {
+  border-color: var(--color-primary);
   color: var(--color-focus);
-  font-family: var(--font-mono);
-  font-size: 8px;
+}
+
+.work-item-update-form {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 7px;
+  margin: 9px 0 0 28px;
+  padding: 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+}
+
+.work-item-update-form select,
+.work-item-update-form textarea {
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 9px;
+}
+
+.work-item-update-form select {
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+.work-item-update-form textarea {
+  min-height: 52px;
+  padding: 7px;
+  resize: vertical;
+}
+
+.work-item-update-form select:focus,
+.work-item-update-form textarea:focus {
+  border-color: var(--color-focus);
+}
+
+.work-item-update-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.work-item-update-actions button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.work-item-update-actions button:last-child {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-focus);
 }
 
 .work-item-add,
-.work-item-submit {
+.work-item-submit,
+.work-item-generate {
   justify-content: center;
   gap: 6px;
   width: 100%;
@@ -885,9 +950,35 @@
   font-size: 10px;
 }
 
-.work-item-add:hover:not(:disabled) {
+.work-item-add:hover:not(:disabled),
+.work-item-generate:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-focus);
+}
+
+.work-item-plan-actions {
+  display: grid;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.work-item-plan-actions .work-item-add,
+.work-item-plan-actions .work-item-generate {
+  margin-top: 0;
+}
+
+.work-item-generate {
+  border-color: var(--color-primary);
+  background:
+    linear-gradient(90deg, var(--color-primary-soft), transparent),
+    var(--color-surface-raised);
+  color: var(--color-focus);
+}
+
+.work-item-agent-hint {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .work-item-form {

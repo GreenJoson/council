@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 运行、持久会话与临时草稿仓储
+ * @output 导出：HttpOrchestrationRepository 运行、AI 实施计划、持久会话与临时草稿仓储
  * @pos    revision 变化时校准运行/会话列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,6 +10,8 @@ import type {
   AnswerCycleQuestionInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  GenerateWorkItemsInput,
+  GenerateWorkItemsResult,
   CycleMetrics,
   DiscussionCycleView,
   OrchestrationRun,
@@ -42,6 +44,7 @@ import {
   parseRuntimeBinding,
   parseRuntimeBindings,
 } from "./orchestration-api";
+import { parseApiWorkItems } from "./api-types";
 import {
   parseAgentConnectionTest,
   parseAgentDefinition,
@@ -237,6 +240,19 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       return this.#snapshot.runs.find((candidate) => candidate.id === run.id) ?? run;
     }
     return run;
+  }
+
+  async generateWorkItems(input: GenerateWorkItemsInput): Promise<GenerateWorkItemsResult> {
+    const workItems = await requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items/actions/generate`,
+      ),
+      parseApiWorkItems,
+      jsonRequest({ adapterId: input.adapterId }),
+    );
+    return { createdCount: workItems.length };
   }
 
   async startRun(runId: string): Promise<OrchestrationSnapshot> {
