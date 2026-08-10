@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge、API 严格解析器和 Workspace mapper
- * @output 导出：NativeCouncilRepository（含人工 Accepted、只读议题详情）与类型守卫
+ * @output 导出：NativeCouncilRepository（含人工 Accepted、实施项写入/只读议题详情）与类型守卫
  * @pos    Tauri 模式下绕过 HTTP、直接读写 Rust council-core 的内容仓储
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,6 +13,8 @@ import {
   parseApiPaginatedTopics,
   parseApiTopic,
   parseApiTopicDetail,
+  parseApiWorkItem,
+  parseApiWorkItems,
   type ApiTopic,
 } from "./api-types";
 import {
@@ -25,10 +27,12 @@ import type { CouncilRepository, WorkspaceListener } from "./repository";
 import { parseCouncilStatusRevisions } from "./status-revisions";
 import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
+  AddWorkItemsInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
   TopicDetail,
+  UpdateWorkItemInput,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -190,6 +194,26 @@ export class NativeCouncilRepository implements CouncilRepository {
       alternatives: [],
       status: "accepted",
     }));
+    this.#assertGeneration(generation);
+    this.#activeTopicId = input.topicId;
+    return this.loadWorkspace();
+  }
+
+  async addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot> {
+    const generation = this.#settingsGeneration;
+    parseApiWorkItems(await this.#bridge.addWorkItems({
+      topicId: input.topicId,
+      ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+      items: input.items,
+    }));
+    this.#assertGeneration(generation);
+    this.#activeTopicId = input.topicId;
+    return this.loadWorkspace();
+  }
+
+  async updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot> {
+    const generation = this.#settingsGeneration;
+    parseApiWorkItem(await this.#bridge.updateWorkItem({ ...input }));
     this.#assertGeneration(generation);
     this.#activeTopicId = input.topicId;
     return this.loadWorkspace();

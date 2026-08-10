@@ -1,6 +1,6 @@
 /**
  * @input  依赖：内存 MCP 传输、临时数据库与 createCouncilServer
- * @output 导出：绑定调用者身份、禁止 MCP 接受决策、共享读写与请求取消的协议测试
+ * @output 导出：绑定调用者身份、禁止 MCP 接受决策、实施项进度、共享读写与请求取消的协议测试
  * @pos    Codex App 与 Claude Desktop 客户端兼容性的端到端验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -116,6 +116,8 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     assert.ok(names.includes("council_create_topic"));
     assert.ok(names.includes("council_ask_claude"));
     assert.ok(names.includes("council_get_topic"));
+    assert.ok(names.includes("council_add_work_items"));
+    assert.ok(names.includes("council_update_work_item"));
     for (const toolName of [
       "council_create_topic",
       "council_post_message",
@@ -178,6 +180,43 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     const decision = asRecord(asRecord(proposed.structuredContent).decision);
     assert.equal(decision.status, "proposed");
     assert.equal(decision.createdByActorId, "codex");
+
+    const accepted = bundle.database.createDecision({
+      topicId: String(topicId),
+      title: "用户确认的实施方案",
+      decision: "进入实施。",
+      rationale: "范围已收敛。",
+      alternatives: [],
+      status: "accepted",
+      createdByAlias: "human",
+    });
+    const added = await client.callTool({
+      name: "council_add_work_items",
+      arguments: {
+        topic_id: topicId,
+        decision_id: accepted.id,
+        items: [{ title: "完成协议接入", details: "验证调用者归属" }],
+      },
+    });
+    assert.equal(added.isError, undefined);
+    const workItems = asRecord(added.structuredContent).workItems as unknown[];
+    const workItem = asRecord(workItems[0]);
+    assert.equal(workItem.createdByActorId, "codex");
+    const updated = await client.callTool({
+      name: "council_update_work_item",
+      arguments: {
+        topic_id: topicId,
+        work_item_id: workItem.id,
+        status: "completed",
+        expected_version: workItem.version,
+        status_note: "协议用例通过。",
+      },
+    });
+    assert.equal(updated.isError, undefined);
+    assert.equal(
+      asRecord(asRecord(updated.structuredContent).workItem).updatedByActorId,
+      "codex",
+    );
   } finally {
     await client.close();
     await bundle.server.close();

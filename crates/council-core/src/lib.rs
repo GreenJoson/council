@@ -11,7 +11,8 @@ mod types;
 pub use error::{CouncilError, CouncilResult};
 pub use store::CouncilStore;
 pub use types::{
-    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, Decision, DecisionStatus,
-    MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
-    TopicStatus,
+    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, CreateWorkItemEntry,
+    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput,
+    RecordDecisionInput, Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem,
+    WorkItemStatus,
 };

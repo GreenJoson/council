@@ -1,6 +1,6 @@
 /**
  * @input  依赖：严格解析后的 API Actor 快照、议题详情和 Web 领域模型
- * @output 导出：动态参与者、Topic 摘要、TopicDetail 与 WorkspaceSnapshot 映射函数
+ * @output 导出：动态参与者、实施项、Topic 摘要、TopicDetail 与 WorkspaceSnapshot 映射函数
  * @pos    后端 ActorIdentity 协议和 Operator Console 展示模型之间的纯转换层；
  *         决策状态原样透传 accepted/superseded（只丢弃 rejected）
  *
@@ -13,10 +13,12 @@ import type {
   ApiMessage,
   ApiTopic,
   ApiTopicDetail,
+  ApiWorkItem,
 } from "./api-types";
 import type {
   CouncilDecision,
   CouncilMessage,
+  CouncilWorkItem,
   ActorSnapshot,
   DecisionStatus,
   MessageKind,
@@ -82,6 +84,10 @@ function collectParticipants(
     for (const decision of detail.decisions) {
       remember(decision.createdBySnapshot);
     }
+    for (const item of detail.workItems) {
+      remember(item.createdBySnapshot);
+      remember(item.updatedBySnapshot);
+    }
   }
   return [...participants.values()];
 }
@@ -107,6 +113,25 @@ function mapMessage(message: ApiMessage): CouncilMessage {
     title: MESSAGE_TITLES[message.kind],
     content: message.content,
     createdLabel: formatTimestamp(message.createdAt),
+  };
+}
+
+function mapWorkItem(item: ApiWorkItem): CouncilWorkItem {
+  return {
+    id: item.id,
+    decisionId: item.decisionId,
+    title: item.title,
+    details: item.details,
+    status: item.status,
+    ...(item.statusNote ? { statusNote: item.statusNote } : {}),
+    version: item.version,
+    createdBy: item.createdByActorId,
+    createdBySnapshot: actorSnapshotFromApi(item.createdBySnapshot),
+    updatedBy: item.updatedByActorId,
+    updatedBySnapshot: actorSnapshotFromApi(item.updatedBySnapshot),
+    createdLabel: formatTimestamp(item.createdAt),
+    updatedLabel: formatTimestamp(item.updatedAt),
+    ...(item.completedAt ? { completedLabel: formatTimestamp(item.completedAt) } : {}),
   };
 }
 
@@ -178,6 +203,7 @@ export function mapApiTopicSummary(topic: ApiTopic): TopicDetail {
     })),
     evidence: [],
     alternatives: [],
+    workItems: [],
   };
 }
 
@@ -188,6 +214,7 @@ export function mapApiTopicDetail(detail: ApiTopicDetail): TopicDetail {
     owner,
     ...detail.messages.map((message) => message.actorId),
     ...detail.decisions.map((item) => item.createdByActorId),
+    ...detail.workItems.flatMap((item) => [item.createdByActorId, item.updatedByActorId]),
   ]);
 
   return {
@@ -217,6 +244,7 @@ export function mapApiTopicDetail(detail: ApiTopicDetail): TopicDetail {
         : { authorSnapshot: actorSnapshotFromApi(detail.topic.createdBySnapshot) }),
       createdLabel: decision ? formatTimestamp(decision.createdAt) : "",
     })),
+    workItems: detail.workItems.map(mapWorkItem),
     ...(decision ? { decision: mapDecision(decision) } : {}),
   };
 }

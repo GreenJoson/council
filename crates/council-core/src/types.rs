@@ -1,5 +1,5 @@
 //! @input 依赖：Council TypeScript 内容协议与 serde
-//! @output 导出：Topic、Message、Decision、分页、revision 和写入输入类型
+//! @output 导出：Topic、Message、Decision、实施项、分页、revision 和写入输入类型
 //! @pos Rust 与现有 MCP/HTTP camelCase 领域模型的同构类型正本
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -52,6 +52,36 @@ string_enum!(DecisionStatus {
     Rejected => "rejected",
     Superseded => "superseded",
 });
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemStatus {
+    Pending,
+    InProgress,
+    Blocked,
+    Completed,
+}
+
+impl WorkItemStatus {
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
+            Self::Completed => "completed",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "in_progress" => Some(Self::InProgress),
+            "blocked" => Some(Self::Blocked),
+            "completed" => Some(Self::Completed),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,10 +142,33 @@ pub struct Decision {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkItem {
+    pub id: String,
+    pub topic_id: String,
+    pub decision_id: String,
+    pub title: String,
+    pub details: String,
+    pub status: WorkItemStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_note: Option<String>,
+    pub version: u32,
+    pub created_by_actor_id: String,
+    pub created_by_snapshot: ActorSnapshot,
+    pub updated_by_actor_id: String,
+    pub updated_by_snapshot: ActorSnapshot,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TopicDetail {
     pub topic: Topic,
     pub messages: Vec<CouncilMessage>,
     pub decisions: Vec<Decision>,
+    pub work_items: Vec<WorkItem>,
     pub message_total: u64,
     pub message_limit: u32,
     pub message_offset: u32,
@@ -171,6 +224,30 @@ pub struct RecordDecisionInput {
     pub alternatives: Vec<String>,
     pub status: DecisionStatus,
     pub created_by_alias: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateWorkItemEntry {
+    pub title: String,
+    pub details: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateWorkItemsInput {
+    pub topic_id: String,
+    pub decision_id: Option<String>,
+    pub items: Vec<CreateWorkItemEntry>,
+    pub actor_alias: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateWorkItemInput {
+    pub topic_id: String,
+    pub work_item_id: String,
+    pub status: WorkItemStatus,
+    pub status_note: Option<String>,
+    pub expected_version: u32,
+    pub actor_alias: String,
 }
 
 #[cfg(test)]

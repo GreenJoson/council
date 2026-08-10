@@ -1,6 +1,6 @@
 /**
- * @input  依赖：临时 v1/v2/v4/v5/fresh SQLite、Node online backup 与 schema 迁移故障注入
- * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、备份、回滚和 revision
+ * @input  依赖：临时 v1/v2/v4/v5/v10/fresh SQLite、Node online backup 与 schema 迁移故障注入
+ * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、v10→v11 实施项、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -292,6 +292,7 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
     database.exec(`
       DROP TRIGGER trg_decisions_cycle_close_update;
       DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE work_items;
       DROP TABLE blocking_questions;
       DROP TABLE discussion_cycles;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
@@ -507,6 +508,7 @@ async function createCanonicalV4Database(databasePath: string): Promise<{
       WHERE actor_id = 'codex';
       DROP TRIGGER trg_decisions_cycle_close_update;
       DROP TRIGGER trg_decisions_cycle_close_insert;
+      DROP TABLE work_items;
       DROP TABLE blocking_questions;
       DROP TABLE discussion_cycles;
       DROP TRIGGER IF EXISTS trg_decisions_runtime_close_insert;
@@ -670,6 +672,7 @@ test("v9→v10 将 Kimi 专用协议归一为 ACP 且无损保留 session、leas
       recreateVersionEightRuntimeTables(versionNine);
       downgradeProviderProfilesBeforeVersionTen(versionNine);
       versionNine.exec(`
+        DROP TABLE work_items;
         DELETE FROM schema_migrations WHERE version >= 9;
         PRAGMA user_version = 8;
       `);
@@ -747,7 +750,7 @@ test("v9→v10 将 Kimi 专用协议归一为 ACP 且无损保留 session、leas
       5_000,
       { maxAttempts: 3 },
     );
-    assert.equal(result.version, 10);
+    assert.equal(result.version, COUNCIL_SCHEMA_VERSION);
     const migrated = new DatabaseSync(fixture.databasePath);
     try {
       assert.deepEqual(
@@ -799,6 +802,86 @@ test("v9→v10 将 Kimi 专用协议归一为 ACP 且无损保留 session、leas
   }
 });
 
+test("v10→v11 原子增加实施项表且保留既有议题与决策", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
+    const versionTen = new DatabaseSync(fixture.databasePath);
+    try {
+      const now = "2026-01-11T00:00:00.000Z";
+      versionTen.prepare(`
+        INSERT INTO topics (
+          id, title, question, constraints_json, project_path,
+          status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+          created_at, updated_at
+        ) VALUES (
+          'topic-v10-work-items', '实施进度', '旧决策能否无损升级', '[]', NULL,
+          'decided', 'human', ?, NULL, ?, ?
+        )
+      `).run(HUMAN_SNAPSHOT_JSON, now, now);
+      versionTen.prepare(`
+        INSERT INTO decisions (
+          id, topic_id, title, decision, rationale, alternatives_json, status,
+          created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+          created_at, updated_at
+        ) VALUES (
+          'decision-v10-work-items', 'topic-v10-work-items', '采用实施账本',
+          '拆分实施项', '保持交付可见', '[]', 'accepted',
+          'human', ?, NULL, ?, ?
+        )
+      `).run(HUMAN_SNAPSHOT_JSON, now, now);
+      versionTen.exec(`
+        DROP TABLE work_items;
+        DELETE FROM schema_migrations WHERE version = 11;
+        PRAGMA user_version = 10;
+      `);
+    } finally {
+      versionTen.close();
+    }
+
+    const result = await migrateCouncilSchema(fixture.databasePath, 5_000, {
+      maxAttempts: 3,
+    });
+    assert.equal(result.migrated, true);
+    assert.equal(result.version, 11);
+    assert.ok(result.backupPath);
+
+    const migrated = new DatabaseSync(fixture.databasePath);
+    try {
+      assertCouncilSchema(migrated);
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM topics WHERE id = 'topic-v10-work-items'
+        `).get() as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM decisions WHERE id = 'decision-v10-work-items'
+        `).get() as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM sqlite_master
+          WHERE type = 'table' AND name = 'work_items'
+        `).get() as { count: number }).count,
+        1,
+      );
+      assert.deepEqual(
+        plainSqlValue(migrated.prepare(`
+          SELECT version, name FROM schema_migrations WHERE version = 11
+        `).get()),
+        { version: 11, name: "decision-work-items" },
+      );
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定", async () => {
   const fixture = temporaryDatabase();
   try {
@@ -808,6 +891,7 @@ test("canonical v5→v6 故障原子回滚，重试迁移并重复打开稳定",
       downgrade.exec(`
         DROP TRIGGER trg_decisions_cycle_close_update;
         DROP TRIGGER trg_decisions_cycle_close_insert;
+        DROP TABLE work_items;
         DROP TABLE blocking_questions;
         DROP TABLE discussion_cycles;
         DROP TRIGGER trg_decisions_runtime_close_update;
@@ -1637,8 +1721,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (8, 'cycle-runtime-capabilities', '2026-01-08T00:00:00.000Z'),
         (9, 'runtime-protocols', '2026-01-09T00:00:00.000Z'),
         (10, 'generic-acp-runtime', '2026-01-10T00:00:00.000Z'),
-        (11, 'future', '2026-01-11T00:00:00.000Z');
-      PRAGMA user_version = 11;
+        (11, 'decision-work-items', '2026-01-11T00:00:00.000Z'),
+        (12, 'future', '2026-01-12T00:00:00.000Z');
+      PRAGMA user_version = 12;
     `);
     futureDatabase.close();
     await assert.rejects(

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已由 Node 迁移器准备的 SQLite、领域类型与安全错误语义
- * @output 导出：动态 Actor alias/可信 actorId 写入、快照一致性、无损 Session 历史与 revision
+ * @output 导出：动态 Actor alias/可信 actorId 写入、决策实施项、快照一致性、无损 Session 历史与 revision
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问层；身份漂移或停用时失败关闭
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -34,6 +34,8 @@ import type {
   Topic,
   TopicDetail,
   TopicStatus,
+  WorkItem,
+  WorkItemStatus,
 } from "./types.js";
 
 interface TopicRow {
@@ -75,6 +77,29 @@ interface DecisionRow {
   created_by_legacy: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface WorkItemRow {
+  id: string;
+  topic_id: string;
+  decision_id: string;
+  title: string;
+  details: string;
+  status: WorkItemStatus;
+  status_note: string | null;
+  version: number;
+  created_by_actor_id: string;
+  created_by_snapshot_json: string;
+  updated_by_actor_id: string;
+  updated_by_snapshot_json: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+interface DecisionReferenceRow {
+  id: string;
+  status: DecisionStatus;
 }
 
 interface CountRow {
@@ -170,6 +195,34 @@ function decisionFromRow(row: DecisionRow): Decision {
     createdBySnapshot,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function workItemFromRow(row: WorkItemRow): WorkItem {
+  const createdBySnapshot = parseActorSnapshot(row.created_by_snapshot_json);
+  const updatedBySnapshot = parseActorSnapshot(row.updated_by_snapshot_json);
+  if (createdBySnapshot.actorId !== row.created_by_actor_id) {
+    throw new Error("Work item 创建者快照与索引身份不一致。");
+  }
+  if (updatedBySnapshot.actorId !== row.updated_by_actor_id) {
+    throw new Error("Work item 更新者快照与索引身份不一致。");
+  }
+  return {
+    id: row.id,
+    topicId: row.topic_id,
+    decisionId: row.decision_id,
+    title: row.title,
+    details: row.details,
+    status: row.status,
+    ...(row.status_note ? { statusNote: row.status_note } : {}),
+    version: row.version,
+    createdByActorId: row.created_by_actor_id,
+    createdBySnapshot,
+    updatedByActorId: row.updated_by_actor_id,
+    updatedBySnapshot,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
   };
 }
 
@@ -379,12 +432,20 @@ export class CouncilDatabase {
     const decisionRows = this.#database
       .prepare("SELECT * FROM decisions WHERE topic_id = ? ORDER BY created_at ASC, rowid ASC")
       .all(topicId) as unknown as DecisionRow[];
+    const workItemRows = this.#database
+      .prepare(`
+        SELECT * FROM work_items
+        WHERE topic_id = ?
+        ORDER BY created_at ASC, rowid ASC
+      `)
+      .all(topicId) as unknown as WorkItemRow[];
     const nextMessageOffset = messageOffset + messageRows.length;
     const hasMoreMessages = nextMessageOffset < messageCountRow.count;
     return {
       topic,
       messages: messageRows.map(messageFromRow),
       decisions: decisionRows.map(decisionFromRow),
+      workItems: workItemRows.map(workItemFromRow),
       messageTotal: messageCountRow.count,
       messageLimit,
       messageOffset,
@@ -565,6 +626,186 @@ export class CouncilDatabase {
     });
   }
 
+  createWorkItems(input: {
+    topicId: string;
+    decisionId?: string;
+    items: Array<{ title: string; details?: string }>;
+    createdByAlias: string;
+  }): WorkItem[] {
+    const actor = this.resolveActorAlias(input.createdByAlias);
+    return this.createWorkItemsAsActor({
+      topicId: input.topicId,
+      ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+      items: input.items,
+      actorId: actor.actorId,
+    });
+  }
+
+  createWorkItemsAsActor(input: {
+    topicId: string;
+    decisionId?: string;
+    items: Array<{ title: string; details?: string }>;
+    actorId: string;
+  }): WorkItem[] {
+    if (input.items.length === 0) {
+      throw new CouncilConflictError("至少需要一个实施项。");
+    }
+    const normalizedItems = input.items.map((item) => ({
+      title: item.title.trim(),
+      details: item.details?.trim() ?? "",
+    }));
+    if (normalizedItems.some((item) => !item.title)) {
+      throw new CouncilConflictError("实施项标题不能为空。");
+    }
+    const normalizedTitles = new Set(normalizedItems.map((item) => item.title.toLowerCase()));
+    if (normalizedTitles.size !== normalizedItems.length) {
+      throw new CouncilConflictError("同一批实施项不能包含重复标题。");
+    }
+
+    const now = new Date().toISOString();
+    return this.#transaction(() => {
+      this.getTopic(input.topicId);
+      const actor = this.#activeActorById(input.actorId);
+      const actorSnapshot = toActorSnapshot(actor);
+      const actorSnapshotJson = serializeActorSnapshot(actorSnapshot);
+      const decision = input.decisionId
+        ? this.#database.prepare(`
+            SELECT id, status FROM decisions
+            WHERE id = ? AND topic_id = ?
+          `).get(input.decisionId, input.topicId) as unknown as DecisionReferenceRow | undefined
+        : this.#database.prepare(`
+            SELECT id, status FROM decisions
+            WHERE topic_id = ? AND status = 'accepted'
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+          `).get(input.topicId) as unknown as DecisionReferenceRow | undefined;
+      if (!decision) {
+        throw new CouncilNotFoundError("当前议题没有可绑定的 Accepted 决策。");
+      }
+      if (decision.status !== "accepted") {
+        throw new CouncilConflictError("实施项只能绑定 Accepted 决策。");
+      }
+
+      const duplicateQuery = this.#database.prepare(`
+        SELECT id FROM work_items
+        WHERE decision_id = ? AND title = ? COLLATE NOCASE
+      `);
+      const insert = this.#database.prepare(`
+        INSERT INTO work_items (
+          id, topic_id, decision_id, title, details, status, status_note, version,
+          created_by_actor_id, created_by_snapshot_json,
+          updated_by_actor_id, updated_by_snapshot_json,
+          created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, 1, ?, ?, ?, ?, ?, ?, NULL)
+      `);
+      const createdIds: string[] = [];
+      for (const item of normalizedItems) {
+        if (duplicateQuery.get(decision.id, item.title)) {
+          throw new CouncilConflictError(`实施项“${item.title}”已经存在。`);
+        }
+        const id = `work_item_${randomUUID()}`;
+        insert.run(
+          id,
+          input.topicId,
+          decision.id,
+          item.title,
+          item.details,
+          actor.actorId,
+          actorSnapshotJson,
+          actor.actorId,
+          actorSnapshotJson,
+          now,
+          now,
+        );
+        createdIds.push(id);
+      }
+      this.#database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?").run(
+        now,
+        input.topicId,
+      );
+      const read = this.#database.prepare("SELECT * FROM work_items WHERE id = ?");
+      return createdIds.map((id) => workItemFromRow(read.get(id) as unknown as WorkItemRow));
+    });
+  }
+
+  updateWorkItem(input: {
+    topicId: string;
+    workItemId: string;
+    status: WorkItemStatus;
+    expectedVersion: number;
+    statusNote?: string;
+    updatedByAlias: string;
+  }): WorkItem {
+    const actor = this.resolveActorAlias(input.updatedByAlias);
+    return this.updateWorkItemAsActor({
+      topicId: input.topicId,
+      workItemId: input.workItemId,
+      status: input.status,
+      expectedVersion: input.expectedVersion,
+      ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+      actorId: actor.actorId,
+    });
+  }
+
+  updateWorkItemAsActor(input: {
+    topicId: string;
+    workItemId: string;
+    status: WorkItemStatus;
+    expectedVersion: number;
+    statusNote?: string;
+    actorId: string;
+  }): WorkItem {
+    const now = new Date().toISOString();
+    return this.#transaction(() => {
+      this.getTopic(input.topicId);
+      const current = this.#database.prepare(`
+        SELECT * FROM work_items WHERE id = ? AND topic_id = ?
+      `).get(input.workItemId, input.topicId) as unknown as WorkItemRow | undefined;
+      if (!current) {
+        throw new CouncilNotFoundError(`实施项 ${input.workItemId} 不存在。`);
+      }
+      if (current.version !== input.expectedVersion) {
+        throw new CouncilConflictError("实施项已被其他参与者更新，请刷新后重试。");
+      }
+      const actor = this.#activeActorById(input.actorId);
+      const actorSnapshotJson = serializeActorSnapshot(toActorSnapshot(actor));
+      const statusNote = input.statusNote === undefined
+        ? current.status_note
+        : input.statusNote.trim() || null;
+      const completedAt = input.status === "completed"
+        ? current.completed_at ?? now
+        : null;
+      const result = this.#database.prepare(`
+        UPDATE work_items
+        SET status = ?, status_note = ?, version = version + 1,
+            updated_by_actor_id = ?, updated_by_snapshot_json = ?,
+            updated_at = ?, completed_at = ?
+        WHERE id = ? AND topic_id = ? AND version = ?
+      `).run(
+        input.status,
+        statusNote,
+        actor.actorId,
+        actorSnapshotJson,
+        now,
+        completedAt,
+        input.workItemId,
+        input.topicId,
+        input.expectedVersion,
+      );
+      if (result.changes !== 1) {
+        throw new CouncilConflictError("实施项已被其他参与者更新，请刷新后重试。");
+      }
+      this.#database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?").run(
+        now,
+        input.topicId,
+      );
+      const updated = this.#database
+        .prepare("SELECT * FROM work_items WHERE id = ?")
+        .get(input.workItemId) as unknown as WorkItemRow;
+      return workItemFromRow(updated);
+    });
+  }
+
   getAgentSession(topicId: string, agent: string): string | undefined {
     const actor = this.resolveActorAlias(agent);
     const row = this.#database
@@ -609,8 +850,8 @@ export class CouncilDatabase {
     return result.changes > 0;
   }
 
-  getCounts(): { topics: number; messages: number; decisions: number } {
-    const count = (table: "topics" | "messages" | "decisions"): number => {
+  getCounts(): { topics: number; messages: number; decisions: number; workItems: number } {
+    const count = (table: "topics" | "messages" | "decisions" | "work_items"): number => {
       const row = this.#database
         .prepare(`SELECT COUNT(*) AS count FROM ${table}`)
         .get() as unknown as CountRow;
@@ -620,6 +861,7 @@ export class CouncilDatabase {
       topics: count("topics"),
       messages: count("messages"),
       decisions: count("decisions"),
+      workItems: count("work_items"),
     };
   }
 

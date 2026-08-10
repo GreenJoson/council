@@ -59,6 +59,8 @@ Actor；工具 schema 不接受作者覆盖。HTTP 入口不读取该配置，�
 | `POST` | `/api/v1/topics` | 新建 `Topic` |
 | `POST` | `/api/v1/topics/:topicId/messages` | 新建 `CouncilMessage` |
 | `POST` | `/api/v1/topics/:topicId/decisions` | 新建 `Decision` |
+| `POST` | `/api/v1/topics/:topicId/work-items` | 为 Accepted 决策批量新增 `WorkItem` |
+| `PUT` | `/api/v1/topics/:topicId/work-items/:workItemId` | 以 `expectedVersion` 更新实施状态与证据备注 |
 | `GET` | `/api/v1/orchestration/capabilities` | Agent 可用性与默认公开策略 |
 | `GET` | `/api/v1/settings/model-router` | Provider、Agent、BrandAsset 与可添加模板的公开快照 |
 | `POST` | `/api/v1/settings/providers` | 从 catalog 创建 Provider 连接并按需保存 Keychain 凭据 |
@@ -86,6 +88,10 @@ claim/renew/release 不推进任何 revision，避免心跳制造 SSE 风暴。
 
 SQLite trigger 维护全库单调 revision，HTTP 进程按配置轮询。因此另一个 MCP 进程
 写入同一数据库时也会产生事件，不依赖进程内 emitter。
+
+schema v7 增加与 Accepted 决策绑定的 `work_items` 执行账本。状态限定为
+`pending`、`in_progress`、`blocked`、`completed`，完成时间由状态不变量维护；MCP
+通过 `council_add_work_items` 和 `council_update_work_item` 写入，Actor 与版本 CAS 均由服务端冻结和校验。
 
 `agent.output` 是进程内临时事件，使用独立 sequence 和
 `snapshot/reset/append/replace/complete` 操作；重连会发送活动草稿快照。草稿只包含公开回复

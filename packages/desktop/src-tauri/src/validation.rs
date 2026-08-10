@@ -1,5 +1,5 @@
 /**
- * @input  依赖：来自 Tauri IPC 的路径、分页、ID、文本参数与设置文件里的服务地址
+ * @input  依赖：来自 Tauri IPC 的路径、分页、ID、内容/实施项文本参数与设置文件里的服务地址
  * @output 导出：与现有 HTTP/MCP 协议一致的输入校验函数和 loopback 服务地址解析
  * @pos    未验证外部输入（前端 IPC 与用户可编辑设置）进入 Rust core 前的唯一边界
  *
@@ -15,6 +15,9 @@ pub const MAX_MESSAGE_CHARS: usize = 30_000;
 pub const MAX_CONSTRAINT_COUNT: usize = 50;
 pub const MAX_CONSTRAINT_CHARS: usize = 1_000;
 pub const MAX_ALTERNATIVE_COUNT: usize = 30;
+pub const MAX_WORK_ITEM_COUNT: usize = 50;
+pub const MAX_WORK_ITEM_DETAILS_CHARS: usize = 8_000;
+pub const MAX_WORK_ITEM_STATUS_NOTE_CHARS: usize = 4_000;
 
 pub fn directory(path: &Path, name: &str) -> Result<(), String> {
     if !path.is_absolute() || !path.is_dir() {

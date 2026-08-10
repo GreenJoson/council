@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council REST/SSE API、严格解析器与 Workspace 映射器
- * @output 导出：人工 Accepted、惰性详情、revision 解析与 HttpCouncilRepository
+ * @output 导出：人工 Accepted、惰性详情、实施项写入、revision 解析与 HttpCouncilRepository
  * @pos    Operator Console 的 HTTP 写入和 REST/SSE 串行校准协调器
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,8 @@ import {
   parseApiPaginatedTopics,
   parseApiTopic,
   parseApiTopicDetail,
+  parseApiWorkItem,
+  parseApiWorkItems,
   type ApiTopic,
   type ApiTopicDetail,
 } from "./api-types";
@@ -26,10 +28,12 @@ import { readProjectPathConfig } from "./project-path";
 import { parseCouncilStatusRevisions } from "./status-revisions";
 import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
+  AddWorkItemsInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
   TopicDetail,
+  UpdateWorkItemInput,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -252,6 +256,43 @@ export class HttpCouncilRepository implements CouncilRepository {
       },
       parseApiDecision,
     );
+    return this.#reloadAfterMutation(input.topicId);
+  }
+
+  async addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot> {
+    await this.#requestMutation(
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items`,
+      ),
+      {
+        ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+        items: input.items,
+      },
+      parseApiWorkItems,
+    );
+    return this.#reloadAfterMutation(input.topicId);
+  }
+
+  async updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot> {
+    try {
+      await requestApiData(
+        this.#fetcher,
+        createApiUrl(
+          this.#baseUrl,
+          `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items/${encodeURIComponent(input.workItemId)}`,
+        ),
+        parseApiWorkItem,
+        jsonRequest({
+          status: input.status,
+          expectedVersion: input.expectedVersion,
+          ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+        }, "PUT"),
+      );
+    } catch (error: unknown) {
+      this.#publishSync("offline", "API 写入失败 · 可重试");
+      throw error;
+    }
     return this.#reloadAfterMutation(input.topicId);
   }
 

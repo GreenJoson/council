@@ -1,12 +1,13 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5→v10、RuntimeBinding/Runtime 协议/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v11、实施项、RuntimeBinding/Runtime 协议/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
 use council_core::{
-    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, DecisionStatus, MessageKind,
-    PostMessageInput, RecordDecisionInput, TopicStatus,
+    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, CreateWorkItemEntry,
+    CreateWorkItemsInput, DecisionStatus, MessageKind, PostMessageInput, RecordDecisionInput,
+    TopicStatus, UpdateWorkItemInput, WorkItemStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -140,6 +141,58 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
     assert_eq!(decided.decisions, vec![decision]);
     assert_eq!(store.get_revisions().expect("decision revisions").total, 7);
 
+    let work_items = store
+        .create_work_items(CreateWorkItemsInput {
+            topic_id: topic.id.clone(),
+            decision_id: None,
+            items: vec![
+                CreateWorkItemEntry {
+                    title: "实现跨语言读写".into(),
+                    details: "验证冻结 Actor".into(),
+                },
+                CreateWorkItemEntry {
+                    title: "补齐并发测试".into(),
+                    details: String::new(),
+                },
+            ],
+            actor_alias: CODEX_ALIAS.into(),
+        })
+        .expect("work items should be created");
+    assert_eq!(work_items.len(), 2);
+    assert_eq!(work_items[0].status, WorkItemStatus::Pending);
+    let completed = store
+        .update_work_item(UpdateWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: work_items[0].id.clone(),
+            status: WorkItemStatus::Completed,
+            status_note: Some("Rust 验证通过。".into()),
+            expected_version: 1,
+            actor_alias: CLAUDE_ALIAS.into(),
+        })
+        .expect("work item should update");
+    assert_eq!(completed.version, 2);
+    assert_eq!(completed.updated_by_actor_id, "claude");
+    assert!(completed.completed_at.is_some());
+    assert!(matches!(
+        store.update_work_item(UpdateWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: completed.id.clone(),
+            status: WorkItemStatus::Blocked,
+            status_note: None,
+            expected_version: 1,
+            actor_alias: CODEX_ALIAS.into(),
+        }),
+        Err(CouncilError::Conflict(_))
+    ));
+    assert_eq!(
+        store
+            .get_topic(&topic.id, 20, 0)
+            .expect("topic with work items")
+            .work_items
+            .len(),
+        2
+    );
+
     let kimi_topic = store
         .create_topic(topic_input(
             "其他项目",
@@ -158,9 +211,9 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
 }
 
 #[test]
-fn opens_node_v10_generic_acp_schema_and_preserves_cross_language_identity() {
+fn opens_node_v11_generic_acp_schema_and_preserves_cross_language_identity() {
     let directory = tempdir().expect("temp directory");
-    let database_path = directory.path().join("node-v6.sqlite3");
+    let database_path = directory.path().join("node-v11.sqlite3");
     prepare_node_schema(&database_path);
     let raw = Connection::open(&database_path).expect("inspection connection");
     let (user_version, binding_tables, binding_triggers): (i64, i64, i64) = (
@@ -186,15 +239,15 @@ fn opens_node_v10_generic_acp_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 10);
+    assert_eq!(user_version, 11);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 5);
     drop(raw);
 
-    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v10");
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v11");
     let topic = store
         .create_topic(topic_input(
-            "Node v6 到 Rust",
+            "Node v11 到 Rust",
             "/workspace/project-alpha",
             HUMAN_ALIAS,
         ))
@@ -430,8 +483,8 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    // v7 为 discussion_cycles / blocking_questions 各加 3 个 revision 触发器；v8–v10 不新增触发器。
-    assert_eq!(trigger_count, 21);
+    // v7 为 cycle/question 各加 3 个，v11 为实施项增加 3 个 revision 触发器。
+    assert_eq!(trigger_count, 24);
 }
 
 #[test]
@@ -447,11 +500,11 @@ fn opens_fresh_v2_v3_and_v5_migrated_databases_created_by_node() {
 }
 
 #[test]
-fn reads_v3_to_v10_dynamic_kimi_rebinding_created_by_node() {
+fn reads_v3_to_v11_dynamic_kimi_rebinding_created_by_node() {
     let directory = tempdir().expect("temp directory");
     let database_path = directory.path().join("v3-migrated.sqlite3");
     prepare_node_schema_with_mode(&database_path, "v3-migrated");
-    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v10 database");
+    CouncilStore::open(&database_path, 5_000).expect("Rust must open Node v3→v11 database");
 
     let raw = Connection::open(&database_path).expect("inspection connection");
     let (actor_id, mention_alias, config_revision): (String, String, i64) = raw
@@ -512,8 +565,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (11, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 11;",
+             VALUES (12, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 12;",
         )
         .expect("future schema fixture");
     assert!(matches!(

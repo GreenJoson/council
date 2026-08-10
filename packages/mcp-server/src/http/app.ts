@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、实施项、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -48,6 +48,7 @@ import {
   createMessageBodySchema,
   createProviderBodySchema,
   createTopicBodySchema,
+  createWorkItemsBodySchema,
   approveRunBodySchema,
   createRunBodySchema,
   emptyActionBodySchema,
@@ -63,6 +64,8 @@ import {
   topicParamsSchema,
   updateAgentBodySchema,
   updateProviderBodySchema,
+  updateWorkItemBodySchema,
+  workItemParamsSchema,
 } from "./schemas.js";
 
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -436,6 +439,32 @@ export function createCouncilHttpApp(
       await orchestration.closeTopicRuntimeBindings(params.topicId);
     }
     sendSuccess(response, decision, "决策已记录。", 201);
+  });
+
+  app.post("/api/v1/topics/:topicId/work-items", (request, response) => {
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(createWorkItemsBodySchema, request.body);
+    const workItems = database.createWorkItemsAsActor({
+      topicId: params.topicId,
+      ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+      items: input.items,
+      actorId: "human",
+    });
+    sendSuccess(response, workItems, "实施项已添加。", 201);
+  });
+
+  app.put("/api/v1/topics/:topicId/work-items/:workItemId", (request, response) => {
+    const params = parse(workItemParamsSchema, request.params);
+    const input = parse(updateWorkItemBodySchema, request.body);
+    const workItem = database.updateWorkItemAsActor({
+      topicId: params.topicId,
+      workItemId: params.workItemId,
+      status: input.status,
+      expectedVersion: input.expectedVersion,
+      ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+      actorId: "human",
+    });
+    sendSuccess(response, workItem, "实施进度已更新。");
   });
 
   app.get("/api/v1/topics/:topicId/runtime-bindings", async (request, response) => {

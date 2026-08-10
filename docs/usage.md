@@ -184,6 +184,11 @@ Codex 会读取 Claude 的公开方案，检查项目证据，并发布一条 `c
 当你明确接受方案后，在 Council 桌面端点击接受决策。MCP 工具只能记录 `proposed`，不能把
 Agent 身份伪装成用户并写入 `accepted`；桌面/HTTP 用户入口确认后，议题才标记为 `decided`。
 
+决策进入 Accepted 后，右侧会出现“实施进度”。可以先在界面添加功能项，也可以让正在实现的
+Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
+`council_update_work_item` 更新为 `in_progress`、`blocked` 或 `completed`。每次更新必须携带
+最新 `expected_version`，过期写入会被拒绝。标记完成时应在 `status_note` 写明测试、构建或交付证据。
+
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
 会以 Human 身份直接写入 `accepted`，关闭圆桌、持久会话和后续 Agent 入口；整个过程不会创建
@@ -302,7 +307,11 @@ Operator Console 会显示每个 Agent 当前逻辑绑定的状态。手动关�
 
 ### 查看总体状态
 
-> 使用 `$council` 告诉我当前有多少议题、消息和决策。
+> 使用 `$council` 告诉我当前有多少议题、消息、决策和实施项。
+
+### 继续实现并回写进度
+
+> 使用 `$council` 读取 topic `<topic-id>` 的 Accepted 决策和实施项。实现尚未完成的项目；开始时标记 `in_progress`，受阻时记录具体依赖，代码与必要验证都完成后再标记 `completed` 并附验证证据。
 
 ## 议题和决策规则
 
@@ -310,6 +319,7 @@ Operator Console 会显示每个 Agent 当前逻辑绑定的状态。手动关�
 - `proposal` 是方案，`critique` 是具体批评，`rebuttal` 是回应，`synthesis` 是综合。
 - 用户未明确接受时，决策状态必须是 `proposed`。
 - `accepted` 表示已经确认采用，不是“两个模型看起来意见一致”。
+- 实施项只绑定 Accepted 决策；`completed` 表示对应交付已真实完成并有证据，不表示“已经决定要做”。
 - 外部工作已经完成时，可以由用户在“决策”页直接记录人工 `accepted` 并结束议题，无需先生成 Agent 决策。
 - 长期有效的最终结论应同步写入项目 ADR 或架构文档；SQLite 讨论记录不是项目文档的替代品。
 

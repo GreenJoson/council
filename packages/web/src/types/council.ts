@@ -1,6 +1,6 @@
 /**
  * @input  依赖：无
- * @output 导出：Council Web 的动态 Actor、Topic/Message/Decision 行快照、
+ * @output 导出：Council Web 的动态 Actor、Topic/Message/Decision/实施项行快照、
  *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
  *         同时供讨论面板、决策记录与架构档案三处消费
@@ -20,6 +20,7 @@ export type MessageKind =
 export type TopicStatus = "open" | "proposed" | "discussing" | "synthesis" | "decided";
 
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
+export type WorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
 
 export interface Participant {
   id: AgentId;
@@ -98,6 +99,23 @@ export interface CouncilDecision {
   supersededByTopicId?: string;
 }
 
+export interface CouncilWorkItem {
+  id: string;
+  decisionId: string;
+  title: string;
+  details: string;
+  status: WorkItemStatus;
+  statusNote?: string;
+  version: number;
+  createdBy: AgentId;
+  createdBySnapshot: ActorSnapshot;
+  updatedBy: AgentId;
+  updatedBySnapshot: ActorSnapshot;
+  createdLabel: string;
+  updatedLabel: string;
+  completedLabel?: string;
+}
+
 export interface RecordManualDecisionInput {
   topicId: string;
   title: string;
@@ -116,6 +134,7 @@ export interface TopicDetail extends TopicSummary {
   constraints: ConstraintItem[];
   evidence: EvidenceItem[];
   alternatives: AlternativeItem[];
+  workItems: CouncilWorkItem[];
   decision?: CouncilDecision;
 }
 
@@ -148,4 +167,18 @@ export interface CreateTopicInput {
   title: string;
   question: string;
   constraints: string[];
+}
+
+export interface AddWorkItemsInput {
+  topicId: string;
+  decisionId?: string;
+  items: Array<{ title: string; details?: string }>;
+}
+
+export interface UpdateWorkItemInput {
+  topicId: string;
+  workItemId: string;
+  status: WorkItemStatus;
+  statusNote?: string;
+  expectedVersion: number;
 }

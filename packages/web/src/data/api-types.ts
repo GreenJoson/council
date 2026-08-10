@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council REST API 返回的未知 JSON 值
- * @output 导出：含动态 Actor 快照的后端协议类型及严格运行时解析函数
+ * @output 导出：含动态 Actor 快照与实施项的后端协议类型及严格运行时解析函数
  * @pos    HTTP 边界的唯一数据校验入口，禁止未验证数据进入 UI
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,6 +15,7 @@ export type ApiMessageKind =
   | "synthesis"
   | "note";
 export type ApiDecisionStatus = "proposed" | "accepted" | "rejected" | "superseded";
+export type ApiWorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
 
 export interface ApiActorSnapshot {
   schemaVersion: 1;
@@ -63,10 +64,29 @@ export interface ApiDecision {
   updatedAt: string;
 }
 
+export interface ApiWorkItem {
+  id: string;
+  topicId: string;
+  decisionId: string;
+  title: string;
+  details: string;
+  status: ApiWorkItemStatus;
+  statusNote?: string;
+  version: number;
+  createdByActorId: string;
+  createdBySnapshot: ApiActorSnapshot;
+  updatedByActorId: string;
+  updatedBySnapshot: ApiActorSnapshot;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
 export interface ApiTopicDetail {
   topic: ApiTopic;
   messages: ApiMessage[];
   decisions: ApiDecision[];
+  workItems: ApiWorkItem[];
   messageTotal: number;
   messageLimit: number;
   messageOffset: number;
@@ -194,6 +214,12 @@ const DECISION_STATUSES: readonly ApiDecisionStatus[] = [
   "rejected",
   "superseded",
 ];
+const WORK_ITEM_STATUSES: readonly ApiWorkItemStatus[] = [
+  "pending",
+  "in_progress",
+  "blocked",
+  "completed",
+];
 
 export function parseApiEnvelope(value: unknown): ApiEnvelope {
   const record = readRecord(value, "响应");
@@ -289,6 +315,50 @@ export function parseApiDecision(value: unknown): ApiDecision {
   };
 }
 
+export function parseApiWorkItem(value: unknown): ApiWorkItem {
+  const record = readRecord(value, "work item");
+  const createdByActorId = readString(record, "createdByActorId");
+  const createdBySnapshot = parseApiActorSnapshot(record.createdBySnapshot);
+  const updatedByActorId = readString(record, "updatedByActorId");
+  const updatedBySnapshot = parseApiActorSnapshot(record.updatedBySnapshot);
+  if (createdBySnapshot.actorId !== createdByActorId) {
+    throw new Error("work item creator snapshot 与索引身份不一致");
+  }
+  if (updatedBySnapshot.actorId !== updatedByActorId) {
+    throw new Error("work item updater snapshot 与索引身份不一致");
+  }
+  const statusNote = readOptionalString(record, "statusNote");
+  const completedAt = readOptionalString(record, "completedAt");
+  const version = readNumber(record, "version");
+  if (!Number.isSafeInteger(version) || version < 1) {
+    throw new Error("work item version 必须是正整数");
+  }
+  return {
+    id: readString(record, "id"),
+    topicId: readString(record, "topicId"),
+    decisionId: readString(record, "decisionId"),
+    title: readString(record, "title"),
+    details: readString(record, "details"),
+    status: readEnum(record, "status", WORK_ITEM_STATUSES),
+    ...(statusNote ? { statusNote } : {}),
+    version,
+    createdByActorId,
+    createdBySnapshot,
+    updatedByActorId,
+    updatedBySnapshot,
+    createdAt: readString(record, "createdAt"),
+    updatedAt: readString(record, "updatedAt"),
+    ...(completedAt ? { completedAt } : {}),
+  };
+}
+
+export function parseApiWorkItems(value: unknown): ApiWorkItem[] {
+  if (!Array.isArray(value)) {
+    throw new Error("work items 必须是数组");
+  }
+  return value.map((item) => parseApiWorkItem(item));
+}
+
 export function parseApiTopicDetail(value: unknown): ApiTopicDetail {
   const record = readRecord(value, "topic detail");
   const nextMessageOffset = readOptionalNumber(record, "nextMessageOffset");
@@ -296,6 +366,7 @@ export function parseApiTopicDetail(value: unknown): ApiTopicDetail {
     topic: parseApiTopic(record.topic),
     messages: readArray(record, "messages", (item) => parseApiMessage(item)),
     decisions: readArray(record, "decisions", (item) => parseApiDecision(item)),
+    workItems: readArray(record, "workItems", (item) => parseApiWorkItem(item)),
     messageTotal: readNumber(record, "messageTotal"),
     messageLimit: readNumber(record, "messageLimit"),
     messageOffset: readNumber(record, "messageOffset"),

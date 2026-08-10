@@ -16,6 +16,7 @@ MCP 进程的公开身份由启动配置绑定。工具参数不得选择、覆�
 - **Continue a manual handoff**: read the latest messages, respond to the strongest unresolved objections, and post a `rebuttal`, `proposal`, or `note`.
 - **Run an automatic debate from Codex App**: create the topic, call `council_ask_claude` for an independent proposal, produce and post Codex's critique, call `council_ask_claude` for a rebuttal, synthesize the result, and call `council_record_decision` only when a real decision exists.
 - **Work inside Claude Desktop Code**: use shared topic tools directly. Do not call `council_ask_claude` merely to ask another Claude process unless the user explicitly requests a second independent Claude perspective.
+- **Track implementation after acceptance**: use `council_add_work_items` only after the user has accepted a decision, then use `council_update_work_item` as delivery evidence changes. Read the latest item version before every update; never mark `completed` from intent alone.
 
 Read [references/discussion-protocol.md](references/discussion-protocol.md) before running an automatic debate or recording a decision.
 
@@ -29,6 +30,7 @@ Read [references/discussion-protocol.md](references/discussion-protocol.md) befo
 6. Format every posted message as clean GFM Markdown: start with a one-sentence conclusion, organize the body with `## ` sections (pick from 方案 / 理由 / 风险 / 失败条件 / 验证 as needed), use `- ` bullet lists, fenced ``` blocks for code, commands, and directory trees, tables for comparisons, and blank lines between paragraphs. Describe architecture, module-dependency, business-flow, and sequence diagrams with ```mermaid fences — the UI renders them as diagrams and archives diagrams from decisions and syntheses into the architecture view. Never post a single wall-of-text paragraph — the Council UI renders Markdown as-is.
 7. Record a decision only after alternatives, risks, and verification are explicit. Use `proposed` when the user has not accepted it.
 8. Tell the user the topic ID and current status so either desktop app can continue later.
+9. After an Accepted decision, split only concrete deliverables into implementation items. Use `pending`, `in_progress`, `blocked`, and `completed`; include a concise `status_note` with completion evidence or the blocking dependency. Overall percentage is derived by the UI and must not be guessed.
 
 ## Background Claude rules
 

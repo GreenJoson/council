@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：议题、消息、决策与含 schema 迁移策略的配置类型
+ * @output 导出：议题、消息、决策、实施项与含 schema 迁移策略的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,12 +10,14 @@ import type {
   DECISION_STATUSES,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_STATUSES,
 } from "./constants.js";
 import type { ActorId, ActorSnapshot } from "./actor-identity.js";
 
 export type TopicStatus = (typeof TOPIC_STATUSES)[number];
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export type DecisionStatus = (typeof DECISION_STATUSES)[number];
+export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 
 export interface CouncilConfig {
   dataDir: string;
@@ -134,10 +136,29 @@ export interface Decision {
   updatedAt: string;
 }
 
+export interface WorkItem {
+  id: string;
+  topicId: string;
+  decisionId: string;
+  title: string;
+  details: string;
+  status: WorkItemStatus;
+  statusNote?: string;
+  version: number;
+  createdByActorId: ActorId;
+  createdBySnapshot: ActorSnapshot;
+  updatedByActorId: ActorId;
+  updatedBySnapshot: ActorSnapshot;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
 export interface TopicDetail {
   topic: Topic;
   messages: CouncilMessage[];
   decisions: Decision[];
+  workItems: WorkItem[];
   messageTotal: number;
   messageLimit: number;
   messageOffset: number;

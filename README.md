@@ -44,6 +44,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 创建、查询和分页列出架构议题。
 - 发布带类型的方案、批评、反驳、综合与备注。
 - 记录可追踪的架构决策及其状态。
+- 把 Accepted 决策拆成待处理、进行中、受阻、已完成四态实施项；右侧自动汇总完成度，Codex/Claude 可通过 MCP 回写实际进展和证据备注。
 - 用户可直接记录 Human / Accepted 人工决策并结束议题；该路径不创建 Run、不调用 Agent，适合外部修复、验证或部署已经完成的场景。
 - 以动态 Actor Identity、大小写不敏感 alias 和冻结快照记录公开身份；Claude、Codex、
   DeepSeek、Kimi 各自独立，历史 `other` 只进入待审计兼容身份。
@@ -131,6 +132,8 @@ SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全]
 第一轮包含三种信息架构。当前已选择方案 A，并完成深色 Operator Console、真实 REST/SSE 数据层及 Tauri 桌面适配；设计稿、实现截图与取舍见 [WebUI 设计方向](docs/designs/ui-directions.md)。
 
 当前边界：消息传播与后台 Agent 触发仍是两个独立能力。只有在 Composer 中明确写 `@claude` 或 `@codex`，或在 Agent 调用面板创建运行，系统才会调用对应 CLI；普通消息只写入共享议题。逻辑绑定会在接受决策、手动关闭、模型配置变化或空闲超时后关闭；Agent 回复不会自动标记为 `accepted`。
+
+决策接受后，右侧“实施进度”可以继续写入，不受讨论会话关闭影响。完成度只按已完成实施项数量自动计算，避免手填百分比与真实交付脱节；并发更新使用实施项版本号拒绝覆盖。
 
 ## 后续演进
 

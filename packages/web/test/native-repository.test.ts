@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 假实现与 Rust 同形领域响应
- * @output 导出：NativeCouncilRepository 加载、人工 Accepted、项目切换与只读详情测试
+ * @output 导出：NativeCouncilRepository 加载、人工 Accepted、实施项桥接、项目切换与只读详情测试
  * @pos    桌面内容闭环不依赖真实 Tauri 窗口的回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -68,6 +68,7 @@ function bridge(): DesktopBridge {
       topic: TOPIC,
       messages: [],
       decisions: [],
+      workItems: [],
       messageTotal: 0,
       messageLimit: 100,
       messageOffset: 0,
@@ -95,6 +96,23 @@ function bridge(): DesktopBridge {
       createdBySnapshot: HUMAN_SNAPSHOT,
       createdAt: TOPIC.updatedAt,
       updatedAt: TOPIC.updatedAt,
+    })),
+    addWorkItems: vi.fn(async () => []),
+    updateWorkItem: vi.fn(async () => ({
+      id: "work_item_alpha",
+      topicId: TOPIC.id,
+      decisionId: "decision_alpha",
+      title: "实施项",
+      details: "",
+      status: "completed",
+      version: 2,
+      createdByActorId: "human",
+      createdBySnapshot: HUMAN_SNAPSHOT,
+      updatedByActorId: "human",
+      updatedBySnapshot: HUMAN_SNAPSHOT,
+      createdAt: TOPIC.updatedAt,
+      updatedAt: TOPIC.updatedAt,
+      completedAt: TOPIC.updatedAt,
     })),
     getStatus: vi.fn(async () => ({
       revision: 1,
@@ -189,6 +207,7 @@ describe("NativeCouncilRepository", () => {
         topic,
         messages: [],
         decisions: [],
+        workItems: [],
         messageTotal: 0,
         messageLimit: 100,
         messageOffset: 0,
@@ -261,6 +280,7 @@ describe("NativeCouncilRepository", () => {
           updatedAt: TOPIC.updatedAt,
         },
       ],
+      workItems: [],
       messageTotal: 0,
       messageLimit: 100,
       messageOffset: 0,

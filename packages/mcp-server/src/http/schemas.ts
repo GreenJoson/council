@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body 的 Zod schema
+ * @output 导出：REST path、query、body（含实施项）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -27,8 +27,12 @@ import {
   MAX_PATH_CHARS,
   MAX_QUESTION_CHARS,
   MAX_TITLE_CHARS,
+  MAX_WORK_ITEM_BATCH,
+  MAX_WORK_ITEM_DETAILS_CHARS,
+  MAX_WORK_ITEM_STATUS_NOTE_CHARS,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_STATUSES,
 } from "../constants.js";
 
 const nonBlankString = (maximum: number) =>
@@ -42,6 +46,15 @@ export const topicIdSchema = z
   .regex(/^topic_[A-Za-z0-9-]+$/, "topicId 格式无效");
 
 export const topicParamsSchema = z.object({ topicId: topicIdSchema }).strict();
+
+export const workItemIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "workItemId 过长")
+  .regex(/^work_item_[A-Za-z0-9-]+$/, "workItemId 格式无效");
+
+export const workItemParamsSchema = z
+  .object({ topicId: topicIdSchema, workItemId: workItemIdSchema })
+  .strict();
 
 export const runIdSchema = z
   .string()
@@ -193,6 +206,33 @@ export const createDecisionBodySchema = z
       .max(MAX_ALTERNATIVE_COUNT)
       .default([]),
     status: z.enum(DECISION_STATUSES).default("proposed"),
+  })
+  .strict();
+
+export const createWorkItemsBodySchema = z
+  .object({
+    decisionId: z
+      .string()
+      .max(MAX_ID_CHARS, "decisionId 过长")
+      .regex(/^decision_[A-Za-z0-9-]+$/, "decisionId 格式无效")
+      .optional(),
+    items: z
+      .array(
+        z.object({
+          title: nonBlankString(MAX_TITLE_CHARS),
+          details: z.string().max(MAX_WORK_ITEM_DETAILS_CHARS).default(""),
+        }).strict(),
+      )
+      .min(1)
+      .max(MAX_WORK_ITEM_BATCH),
+  })
+  .strict();
+
+export const updateWorkItemBodySchema = z
+  .object({
+    status: z.enum(WORK_ITEM_STATUSES),
+    expectedVersion: z.number().int().positive(),
+    statusNote: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
   })
   .strict();
 

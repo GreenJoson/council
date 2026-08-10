@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v8 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v11 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,6 +15,7 @@ export const REQUIRED_TABLES = [
   "topics",
   "messages",
   "decisions",
+  "work_items",
   "agent_sessions",
   "council_meta",
   "council_identity",
@@ -38,6 +39,8 @@ export const REQUIRED_INDEXES = [
   "idx_topics_project_updated",
   "idx_messages_topic_created",
   "idx_decisions_topic_created",
+  "idx_work_items_topic_status",
+  "idx_work_items_decision_title",
   "idx_actor_identities_status_slug",
   "idx_actor_aliases_actor",
   "idx_provider_profiles_status_slug",
@@ -127,6 +130,9 @@ export const REQUIRED_REVISION_TRIGGERS = [
   "trg_decisions_revision_insert",
   "trg_decisions_revision_update",
   "trg_decisions_revision_delete",
+  "trg_work_items_revision_insert",
+  "trg_work_items_revision_update",
+  "trg_work_items_revision_delete",
   "trg_orchestration_runs_revision_insert",
   "trg_orchestration_runs_revision_update",
   "trg_orchestration_runs_revision_delete",
@@ -576,6 +582,53 @@ export const COUNCIL_IDENTITY_SQL = `
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     instance_id TEXT NOT NULL UNIQUE
   );
+`;
+
+export const WORK_ITEM_SCHEMA_SQL = `
+  CREATE TABLE work_items (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    decision_id TEXT NOT NULL REFERENCES decisions(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'in_progress', 'blocked', 'completed')
+    ),
+    status_note TEXT,
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    created_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+    created_by_snapshot_json TEXT NOT NULL,
+    updated_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+    updated_by_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK (
+      (status = 'completed' AND completed_at IS NOT NULL)
+      OR (status <> 'completed' AND completed_at IS NULL)
+    )
+  );
+
+  CREATE INDEX idx_work_items_topic_status
+    ON work_items(topic_id, status, created_at);
+  CREATE UNIQUE INDEX idx_work_items_decision_title
+    ON work_items(decision_id, title COLLATE NOCASE);
+
+  CREATE TRIGGER trg_work_items_revision_insert
+    AFTER INSERT ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
+  CREATE TRIGGER trg_work_items_revision_update
+    AFTER UPDATE ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
+  CREATE TRIGGER trg_work_items_revision_delete
+    AFTER DELETE ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
 `;
 
 export const FROZEN_LEGACY_V1_SCHEMA_SQL = [

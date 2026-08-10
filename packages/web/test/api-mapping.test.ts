@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council API 严格解析器、Workspace 映射器与协议夹具
- * @output 导出：动态 Actor 行快照、重命名保真、身份不一致拒绝和无伪造证据测试
+ * @output 导出：动态 Actor/实施项行快照、重命名保真、身份不一致拒绝和无伪造证据测试
  * @pos    REST 数据进入 Operator Console 前的领域边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -43,6 +43,7 @@ function createDetailFixture() {
       },
     ],
     decisions: [],
+    workItems: [],
     messageTotal: 1,
     messageLimit: 100,
     messageOffset: 0,

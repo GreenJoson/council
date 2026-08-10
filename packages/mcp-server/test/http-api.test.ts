@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import type { CouncilMessage, Decision, PaginatedTopics, Topic, TopicDetail } from "../src/types.js";
+import type { CouncilMessage, Decision, PaginatedTopics, Topic, TopicDetail, WorkItem } from "../src/types.js";
 import { COUNCIL_SCHEMA_VERSION } from "../src/schema-migrator.js";
 import {
   readEnvelope,
@@ -102,6 +102,40 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(decision.data?.status, "accepted");
     assert.equal(decision.data?.createdByActorId, "human");
 
+    const addWorkItemsResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topicId}/work-items`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          items: [{ title: "接入 SSE 刷新", details: "验证跨进程更新" }],
+        }),
+      },
+    );
+    assert.equal(addWorkItemsResponse.status, 201);
+    const added = await readEnvelope<WorkItem[]>(addWorkItemsResponse);
+    const workItem = added.data?.[0];
+    assert.equal(workItem?.status, "pending");
+    assert.equal(workItem?.createdByActorId, "human");
+    assert(workItem);
+
+    const updateWorkItemResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topicId}/work-items/${workItem.id}`,
+      {
+        method: "PUT",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          status: "completed",
+          statusNote: "验收通过",
+          expectedVersion: workItem.version,
+        }),
+      },
+    );
+    assert.equal(updateWorkItemResponse.status, 200);
+    const updated = await readEnvelope<WorkItem>(updateWorkItemResponse);
+    assert.equal(updated.data?.version, 2);
+    assert.ok(updated.data?.completedAt);
+
     const detailResponse = await fetch(
       `${harness.baseUrl}/api/v1/topics/${topicId}?messageLimit=10&messageOffset=0`,
     );
@@ -109,6 +143,7 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(detail.data?.topic.status, "decided");
     assert.equal(detail.data?.messages.length, 1);
     assert.equal(detail.data?.decisions.length, 1);
+    assert.equal(detail.data?.workItems[0]?.status, "completed");
   } finally {
     await harness.close();
   }

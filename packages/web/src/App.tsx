@@ -1,6 +1,6 @@
 /**
- * @input  依赖：Council/Orchestration Repository、主题偏好、工作区视图路由（议题/架构档案/决策记录）和三栏组件
- * @output 导出：含既有提案复用与 Human Decision 直达路径的 App 根组件
+ * @input  依赖：Council/Orchestration Repository、主题偏好、实施项写入、工作区视图路由和三栏组件
+ * @output 导出：含既有提案复用、Human Decision 与实施进度路径的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
  *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
@@ -46,11 +46,13 @@ import {
   type ThemePreference,
 } from "./data/theme";
 import type {
+  CouncilWorkItem,
   CreateTopicInput,
   MessageKind,
   Participant,
   RecordManualDecisionInput,
   WorkspaceSnapshot,
+  WorkItemStatus,
 } from "./types/council";
 import { getErrorMessage } from "./data/error-message";
 import type {
@@ -92,6 +94,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [workItemBusyAction, setWorkItemBusyAction] = useState<string | null>(null);
   const [isRecordingManualDecision, setIsRecordingManualDecision] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -469,12 +472,57 @@ export default function App() {
   async function handleAccept(): Promise<void> {
     setIsAccepting(true);
     try {
-      await repository.acceptDecision(activeTopicId);
+      const snapshot = await repository.acceptDecision(activeTopicId);
+      setWorkspace(snapshot);
       setToastMessage("决策已记录为 Accepted");
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
     } finally {
       setIsAccepting(false);
+    }
+  }
+
+  async function handleAddWorkItem(title: string, details: string): Promise<boolean> {
+    setWorkItemBusyAction("add");
+    setContentErrorMessage(null);
+    try {
+      const snapshot = await repository.addWorkItems({
+        topicId: activeTopicId,
+        items: [{ title, ...(details ? { details } : {}) }],
+      });
+      setWorkspace(snapshot);
+      setToastMessage("实施项已加入执行账本");
+      return true;
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+      return false;
+    } finally {
+      setWorkItemBusyAction(null);
+    }
+  }
+
+  async function handleUpdateWorkItem(
+    item: CouncilWorkItem,
+    status: WorkItemStatus,
+  ): Promise<void> {
+    if (status === item.status) {
+      return;
+    }
+    setWorkItemBusyAction(`update:${item.id}`);
+    setContentErrorMessage(null);
+    try {
+      const snapshot = await repository.updateWorkItem({
+        topicId: activeTopicId,
+        workItemId: item.id,
+        status,
+        expectedVersion: item.version,
+      });
+      setWorkspace(snapshot);
+      setToastMessage(status === "completed" ? "实施项已标记完成" : "实施状态已更新");
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    } finally {
+      setWorkItemBusyAction(null);
     }
   }
 
@@ -751,6 +799,9 @@ export default function App() {
               isRecordingManualDecision={isRecordingManualDecision}
               isOpen={isInspectorOpen}
               onAccept={handleAccept}
+              workItemBusyAction={workItemBusyAction}
+              onAddWorkItem={handleAddWorkItem}
+              onUpdateWorkItem={handleUpdateWorkItem}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               onOpenDecision={() =>
                 setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 SQLite 数据文件与 CouncilDatabase
- * @output 导出：共享存储、分页、决策和会话状态测试
+ * @output 导出：共享存储、分页、决策实施项、乐观并发和会话状态测试
  * @pos    数据一致性与双客户端并发基础的单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -66,6 +66,41 @@ test("CouncilDatabase 保存并分页读取共享讨论", async () => {
     assert.equal(decision.status, "accepted");
     assert.equal(database.getTopic(topic.id).status, "decided");
 
+    const workItems = database.createWorkItems({
+      topicId: topic.id,
+      items: [
+        { title: "实现会话适配层", details: "覆盖替换路径" },
+        { title: "补齐回滚测试" },
+      ],
+      createdByAlias: "codex",
+    });
+    assert.equal(workItems.length, 2);
+    assert.equal(workItems[0]?.decisionId, decision.id);
+    assert.equal(workItems[0]?.status, "pending");
+    const completed = database.updateWorkItem({
+      topicId: topic.id,
+      workItemId: workItems[0]?.id ?? "",
+      status: "completed",
+      statusNote: "实现与测试已通过。",
+      expectedVersion: 1,
+      updatedByAlias: "claude",
+    });
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.version, 2);
+    assert.equal(completed.updatedByActorId, "claude");
+    assert.ok(completed.completedAt);
+    assert.throws(
+      () => database.updateWorkItem({
+        topicId: topic.id,
+        workItemId: completed.id,
+        status: "blocked",
+        expectedVersion: 1,
+        updatedByAlias: "codex",
+      }),
+      /其他参与者更新/,
+    );
+    assert.equal(database.getTopicDetail(topic.id, 20).workItems.length, 2);
+
     database.setAgentSession(topic.id, "claude", "session-test");
     assert.equal(database.getAgentSession(topic.id, "claude"), "session-test");
     database.setAgentSession(topic.id, "claude-code", "session-replaced");
@@ -108,7 +143,7 @@ test("CouncilDatabase 保存并分页读取共享讨论", async () => {
     const page = database.listTopics({ projectPath: directory, limit: 10, offset: 0 });
     assert.equal(page.total, 1);
     assert.equal(page.topics[0]?.id, topic.id);
-    assert.deepEqual(database.getCounts(), { topics: 1, messages: 2, decisions: 1 });
+    assert.deepEqual(database.getCounts(), { topics: 1, messages: 2, decisions: 1, workItems: 2 });
   } finally {
     database.close();
     rmSync(directory, { recursive: true, force: true });

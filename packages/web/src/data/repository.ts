@@ -1,16 +1,18 @@
 /**
  * @input  依赖：Council Web 领域类型
- * @output 导出：含人工 Accepted、显式选题与只读议题详情加载的 CouncilRepository 接口
+ * @output 导出：含人工 Accepted、显式选题、实施项写入与只读议题详情加载的 CouncilRepository 接口
  * @pos    mock 与 HTTP/SSE 数据实现的稳定可替换边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import type {
+  AddWorkItemsInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
   TopicDetail,
+  UpdateWorkItemInput,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -24,6 +26,8 @@ export interface CouncilRepository {
   acceptDecision(topicId: string): Promise<WorkspaceSnapshot>;
   /** 用户直接记录 accepted 并结束议题；不得创建 Agent Run。 */
   recordManualDecision(input: RecordManualDecisionInput): Promise<WorkspaceSnapshot>;
+  addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot>;
+  updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot>;
   /** 只读加载完整议题详情；不改变 activeTopicId，不触发订阅快照 */
   loadTopicDetail(topicId: string): Promise<TopicDetail>;
   subscribe(listener: WorkspaceListener): () => void;

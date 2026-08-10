@@ -21,10 +21,14 @@ import {
   MAX_PATH_CHARS,
   MAX_QUESTION_CHARS,
   MAX_TITLE_CHARS,
+  MAX_WORK_ITEM_BATCH,
+  MAX_WORK_ITEM_DETAILS_CHARS,
+  MAX_WORK_ITEM_STATUS_NOTE_CHARS,
   MESSAGE_KINDS,
   SERVER_NAME,
   SERVER_VERSION,
   TOPIC_STATUSES,
+  WORK_ITEM_STATUSES,
 } from "./constants.js";
 import { CouncilDatabase } from "./database.js";
 import { CouncilValidationError } from "./errors.js";
@@ -37,6 +41,7 @@ import type {
   PaginatedTopics,
   Topic,
   TopicDetail,
+  WorkItem,
 } from "./types.js";
 
 const topicIdField = z
@@ -47,6 +52,7 @@ const topicIdField = z
 const messageKindField = z.enum(MESSAGE_KINDS);
 const topicStatusField = z.enum(TOPIC_STATUSES);
 const decisionStatusField = z.enum(["proposed", "accepted", "rejected", "superseded"]);
+const workItemStatusField = z.enum(WORK_ITEM_STATUSES);
 
 const actorSnapshotOutput = z.object({
   schemaVersion: z.literal(1),
@@ -91,6 +97,23 @@ const decisionOutput = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
+const workItemOutput = z.object({
+  id: z.string(),
+  topicId: z.string(),
+  decisionId: z.string(),
+  title: z.string(),
+  details: z.string(),
+  status: workItemStatusField,
+  statusNote: z.string().optional(),
+  version: z.number().int().positive(),
+  createdByActorId: z.string(),
+  createdBySnapshot: actorSnapshotOutput,
+  updatedByActorId: z.string(),
+  updatedBySnapshot: actorSnapshotOutput,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().optional(),
+});
 
 function toStructured(value: object): Record<string, unknown> {
   return { ...value };
@@ -119,6 +142,8 @@ function publicError(error: unknown): string {
     "缺少环境变量",
     "环境变量",
     "COUNCIL_",
+    "实施项",
+    "当前议题没有可绑定的 Accepted 决策",
   ];
   return safePrefixes.some((prefix) => error.message.startsWith(prefix))
     ? error.message
@@ -180,6 +205,15 @@ function formatDecision(decision: Decision): string {
   ].join("\n");
 }
 
+function formatWorkItem(workItem: WorkItem): string {
+  return [
+    `- [${workItem.status === "completed" ? "x" : " "}] **${workItem.title}** · ${workItem.status} · v${String(workItem.version)}`,
+    ...(workItem.details ? [`  ${workItem.details}`] : []),
+    ...(workItem.statusNote ? [`  状态说明：${workItem.statusNote}`] : []),
+    `  实施项 ID：${workItem.id}`,
+  ].join("\n");
+}
+
 function formatTopicDetail(detail: TopicDetail): string {
   const pagination = detail.hasMoreMessages
     ? `当前显示 ${detail.messages.length}/${detail.messageTotal} 条；使用 message_offset=${String(detail.nextMessageOffset)} 读取更早记录。`
@@ -198,6 +232,11 @@ function formatTopicDetail(detail: TopicDetail): string {
     detail.decisions.length > 0
       ? detail.decisions.map(formatDecision).join("\n\n")
       : "暂无决策。",
+    "",
+    "# 实施进度",
+    detail.workItems.length > 0
+      ? detail.workItems.map(formatWorkItem).join("\n")
+      : "暂无实施项。",
   ].join("\n");
 }
 
@@ -294,6 +333,7 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
         topic: topicOutput,
         messages: z.array(messageOutput),
         decisions: z.array(decisionOutput),
+        workItems: z.array(workItemOutput),
         messageTotal: z.number().int(),
         messageLimit: z.number().int(),
         messageOffset: z.number().int(),
@@ -436,6 +476,89 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
   );
 
   server.registerTool(
+    "council_add_work_items",
+    {
+      title: "拆分决策实施项",
+      description:
+        "为议题最新的 Accepted 决策添加可追踪实施项。仅记录真实计划，不得把尚未实现的功能标成已完成；同一决策内标题不允许重复。",
+      inputSchema: {
+        topic_id: topicIdField,
+        decision_id: z
+          .string()
+          .max(MAX_ID_CHARS)
+          .regex(/^decision_[A-Za-z0-9-]+$/, "decision_id 格式无效")
+          .optional()
+          .describe("省略时绑定该议题最新的 Accepted 决策"),
+        items: z
+          .array(z.object({
+            title: z.string().min(1).max(MAX_TITLE_CHARS),
+            details: z.string().max(MAX_WORK_ITEM_DETAILS_CHARS).default(""),
+          }))
+          .min(1)
+          .max(MAX_WORK_ITEM_BATCH),
+      },
+      outputSchema: { workItems: z.array(workItemOutput) },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, decision_id, items }) =>
+      await executeTool("council_add_work_items", () => {
+        const workItems = database.createWorkItemsAsActor({
+          topicId: topic_id,
+          ...(decision_id ? { decisionId: decision_id } : {}),
+          items,
+          actorId: caller.actorId,
+        });
+        return success(
+          [`已添加 ${String(workItems.length)} 个实施项。`, ...workItems.map(formatWorkItem)].join("\n"),
+          { workItems },
+        );
+      }),
+  );
+
+  server.registerTool(
+    "council_update_work_item",
+    {
+      title: "更新实施进度",
+      description:
+        "更新一个实施项的待开始、进行中、阻塞或完成状态。只有在代码、验证或交付结果确实完成后才能标记 completed；status_note 应简述证据或阻塞原因。expected_version 用于拒绝并发覆盖。",
+      inputSchema: {
+        topic_id: topicIdField,
+        work_item_id: z
+          .string()
+          .max(MAX_ID_CHARS)
+          .regex(/^work_item_[A-Za-z0-9-]+$/, "work_item_id 格式无效"),
+        status: workItemStatusField,
+        expected_version: z.number().int().positive(),
+        status_note: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
+      },
+      outputSchema: { workItem: workItemOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, work_item_id, status, expected_version, status_note }) =>
+      await executeTool("council_update_work_item", () => {
+        const workItem = database.updateWorkItemAsActor({
+          topicId: topic_id,
+          workItemId: work_item_id,
+          status,
+          expectedVersion: expected_version,
+          ...(status_note !== undefined ? { statusNote: status_note } : {}),
+          actorId: caller.actorId,
+        });
+        return success(formatWorkItem(workItem), { workItem });
+      }),
+  );
+
+  server.registerTool(
     "council_check_claude",
     {
       title: "检查 Claude 顾问",
@@ -546,6 +669,7 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
         topics: z.number().int(),
         messages: z.number().int(),
         decisions: z.number().int(),
+        workItems: z.number().int(),
       },
       annotations: {
         readOnlyHint: true,
@@ -558,7 +682,7 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
       await executeTool("council_get_status", () => {
         const counts = database.getCounts();
         return success(
-          `Council 状态：${String(counts.topics)} 个议题，${String(counts.messages)} 条消息，${String(counts.decisions)} 个决策。`,
+          `Council 状态：${String(counts.topics)} 个议题，${String(counts.messages)} 条消息，${String(counts.decisions)} 个决策，${String(counts.workItems)} 个实施项。`,
           counts,
         );
       }),

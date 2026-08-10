@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：议题、流体消息列、圆桌上下行模式项、检查器、对话框与决策归档样式
+ * @output 导出：议题、流体消息列、圆桌上下行模式项、实施进度、检查器、对话框与决策归档样式
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -684,6 +684,268 @@
 
 .summary-participants .agent-avatar + .agent-avatar {
   margin-left: -6px;
+}
+
+.implementation-card {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-raised);
+}
+
+.implementation-heading,
+.implementation-heading > div,
+.implementation-kicker,
+.implementation-alert,
+.work-item,
+.work-item-form-heading,
+.work-item-add,
+.work-item-submit {
+  display: flex;
+  align-items: center;
+}
+
+.implementation-heading {
+  justify-content: space-between;
+}
+
+.implementation-heading > div {
+  align-items: flex-end;
+  gap: 9px;
+}
+
+.implementation-kicker {
+  gap: 5px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.implementation-heading strong,
+.implementation-percent {
+  font-family: var(--font-mono);
+}
+
+.implementation-heading strong {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.implementation-percent {
+  color: var(--color-focus);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.implementation-progress-track {
+  height: 5px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--color-surface-hover);
+}
+
+.implementation-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-positive);
+  transition: width var(--transition-medium);
+}
+
+.implementation-alert {
+  gap: 6px;
+  margin: 9px 0 0;
+  color: var(--color-warning);
+  font-size: 10px;
+}
+
+.implementation-empty {
+  margin: 13px 0 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.work-item-list {
+  display: grid;
+  gap: 1px;
+  padding: 0;
+  margin: 13px -4px 0;
+  list-style: none;
+}
+
+.work-item {
+  position: relative;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 4px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.work-item-marker {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+}
+
+.work-item-completed .work-item-marker {
+  border-color: var(--color-positive);
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+}
+
+.work-item-blocked .work-item-marker {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.work-item-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.work-item-copy strong,
+.work-item-copy small {
+  display: block;
+}
+
+.work-item-copy strong {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.work-item-completed .work-item-copy strong {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.work-item-copy p,
+.work-item-copy blockquote {
+  margin: 3px 0 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.work-item-copy blockquote {
+  padding-left: 7px;
+  border-left: 2px solid var(--color-border-strong);
+}
+
+.work-item-copy small {
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.work-item-status-select {
+  flex: none;
+  width: 72px;
+  min-height: 26px;
+  padding: 0 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 9px;
+}
+
+.work-item-saving {
+  position: absolute;
+  right: 5px;
+  bottom: 1px;
+  color: var(--color-focus);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.work-item-add,
+.work-item-submit {
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  margin-top: 11px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.work-item-add:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-focus);
+}
+
+.work-item-form {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-divider);
+}
+
+.work-item-form-heading {
+  justify-content: space-between;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.work-item-form-heading button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.work-item-form input,
+.work-item-form textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 10px;
+}
+
+.work-item-form input {
+  min-height: 34px;
+  padding: 0 9px;
+}
+
+.work-item-form textarea {
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.work-item-form input:focus,
+.work-item-form textarea:focus {
+  border-color: var(--color-focus);
+}
+
+.work-item-submit {
+  margin-top: 0;
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-focus);
 }
 
 .auto-rounds-card {

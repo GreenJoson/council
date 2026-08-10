@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v10 Actor/Model Router/RuntimeBinding/Cycle SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v10 通用 ACP Runtime/逻辑请求/session/capability 唯一 schema、查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v11 Actor/Model Router/RuntimeBinding/Cycle/实施项 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v11 schema、内容与实施项查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,16 +13,17 @@ use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
 use crate::types::{
-    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, Decision, DecisionStatus,
-    MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
-    TopicStatus,
+    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, CreateWorkItemsInput,
+    Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput,
+    Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 10;
+const SUPPORTED_SCHEMA_VERSION: i64 = 11;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
     "decisions",
+    "work_items",
     "agent_sessions",
     "council_meta",
     "council_identity",
@@ -42,6 +43,8 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_topics_project_updated",
     "idx_messages_topic_created",
     "idx_decisions_topic_created",
+    "idx_work_items_topic_status",
+    "idx_work_items_decision_title",
     "idx_actor_identities_status_slug",
     "idx_actor_aliases_actor",
     "idx_agent_sessions_current",
@@ -70,6 +73,9 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_decisions_revision_insert",
     "trg_decisions_revision_update",
     "trg_decisions_revision_delete",
+    "trg_work_items_revision_insert",
+    "trg_work_items_revision_update",
+    "trg_work_items_revision_delete",
     "trg_runtime_bindings_revision_insert",
     "trg_runtime_bindings_revision_update",
     "trg_runtime_bindings_revision_delete",
@@ -121,6 +127,23 @@ const DECISION_COLUMNS: &[&str] = &[
     "created_by_legacy",
     "created_at",
     "updated_at",
+];
+const WORK_ITEM_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "decision_id",
+    "title",
+    "details",
+    "status",
+    "status_note",
+    "version",
+    "created_by_actor_id",
+    "created_by_snapshot_json",
+    "updated_by_actor_id",
+    "updated_by_snapshot_json",
+    "created_at",
+    "updated_at",
+    "completed_at",
 ];
 const SESSION_COLUMNS: &[&str] = &[
     "id",
@@ -414,6 +437,7 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_table_columns(connection, "topics", TOPIC_COLUMNS)?;
     assert_table_columns(connection, "messages", MESSAGE_COLUMNS)?;
     assert_table_columns(connection, "decisions", DECISION_COLUMNS)?;
+    assert_table_columns(connection, "work_items", WORK_ITEM_COLUMNS)?;
     assert_table_columns(connection, "agent_sessions", SESSION_COLUMNS)?;
     assert_table_columns(connection, "brand_assets", BRAND_COLUMNS)?;
     assert_table_columns(connection, "provider_profiles", PROVIDER_COLUMNS)?;
@@ -458,6 +482,8 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     )?;
     assert_foreign_key(connection, "messages", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
+    assert_foreign_key(connection, "work_items", "topic_id", "topics", "id")?;
+    assert_foreign_key(connection, "work_items", "decision_id", "decisions", "id")?;
     assert_foreign_key(connection, "runtime_bindings", "topic_id", "topics", "id")?;
     assert_foreign_key(
         connection,
@@ -501,6 +527,16 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "idx_decisions_topic_created",
         &["topic_id", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_items_topic_status",
+        &["topic_id", "status", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_items_decision_title",
+        &["decision_id", "title"],
     )?;
     assert_index_columns(
         connection,
@@ -567,6 +603,16 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "runtime_binding_requests",
         &["PRIMARY KEY (topic_id, agent_id, request_message_id)"],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "work_items",
+        &[
+            "status IN ('pending', 'in_progress', 'blocked', 'completed')",
+            "version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)",
+            "(status = 'completed' AND completed_at IS NOT NULL)",
+            "(status <> 'completed' AND completed_at IS NULL)",
+        ],
     )?;
     assert_table_sql_contains(
         connection,
@@ -663,6 +709,25 @@ struct DecisionRow {
     created_by_snapshot_json: String,
     created_at: String,
     updated_at: String,
+}
+
+#[derive(Debug)]
+struct WorkItemRow {
+    id: String,
+    topic_id: String,
+    decision_id: String,
+    title: String,
+    details: String,
+    status: String,
+    status_note: Option<String>,
+    version: i64,
+    created_by_actor_id: String,
+    created_by_snapshot_json: String,
+    updated_by_actor_id: String,
+    updated_by_snapshot_json: String,
+    created_at: String,
+    updated_at: String,
+    completed_at: Option<String>,
 }
 
 struct ResolvedActor {
@@ -846,6 +911,19 @@ impl CouncilStore {
             .into_iter()
             .map(decision_from_row)
             .collect::<CouncilResult<Vec<_>>>()?;
+        let mut work_item_statement = self.connection.prepare(
+            "SELECT id, topic_id, decision_id, title, details, status, status_note, version, \
+             created_by_actor_id, created_by_snapshot_json, updated_by_actor_id, \
+             updated_by_snapshot_json, created_at, updated_at, completed_at \
+             FROM work_items WHERE topic_id = ?1 ORDER BY created_at ASC, rowid ASC",
+        )?;
+        let work_item_rows = work_item_statement
+            .query_map(params![id], read_work_item_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        let work_items = work_item_rows
+            .into_iter()
+            .map(work_item_from_row)
+            .collect::<CouncilResult<Vec<_>>>()?;
         let message_total = non_negative(message_count, "messages count")?;
         let returned_count = u64::try_from(messages.len())
             .map_err(|_| CouncilError::InvalidData("messages count 超出范围。".into()))?;
@@ -855,6 +933,7 @@ impl CouncilStore {
             topic,
             messages,
             decisions,
+            work_items,
             message_total,
             message_limit,
             message_offset,
@@ -1007,6 +1086,164 @@ impl CouncilStore {
         })
     }
 
+    pub fn create_work_items(
+        &mut self,
+        input: CreateWorkItemsInput,
+    ) -> CouncilResult<Vec<WorkItem>> {
+        self.require_topic(&input.topic_id)?;
+        if input.items.is_empty() {
+            return Err(CouncilError::Conflict("至少需要一个实施项。".into()));
+        }
+        let actor = self.resolve_active_actor(&input.actor_alias)?;
+        let decision = if let Some(decision_id) = input.decision_id.as_deref() {
+            self.connection
+                .query_row(
+                    "SELECT id, status FROM decisions WHERE id = ?1 AND topic_id = ?2",
+                    params![decision_id, input.topic_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+        } else {
+            self.connection
+                .query_row(
+                    "SELECT id, status FROM decisions \
+                     WHERE topic_id = ?1 AND status = 'accepted' \
+                     ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                    params![input.topic_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+        };
+        let Some((decision_id, decision_status)) = decision else {
+            return Err(CouncilError::NotFound(
+                "当前议题没有可绑定的 Accepted 决策。".into(),
+            ));
+        };
+        if decision_status != "accepted" {
+            return Err(CouncilError::Conflict(
+                "实施项只能绑定 Accepted 决策。".into(),
+            ));
+        }
+        let mut normalized_items = Vec::with_capacity(input.items.len());
+        let mut normalized_titles = std::collections::HashSet::new();
+        for item in input.items {
+            let title = item.title.trim().to_string();
+            if title.is_empty() {
+                return Err(CouncilError::Conflict("实施项标题不能为空。".into()));
+            }
+            if !normalized_titles.insert(title.to_lowercase()) {
+                return Err(CouncilError::Conflict(
+                    "同一批实施项不能包含重复标题。".into(),
+                ));
+            }
+            normalized_items.push((title, item.details.trim().to_string()));
+        }
+
+        let now = now_iso();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut created_ids = Vec::with_capacity(normalized_items.len());
+        for (title, details) in normalized_items {
+            let duplicate: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM work_items \
+                 WHERE decision_id = ?1 AND title = ?2 COLLATE NOCASE)",
+                params![decision_id, title],
+                |row| row.get(0),
+            )?;
+            if duplicate {
+                return Err(CouncilError::Conflict(format!("实施项“{title}”已经存在。")));
+            }
+            let id = format!("work_item_{}", Uuid::new_v4());
+            transaction.execute(
+                "INSERT INTO work_items (
+                   id, topic_id, decision_id, title, details, status, status_note, version,
+                   created_by_actor_id, created_by_snapshot_json,
+                   updated_by_actor_id, updated_by_snapshot_json,
+                   created_at, updated_at, completed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, 1, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+                params![
+                    id,
+                    input.topic_id,
+                    decision_id,
+                    title,
+                    details,
+                    actor.id,
+                    actor.snapshot_json,
+                    actor.id,
+                    actor.snapshot_json,
+                    now,
+                    now,
+                ],
+            )?;
+            created_ids.push(id);
+        }
+        transaction.execute(
+            "UPDATE topics SET updated_at = ?1 WHERE id = ?2",
+            params![now, input.topic_id],
+        )?;
+        transaction.commit()?;
+        created_ids
+            .into_iter()
+            .map(|id| self.require_work_item(&id, &input.topic_id))
+            .collect()
+    }
+
+    pub fn update_work_item(&mut self, input: UpdateWorkItemInput) -> CouncilResult<WorkItem> {
+        self.require_topic(&input.topic_id)?;
+        let actor = self.resolve_active_actor(&input.actor_alias)?;
+        let current = self.require_work_item(&input.work_item_id, &input.topic_id)?;
+        if current.version != input.expected_version {
+            return Err(CouncilError::Conflict(
+                "实施项已被其他参与者更新，请刷新后重试。".into(),
+            ));
+        }
+        let now = now_iso();
+        let status_note = match input.status_note {
+            Some(note) => {
+                let trimmed = note.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            None => current.status_note,
+        };
+        let completed_at = if input.status == WorkItemStatus::Completed {
+            current.completed_at.or_else(|| Some(now.clone()))
+        } else {
+            None
+        };
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE work_items SET status = ?1, status_note = ?2, version = version + 1,
+               updated_by_actor_id = ?3, updated_by_snapshot_json = ?4,
+               updated_at = ?5, completed_at = ?6
+             WHERE id = ?7 AND topic_id = ?8 AND version = ?9",
+            params![
+                input.status.as_db(),
+                status_note,
+                actor.id,
+                actor.snapshot_json,
+                now,
+                completed_at,
+                input.work_item_id,
+                input.topic_id,
+                input.expected_version,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(CouncilError::Conflict(
+                "实施项已被其他参与者更新，请刷新后重试。".into(),
+            ));
+        }
+        transaction.execute(
+            "UPDATE topics SET updated_at = ?1 WHERE id = ?2",
+            params![now, input.topic_id],
+        )?;
+        transaction.commit()?;
+        self.require_work_item(&input.work_item_id, &input.topic_id)
+    }
+
     pub fn get_revisions(&self) -> CouncilResult<CouncilRevisions> {
         let mut statement = self.connection.prepare(
             "SELECT key, value FROM council_meta \
@@ -1047,6 +1284,24 @@ impl CouncilStore {
             None => Err(CouncilError::NotFound(format!(
                 "议题 {id} 不存在。请先列出议题或创建新议题。"
             ))),
+        }
+    }
+
+    fn require_work_item(&self, id: &str, topic_id: &str) -> CouncilResult<WorkItem> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT id, topic_id, decision_id, title, details, status, status_note, version,
+                 created_by_actor_id, created_by_snapshot_json, updated_by_actor_id,
+                 updated_by_snapshot_json, created_at, updated_at, completed_at
+                 FROM work_items WHERE id = ?1 AND topic_id = ?2",
+                params![id, topic_id],
+                read_work_item_row,
+            )
+            .optional()?;
+        match row {
+            Some(row) => work_item_from_row(row),
+            None => Err(CouncilError::NotFound(format!("实施项 {id} 不存在。"))),
         }
     }
 }
@@ -1092,6 +1347,26 @@ fn read_decision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DecisionRow> {
         created_by_snapshot_json: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+    })
+}
+
+fn read_work_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItemRow> {
+    Ok(WorkItemRow {
+        id: row.get(0)?,
+        topic_id: row.get(1)?,
+        decision_id: row.get(2)?,
+        title: row.get(3)?,
+        details: row.get(4)?,
+        status: row.get(5)?,
+        status_note: row.get(6)?,
+        version: row.get(7)?,
+        created_by_actor_id: row.get(8)?,
+        created_by_snapshot_json: row.get(9)?,
+        updated_by_actor_id: row.get(10)?,
+        updated_by_snapshot_json: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        completed_at: row.get(14)?,
     })
 }
 
@@ -1146,6 +1421,36 @@ fn decision_from_row(row: DecisionRow) -> CouncilResult<Decision> {
         created_by_snapshot,
         created_at: row.created_at,
         updated_at: row.updated_at,
+    })
+}
+
+fn work_item_from_row(row: WorkItemRow) -> CouncilResult<WorkItem> {
+    let created_by_snapshot =
+        parse_actor_snapshot(&row.created_by_snapshot_json, &row.created_by_actor_id)?;
+    let updated_by_snapshot =
+        parse_actor_snapshot(&row.updated_by_snapshot_json, &row.updated_by_actor_id)?;
+    let version = u32::try_from(row.version)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CouncilError::InvalidData("实施项 version 无效。".into()))?;
+    Ok(WorkItem {
+        id: row.id,
+        topic_id: row.topic_id,
+        decision_id: row.decision_id,
+        title: row.title,
+        details: row.details,
+        status: WorkItemStatus::from_db(&row.status).ok_or_else(|| {
+            CouncilError::InvalidData(format!("未知 WorkItem status：{}", row.status))
+        })?,
+        status_note: row.status_note.filter(|value| !value.is_empty()),
+        version,
+        created_by_actor_id: row.created_by_actor_id,
+        created_by_snapshot,
+        updated_by_actor_id: row.updated_by_actor_id,
+        updated_by_snapshot,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        completed_at: row.completed_at.filter(|value| !value.is_empty()),
     })
 }
 

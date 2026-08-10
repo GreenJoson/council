@@ -126,6 +126,7 @@ function createSecondaryTopic(
     alternatives: [
       { id: `${id}-a1`, title: "保持现状并补充监控", author: "codex", createdLabel: "10:20" },
     ],
+    workItems: [],
     decision: {
       ...defaultDecision,
       title: "等待更多证据",
@@ -176,6 +177,7 @@ const transportLegacyTopic: TopicDetail = {
   alternatives: [
     { id: "transport-legacy-a1", title: "引入消息队列做事件驱动同步", author: "claude", createdLabel: "两周前" },
   ],
+  workItems: [],
   decision: {
     title: "REST 回调 + 定时对账轮询",
     summary: "库存服务通过 REST 回调通知订单服务扣减结果，订单服务每 5 分钟轮询一次做兜底对账。",
@@ -238,6 +240,7 @@ const transportGrpcTopic: TopicDetail = {
   alternatives: [
     { id: "transport-grpc-a1", title: "继续沿用 REST 回调，缩短轮询周期", author: "codex", createdLabel: "3 天前" },
   ],
+  workItems: [],
   decision: {
     title: "迁移到 gRPC 双向流同步",
     summary: "订单服务与库存服务之间改用 gRPC 双向流实时推送扣减结果，废弃轮询兜底。",
@@ -341,6 +344,7 @@ function transition(current: State, next: State): State {
     { id: "alternative-db", title: "仅使用数据库唯一索引", author: "codex", createdLabel: "11:15" },
     { id: "alternative-lock", title: "使用短期分布式锁", author: "claude", createdLabel: "10:40" },
   ],
+  workItems: [],
   decision: defaultDecision,
 };
 

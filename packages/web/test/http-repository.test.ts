@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpCouncilRepository、HTTP 客户端和可控 Fetch/SSE 替身
- * @output 导出：HTTP 错误、人工 Accepted、真实写入、事件刷新与只读详情测试
+ * @output 导出：HTTP 错误、人工 Accepted、内容/实施项写入、事件刷新与只读详情测试
  * @pos    Web 真实数据层的传输与实时同步回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -177,6 +177,7 @@ function createApiFixture(): ApiFixture {
         topic,
         messages: topic.id === "topic-one" ? messages : [],
         decisions: topic.id === "topic-one" ? decisions : [],
+        workItems: [],
         messageTotal: topic.id === "topic-one" ? messages.length : 0,
         messageLimit: 100,
         messageOffset: 0,

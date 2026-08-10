@@ -50,6 +50,7 @@ function createDetail(): TopicDetail {
       authorSnapshot: actorSnapshot("Alternative Old", "AO"),
       createdLabel: "更名前",
     }],
+    workItems: [],
     decision: {
       title: "采用冻结身份",
       summary: "历史内容不随 Actor 改名漂移。",

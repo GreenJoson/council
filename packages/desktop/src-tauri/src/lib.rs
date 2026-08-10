@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与动态 Actor Rust Store
- * @output 导出：迁移 ready + 身份门后的 Actor alias 内容、设置和编排服务命令
+ * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/实施项、设置和编排服务命令
  * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,8 +10,9 @@ mod settings;
 mod validation;
 
 use council_core::{
-    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, Decision, DecisionStatus,
-    MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
+    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, CreateWorkItemEntry,
+    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput,
+    RecordDecisionInput, Topic, TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemStatus,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -81,6 +82,32 @@ struct RecordDecisionCommand {
     rationale: String,
     alternatives: Vec<String>,
     status: DecisionStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateWorkItemCommandEntry {
+    title: String,
+    #[serde(default)]
+    details: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateWorkItemsCommand {
+    topic_id: String,
+    decision_id: Option<String>,
+    items: Vec<CreateWorkItemCommandEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateWorkItemCommand {
+    topic_id: String,
+    work_item_id: String,
+    status: WorkItemStatus,
+    status_note: Option<String>,
+    expected_version: u32,
 }
 
 /// 用户主目录；只用于判断日志库是否落在系统隐私保护范围内。
@@ -359,6 +386,87 @@ fn record_decision(
 }
 
 #[tauri::command]
+fn add_work_items(
+    input: CreateWorkItemsCommand,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<WorkItem>, String> {
+    validation::identifier(&input.topic_id, "topic_", "topicId")?;
+    if let Some(decision_id) = input.decision_id.as_deref() {
+        validation::identifier(decision_id, "decision_", "decisionId")?;
+    }
+    if input.items.is_empty() || input.items.len() > validation::MAX_WORK_ITEM_COUNT {
+        return Err(format!(
+            "items 数量必须在 1 到 {} 之间",
+            validation::MAX_WORK_ITEM_COUNT
+        ));
+    }
+    for item in &input.items {
+        validation::non_blank(&item.title, validation::MAX_TITLE_CHARS, "items.title")?;
+        if item.details.chars().count() > validation::MAX_WORK_ITEM_DETAILS_CHARS {
+            return Err(format!(
+                "items.details 不能超过 {} 个字符",
+                validation::MAX_WORK_ITEM_DETAILS_CHARS
+            ));
+        }
+    }
+    let (items, revisions) = with_store(&state, |store| {
+        let items = store.create_work_items(CreateWorkItemsInput {
+            topic_id: input.topic_id,
+            decision_id: input.decision_id,
+            items: input
+                .items
+                .into_iter()
+                .map(|item| CreateWorkItemEntry {
+                    title: item.title,
+                    details: item.details,
+                })
+                .collect(),
+            actor_alias: "human".into(),
+        })?;
+        let revisions = store.get_revisions()?;
+        Ok((items, revisions))
+    })?;
+    emit_content_changed(&app, revisions);
+    Ok(items)
+}
+
+#[tauri::command]
+fn update_work_item(
+    input: UpdateWorkItemCommand,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<WorkItem, String> {
+    validation::identifier(&input.topic_id, "topic_", "topicId")?;
+    validation::identifier(&input.work_item_id, "work_item_", "workItemId")?;
+    if input.expected_version == 0 {
+        return Err("expectedVersion 必须是正整数".into());
+    }
+    if let Some(note) = input.status_note.as_deref()
+        && note.chars().count() > validation::MAX_WORK_ITEM_STATUS_NOTE_CHARS
+    {
+        return Err(format!(
+            "statusNote 不能超过 {} 个字符",
+            validation::MAX_WORK_ITEM_STATUS_NOTE_CHARS
+        ));
+    }
+    let (item, revisions) = with_store(&state, |store| {
+        let item = store.update_work_item(UpdateWorkItemInput {
+            topic_id: input.topic_id,
+            work_item_id: input.work_item_id,
+            status: input.status,
+            status_note: input.status_note,
+            expected_version: input.expected_version,
+            actor_alias: "human".into(),
+        })?;
+        let revisions = store.get_revisions()?;
+        Ok((item, revisions))
+    })?;
+    emit_content_changed(&app, revisions);
+    Ok(item)
+}
+
+#[tauri::command]
 fn get_status(state: tauri::State<'_, AppState>) -> Result<DesktopStatus, String> {
     let revisions = with_store(&state, |store| store.get_revisions())?;
     Ok(DesktopStatus {
@@ -560,6 +668,8 @@ pub fn run() {
             create_topic,
             post_message,
             record_decision,
+            add_work_items,
+            update_work_item,
             get_status,
             get_orchestration_config,
             check_orchestration_service,

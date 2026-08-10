@@ -1,6 +1,6 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
- * @output 导出：写入时冻结 Mock Actor 快照、支持人工 Accepted 的同构数据实现
+ * @output 导出：写入时冻结 Mock Actor 快照、支持人工 Accepted 与实施项流转的同构数据实现
  * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受（同时写入 decidedAt 供架构档案
  *         ADR 编号排序）与只读议题详情加载
  *
@@ -10,10 +10,12 @@
 import { createMockWorkspace, mockActorSnapshot } from "./mock-data";
 import type { CouncilRepository, WorkspaceListener } from "./repository";
 import type {
+  AddWorkItemsInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
   TopicDetail,
+  UpdateWorkItemInput,
   WorkspaceSnapshot,
 } from "../types/council";
 
@@ -72,6 +74,7 @@ export class MockCouncilRepository implements CouncilRepository {
       })),
       evidence: [],
       alternatives: [],
+      workItems: [],
     };
     this.#snapshot.topics.unshift(topic);
     this.#snapshot.activeTopicId = topicId;
@@ -129,6 +132,60 @@ export class MockCouncilRepository implements CouncilRepository {
     };
     topic.status = "decided";
     topic.updatedLabel = "刚刚";
+    return this.#publishSnapshot();
+  }
+
+  async addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    const topic = this.#findTopic(input.topicId);
+    if (topic.decision?.status !== "accepted") {
+      throw new Error("当前议题没有可绑定的 Accepted 决策");
+    }
+    const snapshot = mockActorSnapshot("human");
+    topic.workItems.push(...input.items.map((item) => ({
+      id: `work_item_${crypto.randomUUID()}`,
+      decisionId: input.decisionId ?? `${topic.id}-accepted-decision`,
+      title: item.title.trim(),
+      details: item.details?.trim() ?? "",
+      status: "pending" as const,
+      version: 1,
+      createdBy: "human",
+      createdBySnapshot: snapshot,
+      updatedBy: "human",
+      updatedBySnapshot: snapshot,
+      createdLabel: "刚刚",
+      updatedLabel: "刚刚",
+    })));
+    topic.updatedLabel = "刚刚";
+    this.#snapshot.activeTopicId = input.topicId;
+    return this.#publishSnapshot();
+  }
+
+  async updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    const topic = this.#findTopic(input.topicId);
+    const item = topic.workItems.find((candidate) => candidate.id === input.workItemId);
+    if (!item) {
+      throw new Error("实施项不存在");
+    }
+    if (item.version !== input.expectedVersion) {
+      throw new Error("实施项已被其他参与者更新，请刷新后重试");
+    }
+    item.status = input.status;
+    item.version += 1;
+    item.updatedBy = "human";
+    item.updatedBySnapshot = mockActorSnapshot("human");
+    item.updatedLabel = "刚刚";
+    if (input.statusNote?.trim()) {
+      item.statusNote = input.statusNote.trim();
+    }
+    if (input.status === "completed") {
+      item.completedLabel = "刚刚";
+    } else {
+      delete item.completedLabel;
+    }
+    topic.updatedLabel = "刚刚";
+    this.#snapshot.activeTopicId = input.topicId;
     return this.#publishSnapshot();
   }
 

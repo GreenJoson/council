@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri invoke、event 与原生目录对话框
- * @output 导出：可注入测试的 DesktopBridge、设置类型与本地 Agent 服务配置/健康解析
+ * @output 导出：可注入测试的 DesktopBridge（含实施项写入）、设置类型与本地 Agent 服务配置/健康解析
  * @pos    浏览器领域代码进入 Tauri IPC 的唯一低层边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -42,6 +42,8 @@ export interface DesktopBridge {
   createTopic(args: Record<string, unknown>): Promise<unknown>;
   postMessage(args: Record<string, unknown>): Promise<unknown>;
   recordDecision(input: Record<string, unknown>): Promise<unknown>;
+  addWorkItems(input: Record<string, unknown>): Promise<unknown>;
+  updateWorkItem(input: Record<string, unknown>): Promise<unknown>;
   getStatus(): Promise<unknown>;
   listenChanged(handler: (payload: unknown) => void): Promise<UnlistenFn>;
   getOrchestrationConfig(): Promise<DesktopOrchestrationConfig>;
@@ -158,6 +160,8 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
     createTopic: (args) => runtime.invoke("create_topic", args),
     postMessage: (args) => runtime.invoke("post_message", args),
     recordDecision: (input) => runtime.invoke("record_decision", { input }),
+    addWorkItems: (input) => runtime.invoke("add_work_items", { input }),
+    updateWorkItem: (input) => runtime.invoke("update_work_item", { input }),
     getStatus: () => runtime.invoke("get_status"),
     listenChanged: (handler) => runtime.listen("council://changed", handler),
     getOrchestrationConfig: async () =>

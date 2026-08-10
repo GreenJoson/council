@@ -24,6 +24,12 @@ export const DECISION_STATUSES = [
   "rejected",
   "superseded",
 ] as const;
+export const WORK_ITEM_STATUSES = [
+  "pending",
+  "in_progress",
+  "blocked",
+  "completed",
+] as const;
 
 export const MAX_TITLE_CHARS = 200;
 export const MAX_ID_CHARS = 250;
@@ -35,6 +41,9 @@ export const MAX_CONSTRAINT_CHARS = 1_000;
 export const MAX_ALTERNATIVE_COUNT = 30;
 export const MAX_LIST_LIMIT = 100;
 export const MAX_ORCHESTRATION_PLAN_ROUNDS = 50;
+export const MAX_WORK_ITEM_BATCH = 50;
+export const MAX_WORK_ITEM_DETAILS_CHARS = 8_000;
+export const MAX_WORK_ITEM_STATUS_NOTE_CHARS = 4_000;
 /** 单个圆桌的轮次预算上限：再多说明分歧不该由 Agent 自己吵出结果。 */
 export const MAX_CYCLE_ROUND_BUDGET = 10;
 export const MAX_ORCHESTRATION_STARTUP_SCAN = 10_000;
