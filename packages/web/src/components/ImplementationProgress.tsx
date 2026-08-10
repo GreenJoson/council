@@ -1,6 +1,6 @@
 /**
  * @input  依赖：议题实施项、AI 任务规划能力、动态 Actor、手动补充与带证据的状态更新回调
- * @output 导出：AI 拆分、人工补充、离散状态与进度证据合一的实施计划卡片
+ * @output 导出：右栏实施进度摘要，以及主区 AI 拆分、人工补充和证据化任务清单
  * @pos    Accepted 架构决策与外部 Codex/Claude 实际交付之间的可审计执行账本
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -42,6 +42,55 @@ export interface ImplementationProgressProps {
   ) => Promise<void>;
 }
 
+export interface ImplementationSummaryProps {
+  topic: TopicDetail;
+}
+
+function getImplementationStats(topic: TopicDetail) {
+  const completed = topic.workItems.filter((item) => item.status === "completed").length;
+  const blocked = topic.workItems.filter((item) => item.status === "blocked").length;
+  const progress = topic.workItems.length === 0
+    ? 0
+    : Math.round((completed / topic.workItems.length) * 100);
+  return { completed, blocked, progress };
+}
+
+export function ImplementationSummary({ topic }: ImplementationSummaryProps) {
+  const { completed, blocked, progress } = getImplementationStats(topic);
+
+  return (
+    <section className="implementation-card" aria-labelledby="implementation-summary-heading">
+      <header className="implementation-heading">
+        <div>
+          <span className="implementation-kicker"><ListTodo size={14} /> 实施进度</span>
+          <strong id="implementation-summary-heading">
+            {topic.workItems.length > 0 ? `${completed} / ${topic.workItems.length}` : "尚无任务"}
+          </strong>
+        </div>
+        <span className="implementation-percent">{progress}%</span>
+      </header>
+
+      <div
+        className="implementation-progress-track"
+        role="progressbar"
+        aria-label="实施完成度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <span style={{ width: `${progress}%` }} />
+      </div>
+
+      {blocked > 0 ? (
+        <p className="implementation-alert"><AlertTriangle size={13} /> {blocked} 项受阻，需先解除依赖</p>
+      ) : null}
+      {topic.workItems.length === 0 ? (
+        <p className="implementation-empty">接受架构决策后，即可生成和跟踪实施计划。</p>
+      ) : null}
+    </section>
+  );
+}
+
 export function ImplementationProgress({
   topic,
   participants,
@@ -57,11 +106,7 @@ export function ImplementationProgress({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [nextStatus, setNextStatus] = useState<WorkItemStatus>("pending");
   const [statusNote, setStatusNote] = useState("");
-  const completed = topic.workItems.filter((item) => item.status === "completed").length;
-  const blocked = topic.workItems.filter((item) => item.status === "blocked").length;
-  const progress = topic.workItems.length === 0
-    ? 0
-    : Math.round((completed / topic.workItems.length) * 100);
+  const { blocked } = getImplementationStats(topic);
   const canEdit = topic.decision?.status === "accepted";
   const isGenerating = busyAction === "generate";
 
@@ -92,27 +137,15 @@ export function ImplementationProgress({
   }
 
   return (
-    <section className="implementation-card" aria-labelledby="implementation-heading">
-      <header className="implementation-heading">
+    <section className="implementation-task-card" aria-labelledby="implementation-tasks-heading">
+      <header className="implementation-task-heading">
         <div>
-          <span className="implementation-kicker"><ListTodo size={14} /> 实施计划</span>
-          <strong id="implementation-heading">
-            {topic.workItems.length > 0 ? `${completed} / ${topic.workItems.length}` : "尚无任务"}
+          <span className="implementation-kicker"><ListTodo size={14} /> 任务拆分</span>
+          <strong id="implementation-tasks-heading">
+            {topic.workItems.length > 0 ? `${topic.workItems.length} 项可执行任务` : "尚无任务"}
           </strong>
         </div>
-        <span className="implementation-percent">{progress}%</span>
       </header>
-
-      <div
-        className="implementation-progress-track"
-        role="progressbar"
-        aria-label="实施完成度"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress}
-      >
-        <span style={{ width: `${progress}%` }} />
-      </div>
 
       {blocked > 0 ? (
         <p className="implementation-alert"><AlertTriangle size={13} /> {blocked} 项受阻，需先解除依赖</p>

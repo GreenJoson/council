@@ -227,6 +227,27 @@
     gap: 16px;
   }
 
+  .implementation-task-card {
+    padding: 14px;
+  }
+
+  .implementation-task-card .work-item-main {
+    flex-wrap: wrap;
+  }
+
+  .implementation-task-card .work-item-update-toggle {
+    margin-left: 40px;
+  }
+
+  .implementation-task-card .work-item-update-form {
+    grid-template-columns: 1fr;
+    margin-left: 0;
+  }
+
+  .implementation-task-card .work-item-plan-actions {
+    grid-template-columns: 1fr;
+  }
+
   .message-timeline {
     padding: 16px 10px 12px;
   }

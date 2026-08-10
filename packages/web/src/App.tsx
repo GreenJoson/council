@@ -845,6 +845,11 @@ export default function App() {
               onPublish={handlePublish}
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}
+              workItemBusyAction={workItemBusyAction}
+              planningAgentLabel={planningAgent?.label}
+              onGenerateWorkItems={handleGenerateWorkItems}
+              onAddWorkItem={handleAddWorkItem}
+              onUpdateWorkItem={handleUpdateWorkItem}
               isAccepting={isAccepting}
               onAccept={handleAccept}
               isRecordingManualDecision={isRecordingManualDecision}
@@ -858,11 +863,6 @@ export default function App() {
               isRecordingManualDecision={isRecordingManualDecision}
               isOpen={isInspectorOpen}
               onAccept={handleAccept}
-              workItemBusyAction={workItemBusyAction}
-              planningAgentLabel={planningAgent?.label}
-              onGenerateWorkItems={handleGenerateWorkItems}
-              onAddWorkItem={handleAddWorkItem}
-              onUpdateWorkItem={handleUpdateWorkItem}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               onOpenDecision={() =>
                 setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}

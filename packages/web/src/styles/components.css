@@ -929,6 +929,36 @@
   background: var(--color-surface-raised);
 }
 
+.implementation-task-card {
+  margin-top: 6px;
+  padding: 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-raised);
+}
+
+.implementation-task-heading,
+.implementation-task-heading > div {
+  display: flex;
+  align-items: center;
+}
+
+.implementation-task-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.implementation-task-heading > div {
+  gap: 10px;
+}
+
+.implementation-task-heading strong {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .implementation-heading,
 .implementation-heading > div,
 .implementation-kicker,
@@ -1272,6 +1302,75 @@
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   color: var(--color-focus);
+}
+
+.implementation-task-card .work-item-list {
+  margin: 16px 0 0;
+}
+
+.implementation-task-card .work-item {
+  padding: 18px 8px;
+}
+
+.implementation-task-card .work-item-main {
+  gap: 12px;
+}
+
+.implementation-task-card .work-item-marker {
+  width: 28px;
+  height: 28px;
+}
+
+.implementation-task-card .work-item-copy strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.implementation-task-card .work-item-copy p,
+.implementation-task-card .work-item-copy blockquote {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.implementation-task-card .work-item-copy small {
+  margin-top: 8px;
+  font-size: 9px;
+}
+
+.implementation-task-card .work-item-update-toggle {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 10px;
+}
+
+.implementation-task-card .work-item-update-form {
+  grid-template-columns: 110px minmax(0, 1fr);
+  margin: 12px 0 0 40px;
+  padding: 12px;
+}
+
+.implementation-task-card .work-item-update-form select,
+.implementation-task-card .work-item-update-form textarea,
+.implementation-task-card .work-item-update-actions button,
+.implementation-task-card .work-item-form input,
+.implementation-task-card .work-item-form textarea,
+.implementation-task-card .work-item-form-heading,
+.implementation-task-card .work-item-agent-hint {
+  font-size: 11px;
+}
+
+.implementation-task-card .work-item-plan-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.implementation-task-card .work-item-add,
+.implementation-task-card .work-item-generate,
+.implementation-task-card .work-item-submit {
+  min-height: 38px;
+  font-size: 11px;
 }
 
 .auto-rounds-card {
@@ -1772,10 +1871,11 @@
 }
 
 /*
- * 决策 tab 跟着消息列走同一条流体宽度，不用元数据那条 640px 上限——决策里有
- * 章节、表格和 mermaid，正是需要主列宽度的内容。
+ * 决策与任务 tab 跟着消息列走同一条流体宽度，不用元数据那条 640px 上限——
+ * 决策有章节/图表，任务有长证据清单，都需要主列宽度。
  */
-.topic-decision-panel {
+.topic-decision-panel,
+.topic-implementation-panel {
   flex: 1;
   min-height: 0;
   width: min(

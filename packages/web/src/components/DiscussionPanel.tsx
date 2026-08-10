@@ -1,8 +1,8 @@
 /**
- * @input  依赖：当前项目名、含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
+ * @input  依赖：当前项目名、含 owner/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央工作区（讨论/决策/元数据、人工签署、阶梯导航与引用回复）
- * @pos    Operator Console 的主要阅读、决策通读、元数据核查和回复区域；过长议题问题默认
+ * @output 导出：DiscussionPanel 中央工作区（讨论/决策/任务/元数据、人工签署、阶梯导航与引用回复）
+ * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,7 +10,15 @@
 
 import { Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
+import type {
+  CouncilMessage,
+  CouncilWorkItem,
+  MessageKind,
+  Participant,
+  SyncState,
+  TopicDetail,
+  WorkItemStatus,
+} from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
 import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "./presentation";
 import {
@@ -19,6 +27,7 @@ import {
 } from "./AgentReplyActivity";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { DecisionCard } from "./DecisionCard";
+import { ImplementationProgress } from "./ImplementationProgress";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
@@ -32,6 +41,15 @@ export interface DiscussionPanelProps {
   onPublish: (kind: MessageKind, content: string, mention?: MentionPublishRequest) => Promise<boolean>;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
+  workItemBusyAction: string | null;
+  planningAgentLabel?: string;
+  onGenerateWorkItems: () => Promise<void>;
+  onAddWorkItem: (title: string, details: string) => Promise<boolean>;
+  onUpdateWorkItem: (
+    item: CouncilWorkItem,
+    status: WorkItemStatus,
+    statusNote: string,
+  ) => Promise<void>;
   isAccepting: boolean;
   onAccept: () => Promise<void> | void;
   isRecordingManualDecision: boolean;
@@ -40,7 +58,7 @@ export interface DiscussionPanelProps {
   decisionFocusNonce?: number;
 }
 
-type DiscussionTab = "discussion" | "decision" | "metadata";
+type DiscussionTab = "discussion" | "decision" | "tasks" | "metadata";
 
 const QUOTE_LINE_LIMIT = 88;
 const TIMELINE_FOLLOW_THRESHOLD = 240;
@@ -70,6 +88,11 @@ export function DiscussionPanel({
   onPublish,
   orchestration,
   orchestrationBusyAction,
+  workItemBusyAction,
+  planningAgentLabel,
+  onGenerateWorkItems,
+  onAddWorkItem,
+  onUpdateWorkItem,
   isAccepting,
   onAccept,
   isRecordingManualDecision,
@@ -208,6 +231,7 @@ export function DiscussionPanel({
       participants.get(topic.decision.proposedBy),
     )
     : undefined;
+  const completedWorkItems = topic.workItems.filter((item) => item.status === "completed").length;
 
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
@@ -296,6 +320,23 @@ export function DiscussionPanel({
             {topic.decision?.status === "proposed" ? (
               <span className="tab-dot" aria-label="有待审阅的拟议决策" />
             ) : null}
+          </button>
+          <button
+            className={activeTab === "tasks" ? "active" : ""}
+            type="button"
+            role="tab"
+            id="tasks-tab"
+            aria-selected={activeTab === "tasks"}
+            aria-controls="tasks-tabpanel"
+            onClick={() => setActiveTab("tasks")}
+          >
+            任务
+            <span
+              className="count-pill task-count-pill"
+              aria-label={`已完成 ${String(completedWorkItems)}，共 ${String(topic.workItems.length)} 项任务`}
+            >
+              {completedWorkItems}/{topic.workItems.length}
+            </span>
           </button>
           <button
             className={activeTab === "metadata" ? "active" : ""}
@@ -435,6 +476,24 @@ export function DiscussionPanel({
               </div>
             </div>
           )}
+        </section>
+      ) : activeTab === "tasks" ? (
+        <section
+          className="topic-implementation-panel"
+          id="tasks-tabpanel"
+          role="tabpanel"
+          aria-labelledby="tasks-tab"
+          aria-label="实施任务"
+        >
+          <ImplementationProgress
+            topic={topic}
+            participants={participants}
+            busyAction={workItemBusyAction}
+            planningAgentLabel={planningAgentLabel}
+            onGenerate={onGenerateWorkItems}
+            onAdd={onAddWorkItem}
+            onUpdate={onUpdateWorkItem}
+          />
         </section>
       ) : (
         <section

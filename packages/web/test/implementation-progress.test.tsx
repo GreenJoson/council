@@ -1,6 +1,6 @@
 /**
- * @input  依赖：ImplementationProgress、服务端静态 React 渲染与实施项夹具
- * @output 导出：AI 任务拆分入口、派生完成度、阻塞提示、证据和最后更新 Actor 的 UI 回归测试
+ * @input  依赖：ImplementationProgress/ImplementationSummary、服务端静态 React 渲染与实施项夹具
+ * @output 导出：右栏派生完成度、主区任务拆分入口、阻塞提示、证据和最后更新 Actor 的 UI 回归测试
  * @pos    决策执行账本不退化为手填百分比的前端验收证据
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,7 +8,10 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ImplementationProgress } from "../src/components/ImplementationProgress";
+import {
+  ImplementationProgress,
+  ImplementationSummary,
+} from "../src/components/ImplementationProgress";
 import type { ActorSnapshot, Participant, TopicDetail } from "../src/types/council";
 
 function snapshot(actorId: string, displayName: string): ActorSnapshot {
@@ -98,14 +101,17 @@ describe("ImplementationProgress", () => {
         onUpdate={async () => undefined}
       />,
     );
+    const summaryHtml = renderToStaticMarkup(<ImplementationSummary topic={topic} />);
 
-    expect(html).toContain("50%");
+    expect(summaryHtml).toContain("50%");
+    expect(summaryHtml).toContain("aria-valuenow=\"50\"");
+    expect(summaryHtml).toContain("实施进度");
     expect(html).toContain("1 项受阻");
     expect(html).toContain("测试通过");
     expect(html).toContain("Codex");
-    expect(html).toContain("aria-valuenow=\"50\"");
+    expect(html).not.toContain("role=\"progressbar\"");
     expect(html).toContain("AI 补充遗漏任务");
-    expect(html).toContain("实施计划");
+    expect(html).toContain("任务拆分");
   });
 
   it("Accepted 决策没有任务时优先提供 AI 拆分和手动补充入口", () => {

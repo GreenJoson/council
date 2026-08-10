@@ -10,7 +10,7 @@
 | `BrandGlyph.tsx` | 品牌 | 离线渲染受控 glyph、供应商名称和语义色；未知品牌使用通用网络图形，不写成 Other |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `TopicSidebar.tsx` | 导航 | 导出 WorkspaceView 视图路由类型；展示轻量议题列表、状态筛选 chips 和议题/架构档案/决策记录三个真实可切换的导航项 |
-| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/决策/元数据 tab（所有者优先使用议题冻结快照）、一卡一节点的阶梯导航、独立时间线、真实 Agent 回复动态、历史总数、人工决策入口、引用回复和编辑器；过长议题问题默认收起，并把自动轮次状态透传给 Composer |
+| `DiscussionPanel.tsx` | 核心 | 组织议题头部、讨论/决策/任务/元数据 tab（任务徽标显示完成数/总数，所有者优先使用议题冻结快照）、一卡一节点的阶梯导航、独立时间线、真实 Agent 回复动态、人工决策入口、引用回复和编辑器；过长议题问题默认收起 |
 | `AgentReplyActivity.tsx` | 状态 | 从当前议题真实 `running/waiting_agent` Run 中选择最新活动 Agent，在时间线末尾显示 Provider 品牌、具体名称、阶段与同议题实时草稿；较大输出块逐帧平滑展开，完成后由正式消息接替，不进入阶梯节点计数 |
 | `MessageJumpRail.tsx` | 导航 | 按当前议题实际消息卡数量渲染一一对应的阶梯节点；点击平滑跳转到对应卡片，当前阅读卡跟随滚动高亮 |
 | `MessageCard.tsx` | 核心 | 以消息行冻结 Actor 快照展示历史作者，避免身份重命名改写旧卡片；渲染公开 proposal/critique/rebuttal/synthesis，把 `council-fix` 尾块呈现为关联提交证据卡，并提供正文折叠、Markdown/Mermaid 与引用回复 |
@@ -18,7 +18,7 @@
 | `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成固定上限缩略 SVG；按 data-theme 联动主题，securityLevel 显式声明为 strict；点击放大，失败降级为原始代码块 + 错误提示 |
 | `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
 | `Composer.tsx` | 写入 | 发布带类型的公开回复（支持 ⌘Enter）、当前项目自动绑定且支持一个输入框批量粘贴多 commit 的结构化关联提交、引用回复和动态 `@actor-id` 召唤；Claude、Codex、DeepSeek、Kimi API 与 Kimi Code 均使用独立 Actor 身份；发布成功后创建并启动受控运行，离线或同议题已有活动运行时明确拦截 |
-| `InspectorPanel.tsx` | 决策 | 组织自动轮次、真实约束、证据、备选方案、可空拟议决策和 Human / Accepted 人工结束入口；owner/备选作者优先使用各自行冻结快照 |
+| `InspectorPanel.tsx` | 决策 | 组织紧凑实施进度、自动轮次、真实约束、证据、备选方案、可空拟议决策和 Human / Accepted 人工结束入口；长任务清单交给主列任务 tab，owner/备选作者优先使用各自行冻结快照 |
 | `CyclePanel.tsx` | 圆桌 | 开局勾选参与名册，按 Actor 标出发起人并展示“首轮跳过”后的真实顺序；以分段控件选择方案/当前工作区/Commit 三种范围，并展示能力缺口、阶段轨道、阻断结果与累计度量 |
 | `AutoRoundsPanel.tsx` | 编排 | 仅在存在 Run 或持久会话时展示紧凑运行状态、单一当前调用卡、折叠历史及会话关闭/重开；单次启动统一由 Composer `@Agent` 承担 |
 | `CreateTopicDialog.tsx` | 创建 | 收集议题问题和约束，桌面端可选择目标项目（当前/最近/浏览），失败时保留输入以便重试 |
