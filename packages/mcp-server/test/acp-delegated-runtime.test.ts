@@ -1,6 +1,6 @@
 /**
  * @input  依赖：声明式假 ACP Agent、五 Agent 生产注册表、临时项目、AcpDelegatedRuntime 与 CouncilConfig
- * @output 验证：跨定义启动、launch/session 模型选择、进程/session 复用、恢复、只读桥与权限拒绝
+ * @output 验证：跨定义启动、模型选择、进程/session 复用、仓库授权重挂载、只读桥与权限拒绝
  * @pos    供应商无关 DelegatedRuntime 的真实 stdio ACP 进程边界回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -428,6 +428,12 @@ test("通用 ACP Runtime 按定义启动，同 binding 复用 session 且重启�
     assert.equal(typeof mcpServers[0]?.command, "string");
     assert.ok(Array.isArray(mcpServers[0]?.args));
     assert.ok(Array.isArray(mcpServers[0]?.env));
+    const mcpEnvironment = mcpServers[0]?.env as Array<Record<string, unknown>>;
+    assert.deepEqual(
+      JSON.parse(String(mcpEnvironment.find((entry) =>
+        entry.name === "COUNCIL_READONLY_GIT_TARGETS")?.value)),
+      [],
+    );
     assert.equal(
       beforeRestart.find((entry) => entry.type === "read-result")?.content,
       "LOCAL_SOURCE_EVIDENCE",
@@ -460,6 +466,53 @@ test("通用 ACP Runtime 按定义启动，同 binding 复用 session 且重启�
     }
   } finally {
     await firstRuntime.shutdown();
+    delete process.env.FAKE_KIMI_LOG;
+    delete process.env.FAKE_KIMI_READ_PATH;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("同一 ACP binding 的仓库授权变化时重建 session 并重挂 Git MCP", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-acp-repositories-"));
+  const command = path.join(directory, "fake-kimi-agent");
+  const logPath = path.join(directory, "fake-kimi-agent.log");
+  const sourcePath = path.join(directory, "source.txt");
+  writeFileSync(command, FAKE_KIMI);
+  chmodSync(command, 0o700);
+  writeFileSync(sourcePath, "REPOSITORY_AUTH_EVIDENCE");
+  process.env.FAKE_KIMI_LOG = logPath;
+  process.env.FAKE_KIMI_READ_PATH = sourcePath;
+  const definition = runtimeDefinition("kimi-code", command);
+  const runtime = new AcpDelegatedRuntime(config(directory, command));
+  try {
+    await runtime.generate({
+      ...input(definition, "binding-repositories", directory),
+      gitCommitTargets: [{ repository: ".", commit: "aaaaaaa" }],
+    });
+    await runtime.generate({
+      ...input(definition, "binding-repositories", directory),
+      gitCommitTargets: [
+        { repository: ".", commit: "aaaaaaa" },
+        { repository: "../client", commit: "bbbbbbb" },
+      ],
+    });
+
+    const entries = readLog(logPath);
+    assert.equal(entries.filter((entry) => entry.type === "initialize").length, 2);
+    const sessions = entries.filter((entry) => entry.type === "new");
+    assert.equal(sessions.length, 2);
+    const secondServers = sessions[1]?.mcpServers as Array<Record<string, unknown>>;
+    const secondEnvironment = secondServers[0]?.env as Array<Record<string, unknown>>;
+    assert.deepEqual(
+      JSON.parse(String(secondEnvironment.find((entry) =>
+        entry.name === "COUNCIL_READONLY_GIT_TARGETS")?.value)),
+      [
+        { repository: ".", commit: "aaaaaaa" },
+        { repository: "../client", commit: "bbbbbbb" },
+      ],
+    );
+  } finally {
+    await runtime.shutdown();
     delete process.env.FAKE_KIMI_LOG;
     delete process.env.FAKE_KIMI_READ_PATH;
     rmSync(directory, { recursive: true, force: true });

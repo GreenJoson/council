@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLiteCouncilStore 收敛入口、编排 Run 生命周期与阶段指令契约
- * @output 导出：复用既有提案、自动交接下一位 Agent、终态结算的圆桌驱动器
+ * @output 导出：复用既有提案、冻结多仓库审查目标、自动交接下一位 Agent、终态结算的圆桌驱动器
  * @pos    把「谁下一个说话」从用户手里接过来的唯一处；自身不召唤 Agent，只创建并启动 Run
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -166,11 +166,11 @@ export class CycleDriver {
         );
         const proposer = cycle.participants[0] ?? action.agentId;
         const reviewScope = cycle.requirements.reviewScope;
-        const reviewed = action.stage === "critique"
-          ? [...cycle.turns]
-            .reverse()
-            .find((turn) => turn.stage === "proposal" || turn.stage === "rebuttal")
-          : undefined;
+        const latestCommitTargets = [...cycle.turns]
+          .reverse()
+          .find((turn) => turn.commitTargets?.length)
+          ?.commitTargets
+          ?? this.#store.readTopicProposalSeed(topicId)?.commitTargets;
         const run = await this.#runner.createRun(topicId, [{
           adapterId: action.agentId,
           messageKind: action.stage,
@@ -181,8 +181,8 @@ export class CycleDriver {
             reviewers,
             proposer,
             reviewScope,
-            ...(reviewScope === "commit" && reviewed?.commitTargets?.length
-              ? { reviewedCommitTargets: reviewed.commitTargets }
+            ...(reviewScope === "commit" && latestCommitTargets?.length
+              ? { reviewedCommitTargets: latestCommitTargets }
               : {}),
           }),
         }]);

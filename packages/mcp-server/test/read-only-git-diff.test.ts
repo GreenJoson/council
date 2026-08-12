@@ -1,6 +1,6 @@
 /**
- * @input  依赖：临时 Git 仓库、只读 Git diff 服务与单工具 MCP server
- * @output 验证：commit/ref 解析、敏感路径过滤、外部驱动禁用、预算降级与 MCP 调用
+ * @input  依赖：临时单/多 Git 仓库、只读 Git diff 服务与单工具 MCP server
+ * @output 验证：多仓库授权、路径/软链逃逸、commit 解析、敏感过滤、预算降级与 MCP 调用
  * @pos    ToolLoop 与 ACP DelegatedRuntime 共用 Git 边界的对抗性回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -119,6 +120,75 @@ test("受控 Git diff 拒绝 option、range 注入与路径型 ref", async () =>
   }
 });
 
+test("受控 Git diff 可按议题白名单读取同级仓库，并拒绝未授权与逃逸路径", async () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "council-git-multi-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "council-git-outside-"));
+  try {
+    const backend = path.join(parent, "backend");
+    const client = path.join(parent, "client");
+    const other = path.join(parent, "other");
+    mkdirSync(backend);
+    mkdirSync(client);
+    mkdirSync(other);
+    initializeRepository(backend);
+    initializeRepository(client);
+    initializeRepository(other);
+    initializeRepository(outside);
+    const backendCommit = createReviewCommit(backend);
+    const clientCommit = createReviewCommit(client);
+    const otherCommit = createReviewCommit(other);
+    const outsideCommit = createReviewCommit(outside);
+    symlinkSync(outside, path.join(parent, "escaped"));
+
+    const reader = await ReadOnlyGitDiff.create(
+      backend,
+      config(),
+      [
+        { repository: ".", commit: backendCommit },
+        { repository: "../client", commit: clientCommit },
+        { repository: "../escaped", commit: outsideCommit },
+      ],
+    );
+    assert.match(
+      await reader.generate({ repository: ".", commit: backendCommit }),
+      /export const value = 2/u,
+    );
+    assert.match(
+      await reader.generate({ repository: "../client", commit: clientCommit }),
+      /export const value = 2/u,
+    );
+    await assert.rejects(
+      reader.generate({ repository: "../client", commit: "HEAD" }),
+      (error: unknown) =>
+        error instanceof ReadOnlyGitDiffError
+        && error.diagnosticCode === "commit_not_authorized",
+    );
+    await assert.rejects(
+      reader.generate({ repository: "../other", commit: otherCommit }),
+      (error: unknown) =>
+        error instanceof ReadOnlyGitDiffError
+        && error.diagnosticCode === "repository_not_authorized",
+    );
+    await assert.rejects(
+      reader.generate({ repository: "../escaped", commit: outsideCommit }),
+      (error: unknown) =>
+        error instanceof ReadOnlyGitDiffError
+        && error.diagnosticCode === "repository_outside_scope",
+    );
+    for (const repository of ["../../other", "/tmp/other", "..\\other"] as const) {
+      await assert.rejects(
+        reader.generate({ repository, commit: backendCommit }),
+        (error: unknown) =>
+          error instanceof ReadOnlyGitDiffError
+          && error.diagnosticCode === "invalid_repository",
+      );
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("敏感文件改名为普通路径时整条 rename 仍被过滤", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-git-rename-"));
   try {
@@ -161,12 +231,21 @@ test("patch 超过预算时明确降级为安全路径统计摘要", async () =>
   }
 });
 
-test("单工具 MCP 只公开 council_git_diff 并返回同一安全结果", async () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "council-git-mcp-"));
+test("单工具 MCP 公开 repository 参数并返回同级仓库安全结果", async () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "council-git-mcp-"));
   try {
-    initializeRepository(directory);
-    const commit = createReviewCommit(directory);
-    const server = await createReadOnlyGitMcpServer(directory, config());
+    const backend = path.join(parent, "backend");
+    const clientDirectory = path.join(parent, "client");
+    mkdirSync(backend);
+    mkdirSync(clientDirectory);
+    initializeRepository(backend);
+    initializeRepository(clientDirectory);
+    const commit = createReviewCommit(clientDirectory);
+    const server = await createReadOnlyGitMcpServer(
+      backend,
+      config(),
+      [{ repository: "../client", commit }],
+    );
     const client = new Client({ name: "git-diff-test", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     try {
@@ -179,9 +258,15 @@ test("单工具 MCP 只公开 council_git_diff 并返回同一安全结果", asy
         tools.tools.map((tool) => tool.name),
         ["council_git_diff"],
       );
+      assert.ok(
+        tools.tools[0]?.inputSchema
+        && "properties" in tools.tools[0].inputSchema
+        && tools.tools[0].inputSchema.properties
+        && "repository" in tools.tools[0].inputSchema.properties,
+      );
       const response = await client.callTool({
         name: "council_git_diff",
-        arguments: { commit },
+        arguments: { repository: "../client", commit },
       });
       assert.ok(Array.isArray(response.content));
       const text = response.content
@@ -206,6 +291,6 @@ test("单工具 MCP 只公开 council_git_diff 并返回同一安全结果", asy
       await server.close();
     }
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
   }
 });

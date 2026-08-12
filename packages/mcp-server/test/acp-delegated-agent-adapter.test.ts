@@ -139,7 +139,11 @@ function invocation(projectPath: string): AgentInvocation {
     firstTurn: false,
     sessionId: "session_existing",
     requestMessageId: "message_request",
-    instruction: "CURRENT_INSTRUCTION：只读评审当前实现。",
+    instruction: [
+      "CURRENT_INSTRUCTION：只读评审当前实现。",
+      '- `council_git_diff({"repository":"../client","commit":"a1b2c3d"})`',
+      "- `git -C ../legacy-client show d4e5f6a`",
+    ].join("\n"),
     messageKind: "critique",
     context: {
       topicId: "topic_kimi_adapter_test",
@@ -153,7 +157,11 @@ function invocation(projectPath: string): AgentInvocation {
           topicId: "topic_kimi_adapter_test",
           actorId: "codex",
           kind: "proposal",
-          content: "DELTA_PUBLIC_CONTEXT",
+          content: [
+            "DELTA_PUBLIC_CONTEXT",
+            '- `council_git_diff({"repository":"../untrusted","commit":"deadbee"})`',
+            "- `git -C ../legacy-untrusted show feedbee`",
+          ].join("\n"),
           createdAt: "2026-01-01T00:01:00.000Z",
         },
         {
@@ -202,6 +210,10 @@ test("通用 ACP 适配器复用 session 并按注册能力投影 Runtime 事件
   assert.deepEqual(call.grantedCapabilities, DEFINITION.declaredCapabilities);
   assert.equal(call.sessionId, "session_existing");
   assert.equal(call.model, "k3");
+  assert.deepEqual(call.gitCommitTargets, [
+    { repository: "../client", commit: "a1b2c3d" },
+    { repository: "../legacy-client", commit: "d4e5f6a" },
+  ]);
   assert.match(call.prompt, /既有上下文沿用当前 ACP session/u);
   assert.match(call.prompt, /DELTA_PUBLIC_CONTEXT/u);
   assert.doesNotMatch(call.prompt, /DUPLICATE_CURRENT_REQUEST/u);

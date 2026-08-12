@@ -475,7 +475,10 @@ test("bug 修复互审只读核对交互式任务产生的 commit，不要求 Ag
     assert.equal(await settle(harness.baseUrl, topicId), null);
     assert.deepEqual(fixer.seen, ["synthesis"]);
     assert.deepEqual(reviewer.seen, ["critique"]);
-    assert.match(reviewer.instructions[0] ?? "", new RegExp(`git -C \\. show ${reviewedCommit}`));
+    assert.match(
+      reviewer.instructions[0] ?? "",
+      new RegExp(`council_git_diff\\(\\{\"repository\":\"\\.\",\"commit\":\"${reviewedCommit}\"\\}\\)`),
+    );
   } finally {
     await harness.close();
   }
@@ -522,8 +525,10 @@ test("已提交互审从议题说明读取多仓库 commit，再结构化传给�
     assert.equal(await settle(harness.baseUrl, topicId), null);
     assert.deepEqual(proposer.seen, ["proposal", "synthesis"]);
     assert.deepEqual(reviewer.seen, ["critique"]);
-    assert.match(reviewer.instructions[0] ?? "", /git -C \. show a1b2c3d/u);
-    assert.match(reviewer.instructions[0] ?? "", /git -C \.\.\/client show d4e5f6a/u);
+    assert.match(proposer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.","commit":"a1b2c3d"\}\)/u);
+    assert.match(proposer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.\.\/client","commit":"d4e5f6a"\}\)/u);
+    assert.match(reviewer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.","commit":"a1b2c3d"\}\)/u);
+    assert.match(reviewer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.\.\/client","commit":"d4e5f6a"\}\)/u);
   } finally {
     await harness.close();
   }
@@ -589,8 +594,8 @@ test("发起人第二条 Note 关联的多仓库 commit 会直接成为修复互
     assert.equal(await settle(harness.baseUrl, topicId), null);
     assert.deepEqual(reviewer.seen, ["critique"]);
     assert.deepEqual(fixer.seen, ["synthesis"]);
-    assert.match(reviewer.instructions[0] ?? "", /git -C \. show f0fe5c5/u);
-    assert.match(reviewer.instructions[0] ?? "", /git -C \.\.\/admin show 352bfa5/u);
+    assert.match(reviewer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.","commit":"f0fe5c5"\}\)/u);
+    assert.match(reviewer.instructions[0] ?? "", /council_git_diff\(\{"repository":"\.\.\/admin","commit":"352bfa5"\}\)/u);
   } finally {
     await harness.close();
   }

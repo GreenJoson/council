@@ -405,8 +405,12 @@ test("已提交互审传递多仓库 commit，工作区互审明确读取可变�
     ],
     reviewScope: "commit",
   });
-  assert.ok(withDiff.includes("git -C . show a1b2c3d4e5f6"));
-  assert.ok(withDiff.includes("git -C ../client show d4c3b2a1f6e5"));
+  assert.ok(withDiff.includes(
+    'council_git_diff({"repository":".","commit":"a1b2c3d4e5f6"})',
+  ));
+  assert.ok(withDiff.includes(
+    'council_git_diff({"repository":"../client","commit":"d4c3b2a1f6e5"})',
+  ));
   assert.ok(withDiff.includes("只读复审"), "复审者不得改代码");
 
   const missingCommittedDiff = buildStageInstruction({

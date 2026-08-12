@@ -1,6 +1,6 @@
 /**
- * @input  依赖：项目根目录、CouncilConfig 与结构化 Tool Call
- * @output 导出：项目内读文件、列目录、文本搜索和 commit diff 的有界只读 ToolHost
+ * @input  依赖：项目根目录、本轮授权仓库标签、CouncilConfig 与结构化 Tool Call
+ * @output 导出：项目内读文件/搜索和已授权多仓库 commit diff 的有界只读 ToolHost
  * @pos    Council-owned ToolLoop 的本机沙箱；不执行 Shell、不写文件、不读取凭据文件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -20,6 +20,7 @@ import type {
 import {
   COUNCIL_GIT_DIFF_TOOL_NAME,
   ReadOnlyGitDiff,
+  type GitCommitGrant,
   type GitDiffRequest,
 } from "./read-only-git-diff.js";
 import {
@@ -69,6 +70,7 @@ interface ToolArguments {
   line?: unknown;
   limit?: unknown;
   query?: unknown;
+  repository?: unknown;
   commit?: unknown;
   base?: unknown;
   head?: unknown;
@@ -150,17 +152,19 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function gitDiffRequest(args: ToolArguments): GitDiffRequest {
   const unexpected = Object.keys(args).filter((key) =>
-    key !== "commit" && key !== "base" && key !== "head");
+    key !== "repository" && key !== "commit" && key !== "base" && key !== "head");
   if (unexpected.length > 0) {
     throw new ReadOnlyToolHostError(
       "Git diff 包含未允许的参数。",
       "invalid_tool_arguments",
     );
   }
+  const repository = optionalString(args.repository, "repository");
   const commit = optionalString(args.commit, "commit");
   const base = optionalString(args.base, "base");
   const head = optionalString(args.head, "head");
   return {
+    ...(repository ? { repository } : {}),
     ...(commit ? { commit } : {}),
     ...(base ? { base } : {}),
     ...(head ? { head } : {}),
@@ -225,11 +229,15 @@ export class ReadOnlyToolHost {
       function: {
         name: TOOL_NAMES.gitDiff,
         description:
-          "独立读取已提交 commit 或 base/head 范围的 Git diff。不会读取未提交工作区；敏感路径会被过滤，超限会返回明确摘要。",
+          "读取本轮已授权仓库中已提交 commit 或 base/head 范围的 Git diff。不会读取未提交工作区；敏感路径会被过滤，超限会返回明确摘要。",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
+            repository: {
+              type: "string",
+              description: "本轮议题已授权的仓库标签；当前仓库默认使用 .。",
+            },
             commit: {
               type: "string",
               description: "单个 commit/ref；Council 比较它与第一父提交。",
@@ -266,7 +274,11 @@ export class ReadOnlyToolHost {
     this.#gitDiff = gitDiff;
   }
 
-  static async create(projectPath: string, config: CouncilConfig): Promise<ReadOnlyToolHost> {
+  static async create(
+    projectPath: string,
+    config: CouncilConfig,
+    gitCommitTargets: readonly GitCommitGrant[] = [],
+  ): Promise<ReadOnlyToolHost> {
     const root = await realpath(projectPath);
     const info = await lstat(root);
     if (!info.isDirectory()) {
@@ -278,7 +290,7 @@ export class ReadOnlyToolHost {
     return new ReadOnlyToolHost(
       root,
       config,
-      await ReadOnlyGitDiff.create(root, config),
+      await ReadOnlyGitDiff.create(root, config, gitCommitTargets),
     );
   }
 

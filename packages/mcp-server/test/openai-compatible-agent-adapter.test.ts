@@ -119,8 +119,10 @@ test("未知远程异常不会进入公开失败边界", async () => {
 });
 
 test("远程只读工具事件明确归 Council ToolLoop 所有", async () => {
+  let runtimeInput: ReadOnlyAgentLoopInput | undefined;
   const runtime = {
     generate: async (input: ReadOnlyAgentLoopInput) => {
+      runtimeInput = input;
       input.onToolEvent?.({
         type: "tool.requested",
         callId: "call-read",
@@ -136,6 +138,10 @@ test("远程只读工具事件明确归 Council ToolLoop 所有", async () => {
   };
   const current = invocation();
   current.context.projectPath = process.cwd();
+  current.instruction = [
+    "读取服务端冻结改动。",
+    '- `council_git_diff({"repository":"../client","commit":"abc1234"})`',
+  ].join("\n");
   const events: RuntimeEvent[] = [];
   const currentAdapter = new OpenAICompatibleAgentAdapter(
     "remote-test",
@@ -152,6 +158,10 @@ test("远程只读工具事件明确归 Council ToolLoop 所有", async () => {
   });
 
   assert.match(result.content, /代码证据结论/u);
+  assert.deepEqual(runtimeInput?.gitCommitTargets, [{
+    repository: "../client",
+    commit: "abc1234",
+  }]);
   assert.deepEqual(events.map((event) => event.type), [
     "tool.requested",
     "tool.completed",

@@ -1,12 +1,13 @@
 /**
- * @input  依赖：临时项目、CouncilConfig 与 ReadOnlyToolHost
- * @output 验证：读文件、列目录、搜索、项目边界、凭据隔离与扫描上限
+ * @input  依赖：临时项目/同级 Git 仓库、CouncilConfig 与 ReadOnlyToolHost
+ * @output 验证：读文件、搜索、项目边界、凭据隔离与多仓库 Git 参数贯通
  * @pos    Council-owned 本机只读沙箱的文件系统安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -63,6 +64,25 @@ function config(directory: string): CouncilConfig {
     maxOutputChars: 10_000,
     defaultMessageLimit: 20,
   };
+}
+
+function git(directory: string, args: string[]): string {
+  return execFileSync("git", ["-C", directory, ...args], {
+    encoding: "utf8",
+  }).trim();
+}
+
+function commitEvidence(directory: string): string {
+  git(directory, ["init", "-q"]);
+  git(directory, ["config", "user.name", "Council Test"]);
+  git(directory, ["config", "user.email", "test@example.com"]);
+  writeFileSync(path.join(directory, "source.ts"), "export const value = 1;\n");
+  git(directory, ["add", "."]);
+  git(directory, ["commit", "-qm", "base"]);
+  writeFileSync(path.join(directory, "source.ts"), "export const value = 2;\n");
+  git(directory, ["add", "."]);
+  git(directory, ["commit", "-qm", "review"]);
+  return git(directory, ["rev-parse", "HEAD"]);
 }
 
 test("ToolHost 只读取项目普通文本并提供有界列目录与搜索", async () => {
@@ -138,5 +158,34 @@ test("ToolHost 用 realpath 拒绝通过软链越过项目边界", async () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("ToolHost 把 repository 参数贯通到已授权的同级 Git 仓库", async () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "council-tool-host-git-"));
+  try {
+    const backend = path.join(parent, "backend");
+    const client = path.join(parent, "client");
+    mkdirSync(backend);
+    mkdirSync(client);
+    commitEvidence(backend);
+    const clientCommit = commitEvidence(client);
+    const host = await ReadOnlyToolHost.create(
+      backend,
+      config(backend),
+      [{ repository: "../client", commit: clientCommit }],
+    );
+
+    const result = await host.execute({
+      id: "call-client-diff",
+      name: "council_git_diff",
+      arguments: JSON.stringify({
+        repository: "../client",
+        commit: clientCommit,
+      }),
+    });
+    assert.match(result.content, /export const value = 2/u);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
   }
 });

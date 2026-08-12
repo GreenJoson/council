@@ -1,6 +1,6 @@
 /**
- * @input  依赖：声明式 ACP RuntimeDefinition、ACP v1 SDK、项目目录、只读 Git MCP、持久 RuntimeBinding 与 AbortSignal
- * @output 导出：每 binding 长驻、可恢复、含受控 commit diff 的通用 ACP DelegatedRuntime
+ * @input  依赖：声明式 ACP RuntimeDefinition、ACP v1 SDK、项目目录/仓库白名单、只读 Git MCP、持久 RuntimeBinding 与 AbortSignal
+ * @output 导出：每 binding 长驻、可恢复、含受控多仓库 commit diff 的通用 ACP DelegatedRuntime
  * @pos    供应商无关的 DelegatedRuntime；外部 Agent 拥有 AgentLoop，Council 只管理 session 与权限
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -37,7 +37,11 @@ import {
   terminateProcessTree,
 } from "./process-utils.js";
 import { isProtectedProjectRelativePath } from "./project-path-policy.js";
-import { COUNCIL_GIT_DIFF_TOOL_NAME } from "./read-only-git-diff.js";
+import {
+  COUNCIL_GIT_DIFF_TOOL_NAME,
+  normalizeGitCommitGrant,
+  type GitCommitGrant,
+} from "./read-only-git-diff.js";
 import { readOnlyGitMcpServerConfig } from "./read-only-git-mcp.js";
 
 const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/,-]*$/u;
@@ -75,6 +79,7 @@ export interface AcpDelegatedRuntimeInput {
   cwd: string;
   prompt: string;
   model: string;
+  gitCommitTargets?: readonly GitCommitGrant[];
   sessionId?: string;
   signal?: AbortSignal;
   onUpdate?: (update: SessionUpdate) => void;
@@ -109,6 +114,7 @@ interface ManagedAcpProcess {
   cwd: string;
   rootRealPath: string;
   model: string;
+  gitCommitTargets: readonly GitCommitGrant[];
   sessionId: string;
   child: ChildProcessWithoutNullStreams;
   connection: ClientConnection;
@@ -143,6 +149,29 @@ function sameCapabilities(
 ): boolean {
   return left.length === right.length
     && left.every((capability, index) => capability === right[index]);
+}
+
+function normalizeGitCommitTargets(
+  targets: readonly GitCommitGrant[] | undefined,
+): readonly GitCommitGrant[] {
+  const normalized = new Map<string, GitCommitGrant>();
+  for (const target of targets ?? []) {
+    const grant = normalizeGitCommitGrant(target);
+    normalized.set(`${grant.repository}\0${grant.commit}`, grant);
+  }
+  return [...normalized.values()].sort((left, right) =>
+    left.repository.localeCompare(right.repository)
+    || left.commit.localeCompare(right.commit));
+}
+
+function sameGitCommitTargets(
+  left: readonly GitCommitGrant[],
+  right: readonly GitCommitGrant[],
+): boolean {
+  return left.length === right.length
+    && left.every((target, index) =>
+      target.repository === right[index]?.repository
+      && target.commit === right[index]?.commit);
 }
 
 function normalizeModel(model: string, definition: AcpRuntimeDefinition): string {
@@ -426,6 +455,7 @@ export class AcpDelegatedRuntime {
       input.definition,
       input.grantedCapabilities,
     );
+    const gitCommitTargets = normalizeGitCommitTargets(input.gitCommitTargets);
     const expectedSessionId = normalizeSession(input.sessionId, input.definition);
     let managed = this.#processes.get(input.bindingId);
     if (
@@ -435,6 +465,7 @@ export class AcpDelegatedRuntime {
         || managed.cwd !== input.cwd
         || managed.model !== model
         || !sameCapabilities(managed.grantedCapabilities, grantedCapabilities)
+        || !sameGitCommitTargets(managed.gitCommitTargets, gitCommitTargets)
         || (
           expectedSessionId !== undefined
           && managed.sessionId !== expectedSessionId
@@ -451,6 +482,7 @@ export class AcpDelegatedRuntime {
       input.definition,
       grantedCapabilities,
       expectedSessionId,
+      gitCommitTargets,
     );
     if (managed.promptActive) {
       throw new AcpDelegatedRuntimeError(
@@ -601,6 +633,7 @@ export class AcpDelegatedRuntime {
     definition: AcpRuntimeDefinition,
     grantedCapabilities: readonly RuntimeCapabilityKey[],
     sessionId?: string,
+    gitCommitTargets: readonly GitCommitGrant[] = [],
   ): Promise<ManagedAcpProcess> {
     const rootRealPath = realpathSync(cwd);
     const child = spawn(
@@ -685,7 +718,11 @@ export class AcpDelegatedRuntime {
         { cancellationSignal: startupSignal },
       );
       const mcpServers = grantedCapabilities.includes("git_diff")
-        ? [readOnlyGitMcpServerConfig(rootRealPath, this.config)]
+        ? [readOnlyGitMcpServerConfig(
+            rootRealPath,
+            this.config,
+            gitCommitTargets,
+          )]
         : [];
       let activeSessionId: string;
       let configOptions: readonly SessionConfigOption[] | null | undefined;
@@ -725,6 +762,7 @@ export class AcpDelegatedRuntime {
         cwd,
         rootRealPath,
         model,
+        gitCommitTargets,
         sessionId: activeSessionId,
         child,
         connection,

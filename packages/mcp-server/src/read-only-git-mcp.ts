@@ -1,7 +1,7 @@
 /**
- * @input  依赖：ACP stdio MCP 配置、内部 COUNCIL_READONLY_GIT_* 环境与只读 Git diff 服务
- * @output 导出：获授权 ACP DelegatedRuntime 可调用的单工具 MCP server 与安全启动配置
- * @pos    DelegatedRuntime 的 Git diff 桥；只暴露 council_git_diff，不继承 Council 主服务工具
+ * @input  依赖：ACP stdio MCP 配置、内部 Git 根目录/仓库白名单环境与只读 Git diff 服务
+ * @output 导出：获授权 ACP DelegatedRuntime 可调用的多仓库单工具 MCP server 与安全启动配置
+ * @pos    DelegatedRuntime 的多仓库 Git diff 桥；只暴露 council_git_diff，不继承 Council 主服务工具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -15,6 +15,7 @@ import {
   COUNCIL_GIT_DIFF_TOOL_NAME,
   ReadOnlyGitDiff,
   ReadOnlyGitDiffError,
+  type GitCommitGrant,
   type ReadOnlyGitDiffConfig,
 } from "./read-only-git-diff.js";
 
@@ -22,6 +23,7 @@ export const READ_ONLY_GIT_MCP_FLAG = "--readonly-git-mcp";
 
 const ENV = {
   root: "COUNCIL_READONLY_GIT_ROOT",
+  targets: "COUNCIL_READONLY_GIT_TARGETS",
   command: "COUNCIL_READONLY_GIT_COMMAND",
   timeoutMs: "COUNCIL_READONLY_GIT_TIMEOUT_MS",
   killGraceMs: "COUNCIL_READONLY_GIT_KILL_GRACE_MS",
@@ -49,10 +51,29 @@ function positiveInteger(name: string, env: NodeJS.ProcessEnv): number {
 
 function configFromEnvironment(env: NodeJS.ProcessEnv): {
   root: string;
+  targets: readonly GitCommitGrant[];
   config: ReadOnlyGitDiffConfig;
 } {
+  let targets: unknown;
+  try {
+    targets = JSON.parse(required(ENV.targets, env));
+  } catch {
+    throw new Error(`内部只读 Git 配置 ${ENV.targets} 不是有效 JSON。`);
+  }
+  if (
+    !Array.isArray(targets)
+    || targets.some((target) =>
+      !target
+      || typeof target !== "object"
+      || Array.isArray(target)
+      || typeof (target as Record<string, unknown>).repository !== "string"
+      || typeof (target as Record<string, unknown>).commit !== "string")
+  ) {
+    throw new Error(`内部只读 Git 配置 ${ENV.targets} 必须是仓库/commit 数组。`);
+  }
   return {
     root: required(ENV.root, env),
+    targets: targets as GitCommitGrant[],
     config: {
       gitCommand: required(ENV.command, env),
       gitDiffTimeoutMs: positiveInteger(ENV.timeoutMs, env),
@@ -89,6 +110,7 @@ function entryCommand(): { command: string; args: string[] } {
 export function readOnlyGitMcpServerConfig(
   root: string,
   config: ReadOnlyGitDiffConfig,
+  targets: readonly GitCommitGrant[] = [],
 ): McpServerStdio {
   const launch = entryCommand();
   return {
@@ -97,6 +119,7 @@ export function readOnlyGitMcpServerConfig(
     args: launch.args,
     env: [
       { name: ENV.root, value: root },
+      { name: ENV.targets, value: JSON.stringify(targets) },
       { name: ENV.command, value: config.gitCommand },
       { name: ENV.timeoutMs, value: String(config.gitDiffTimeoutMs) },
       { name: ENV.killGraceMs, value: String(config.gitDiffKillGraceMs) },
@@ -111,8 +134,9 @@ export function readOnlyGitMcpServerConfig(
 export async function createReadOnlyGitMcpServer(
   root: string,
   config: ReadOnlyGitDiffConfig,
+  targets: readonly GitCommitGrant[] = [],
 ): Promise<McpServer> {
-  const gitDiff = await ReadOnlyGitDiff.create(root, config);
+  const gitDiff = await ReadOnlyGitDiff.create(root, config, targets);
   const server = new McpServer({
     name: "council-readonly-git",
     version: "1",
@@ -122,8 +146,9 @@ export async function createReadOnlyGitMcpServer(
     {
       title: "读取受控 Git diff",
       description:
-        "读取已提交 commit 或 base/head 范围的安全 diff；不读取未提交工作区，敏感路径会被过滤。",
+        "读取本轮已授权仓库中已提交 commit 或 base/head 范围的安全 diff；不读取未提交工作区，敏感路径会被过滤。",
       inputSchema: {
+        repository: z.string().min(1).max(200).optional(),
         commit: z.string().min(1).max(200).optional(),
         base: z.string().min(1).max(200).optional(),
         head: z.string().min(1).max(200).optional(),
@@ -135,9 +160,10 @@ export async function createReadOnlyGitMcpServer(
         openWorldHint: false,
       },
     },
-    async ({ commit, base, head }) => {
+    async ({ repository, commit, base, head }) => {
       try {
         const text = await gitDiff.generate({
+          ...(repository ? { repository } : {}),
           ...(commit ? { commit } : {}),
           ...(base ? { base } : {}),
           ...(head ? { head } : {}),
@@ -166,6 +192,7 @@ export async function runReadOnlyGitMcp(
   const server = await createReadOnlyGitMcpServer(
     settings.root,
     settings.config,
+    settings.targets,
   );
   await server.connect(new StdioServerTransport());
 }
