@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -516,6 +517,48 @@ test("同一 ACP binding 的仓库授权变化时重建 session 并重挂 Git MC
     delete process.env.FAKE_KIMI_LOG;
     delete process.env.FAKE_KIMI_READ_PATH;
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ACP 文件桥只允许读取当前项目与本轮已授权的同级仓库", async () => {
+  const parent = mkdtempSync(path.join(tmpdir(), "council-acp-sibling-read-"));
+  const backend = path.join(parent, "backend");
+  const client = path.join(parent, "client");
+  const command = path.join(parent, "fake-kimi-agent");
+  const logPath = path.join(parent, "fake-kimi-agent.log");
+  const clientSource = path.join(client, "client-source.txt");
+  mkdirSync(backend);
+  mkdirSync(client);
+  writeFileSync(command, FAKE_KIMI);
+  chmodSync(command, 0o700);
+  writeFileSync(clientSource, "AUTHORIZED_CLIENT_CONTEXT");
+  process.env.FAKE_KIMI_LOG = logPath;
+  process.env.FAKE_KIMI_READ_PATH = clientSource;
+  const definition = runtimeDefinition("kimi-code", command);
+  const runtime = new AcpDelegatedRuntime(config(parent, command));
+  try {
+    await runtime.generate({
+      ...input(definition, "binding-without-client", backend),
+      gitCommitTargets: [{ repository: ".", commit: "aaaaaaa" }],
+    });
+    assert.equal(
+      readLog(logPath).filter((entry) => entry.type === "read-error").length,
+      1,
+    );
+
+    await runtime.generate({
+      ...input(definition, "binding-with-client", backend),
+      gitCommitTargets: [{ repository: "../client", commit: "bbbbbbb" }],
+    });
+    assert.equal(
+      readLog(logPath).findLast((entry) => entry.type === "read-result")?.content,
+      "AUTHORIZED_CLIENT_CONTEXT",
+    );
+  } finally {
+    await runtime.shutdown();
+    delete process.env.FAKE_KIMI_LOG;
+    delete process.env.FAKE_KIMI_READ_PATH;
+    rmSync(parent, { recursive: true, force: true });
   }
 });
 

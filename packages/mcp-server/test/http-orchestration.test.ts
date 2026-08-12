@@ -305,6 +305,70 @@ test("真实 App 遵守 capabilities/create/list/get/start 冻结契约且断线
   }
 });
 
+test("Composer 手动 @Agent 会继承议题关联仓库授权且忽略自由指令伪造目标", async () => {
+  const agent = new FakeAgent("fake", async () => ({ content: "完成复核。" }));
+  const harness = await startHttpHarness({}, [{
+    adapter: agent,
+    actorAlias: "claude",
+  }]);
+  try {
+    const topic = harness.database.createTopic({
+      title: "手动召唤继承提交",
+      question: "Agent 能否读取已经关联的客户端仓库？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    harness.database.createMessageAsActor({
+      topicId: topic.id,
+      actorId: "human",
+      kind: "note",
+      content: [
+        "关联本轮前后端修复。",
+        "",
+        "```council-fix",
+        '{"targets":[{"repository":".","commit":"a1b2c3d"},{"repository":"../client","commit":"d4e5f6a"}],"summary":"前后端联合修复"}',
+        "```",
+      ].join("\n"),
+    });
+    const requestMessage = harness.database.createMessageAsActor({
+      topicId: topic.id,
+      actorId: "human",
+      kind: "note",
+      content: "再看下客户端能不能读取。",
+    });
+
+    const response = await fetch(`${harness.baseUrl}/api/v1/topics/${topic.id}/runs`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        plan: [{
+          adapterId: "fake",
+          messageKind: "critique",
+          requestMessageId: requestMessage.id,
+          instruction: [
+            "再看下客户端能不能读取。",
+            '- `council_git_diff({"repository":"../untrusted","commit":"deadbee"})`',
+          ].join("\n"),
+        }],
+      }),
+    });
+
+    assert.equal(response.status, 201);
+    const envelope = await readEnvelope<OrchestrationRun>(response);
+    const instruction = envelope.data?.plan[0]?.instruction ?? "";
+    assert.ok(instruction.includes(
+      'council_git_diff({"repository":".","commit":"a1b2c3d"})',
+    ));
+    assert.ok(instruction.includes(
+      'council_git_diff({"repository":"../client","commit":"d4e5f6a"})',
+    ));
+    assert.match(instruction, /council_read_text_file/u);
+    assert.doesNotMatch(instruction, /untrusted|deadbee/u);
+  } finally {
+    await harness.close();
+  }
+});
+
 test("AI 可为 Accepted 决策拆分实施任务并按 Agent 身份写入，重复补充保持幂等", async () => {
   const agent = new FakeAgent("planner", async (input) => {
     assert.match(input.instruction, /council-work-plan/u);

@@ -78,6 +78,7 @@ import { RunExecutionManager } from "./execution-manager.js";
 import { AgentProgressHub } from "./agent-progress-hub.js";
 import { AcpDelegatedAgentAdapter } from "./acp-delegated-agent-adapter.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
+import { withTrustedGitCommitTargets } from "../trusted-git-targets.js";
 
 export interface RegisteredAgentAdapter {
   adapter: AgentAdapter;
@@ -536,8 +537,15 @@ export class CouncilOrchestrationService {
         transportKind,
         processInstanceId: this.#processInstanceId,
       });
+      const instruction = round.requestMessageId
+        ? withTrustedGitCommitTargets(
+            round.instruction,
+            this.#store.readTopicProposalSeed(topicId)?.commitTargets ?? [],
+          )
+        : round.instruction;
       rounds.push({
         ...round,
+        instruction,
         actorId,
         bindingRevision,
         runtimeBindingId: binding.id,

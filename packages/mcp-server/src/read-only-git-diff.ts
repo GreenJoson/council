@@ -111,7 +111,7 @@ function withinRoot(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }
 
-async function resolveAuthorizedRoot(
+export async function resolveAuthorizedGitRepositoryRoot(
   primaryRoot: string,
   repository: string,
 ): Promise<string> {
@@ -323,7 +323,7 @@ export class ReadOnlyGitDiff {
     for (const repository of labels) {
       try {
         repositories.set(repository, {
-          root: await resolveAuthorizedRoot(root, repository),
+          root: await resolveAuthorizedGitRepositoryRoot(root, repository),
           ...(grants.length > 0
             ? {
                 commits: new Set(

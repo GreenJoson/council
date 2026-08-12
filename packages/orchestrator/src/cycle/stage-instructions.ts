@@ -97,6 +97,8 @@ function commitTargetBody(input: StageInstructionInput): readonly string[] {
       ...commands,
       "",
       "逐一读完真实 diff 和必要的上下文文件再下判断。",
+      "关联仓库的上下文文件同样使用上述 repository 标签调用 read/list/search 工具；",
+      "不要把 ../仓库名塞进当前项目路径后再误判为项目外目录。",
       "不要凭提交说明或对方的描述判断改动是否正确。",
       "",
       "你是只读复审：不要修改任何文件、不要提交、不要部署。",

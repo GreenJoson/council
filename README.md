@@ -68,7 +68,7 @@ Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime
 - 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
 - 圆桌开局会冻结方案讨论、当前工作区或已提交 commit 三种审查范围，以及参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在模型调用前直接拒绝，避免纯文本 Provider 假装已经读过代码。
 - 议题发起人入选时由服务端按 Actor 身份自动置为提案人，议题正文直接冻结为首轮提案，不受勾选顺序影响，也不重复召唤发起人；Commit 互审会从议题正文及发起人的最新说明提取一个或多个本地仓库/commit，首个真实调用直接交给其他评审。发起人未入选时才由首位 Agent 形成提案。
-- 工作区与 commit 互审都保持只读，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime 可读取当前代码并在只读 Shell 中检查工作区 diff；获授权 ACP 与兼容 API ToolLoop 可读取当前项目文件和受控已提交 diff，但没有 Shell，跨仓库或未提交 diff 不可验证时必须明确阻断。
+- 工作区与 commit 互审都保持只读，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime 可读取当前代码并在只读 Shell 中检查工作区 diff；获授权 ACP 与兼容 API ToolLoop 可读取当前项目、议题明确关联的一层同级仓库及其受控已提交 diff，但没有 Shell，未关联仓库或未提交 diff 不可验证时必须明确阻断。
 - 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
 - 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。
 - 本机 Agent 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。Claude/Codex 当前按轮启动 CLI 并恢复 session；ACP DelegatedRuntime 让同一 RuntimeBinding 复用一个常驻进程与 ACP session。所有迟到回复都受 lease/fencing 阻止；兼容远程 Provider 的 ToolLoop 单轮无状态，但每一步工具调用都留在同一次模型对话内。

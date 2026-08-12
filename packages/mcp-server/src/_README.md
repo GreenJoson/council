@@ -31,12 +31,12 @@
 | `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code stream-json，只转发公开 text delta，并将失败分类为脱敏诊断 |
 | `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；转发公开 JSONL 消息、约束总事件流并独立限制最终正文 |
 | `acp-runtime-registry.ts` | Runtime 注册 | 声明 Kimi、Gemini、Grok、Codex、Claude Agent 到 ACP 命令、模型选择协议、启动参数和 Runtime 能力的受控映射；实际授权再与独立 Council policy 取交集 |
-| `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、项目内只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
+| `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、当前及已关联仓库的只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |
-| `read-only-tool-host.ts` | ToolHost | 以 realpath 限制项目根目录，提供读文本、列目录、搜索文本和受控已提交 Git diff，拒绝敏感配置、符号链接逃逸与所有写操作 |
+| `read-only-tool-host.ts` | ToolHost | 以本轮仓库白名单和 realpath 限制当前/关联仓库，提供读文本、列目录、搜索文本和受控已提交 Git diff，拒绝敏感配置、符号链接逃逸与所有写操作 |
 | `read-only-agent-loop.ts` | AgentLoop | 让同轮工具共享结果预算，保留本轮原始证据并将已读旧结果压成带哈希的首尾凭据；上下文吃紧时收回工具强制收尾并追加 blocking 覆盖保护，只有初始可信提示自身超限才失败关闭 |
 | `read-only-git-diff.ts` | Git 安全边界 | 只接受本轮白名单中的当前/一层同级仓库，将 commit/ref 解析为 OID，过滤敏感路径后用固定 argv 生成有界 patch 或统计摘要，并阻止软链逃逸 |
-| `trusted-git-targets.ts` | Git 授权桥 | 只从服务端生成的新旧阶段指令提取本轮仓库与精确 commit，支持恢复历史 Run；绝不从公开讨论正文扩大文件权限 |
+| `trusted-git-targets.ts` | Git 授权桥 | 自动圆桌只从服务端阶段指令提取白名单；Composer 手动 @Agent 会移除自由文本伪造授权，再从议题最新结构化提交关联继承仓库/commit |
 | `read-only-git-mcp.ts` | Delegated 工具桥 | 只向获授权 ACP Runtime 暴露支持 `repository` 参数的 `council_git_diff`；复用同一 sidecar，不暴露 Council 写工具或 Shell |
 | `openai-compatible-runtime.ts` | 兼容层 | 复用 ModelClient 提供连接测试与旧绑定所需的纯文本生成接口 |
 | `claude-client.ts` | 适配 | 组装公开上下文、恢复 session，并在成功后写入共享数据库 |

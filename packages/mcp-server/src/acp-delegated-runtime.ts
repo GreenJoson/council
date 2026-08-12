@@ -1,6 +1,6 @@
 /**
  * @input  依赖：声明式 ACP RuntimeDefinition、ACP v1 SDK、项目目录/仓库白名单、只读 Git MCP、持久 RuntimeBinding 与 AbortSignal
- * @output 导出：每 binding 长驻、可恢复、含受控多仓库 commit diff 的通用 ACP DelegatedRuntime
+ * @output 导出：每 binding 长驻、可恢复、含受控多仓库 diff/文本读取的通用 ACP DelegatedRuntime
  * @pos    供应商无关的 DelegatedRuntime；外部 Agent 拥有 AgentLoop，Council 只管理 session 与权限
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -40,6 +40,7 @@ import { isProtectedProjectRelativePath } from "./project-path-policy.js";
 import {
   COUNCIL_GIT_DIFF_TOOL_NAME,
   normalizeGitCommitGrant,
+  resolveAuthorizedGitRepositoryRoot,
   type GitCommitGrant,
 } from "./read-only-git-diff.js";
 import { readOnlyGitMcpServerConfig } from "./read-only-git-mcp.js";
@@ -113,6 +114,7 @@ interface ManagedAcpProcess {
   bindingId: string;
   cwd: string;
   rootRealPath: string;
+  repositoryRoots: readonly string[];
   model: string;
   gitCommitTargets: readonly GitCommitGrant[];
   sessionId: string;
@@ -307,7 +309,7 @@ function withinRoot(root: string, candidate: string): boolean {
 }
 
 function readProjectText(
-  root: string,
+  roots: readonly string[],
   requestedPath: string,
   line: number | null | undefined,
   limit: number | null | undefined,
@@ -317,10 +319,13 @@ function readProjectText(
     throw new Error("ACP 只允许读取绝对文件路径。");
   }
   const realPath = realpathSync(requestedPath);
-  const relativePath = path.relative(root, realPath);
+  const root = [...roots]
+    .filter((candidate) => withinRoot(candidate, realPath))
+    .sort((left, right) => right.length - left.length)[0];
+  const relativePath = root ? path.relative(root, realPath) : "";
   const info = statSync(realPath);
   if (
-    !withinRoot(root, realPath)
+    !root
     || isProtectedProjectRelativePath(relativePath)
     || !info.isFile()
     || info.size > maximumChars * 4
@@ -636,6 +641,21 @@ export class AcpDelegatedRuntime {
     gitCommitTargets: readonly GitCommitGrant[] = [],
   ): Promise<ManagedAcpProcess> {
     const rootRealPath = realpathSync(cwd);
+    const repositoryRoots = new Set<string>([rootRealPath]);
+    for (const repository of new Set(
+      gitCommitTargets.map((target) => target.repository),
+    )) {
+      if (repository === ".") {
+        continue;
+      }
+      try {
+        repositoryRoots.add(
+          await resolveAuthorizedGitRepositoryRoot(rootRealPath, repository),
+        );
+      } catch {
+        // 不可用的关联仓库由 council_git_diff 返回稳定诊断，不能扩大文件读取根。
+      }
+    }
     const child = spawn(
       definition.agentCommand,
       definition.buildLaunchArgs({ cwd, model }),
@@ -678,7 +698,7 @@ export class AcpDelegatedRuntime {
         }
         return {
           content: readProjectText(
-            managed?.rootRealPath ?? rootRealPath,
+            managed?.repositoryRoots ?? [...repositoryRoots],
             context.params.path,
             context.params.line,
             context.params.limit,
@@ -761,6 +781,7 @@ export class AcpDelegatedRuntime {
         bindingId,
         cwd,
         rootRealPath,
+        repositoryRoots: [...repositoryRoots],
         model,
         gitCommitTargets,
         sessionId: activeSessionId,
