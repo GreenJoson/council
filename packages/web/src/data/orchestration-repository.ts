@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次领域类型
- * @output 导出：OrchestrationRepository 运行与持久会话数据访问契约
+ * @output 导出：OrchestrationRepository 运行、AI 实施计划与持久会话数据访问契约
  * @pos    将运行状态与 TopicDetail 解耦的前端持久化边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,6 +11,8 @@ import type {
   SubmitFixesInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  GenerateWorkItemsInput,
+  GenerateWorkItemsResult,
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
@@ -34,6 +36,7 @@ export interface OrchestrationRepository {
   selectTopic(topicId: string): Promise<OrchestrationSnapshot>;
   getRun(runId: string): Promise<OrchestrationRun>;
   createRun(input: CreateOrchestrationRunInput): Promise<OrchestrationRun>;
+  generateWorkItems(input: GenerateWorkItemsInput): Promise<GenerateWorkItemsResult>;
   startRun(runId: string): Promise<OrchestrationSnapshot>;
   approveRun(input: ApproveOrchestrationRunInput): Promise<OrchestrationSnapshot>;
   /** 开始圆桌：冻结名册后由编排层自动交接，用户此后只在被提问时介入。 */

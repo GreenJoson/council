@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css 语义变量和 React 组件类名
- * @output 导出：全局、顶栏、三栏/两栏工作区布局、讨论滚动壳、讨论列尺寸容器和基础交互样式
+ * @output 导出：全局、顶栏中英切换、三栏/两栏工作区布局、讨论滚动壳、讨论列尺寸容器和基础交互样式
  * @pos    Operator Console 的桌面端空间骨架
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -196,6 +196,39 @@ textarea:focus-visible {
 
 .header-actions {
   justify-content: flex-end;
+}
+
+.language-switcher {
+  display: inline-flex;
+  flex: none;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.language-switcher button {
+  min-width: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: calc(var(--radius-small) - 2px);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.language-switcher button:hover:not(.active) {
+  color: var(--color-text);
+}
+
+.language-switcher button.active {
+  background: var(--color-surface-raised);
+  color: var(--color-primary);
+  box-shadow: var(--shadow-small);
 }
 
 .brand {

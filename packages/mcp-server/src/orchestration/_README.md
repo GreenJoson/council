@@ -11,6 +11,7 @@
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
+| `work-item-planner.ts` | 结构化边界 | 把 Accepted 决策作为非可信上下文交给只读 Agent，严格解析 `council-work-plan` 并过滤重复任务 |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
 Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，
@@ -48,9 +49,10 @@ capabilities，无需重启服务；活动 Run 引用的 Agent/Provider 不允�
 启动参数、模型选择协议与声明能力，再与独立 Council policy 计算实际授权；当前注册 Kimi、
 Gemini、Grok、Codex 与 Claude Agent。供应商自己的 AgentLoop 负责工具循环，
 Council 不重复实现。Runtime 只在定义获得 `repository_read` 时声明文件读取能力，只在
-获得 `git_diff` 时挂载仅公开 `council_git_diff` 的 stdio MCP；
+获得 `git_diff` 时挂载仅公开 `council_git_diff` 的 stdio MCP；议题关联仓库白名单同时进入
+ACP 文件桥与兼容 API ToolLoop；
 read/search/think 与该精确工具名仅允许单次，execute/edit/delete/move/fetch 等请求均拒绝。
-文件路径必须 realpath 后位于当前项目根目录；Git 工具只读已提交 commit/ref，过滤敏感路径，
+文件路径必须 realpath 后位于当前项目或本轮已关联仓库根目录；Git 工具只读已提交 commit/ref，过滤敏感路径，
 禁用外部驱动且不接触未提交工作区。服务重启后使用
 RuntimeBinding 保存的 session ID 执行 `session/resume`；accepted 决策、配置变化、手动
 关闭、空闲回收与服务退出都会有界取消并终止对应进程树。
@@ -73,7 +75,10 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 
 取消或失败清理会在同一状态迁移中清空 session 与游标；任何缺少 session 的绑定都强制使用
 完整公开上下文。进程重启只保留仍存在的可恢复 session。只有 open 议题可以创建运行或重开
-绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续调用。
+绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续通用 Run。
+唯一例外是一次性实施计划：它不恢复旧 session、不创建 RuntimeBinding/Run，也不给模型 Council
+写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审传递议题中的多仓库提交，提问处停住，收敛时写 proposed 决策 |
+| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
+| `service.ts` | 产品聚合 | Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单；自由 instruction 不能自行扩大授权 |

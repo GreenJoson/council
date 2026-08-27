@@ -6,7 +6,7 @@
 |---|---|---|
 | `repository.ts` | 边界 | 定义列表加载、显式选题、消息写入、Human / Accepted 人工决策和只读议题详情加载的数据访问接口 |
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
-| `orchestration-repository.ts` | 边界 | 定义 `@Agent` 单次调用、三范围圆桌开局/作答、RuntimeBinding 关闭/重开和订阅接口 |
+| `orchestration-repository.ts` | 边界 | 定义 `@Agent` 单次调用、AI 实施计划、三范围圆桌开局/作答、RuntimeBinding 关闭/重开和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
 | `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、含审查范围/多仓库 commit 目标的圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
@@ -17,17 +17,19 @@
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
 | `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected） |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，提交用户绑定的 accepted 人工决策，并提供不改状态的只读议题详情加载 |
-| `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API |
+| `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，生成 AI 实施计划，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、发帖、同步、Human / Accepted 人工结束（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
-| `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束 |
+| `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束 |
 | `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器与本地 Agent 服务配置/健康命令 |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，提交用户绑定的 accepted 人工决策，并提供不参与设置世代的只读议题详情加载 |
-| `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
+| `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储及 AI 实施计划，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 | `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
+| `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |
+| `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。
 

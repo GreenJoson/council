@@ -1,5 +1,5 @@
 /**
- * @input  依赖：含 owner/决策/备选冻结快照的议题、参与者回退、详情懒加载回调，
+ * @input  依赖：界面语言上下文、含 owner/决策/备选冻结快照的议题、参与者回退、详情懒加载回调，
  *         经共享的 useTopicDetails hook）、外部跳转定位请求（focusRequest）、打开讨论回调与 MarkdownContent
  * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）、
  *         DecisionRecordArticle 单条冻结身份档案
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTopicDetails } from "../hooks/useTopicDetails";
+import { useI18n } from "../i18n/I18nProvider";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
 import { DecisionCard } from "./DecisionCard";
 import { MarkdownContent } from "./MarkdownContent";
@@ -54,6 +55,7 @@ export function DecisionRecordsView({
   onOpenTopic,
   focusRequest,
 }: DecisionRecordsViewProps) {
+  const { t } = useI18n();
   const decidedTopics = useMemo(
     () => topics.filter((topic) => topic.status === "decided"),
     [topics],
@@ -88,10 +90,10 @@ export function DecisionRecordsView({
   const isLoading = Boolean(selectedTopicId) && !selectedDetail && !loadErrorMessage;
 
   return (
-    <section className="decision-records-view" aria-label="决策记录">
-      <aside className="decision-records-list" aria-label="已决策议题列表">
+    <section className="decision-records-view" aria-label={t("决策记录")}>
+      <aside className="decision-records-list" aria-label={t("已决策议题列表")}>
         <header className="decision-records-list-header">
-          <h1>决策记录</h1>
+          <h1>{t("决策记录")}</h1>
           <span className="count-pill">{decidedTopics.length}</span>
         </header>
         {decidedTopics.length > 0 ? (
@@ -112,7 +114,7 @@ export function DecisionRecordsView({
         ) : (
           <div className="empty-topics">
             <FileCheck2 size={22} aria-hidden="true" />
-            <p>接受决策后会在这里归档</p>
+            <p>{t("接受决策后会在这里归档")}</p>
           </div>
         )}
       </aside>
@@ -121,7 +123,7 @@ export function DecisionRecordsView({
         {!selectedTopicId ? (
           <div className="decision-records-placeholder">
             <FileCheck2 size={28} aria-hidden="true" />
-            <p>选择左侧的已决策议题查看归档详情</p>
+            <p>{t("选择左侧的已决策议题查看归档详情")}</p>
           </div>
         ) : loadErrorMessage ? (
           <div className="decision-records-placeholder">
@@ -133,11 +135,11 @@ export function DecisionRecordsView({
               onClick={() => selectedTopicId && retry(selectedTopicId)}
             >
               <RefreshCw size={15} />
-              重试
+              {t("重试")}
             </button>
           </div>
         ) : isLoading ? (
-          <div className="decision-records-skeleton" aria-busy="true" aria-label="正在加载决策详情">
+          <div className="decision-records-skeleton" aria-busy="true" aria-label={t("正在加载决策详情")}>
             <div className="skeleton-line skeleton-line-title" />
             <div className="skeleton-block" />
             <div className="skeleton-line" />
@@ -162,6 +164,7 @@ export function DecisionRecordArticle({
   participants,
   onOpenTopic,
 }: DecisionRecordArticleProps) {
+  const { t } = useI18n();
   const decision = detail.decision;
   const owner = participantFromActorSnapshot(
     detail.ownerSnapshot,
@@ -181,7 +184,7 @@ export function DecisionRecordArticle({
           <StatusBadge status={detail.status} />
           <h2>{detail.title}</h2>
         </div>
-        <span className="decision-record-updated">更新于 {detail.updatedLabel}</span>
+        <span className="decision-record-updated">{t("更新于 {time}", { time: detail.updatedLabel })}</span>
       </header>
 
       {decision ? (
@@ -192,20 +195,20 @@ export function DecisionRecordArticle({
               participant={proposer}
               size="small"
             />
-            <span>由 {proposer?.name ?? decision.proposedBy} 提出</span>
+            <span>{t("由 {name} 提出", { name: proposer?.name ?? decision.proposedBy })}</span>
           </div>
         </DecisionCard>
       ) : (
         <p className="decision-record-honest-notice">
           <TriangleAlert size={15} aria-hidden="true" />
-          该议题已决定，但未记录结构化决策。
+          {t("该议题已决定，但未记录结构化决策。")}
         </p>
       )}
 
       <section className="inspector-section">
         <header>
           <div>
-            <h3>约束条件</h3>
+            <h3>{t("约束条件")}</h3>
             <span className="count-pill">{detail.constraints.length}</span>
           </div>
         </header>
@@ -223,14 +226,14 @@ export function DecisionRecordArticle({
             ))}
           </ul>
         ) : (
-          <p className="empty-copy">尚未记录约束条件。</p>
+          <p className="empty-copy">{t("尚未记录约束条件。")}</p>
         )}
       </section>
 
       <section className="inspector-section">
         <header>
           <div>
-            <h3>关键证据</h3>
+            <h3>{t("关键证据")}</h3>
             <span className="count-pill">{detail.evidence.length}</span>
           </div>
         </header>
@@ -247,14 +250,14 @@ export function DecisionRecordArticle({
             ))}
           </ul>
         ) : (
-          <p className="empty-copy">尚未添加证据。</p>
+          <p className="empty-copy">{t("尚未添加证据。")}</p>
         )}
       </section>
 
       <section className="inspector-section">
         <header>
           <div>
-            <h3>备选方案</h3>
+            <h3>{t("备选方案")}</h3>
             <span className="count-pill">{detail.alternatives.length}</span>
           </div>
         </header>
@@ -281,14 +284,14 @@ export function DecisionRecordArticle({
             })}
           </ol>
         ) : (
-          <p className="empty-copy">尚未提出备选方案。</p>
+          <p className="empty-copy">{t("尚未提出备选方案。")}</p>
         )}
       </section>
 
       <section className="inspector-section decision-record-question-section">
         <header>
           <div>
-            <h3>议题原始问题</h3>
+            <h3>{t("议题原始问题")}</h3>
           </div>
         </header>
         <div className="metadata-question-full">
@@ -297,7 +300,7 @@ export function DecisionRecordArticle({
       </section>
 
       <div className="decision-record-owner">
-        <span className="metadata-label">所有者</span>
+        <span className="metadata-label">{t("所有者")}</span>
         <span className="metadata-person">
           <AgentAvatar agent={detail.owner} participant={owner} size="small" />
           <span>{owner?.name ?? detail.owner}</span>
@@ -307,7 +310,7 @@ export function DecisionRecordArticle({
       <footer className="decision-record-footer">
         <button className="secondary-button" type="button" onClick={() => onOpenTopic(detail.id)}>
           <ArrowUpRight size={16} />
-          在讨论中打开
+          {t("在讨论中打开")}
         </button>
       </footer>
     </article>

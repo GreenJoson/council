@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含 actorId 的 Capabilities、Run、持久会话状态、Agent 临时草稿和独立快照类型
+ * @output 导出：含 actorId 的 Capabilities、Run、AI 实施计划、持久会话状态、Agent 临时草稿和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -153,6 +153,15 @@ export interface CreateOrchestrationRunInput {
     instruction: string;
     requestMessageId?: string;
   }>;
+}
+
+export interface GenerateWorkItemsInput {
+  topicId: string;
+  adapterId: string;
+}
+
+export interface GenerateWorkItemsResult {
+  createdCount: number;
 }
 
 export interface ApproveOrchestrationRunInput {

@@ -227,6 +227,27 @@
     gap: 16px;
   }
 
+  .implementation-task-card {
+    padding: 14px;
+  }
+
+  .implementation-task-card .work-item-main {
+    flex-wrap: wrap;
+  }
+
+  .implementation-task-card .work-item-update-toggle {
+    margin-left: 40px;
+  }
+
+  .implementation-task-card .work-item-update-form {
+    grid-template-columns: 1fr;
+    margin-left: 0;
+  }
+
+  .implementation-task-card .work-item-plan-actions {
+    grid-template-columns: 1fr;
+  }
+
   .message-timeline {
     padding: 16px 10px 12px;
   }
@@ -276,6 +297,35 @@
 
   .composer-toolbar {
     align-items: flex-end;
+  }
+
+  .commit-association-row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .commit-association-row .commit-sha-field {
+    grid-column: 1;
+  }
+
+  .commit-remove-button {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .commit-association-footer,
+  .composer-tools {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .commit-add-actions {
+    width: 100%;
+  }
+
+  .commit-association-card li {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 
   .publish-button {

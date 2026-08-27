@@ -25,6 +25,7 @@ import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
 import { ReadOnlyAgentLoop } from "../read-only-agent-loop.js";
 import { readOnlyToolCapability } from "../read-only-tool-host.js";
+import { trustedGitCommitTargets } from "../trusted-git-targets.js";
 function buildPrompt(input: AgentInvocation, maximum: number): string {
   const trustedPrefix = [
     "你是 Council 架构委员会中的独立顾问。只返回可公开共享的最终结论，不输出隐藏思维链。",
@@ -127,6 +128,7 @@ export class OpenAICompatibleAgentAdapter implements AgentAdapter {
         apiKey,
         prompt: buildPrompt(input, this.maxContextChars),
         ...(projectPath ? { projectPath } : {}),
+        gitCommitTargets: trustedGitCommitTargets(input.instruction),
         signal: options.signal,
         onActivity: options.notifyActivity,
         onToolEvent: emitTool,

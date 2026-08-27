@@ -1,5 +1,5 @@
 /**
- * @input  依赖：OpenAICompatibleModelClient、ReadOnlyToolHost、项目路径与 ToolLoop 配置
+ * @input  依赖：OpenAICompatibleModelClient、ReadOnlyToolHost、项目路径/授权仓库与 ToolLoop 配置
  * @output 导出：模型请求→共享批次预算→证据凭据压缩→强制收尾的有界 AgentLoop
  * @pos    Council-owned Runtime；模型只选择工具，原始证据留在本轮内存，发送上下文始终受 Council 预算控制
  *
@@ -19,6 +19,7 @@ import {
   ReadOnlyToolHostError,
 } from "./read-only-tool-host.js";
 import { ReadOnlyGitDiffError } from "./read-only-git-diff.js";
+import type { GitCommitGrant } from "./read-only-git-diff.js";
 import type { CouncilConfig } from "./types.js";
 
 export type ToolLoopToolEventType =
@@ -32,6 +33,7 @@ export interface ReadOnlyAgentLoopInput {
   apiKey: string;
   prompt: string;
   projectPath?: string;
+  gitCommitTargets?: readonly GitCommitGrant[];
   signal?: AbortSignal;
   onActivity?: () => void;
   onTextEvent?: (event:
@@ -252,7 +254,11 @@ export class ReadOnlyAgentLoop {
 
   async generate(input: ReadOnlyAgentLoopInput): Promise<string> {
     const host = input.projectPath
-      ? await ReadOnlyToolHost.create(input.projectPath, this.config)
+      ? await ReadOnlyToolHost.create(
+          input.projectPath,
+          this.config,
+          input.gitCommitTargets,
+        )
       : undefined;
     const messages: ModelMessage[] = [
       { role: "user", content: input.prompt },

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：收敛阶段枚举、周期类型与结构化尾块契约
- * @output 导出：四段协议、工作区审查/commit 互审边界、审核账本复审与尾块格式说明
+ * @output 导出：四段协议、多仓库 Git 工具调用、工作区审查/commit 互审边界、审核账本复审与尾块格式说明
  * @pos    Agent 侧协议契约的唯一正本；改这里就等于改协议，必须同步 verdict.ts 的解析
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -25,10 +25,7 @@ export interface StageInstructionInput {
   reviewers: readonly string[];
   /** 提案人 Agent id；反驳与收敛阶段由它执行。 */
   proposer: string;
-  /**
-   * 被复审的那次发言自述的 commit 引用。存在就说明这一轮是 diff 互审，
-   * 复审者必须去读真实改动而不是读描述。
-   */
+  /** 本轮由服务端冻结并授权给只读 Git 工具的 commit 引用。 */
   reviewedCommitTargets?: readonly AgentFixTarget[];
   /** 决定本轮审的是方案、可变工作区还是冻结 commit。 */
   reviewScope?: CycleReviewScope;
@@ -144,17 +141,22 @@ const WORKSPACE_SPEC = [
   "必须明确标记 `blocking` 并要求重新开局，不能把前后两个状态拼成同一份结论。",
 ].join("\n");
 
-function reviewBody(input: StageInstructionInput): readonly string[] {
+function commitTargetBody(input: StageInstructionInput): readonly string[] {
   if (input.reviewedCommitTargets?.length) {
     const commands = input.reviewedCommitTargets.map(
-      (target) => `- \`git -C ${target.repository} show ${target.commit}\``,
+      (target) => `- \`council_git_diff(${JSON.stringify({
+        repository: target.repository,
+        commit: target.commit,
+      })})\``,
     );
     return [
       "",
-      "本轮复审的冻结改动：",
+      "本轮已授权读取的冻结改动（按原样调用只读工具）：",
       ...commands,
       "",
       "逐一读完真实 diff 和必要的上下文文件再下判断。",
+      "关联仓库的上下文文件同样使用上述 repository 标签调用 read/list/search 工具；",
+      "不要把 ../仓库名塞进当前项目路径后再误判为项目外目录。",
       "不要凭提交说明或对方的描述判断改动是否正确。",
       "",
       "你是只读复审：不要修改任何文件、不要提交、不要部署。",
@@ -219,7 +221,6 @@ function stageBody(input: StageInstructionInput): readonly string[] {
                 "可用的工作区 diff 与必要上下文，并明确说明结论针对可变快照。",
               ]
             : []),
-        ...reviewBody(input),
       ];
     case "rebuttal":
       if (reviewScope === "commit") {
@@ -274,6 +275,7 @@ export function buildStageInstruction(input: StageInstructionInput): string {
     `# 当前阶段：${input.stage}（第 ${String(input.round)}/${String(input.roundBudget)} 轮）`,
     "",
     ...stageBody(input),
+    ...(reviewScope === "commit" ? commitTargetBody(input) : []),
     "",
     ...(wantsWorkspaceSpec ? [WORKSPACE_SPEC, ""] : []),
     ...(wantsFixSpec ? [FIX_SPEC, ""] : []),

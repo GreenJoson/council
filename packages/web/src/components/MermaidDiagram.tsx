@@ -1,5 +1,5 @@
 /**
- * @input  依赖：mermaid 源码文本；动态 import("mermaid")（首屏不加载，仅遇到图时才拉取）；
+ * @input  依赖：界面语言上下文、mermaid 源码文本；动态 import("mermaid")（首屏不加载，仅遇到图时才拉取）；
  *         document.documentElement 的 data-theme 属性（浅/深主题联动）
  * @output 导出：MermaidDiagram —— 把 mermaid 源码渲染成有界缩略图，支持点击放大回调、
  *         主题切换即时重渲染，渲染失败时降级为原始代码块 + 错误提示，绝不白屏
@@ -12,6 +12,7 @@
 import { AlertTriangle, Maximize2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import type { MermaidConfig } from "mermaid";
+import { useI18n } from "../i18n/I18nProvider";
 
 // 动态 import 且模块级缓存：整个会话只会真正拉取一次 mermaid 包，
 // 多个图表实例共享同一个 Promise，不会重复触发网络/解析开销。
@@ -37,6 +38,7 @@ export interface MermaidDiagramProps {
 }
 
 export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
+  const { t } = useI18n();
   const rawId = useId();
   const renderId = `mermaid-${rawId.replace(/[^a-zA-Z0-9-]/g, "")}`;
   const [themeName, setThemeName] = useState(resolveMermaidTheme);
@@ -75,21 +77,21 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
         if (active) {
           setState({
             status: "error",
-            message: error instanceof Error ? error.message : "Mermaid 图渲染失败",
+            message: error instanceof Error ? error.message : t("Mermaid 图渲染失败"),
           });
         }
       });
     return () => {
       active = false;
     };
-  }, [code, renderId, themeName]);
+  }, [code, renderId, themeName, t]);
 
   if (state.status === "error") {
     return (
       <div className="mermaid-fallback">
         <div className="mermaid-fallback-heading">
           <AlertTriangle size={15} aria-hidden="true" />
-          <span>架构图渲染失败：{state.message}</span>
+          <span>{t("架构图渲染失败：{message}", { message: state.message })}</span>
         </div>
         <pre className="mermaid-fallback-source">
           <code>{code}</code>
@@ -100,9 +102,9 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
 
   if (state.status === "loading") {
     return (
-      <div className="mermaid-loading" aria-busy="true" aria-label="正在渲染架构图">
+      <div className="mermaid-loading" aria-busy="true" aria-label={t("正在渲染架构图")}>
         <span className="mermaid-loading-dot" aria-hidden="true" />
-        正在渲染架构图…
+        {t("正在渲染架构图…")}
       </div>
     );
   }
@@ -124,7 +126,7 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
       type="button"
       className="mermaid-diagram-frame mermaid-diagram-frame-clickable"
       onClick={() => onOpen(svg)}
-      aria-label="放大查看架构图"
+      aria-label={t("放大查看架构图")}
     >
       {/* 同上：mermaid 自身已清洗过的 SVG，安全注入 */}
       <span
@@ -133,7 +135,7 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
       />
       <span className="mermaid-diagram-zoom-hint" aria-hidden="true">
         <Maximize2 size={14} />
-        点击放大
+        {t("点击放大")}
       </span>
     </button>
   );

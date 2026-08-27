@@ -301,11 +301,11 @@ test("发起人的多仓库 Commit 议题跳过自审，并把冻结目标交给
     assert.equal(harness.invocations[0]?.messageKind, "critique");
     assert.match(
       harness.invocations[0]?.instruction ?? "",
-      /git -C \.\.\/client show aaaaaaa/u,
+      /council_git_diff\(\{"repository":"\.\.\/client","commit":"aaaaaaa"\}\)/u,
     );
     assert.match(
       harness.invocations[0]?.instruction ?? "",
-      /git -C \. show bbbbbbb/u,
+      /council_git_diff\(\{"repository":"\.","commit":"bbbbbbb"\}\)/u,
     );
   } finally {
     harness.cleanup();

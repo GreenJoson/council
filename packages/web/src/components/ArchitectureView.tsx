@@ -1,5 +1,5 @@
 /**
- * @input  依赖：项目名/路径、议题摘要列表、只读议题详情懒加载回调（经共享的 useTopicDetails
+ * @input  依赖：界面语言上下文、项目名/路径、议题摘要列表、只读议题详情懒加载回调（经共享的 useTopicDetails
  *         hook 一次性加载全部议题）、跳转讨论/决策记录/创建议题三个回调，以及
  *         data/selectors.ts 的架构档案聚合纯函数（buildArchitectureTimeline/
  *         aggregateConstraints/collectArchitectureDiagrams）
@@ -25,6 +25,7 @@ import {
   collectArchitectureDiagrams,
 } from "../data/selectors";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 
 export interface ArchitectureViewProps {
   projectName: string;
@@ -50,6 +51,7 @@ export function ArchitectureView({
   onOpenDecisionRecord,
   onCreateTopic,
 }: ArchitectureViewProps) {
+  const { t } = useI18n();
   const topicIds = useMemo(() => topics.map((topic) => topic.id), [topics]);
   const { details, errors, retry } = useTopicDetails(topicIds, onLoadDetail);
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
@@ -71,21 +73,23 @@ export function ArchitectureView({
   const proposedCount = loadedTopics.filter((topic) => topic.decision?.status === "proposed").length;
 
   const loadingProgressLabel =
-    details.size < topics.length ? `正在加载议题详情…（${String(details.size)}/${String(topics.length)}）` : null;
+    details.size < topics.length
+      ? t("正在加载议题详情…（{loaded}/{total}）", {
+        loaded: details.size,
+        total: topics.length,
+      })
+      : null;
 
   if (topics.length === 0) {
     return (
-      <section className="architecture-view" aria-label="项目架构档案">
+      <section className="architecture-view" aria-label={t("项目架构档案")}>
         <div className="architecture-empty">
           <Boxes size={28} aria-hidden="true" />
-          <h2>这个工作区还没有议题</h2>
-          <p>
-            架构档案来自讨论中的决策：在方案与综合消息里用 ```mermaid 围栏画图、在决策里写下
-            约束，都会自动归档到这里。先创建第一个议题开始讨论吧。
-          </p>
+          <h2>{t("这个工作区还没有议题")}</h2>
+          <p>{t("架构档案来自讨论中的决策：在方案与综合消息里用 ```mermaid 围栏画图、在决策里写下约束，都会自动归档到这里。先创建第一个议题开始讨论吧。")}</p>
           <button className="primary-button" type="button" onClick={onCreateTopic}>
             <Plus size={17} />
-            创建议题
+            {t("创建议题")}
           </button>
         </div>
       </section>
@@ -93,23 +97,23 @@ export function ArchitectureView({
   }
 
   return (
-    <section className="architecture-view" aria-label="项目架构档案">
+    <section className="architecture-view" aria-label={t("项目架构档案")}>
       <header className="architecture-view-header">
-        <h1>项目架构档案</h1>
-        <p>从讨论决策中聚合生成的架构沉淀页，随每一次接受决策自动更新</p>
+        <h1>{t("项目架构档案")}</h1>
+        <p>{t("从讨论决策中聚合生成的架构沉淀页，随每一次接受决策自动更新")}</p>
       </header>
 
       {errors.size > 0 ? (
         <div className="architecture-error-banner" role="alert">
           <TriangleAlert size={16} aria-hidden="true" />
-          <span>{errors.size} 个议题详情加载失败，架构档案可能不完整</span>
+          <span>{t("{count} 个议题详情加载失败，架构档案可能不完整", { count: errors.size })}</span>
           <button
             className="secondary-button"
             type="button"
             onClick={() => errors.forEach((_message, topicId) => retry(topicId))}
           >
             <RefreshCw size={14} />
-            重试失败项
+            {t("重试失败项")}
           </button>
         </div>
       ) : null}

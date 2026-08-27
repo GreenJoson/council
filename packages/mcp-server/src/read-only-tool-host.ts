@@ -1,6 +1,6 @@
 /**
- * @input  依赖：项目根目录、CouncilConfig 与结构化 Tool Call
- * @output 导出：项目内读文件、列目录、文本搜索和 commit diff 的有界只读 ToolHost
+ * @input  依赖：项目根目录、本轮授权仓库标签、CouncilConfig 与结构化 Tool Call
+ * @output 导出：项目内读文件/搜索和已授权多仓库 commit diff 的有界只读 ToolHost
  * @pos    Council-owned ToolLoop 的本机沙箱；不执行 Shell、不写文件、不读取凭据文件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -19,7 +19,11 @@ import type {
 } from "./openai-compatible-model-client.js";
 import {
   COUNCIL_GIT_DIFF_TOOL_NAME,
+  normalizeGitRepositoryLabel,
   ReadOnlyGitDiff,
+  ReadOnlyGitDiffError,
+  resolveAuthorizedGitRepositoryRoot,
+  type GitCommitGrant,
   type GitDiffRequest,
 } from "./read-only-git-diff.js";
 import {
@@ -69,9 +73,15 @@ interface ToolArguments {
   line?: unknown;
   limit?: unknown;
   query?: unknown;
+  repository?: unknown;
   commit?: unknown;
   base?: unknown;
   head?: unknown;
+}
+
+interface RepositoryAccess {
+  root?: string;
+  error?: ReadOnlyToolHostError;
 }
 
 function withinRoot(root: string, candidate: string): boolean {
@@ -148,19 +158,41 @@ function optionalString(value: unknown, name: string): string | undefined {
   return value.trim();
 }
 
+function optionalRepository(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ReadOnlyToolHostError(
+      "工具 repository 必须是非空字符串。",
+      "invalid_tool_arguments",
+    );
+  }
+  try {
+    return normalizeGitRepositoryLabel(value);
+  } catch (error) {
+    if (error instanceof ReadOnlyGitDiffError) {
+      throw new ReadOnlyToolHostError(error.message, error.diagnosticCode);
+    }
+    throw error;
+  }
+}
+
 function gitDiffRequest(args: ToolArguments): GitDiffRequest {
   const unexpected = Object.keys(args).filter((key) =>
-    key !== "commit" && key !== "base" && key !== "head");
+    key !== "repository" && key !== "commit" && key !== "base" && key !== "head");
   if (unexpected.length > 0) {
     throw new ReadOnlyToolHostError(
       "Git diff 包含未允许的参数。",
       "invalid_tool_arguments",
     );
   }
+  const repository = optionalString(args.repository, "repository");
   const commit = optionalString(args.commit, "commit");
   const base = optionalString(args.base, "base");
   const head = optionalString(args.head, "head");
   return {
+    ...(repository ? { repository } : {}),
     ...(commit ? { commit } : {}),
     ...(base ? { base } : {}),
     ...(head ? { head } : {}),
@@ -174,11 +206,15 @@ export class ReadOnlyToolHost {
       function: {
         name: TOOL_NAMES.read,
         description:
-          "读取当前项目内的普通文本文件。path 可为项目相对路径；凭据、构建产物和项目外路径会被拒绝。",
+          "读取当前项目或本轮已授权关联仓库内的普通文本文件。关联仓库优先传 repository；凭据、构建产物和未授权路径会被拒绝。",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
+            repository: {
+              type: "string",
+              description: "本轮已授权的仓库标签；当前仓库默认使用 .。",
+            },
             path: { type: "string" },
             line: { type: "integer", minimum: 1 },
             limit: { type: "integer", minimum: 1 },
@@ -191,12 +227,16 @@ export class ReadOnlyToolHost {
       type: "function",
       function: {
         name: TOOL_NAMES.list,
-        description: "列出当前项目内一个目录的直接子项，不递归。",
+        description: "列出当前项目或本轮已授权关联仓库内一个目录的直接子项，不递归。",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            path: { type: "string", description: "项目相对目录，默认项目根目录。" },
+            repository: {
+              type: "string",
+              description: "本轮已授权的仓库标签；当前仓库默认使用 .。",
+            },
+            path: { type: "string", description: "仓库相对目录，默认仓库根目录。" },
             limit: { type: "integer", minimum: 1 },
           },
         },
@@ -207,13 +247,17 @@ export class ReadOnlyToolHost {
       function: {
         name: TOOL_NAMES.search,
         description:
-          "在当前项目的普通文本文件中按字面量搜索，返回文件、行号和有界片段。",
+          "在当前项目或本轮已授权关联仓库的普通文本文件中按字面量搜索，返回文件、行号和有界片段。",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
+            repository: {
+              type: "string",
+              description: "本轮已授权的仓库标签；当前仓库默认使用 .。",
+            },
             query: { type: "string" },
-            path: { type: "string", description: "项目相对目录，默认项目根目录。" },
+            path: { type: "string", description: "仓库相对目录，默认仓库根目录。" },
             limit: { type: "integer", minimum: 1 },
           },
           required: ["query"],
@@ -225,11 +269,15 @@ export class ReadOnlyToolHost {
       function: {
         name: TOOL_NAMES.gitDiff,
         description:
-          "独立读取已提交 commit 或 base/head 范围的 Git diff。不会读取未提交工作区；敏感路径会被过滤，超限会返回明确摘要。",
+          "读取本轮已授权仓库中已提交 commit 或 base/head 范围的 Git diff。不会读取未提交工作区；敏感路径会被过滤，超限会返回明确摘要。",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
+            repository: {
+              type: "string",
+              description: "本轮议题已授权的仓库标签；当前仓库默认使用 .。",
+            },
             commit: {
               type: "string",
               description: "单个 commit/ref；Council 比较它与第一父提交。",
@@ -247,6 +295,7 @@ export class ReadOnlyToolHost {
   ];
 
   readonly #root: string;
+  readonly #repositories: ReadonlyMap<string, RepositoryAccess>;
   readonly #maxResultChars: number;
   readonly #maxFileBytes: number;
   readonly #maxScanFiles: number;
@@ -255,10 +304,12 @@ export class ReadOnlyToolHost {
 
   private constructor(
     root: string,
+    repositories: ReadonlyMap<string, RepositoryAccess>,
     config: CouncilConfig,
     gitDiff: ReadOnlyGitDiff,
   ) {
     this.#root = root;
+    this.#repositories = repositories;
     this.#maxResultChars = config.maxOutputChars;
     this.#maxFileBytes = config.toolLoopMaxFileBytes;
     this.#maxScanFiles = config.toolLoopMaxScanFiles;
@@ -266,7 +317,11 @@ export class ReadOnlyToolHost {
     this.#gitDiff = gitDiff;
   }
 
-  static async create(projectPath: string, config: CouncilConfig): Promise<ReadOnlyToolHost> {
+  static async create(
+    projectPath: string,
+    config: CouncilConfig,
+    gitCommitTargets: readonly GitCommitGrant[] = [],
+  ): Promise<ReadOnlyToolHost> {
     const root = await realpath(projectPath);
     const info = await lstat(root);
     if (!info.isDirectory()) {
@@ -275,10 +330,33 @@ export class ReadOnlyToolHost {
         "invalid_project_path",
       );
     }
+    const repositories = new Map<string, RepositoryAccess>([[".", { root }]]);
+    for (const repository of new Set(
+      gitCommitTargets.map((target) => normalizeGitRepositoryLabel(target.repository)),
+    )) {
+      if (repository === ".") {
+        continue;
+      }
+      try {
+        repositories.set(repository, {
+          root: await resolveAuthorizedGitRepositoryRoot(root, repository),
+        });
+      } catch (error) {
+        repositories.set(repository, {
+          error: error instanceof ReadOnlyGitDiffError
+            ? new ReadOnlyToolHostError(error.message, error.diagnosticCode)
+            : new ReadOnlyToolHostError(
+                `关联仓库 ${repository} 无法读取。`,
+                "repository_unavailable",
+              ),
+        });
+      }
+    }
     return new ReadOnlyToolHost(
       root,
+      repositories,
       config,
-      await ReadOnlyGitDiff.create(root, config),
+      await ReadOnlyGitDiff.create(root, config, gitCommitTargets),
     );
   }
 
@@ -317,29 +395,60 @@ export class ReadOnlyToolHost {
     };
   }
 
-  async #resolve(requestedPath: string): Promise<{ absolute: string; relative: string }> {
+  async #resolve(
+    args: ToolArguments,
+    requestedPath: string,
+  ): Promise<{ absolute: string; relative: string; repository: string }> {
+    const requestedRepository = optionalRepository(args.repository);
+    const selected = requestedRepository
+      ? this.#repositories.get(requestedRepository)
+      : undefined;
+    if (requestedRepository && !selected) {
+      throw new ReadOnlyToolHostError(
+        `仓库 ${requestedRepository} 未被本轮议题授权。`,
+        "repository_not_authorized",
+      );
+    }
+    if (selected?.error || (requestedRepository && !selected?.root)) {
+      throw selected?.error ?? new ReadOnlyToolHostError(
+        `关联仓库 ${requestedRepository} 无法读取。`,
+        "repository_unavailable",
+      );
+    }
+    const baseRoot = selected?.root ?? this.#root;
     const candidate = path.isAbsolute(requestedPath)
       ? requestedPath
-      : path.resolve(this.#root, requestedPath);
+      : path.resolve(baseRoot, requestedPath);
     const absolute = await realpath(candidate);
-    if (!withinRoot(this.#root, absolute)) {
+    const matched = requestedRepository
+      ? { repository: requestedRepository, access: selected! }
+      : [...this.#repositories.entries()]
+          .filter((entry): entry is [string, RepositoryAccess & { root: string }] =>
+            Boolean(entry[1].root) && withinRoot(entry[1].root!, absolute))
+          .sort((left, right) => right[1].root.length - left[1].root.length)
+          .map(([repository, access]) => ({ repository, access }))[0];
+    if (!matched?.access.root || !withinRoot(matched.access.root, absolute)) {
       throw new ReadOnlyToolHostError(
-        "工具路径超出当前项目。",
+        "工具路径超出当前项目与本轮已授权仓库。",
         "path_outside_project",
       );
     }
-    const relative = path.relative(this.#root, absolute);
+    const relative = path.relative(matched.access.root, absolute);
     if (isProtectedProjectRelativePath(relative)) {
       throw new ReadOnlyToolHostError(
         "安全策略禁止读取该路径。",
         "protected_path",
       );
     }
-    return { absolute, relative: relative || "." };
+    return {
+      absolute,
+      relative: relative || ".",
+      repository: matched.repository,
+    };
   }
 
   async #readTextFile(args: ToolArguments): Promise<string> {
-    const resolved = await this.#resolve(requiredPath(args.path));
+    const resolved = await this.#resolve(args, requiredPath(args.path));
     const info = await lstat(resolved.absolute);
     if (!info.isFile() || info.size > this.#maxFileBytes) {
       throw new ReadOnlyToolHostError(
@@ -378,7 +487,7 @@ export class ReadOnlyToolHost {
   }
 
   async #listDirectory(args: ToolArguments): Promise<string> {
-    const resolved = await this.#resolve(requiredPath(args.path, "."));
+    const resolved = await this.#resolve(args, requiredPath(args.path, "."));
     const info = await lstat(resolved.absolute);
     if (!info.isDirectory()) {
       throw new ReadOnlyToolHostError(
@@ -405,12 +514,16 @@ export class ReadOnlyToolHost {
             ? "file"
             : "other",
       }));
-    return JSON.stringify({ path: resolved.relative, entries });
+    return JSON.stringify({
+      repository: resolved.repository,
+      path: resolved.relative,
+      entries,
+    });
   }
 
   async #searchText(args: ToolArguments): Promise<string> {
     const query = requiredQuery(args.query);
-    const resolved = await this.#resolve(requiredPath(args.path, "."));
+    const resolved = await this.#resolve(args, requiredPath(args.path, "."));
     const info = await lstat(resolved.absolute);
     if (!info.isDirectory()) {
       throw new ReadOnlyToolHostError(
@@ -440,7 +553,10 @@ export class ReadOnlyToolHost {
           break;
         }
         const absolute = path.join(directory, entry.name);
-        const relative = path.relative(this.#root, absolute);
+        const relative = path.relative(
+          this.#repositories.get(resolved.repository)?.root ?? this.#root,
+          absolute,
+        );
         if (
           isProtectedProjectRelativePath(relative)
           || entry.isSymbolicLink()
@@ -492,7 +608,12 @@ export class ReadOnlyToolHost {
         }
       }
     }
-    return JSON.stringify({ query, scannedFiles, results });
+    return JSON.stringify({
+      repository: resolved.repository,
+      query,
+      scannedFiles,
+      results,
+    });
   }
 
   #bounded(content: string): string {

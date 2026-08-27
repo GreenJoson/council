@@ -1,6 +1,7 @@
 /**
- * @input  依赖：ImplementationProgress、服务端静态 React 渲染与实施项夹具
- * @output 导出：派生完成度、只数叶子的分母、父任务只读状态、审核发现徽标与认领态的 UI 回归测试
+ * @input  依赖：ImplementationProgress/ImplementationSummary、服务端静态 React 渲染与实施项夹具
+ * @output 导出：中英界面下的派生完成度、只数叶子的分母、父任务只读状态、审核发现徽标、
+ *         认领态与 AI 拆分入口的 UI 回归测试
  * @pos    决策执行账本不退化为手填百分比的前端验收证据
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,7 +9,11 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ImplementationProgress } from "../src/components/ImplementationProgress";
+import {
+  ImplementationProgress,
+  ImplementationSummary,
+} from "../src/components/ImplementationProgress";
+import { I18nProvider } from "../src/i18n/I18nProvider";
 import type {
   ActorSnapshot,
   CouncilWorkItem,
@@ -80,22 +85,34 @@ const participants = new Map<string, Participant>([[
   { id: "codex", slug: "codex", name: "Codex Current", shortName: "CX", role: "实现者" },
 ]]);
 
-function render(topic: TopicDetail): string {
-  return renderToStaticMarkup(
+function tasks(topic: TopicDetail): JSX.Element {
+  return (
     <ImplementationProgress
       topic={topic}
       participants={participants}
       busyAction={null}
+      planningAgentLabel="Codex"
+      onGenerate={async () => undefined}
       onAdd={async () => true}
       onUpdate={async () => undefined}
       onClaim={async () => undefined}
-    />,
+    />
+  );
+}
+
+function render(topic: TopicDetail): string {
+  return renderToStaticMarkup(tasks(topic));
+}
+
+function renderEnglish(topic: TopicDetail): string {
+  return renderToStaticMarkup(
+    <I18nProvider initialLocale="en">{tasks(topic)}</I18nProvider>,
   );
 }
 
 describe("ImplementationProgress", () => {
   it("从完成项数量派生百分比并显示阻塞与更新证据", () => {
-    const html = render(topicWith([
+    const topic = topicWith([
       workItem({
         id: "work_item_done",
         title: "完成接口",
@@ -114,17 +131,28 @@ describe("ImplementationProgress", () => {
         sortOrder: 1,
         updatedLabel: "10:40",
       }),
-    ]));
+    ]);
+    const html = render(topic);
+    const summaryHtml = renderToStaticMarkup(<ImplementationSummary topic={topic} />);
+    const englishHtml = renderEnglish(topic);
 
-    expect(html).toContain("50%");
+    expect(summaryHtml).toContain("50%");
+    expect(summaryHtml).toContain("aria-valuenow=\"50\"");
+    expect(summaryHtml).toContain("实施进度");
     expect(html).toContain("1 项受阻");
     expect(html).toContain("测试通过");
     expect(html).toContain("Codex");
-    expect(html).toContain("aria-valuenow=\"50\"");
+    // 进度条只属于右栏摘要；主区任务卡再画一条等于同一个数字维护两处。
+    expect(html).not.toContain("role=\"progressbar\"");
+    expect(html).toContain("AI 补充遗漏任务");
+    expect(html).toContain("任务拆分");
+    expect(englishHtml).toContain("Task breakdown");
+    expect(englishHtml).toContain("1 blocked; resolve dependencies first");
+    expect(englishHtml).toContain("AI find missing tasks");
   });
 
-  it("分母只数叶子任务，父任务缩进渲染且状态下拉被禁用", () => {
-    const html = render(topicWith([
+  it("分母只数叶子任务，父任务缩进渲染且状态按钮被禁用", () => {
+    const topic = topicWith([
       workItem({ id: "work_item_parent", title: "打通登录链路" }),
       workItem({
         id: "work_item_child_a",
@@ -139,21 +167,23 @@ describe("ImplementationProgress", () => {
         title: "前端存储令牌",
         sortOrder: 1,
       }),
-    ]));
+    ]);
+    const html = render(topic);
 
     // 三条记录只有两个叶子：父任务再被计一次，进度会凭空变成 1/3。
-    expect(html).toContain("1 / 2");
-    expect(html).toContain("50%");
+    expect(html).toContain("2 项可执行任务");
+    expect(renderToStaticMarkup(<ImplementationSummary topic={topic} />)).toContain("1 / 2");
     expect(html).toContain("--work-item-depth:1");
     expect(html).toContain("work-item-child");
     expect(html).toContain("父任务状态由子任务派生");
     expect(html).toContain("work-item-tag-derived");
-    // 父任务的下拉是只读回显；子任务的仍然可改。
-    expect(html.match(/work-item-status-select" disabled=""/g)).toHaveLength(1);
+    // 父任务的状态按钮是只读回显；子任务的仍然可点。
+    expect(html.match(/work-item-update-toggle" disabled=""/g)).toHaveLength(1);
+    expect(renderEnglish(topic)).toContain("Derived");
   });
 
   it("阻断级审核发现会挡住收敛并标出轮次", () => {
-    const html = render(topicWith([
+    const topic = topicWith([
       workItem({
         id: "work_item_finding",
         decisionId: undefined,
@@ -173,15 +203,18 @@ describe("ImplementationProgress", () => {
         status: "completed",
         completedLabel: "12:00",
       }),
-    ]));
+    ]);
+    const html = render(topic);
 
     expect(html).toContain("1 条阻断级审核发现未关闭");
     expect(html).toContain("阻断 · R2");
     expect(html).toContain("非阻断");
+    expect(renderEnglish(topic))
+      .toContain("1 blocking review findings are still open");
   });
 
   it("已认领的叶子显示执行者与修复提交，未认领的才给认领按钮", () => {
-    const html = render(topicWith([
+    const topic = topicWith([
       workItem({
         id: "work_item_claimed",
         title: "重放迁移脚本",
@@ -191,10 +224,20 @@ describe("ImplementationProgress", () => {
         fixCommit: "a1b2c3d",
       }),
       workItem({ id: "work_item_open", title: "补迁移测试", sortOrder: 1 }),
-    ]));
+    ]);
+    const html = render(topic);
 
     expect(html).toContain("认领：Codex Current");
     expect(html).toContain("a1b2c3d");
     expect(html.match(/认领<\/button>/g)).toHaveLength(1);
+    expect(renderEnglish(topic)).toContain("Claimed by Codex Current");
+  });
+
+  it("Accepted 决策没有任务时优先提供 AI 拆分和手动补充入口", () => {
+    const html = render(topicWith([]));
+
+    expect(html).toContain("AI 拆分任务");
+    expect(html).toContain("手动添加任务");
+    expect(html).toContain("尚无任务");
   });
 });

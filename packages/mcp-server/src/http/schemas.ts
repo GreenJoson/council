@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含实施项）的 Zod schema
+ * @output 导出：REST path、query、body（含 AI 实施计划与实施项）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -229,6 +229,12 @@ export const createWorkItemsBodySchema = z
       )
       .min(1)
       .max(MAX_WORK_ITEM_BATCH),
+  })
+  .strict();
+
+export const generateWorkItemsBodySchema = z
+  .object({
+    adapterId: routerIdSchema,
   })
   .strict();
 

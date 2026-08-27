@@ -667,6 +667,241 @@
   color: var(--color-text-muted);
 }
 
+.commit-association-editor {
+  display: grid;
+  gap: 9px;
+  margin: 8px 0 6px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface) 76%, var(--color-surface-raised));
+}
+
+.commit-association-heading,
+.commit-association-footer,
+.commit-association-card-heading,
+.composer-tools {
+  display: flex;
+  align-items: center;
+}
+
+.commit-association-heading {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.commit-association-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.commit-association-heading strong {
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.commit-association-heading small,
+.commit-association-heading > span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.commit-association-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.commit-association-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.55fr) minmax(220px, 1fr) 28px;
+  gap: 8px;
+  align-items: end;
+}
+
+.commit-association-row label {
+  display: grid;
+  gap: 3px;
+  cursor: text;
+}
+
+.commit-association-row label > span,
+.commit-repository-context > span {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.commit-repository-context {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.commit-repository-context > strong {
+  min-height: 30px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-positive) 5%, var(--color-surface-raised));
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-association-row input,
+.commit-association-row textarea {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  outline: 0;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.commit-association-row textarea {
+  max-height: 62px;
+  line-height: 1.55;
+  resize: none;
+}
+
+.commit-association-row input:focus,
+.commit-association-row textarea:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 12%, transparent);
+}
+
+.commit-remove-button {
+  margin-bottom: 1px;
+}
+
+.commit-association-footer {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.commit-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.commit-add-button,
+.commit-association-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.commit-add-button {
+  min-height: 26px;
+  padding: 3px 8px;
+}
+
+.commit-association-toggle {
+  min-height: 28px;
+  padding: 4px 9px;
+}
+
+.commit-add-button:hover:not(:disabled),
+.commit-association-toggle:hover,
+.commit-association-toggle.is-active {
+  border-color: var(--color-focus);
+  color: var(--color-focus);
+}
+
+.commit-association-toggle.is-active {
+  background: color-mix(in srgb, var(--color-focus) 8%, var(--color-surface-raised));
+}
+
+.commit-association-error,
+.commit-association-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.commit-association-error {
+  color: var(--color-danger);
+}
+
+.commit-association-ready {
+  color: var(--color-positive);
+}
+
+.composer-tools {
+  gap: 9px;
+}
+
+.commit-association-card {
+  display: grid;
+  gap: 8px;
+  max-width: 76ch;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-positive);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-positive) 5%, var(--color-surface));
+}
+
+.commit-association-card-heading {
+  gap: 6px;
+  color: var(--color-positive);
+}
+
+.commit-association-card-heading strong {
+  font-size: 11px;
+}
+
+.commit-association-card-heading span {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.commit-association-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commit-association-card li {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.45fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.commit-association-card code {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .publish-button {
   min-width: 155px;
 }
@@ -719,14 +954,47 @@
   background: var(--color-surface-raised);
 }
 
+.implementation-task-card {
+  margin-top: 6px;
+  padding: 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-raised);
+}
+
+.implementation-task-heading,
+.implementation-task-heading > div {
+  display: flex;
+  align-items: center;
+}
+
+.implementation-task-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.implementation-task-heading > div {
+  gap: 10px;
+}
+
+.implementation-task-heading strong {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .implementation-heading,
 .implementation-heading > div,
 .implementation-kicker,
 .implementation-alert,
-.work-item,
+.work-item-main,
 .work-item-form-heading,
 .work-item-add,
-.work-item-submit {
+.work-item-submit,
+.work-item-generate,
+.work-item-update-toggle,
+.work-item-update-actions {
   display: flex;
   align-items: center;
 }
@@ -804,8 +1072,6 @@
 
 .work-item {
   position: relative;
-  align-items: flex-start;
-  gap: 8px;
   min-width: 0;
   /* --work-item-depth 由组件按树深度写入；缩进本身就是层级的唯一视觉线索。 */
   padding: 10px 4px 10px calc(4px + var(--work-item-depth, 0) * 16px);
@@ -825,6 +1091,11 @@
 
 .work-item-parent > .work-item-marker {
   border-style: dashed;
+}
+
+.work-item-main {
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .work-item-marker {
@@ -956,36 +1227,95 @@
   opacity: 0.5;
 }
 
-.work-item-status-select {
+.work-item-update-toggle {
   flex: none;
-  width: 72px;
+  justify-content: center;
+  gap: 4px;
   min-height: 26px;
-  padding: 0 5px;
+  padding: 0 6px;
   border: 1px solid var(--color-border);
   border-radius: 5px;
-  background: var(--color-surface);
-  color: var(--color-text-secondary);
+  background: transparent;
+  color: var(--color-text-muted);
   font-size: 9px;
 }
 
-/* 父任务的下拉是只读回显，不做成能点的样子，省得用户反复试。 */
-.work-item-parent .work-item-status-select:disabled {
+.work-item-update-toggle:hover:not(:disabled),
+.work-item-update-toggle[aria-expanded="true"] {
+  border-color: var(--color-primary);
+  color: var(--color-focus);
+}
+
+.work-item-update-form {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 7px;
+  margin: 9px 0 0 28px;
+  padding: 9px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas-deep);
+}
+
+.work-item-update-form select,
+.work-item-update-form textarea {
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 9px;
+}
+
+/* 父任务的状态按钮是只读回显，不做成能点的样子，省得用户反复试。 */
+.work-item-parent .work-item-update-toggle:disabled {
   border-style: dashed;
   color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
-.work-item-saving {
-  position: absolute;
-  right: 5px;
-  bottom: 1px;
+.work-item-update-form select {
+  min-height: 30px;
+  padding: 0 6px;
+}
+
+.work-item-update-form textarea {
+  min-height: 52px;
+  padding: 7px;
+  resize: vertical;
+}
+
+.work-item-update-form select:focus,
+.work-item-update-form textarea:focus {
+  border-color: var(--color-focus);
+}
+
+.work-item-update-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.work-item-update-actions button {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.work-item-update-actions button:last-child {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
   color: var(--color-focus);
-  font-family: var(--font-mono);
-  font-size: 8px;
 }
 
 .work-item-add,
-.work-item-submit {
+.work-item-submit,
+.work-item-generate {
   justify-content: center;
   gap: 6px;
   width: 100%;
@@ -998,9 +1328,35 @@
   font-size: 10px;
 }
 
-.work-item-add:hover:not(:disabled) {
+.work-item-add:hover:not(:disabled),
+.work-item-generate:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-focus);
+}
+
+.work-item-plan-actions {
+  display: grid;
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.work-item-plan-actions .work-item-add,
+.work-item-plan-actions .work-item-generate {
+  margin-top: 0;
+}
+
+.work-item-generate {
+  border-color: var(--color-primary);
+  background:
+    linear-gradient(90deg, var(--color-primary-soft), transparent),
+    var(--color-surface-raised);
+  color: var(--color-focus);
+}
+
+.work-item-agent-hint {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .work-item-form {
@@ -1059,6 +1415,75 @@
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   color: var(--color-focus);
+}
+
+.implementation-task-card .work-item-list {
+  margin: 16px 0 0;
+}
+
+.implementation-task-card .work-item {
+  padding: 18px 8px;
+}
+
+.implementation-task-card .work-item-main {
+  gap: 12px;
+}
+
+.implementation-task-card .work-item-marker {
+  width: 28px;
+  height: 28px;
+}
+
+.implementation-task-card .work-item-copy strong {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.implementation-task-card .work-item-copy p,
+.implementation-task-card .work-item-copy blockquote {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.implementation-task-card .work-item-copy small {
+  margin-top: 8px;
+  font-size: 9px;
+}
+
+.implementation-task-card .work-item-update-toggle {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 10px;
+}
+
+.implementation-task-card .work-item-update-form {
+  grid-template-columns: 110px minmax(0, 1fr);
+  margin: 12px 0 0 40px;
+  padding: 12px;
+}
+
+.implementation-task-card .work-item-update-form select,
+.implementation-task-card .work-item-update-form textarea,
+.implementation-task-card .work-item-update-actions button,
+.implementation-task-card .work-item-form input,
+.implementation-task-card .work-item-form textarea,
+.implementation-task-card .work-item-form-heading,
+.implementation-task-card .work-item-agent-hint {
+  font-size: 11px;
+}
+
+.implementation-task-card .work-item-plan-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.implementation-task-card .work-item-add,
+.implementation-task-card .work-item-generate,
+.implementation-task-card .work-item-submit {
+  min-height: 38px;
+  font-size: 11px;
 }
 
 .auto-rounds-card {
@@ -1559,10 +1984,11 @@
 }
 
 /*
- * 决策 tab 跟着消息列走同一条流体宽度，不用元数据那条 640px 上限——决策里有
- * 章节、表格和 mermaid，正是需要主列宽度的内容。
+ * 决策与任务 tab 跟着消息列走同一条流体宽度，不用元数据那条 640px 上限——
+ * 决策有章节/图表，任务有长证据清单，都需要主列宽度。
  */
-.topic-decision-panel {
+.topic-decision-panel,
+.topic-implementation-panel {
   flex: 1;
   min-height: 0;
   width: min(

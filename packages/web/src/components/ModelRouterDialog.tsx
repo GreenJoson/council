@@ -1,5 +1,5 @@
 /**
- * @input  依赖：OrchestrationRepository 的 ModelRouter CRUD、BrandGlyph 与单项编辑器
+ * @input  依赖：界面语言上下文、OrchestrationRepository 的 ModelRouter CRUD、BrandGlyph 与单项编辑器
  * @output 导出：ModelRouterDialog 固定高度模型路由台与系统/模板身份判定
  * @pos    Council 桌面/Web 的 Provider 连接、受控品牌身份、Agent 模型和 @alias 管理入口
  *
@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "../i18n/I18nProvider";
 import type { OrchestrationRepository } from "../data/orchestration-repository";
 import type {
   AgentDefinition,
@@ -179,6 +180,7 @@ export function ModelRouterDialog({
   onClose,
   onChanged,
 }: ModelRouterDialogProps) {
+  const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<ModelRouterSnapshot | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [agentForm, setAgentForm] = useState<AgentDefinitionDraft | null>(null);
@@ -314,7 +316,10 @@ export function ModelRouterDialog({
           });
       await reload({ kind: "agent", id: saved.id });
       setAgentForm(agentDraft(saved));
-      setResultMessage(`${saved.displayName} 已保存，@${saved.mentionAlias} 立即生效。`);
+      setResultMessage(t("{name} 已保存，@{alias} 立即生效。", {
+        name: saved.displayName,
+        alias: saved.mentionAlias,
+      }));
     } catch (error: unknown) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -348,7 +353,7 @@ export function ModelRouterDialog({
           });
       await reload({ kind: "provider", id: saved.id });
       setProviderForm(providerDraft(saved));
-      setResultMessage(`${saved.displayName} 连接已保存。`);
+      setResultMessage(t("{name} 连接已保存。", { name: saved.displayName }));
     } catch (error: unknown) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -362,10 +367,12 @@ export function ModelRouterDialog({
     try {
       if (selectedAgent) {
         await repository.removeAgent(selectedAgent.id);
-        setResultMessage(`${selectedAgent.displayName} 已移除。`);
+        setResultMessage(t("{name} 已移除。", { name: selectedAgent.displayName }));
       } else if (selectedProvider) {
         await repository.removeProvider(selectedProvider.id);
-        setResultMessage(`${selectedProvider.displayName} 连接和 Keychain 凭据已移除。`);
+        setResultMessage(t("{name} 连接和 Keychain 凭据已移除。", {
+          name: selectedProvider.displayName,
+        }));
       }
       const next = await reload();
       const first = next.agents.find((agent) => !agent.deletedAt);
@@ -389,7 +396,10 @@ export function ModelRouterDialog({
     setErrorMessage(null);
     try {
       const result = await repository.testAgent(selectedAgent.id);
-      setResultMessage(`${selectedAgent.displayName} 连接测试通过 · ${String(result.latencyMs)} ms`);
+      setResultMessage(t("{name} 连接测试通过 · {latency} ms", {
+        name: selectedAgent.displayName,
+        latency: result.latencyMs,
+      }));
     } catch (error: unknown) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -433,20 +443,20 @@ export function ModelRouterDialog({
         <header className="model-router-header">
           <div>
             <span className="settings-kicker">MODEL ROUTER</span>
-            <h2 id="model-router-title">Provider 与 Agent</h2>
-            <p>Provider 管连接，Agent 管模型、身份和 @alias；同一连接可创建多个独立 Agent。</p>
+            <h2 id="model-router-title">{t("Provider 与 Agent")}</h2>
+            <p>{t("Provider 管连接，Agent 管模型、身份和 @alias；同一连接可创建多个独立 Agent。")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="关闭模型路由" onClick={onClose}><X size={19} /></button>
+          <button className="icon-button" type="button" aria-label={t("关闭模型路由")} onClick={onClose}><X size={19} /></button>
         </header>
         <div className="model-router-body">
           {loading || !snapshot ? (
-            <div className="settings-loading"><LoaderCircle className="spinner" size={22} />正在读取模型路由…</div>
+            <div className="settings-loading"><LoaderCircle className="spinner" size={22} />{t("正在读取模型路由…")}</div>
           ) : (
             <>
-              <aside className="model-router-nav" aria-label="Provider 与 Agent">
+              <aside className="model-router-nav" aria-label={t("Provider 与 Agent")}>
                 <div className="model-router-nav-summary">
                   <span><strong>{String(activeAgents.length)}</strong> Agents</span>
-                  <small>{String(activeProviders.length)} 个 Provider 连接</small>
+                  <small>{t("{count} 个 Provider 连接", { count: activeProviders.length })}</small>
                 </div>
                 <div className="model-router-nav-section">
                   <span className="model-router-nav-label">AGENTS</span>
@@ -457,7 +467,7 @@ export function ModelRouterDialog({
                         <RouterListButton
                           key={agent.id}
                           title={agent.displayName}
-                          detail={`@${agent.mentionAlias} · ${provider?.displayName ?? "未连接"}`}
+                          detail={`@${agent.mentionAlias} · ${provider?.displayName ?? t("未连接")}`}
                           brand={findBrand(snapshot, provider)}
                           selected={selection?.kind === "agent" && selection.id === agent.id}
                           active={agent.enabled}
@@ -485,7 +495,7 @@ export function ModelRouterDialog({
                 </div>
                 <div className="agent-provider-catalog">
                   <button className="agent-provider-add-button" type="button" aria-expanded={catalogOpen} onClick={() => setCatalogOpen((open) => !open)}>
-                    <Plus size={16} /><span>连接 Provider</span><em>{String(snapshot.catalog.providers.length)}</em>
+                    <Plus size={16} /><span>{t("连接 Provider")}</span><em>{String(snapshot.catalog.providers.length)}</em>
                   </button>
                   {catalogOpen ? (
                     <div className="agent-provider-catalog-list">
@@ -497,7 +507,7 @@ export function ModelRouterDialog({
                             <span><BrandGlyph brand={brand} size={17} /></span>
                             <span>
                               <strong>{template.displayName}</strong>
-                              <small>{providerProtocolLabel(template.protocol)}</small>
+                              <small>{t(providerProtocolLabel(template.protocol))}</small>
                             </span>
                             <Plus size={15} />
                           </button>
@@ -506,7 +516,7 @@ export function ModelRouterDialog({
                     </div>
                   ) : null}
                 </div>
-                <div className="model-router-security-note"><ShieldCheck size={15} /><span>API Key 只进入系统 Keychain</span></div>
+                <div className="model-router-security-note"><ShieldCheck size={15} /><span>{t("API Key 只进入系统 Keychain")}</span></div>
               </aside>
               <main className="model-router-workbench">
                 {agentForm && agentProvider ? (
@@ -568,7 +578,7 @@ export function ModelRouterDialog({
                     onRemove={() => void removeSelection()}
                   />
                 ) : (
-                  <div className="model-router-empty"><Bot size={22} />选择 Agent 或 Provider 开始配置</div>
+                  <div className="model-router-empty"><Bot size={22} />{t("选择 Agent 或 Provider 开始配置")}</div>
                 )}
               </main>
             </>
@@ -576,7 +586,7 @@ export function ModelRouterDialog({
         </div>
         {(errorMessage || resultMessage) ? (
           <footer className={`settings-result ${errorMessage ? "is-error" : "is-success"}`}>
-            {errorMessage ? <X size={16} /> : <Check size={16} />}{errorMessage ?? resultMessage}
+            {errorMessage ? <X size={16} /> : <Check size={16} />}{t(errorMessage ?? resultMessage ?? "")}
           </footer>
         ) : null}
       </section>

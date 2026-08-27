@@ -1,5 +1,5 @@
 /**
- * @input  依赖：打开状态、桌面项目设置、目录浏览与议题创建回调
+ * @input  依赖：界面语言上下文、打开状态、桌面项目设置、目录浏览与议题创建回调
  * @output 导出：CreateTopicDialog 新建议题表单（含目标项目选择）
  * @pos    Operator Console 的议题创建入口
  *
@@ -10,6 +10,7 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { DesktopSettings } from "../data/desktop-bridge";
 import type { CreateTopicInput } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 
 const BROWSE_OPTION_VALUE = "__browse__";
 
@@ -37,6 +38,7 @@ export function CreateTopicDialog({
   isBrowsingProject,
   onBrowseProject,
 }: CreateTopicDialogProps) {
+  const { t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [title, setTitle] = useState("");
   const [question, setQuestion] = useState("");
@@ -112,16 +114,16 @@ export function CreateTopicDialog({
       <form onSubmit={(event) => void handleSubmit(event)}>
         <header>
           <div>
-            <span className="dialog-kicker">新建架构议题</span>
-            <h2 id="create-topic-title">创建一个可验证的议题</h2>
+            <span className="dialog-kicker">{t("新建架构议题")}</span>
+            <h2 id="create-topic-title">{t("创建一个可验证的议题")}</h2>
           </div>
-          <button className="icon-button" type="button" aria-label="关闭" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("关闭")} onClick={onClose}>
             <X size={19} />
           </button>
         </header>
         {currentProjectPath ? (
           <label>
-            <span>目标项目 <small>议题将写入该项目的共享讨论</small></span>
+            <span>{t("目标项目")} <small>{t("议题将写入该项目的共享讨论")}</small></span>
             <select
               value={effectiveProjectPath ?? ""}
               disabled={isCreating || Boolean(isBrowsingProject)}
@@ -140,44 +142,44 @@ export function CreateTopicDialog({
               ))}
               {onBrowseProject ? (
                 <option value={BROWSE_OPTION_VALUE}>
-                  {isBrowsingProject ? "正在打开目录选择…" : "浏览其他目录…"}
+                  {isBrowsingProject ? t("正在打开目录选择…") : t("浏览其他目录…")}
                 </option>
               ) : null}
             </select>
           </label>
         ) : null}
         <label>
-          <span>议题标题</span>
+          <span>{t("议题标题")}</span>
           <input
             autoFocus
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder="例如：订单状态机迁移策略"
+            placeholder={t("例如：订单状态机迁移策略")}
           />
         </label>
         <label>
-          <span>待解决的问题</span>
+          <span>{t("待解决的问题")}</span>
           <textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="写清预期行为、失败条件和需要做出的决定"
+            placeholder={t("写清预期行为、失败条件和需要做出的决定")}
             rows={4}
           />
         </label>
         <label>
-          <span>约束条件 <small>每行一条，可选</small></span>
+          <span>{t("约束条件")} <small>{t("每行一条，可选")}</small></span>
           <textarea
             value={constraints}
             onChange={(event) => setConstraints(event.target.value)}
-            placeholder={"保持公开接口兼容\n必须支持安全回滚"}
+            placeholder={t("保持公开接口兼容\n必须支持安全回滚")}
             rows={3}
           />
         </label>
         <footer>
-          <button className="secondary-button" type="button" onClick={onClose}>取消</button>
+          <button className="secondary-button" type="button" onClick={onClose}>{t("取消")}</button>
           <button className="primary-button" type="submit" disabled={!canCreate}>
             <Plus size={17} />
-            {isCreating ? "创建中…" : "创建议题"}
+            {isCreating ? t("创建中…") : t("创建议题")}
           </button>
         </footer>
       </form>

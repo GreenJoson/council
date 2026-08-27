@@ -1,8 +1,8 @@
 /**
- * @input  依赖：含 owner 冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
+ * @input  依赖：界面语言上下文、当前项目名、含 owner/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央工作区（讨论/决策/元数据、人工签署、阶梯导航与引用回复）
- * @pos    Operator Console 的主要阅读、决策通读、元数据核查和回复区域；过长议题问题默认
+ * @output 导出：DiscussionPanel 中央工作区（讨论/决策/任务/元数据、人工签署、阶梯导航与引用回复）
+ * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,8 +10,18 @@
 
 import { Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { CouncilMessage, MessageKind, Participant, SyncState, TopicDetail } from "../types/council";
+import type {
+  CouncilMessage,
+  CouncilWorkItem,
+  MessageKind,
+  Participant,
+  SyncState,
+  TopicDetail,
+  WorkItemStatus,
+} from "../types/council";
 import type { OrchestrationSnapshot } from "../types/orchestration";
+import { summarizeWorkItemProgress } from "../data/work-item-tree";
+import { useI18n } from "../i18n/I18nProvider";
 import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "./presentation";
 import {
   AgentReplyActivity,
@@ -19,11 +29,13 @@ import {
 } from "./AgentReplyActivity";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { DecisionCard } from "./DecisionCard";
+import { ImplementationProgress } from "./ImplementationProgress";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
 
 export interface DiscussionPanelProps {
+  projectName: string;
   topic: TopicDetail;
   participants: Map<string, Participant>;
   sync: SyncState;
@@ -31,6 +43,16 @@ export interface DiscussionPanelProps {
   onPublish: (kind: MessageKind, content: string, mention?: MentionPublishRequest) => Promise<boolean>;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
+  workItemBusyAction: string | null;
+  planningAgentLabel?: string;
+  onGenerateWorkItems: () => Promise<void>;
+  onAddWorkItem: (title: string, details: string, parentId?: string) => Promise<boolean>;
+  onUpdateWorkItem: (
+    item: CouncilWorkItem,
+    status: WorkItemStatus,
+    statusNote: string,
+  ) => Promise<void>;
+  onClaimWorkItem: (item: CouncilWorkItem) => Promise<void>;
   isAccepting: boolean;
   onAccept: () => Promise<void> | void;
   isRecordingManualDecision: boolean;
@@ -39,7 +61,7 @@ export interface DiscussionPanelProps {
   decisionFocusNonce?: number;
 }
 
-type DiscussionTab = "discussion" | "decision" | "metadata";
+type DiscussionTab = "discussion" | "decision" | "tasks" | "metadata";
 
 const QUOTE_LINE_LIMIT = 88;
 const TIMELINE_FOLLOW_THRESHOLD = 240;
@@ -61,6 +83,7 @@ function buildQuoteText(message: CouncilMessage, participants: Map<string, Parti
 }
 
 export function DiscussionPanel({
+  projectName,
   topic,
   participants,
   sync,
@@ -68,12 +91,19 @@ export function DiscussionPanel({
   onPublish,
   orchestration,
   orchestrationBusyAction,
+  workItemBusyAction,
+  planningAgentLabel,
+  onGenerateWorkItems,
+  onAddWorkItem,
+  onUpdateWorkItem,
+  onClaimWorkItem,
   isAccepting,
   onAccept,
   isRecordingManualDecision,
   onRecordManualDecision,
   decisionFocusNonce,
 }: DiscussionPanelProps) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
   const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
   const [isIdCopied, setIsIdCopied] = useState(false);
@@ -206,6 +236,11 @@ export function DiscussionPanel({
       participants.get(topic.decision.proposedBy),
     )
     : undefined;
+  // 任务 tab 的计数必须和侧边栏、实施进度卡共用一套口径：都只数叶子。
+  // 父任务的状态本来就是子任务算出来的，再进一次分母等于把同一件事记两次。
+  const workItemProgress = topic.workItemProgress ?? summarizeWorkItemProgress(topic.workItems);
+  const completedWorkItems = workItemProgress?.completed ?? 0;
+  const totalWorkItems = workItemProgress?.total ?? 0;
 
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
@@ -248,12 +283,12 @@ export function DiscussionPanel({
             </div>
             <div className="topic-metadata">
               <StatusBadge status={topic.status} />
-              <span>创建于 {topic.createdLabel}</span>
+              <span>{t("创建于 {time}", { time: topic.createdLabel })}</span>
               <span aria-hidden="true">·</span>
-              <span>更新于 {topic.updatedLabel}</span>
+              <span>{t("更新于 {time}", { time: topic.updatedLabel })}</span>
             </div>
           </div>
-          <div className="topic-participants" aria-label="议题参与者">
+          <div className="topic-participants" aria-label={t("议题参与者")}>
             {topic.participants.map((agent) => (
               <AgentAvatar
                 agent={agent}
@@ -267,7 +302,7 @@ export function DiscussionPanel({
         <div className="topic-question">
           <MarkdownContent content={topic.question} collapsible collapseVariant="topic" />
         </div>
-        <div className="topic-tabs" role="tablist" aria-label="议题视图">
+        <div className="topic-tabs" role="tablist" aria-label={t("议题视图")}>
           <button
             className={activeTab === "discussion" ? "active" : ""}
             type="button"
@@ -277,7 +312,7 @@ export function DiscussionPanel({
             aria-controls="discussion-tabpanel"
             onClick={() => setActiveTab("discussion")}
           >
-            讨论
+            {t("讨论")}
             <span className="count-pill">{topic.messageTotal ?? topic.messages.length}</span>
           </button>
           <button
@@ -289,11 +324,31 @@ export function DiscussionPanel({
             aria-controls="decision-tabpanel"
             onClick={() => setActiveTab("decision")}
           >
-            决策
+            {t("决策")}
             {/* 只有 proposed 才亮点：已接受/已取代不是待办，不该一直催 */}
             {topic.decision?.status === "proposed" ? (
-              <span className="tab-dot" aria-label="有待审阅的拟议决策" />
+              <span className="tab-dot" aria-label={t("有待审阅的拟议决策")} />
             ) : null}
+          </button>
+          <button
+            className={activeTab === "tasks" ? "active" : ""}
+            type="button"
+            role="tab"
+            id="tasks-tab"
+            aria-selected={activeTab === "tasks"}
+            aria-controls="tasks-tabpanel"
+            onClick={() => setActiveTab("tasks")}
+          >
+            {t("任务")}
+            <span
+              className="count-pill task-count-pill"
+              aria-label={t("已完成 {completed}，共 {total} 项任务", {
+                completed: completedWorkItems,
+                total: totalWorkItems,
+              })}
+            >
+              {completedWorkItems}/{totalWorkItems}
+            </span>
           </button>
           <button
             className={activeTab === "metadata" ? "active" : ""}
@@ -304,7 +359,7 @@ export function DiscussionPanel({
             aria-controls="metadata-tabpanel"
             onClick={() => setActiveTab("metadata")}
           >
-            元数据
+            {t("元数据")}
           </button>
         </div>
       </header>
@@ -322,12 +377,15 @@ export function DiscussionPanel({
               id="discussion-tabpanel"
               role="tabpanel"
               aria-labelledby="discussion-tab"
-              aria-label="共享讨论时间线"
+              aria-label={t("共享讨论时间线")}
               ref={timelineRef}
             >
               {hiddenMessageCount > 0 ? (
                 <p className="history-notice">
-                  当前显示最近 {topic.messages.length} 条，另有 {hiddenMessageCount} 条历史消息。
+                  {t("当前显示最近 {visible} 条，另有 {hidden} 条历史消息。", {
+                    visible: topic.messages.length,
+                    hidden: hiddenMessageCount,
+                  })}
                 </p>
               ) : null}
               {topic.messages.length > 0 ? (
@@ -345,8 +403,8 @@ export function DiscussionPanel({
                 <div className="empty-discussion">
                   <AgentAvatar agent="council" />
                   <div>
-                    <h2>议题已经准备好</h2>
-                    <p>发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。</p>
+                    <h2>{t("议题已经准备好")}</h2>
+                    <p>{t("发布第一条 proposal，或让 Agent 读取此议题后提交公开方案。")}</p>
                   </div>
                 </div>
               )}
@@ -357,6 +415,7 @@ export function DiscussionPanel({
           </div>
 
           <Composer
+            currentProjectName={projectName}
             isPublishing={isPublishing}
             allowAgentCalls={topic.status !== "decided"}
             sync={sync}
@@ -373,7 +432,7 @@ export function DiscussionPanel({
           id="decision-tabpanel"
           role="tabpanel"
           aria-labelledby="decision-tab"
-          aria-label="议题决策"
+          aria-label={t("议题决策")}
         >
           {topic.decision ? (
             <DecisionCard decision={topic.decision}>
@@ -384,7 +443,7 @@ export function DiscussionPanel({
                     participant={decisionProposer}
                     size="small"
                   />
-                  <span>由 {decisionProposer?.name ?? topic.decision.proposedBy} 提出</span>
+                  <span>{t("由 {name} 提出", { name: decisionProposer?.name ?? topic.decision.proposedBy })}</span>
                 </span>
                 <button
                   className="accept-button"
@@ -394,12 +453,12 @@ export function DiscussionPanel({
                 >
                   <CheckCircle2 size={17} />
                   {topic.decision.status === "accepted"
-                    ? "决策已接受"
+                    ? t("决策已接受")
                     : topic.decision.status === "superseded"
-                      ? "决策已被取代"
+                      ? t("决策已被取代")
                       : isAccepting
-                        ? "记录中…"
-                        : "标记为 Accepted"}
+                        ? t("记录中…")
+                        : t("标记为 Accepted")}
                 </button>
                 {topic.decision.status === "proposed" ? (
                   <button
@@ -409,7 +468,7 @@ export function DiscussionPanel({
                     onClick={onRecordManualDecision}
                   >
                     <FileCheck2 size={16} />
-                    记录独立人工决策
+                    {t("记录独立人工决策")}
                   </button>
                 ) : null}
               </div>
@@ -418,8 +477,8 @@ export function DiscussionPanel({
             <div className="empty-discussion">
               <AgentAvatar agent="council" />
               <div>
-                <h2>尚无拟议决策</h2>
-                <p>可以等待 Agent 提案，也可以由你直接记录结论并结束议题。</p>
+                <h2>{t("尚无拟议决策")}</h2>
+                <p>{t("可以等待 Agent 提案，也可以由你直接记录结论并结束议题。")}</p>
                 <button
                   className="primary-button manual-decision-entry"
                   type="button"
@@ -427,11 +486,30 @@ export function DiscussionPanel({
                   onClick={onRecordManualDecision}
                 >
                   <FileCheck2 size={16} />
-                  记录人工决策
+                  {t("记录人工决策")}
                 </button>
               </div>
             </div>
           )}
+        </section>
+      ) : activeTab === "tasks" ? (
+        <section
+          className="topic-implementation-panel"
+          id="tasks-tabpanel"
+          role="tabpanel"
+          aria-labelledby="tasks-tab"
+          aria-label={t("实施任务")}
+        >
+          <ImplementationProgress
+            topic={topic}
+            participants={participants}
+            busyAction={workItemBusyAction}
+            planningAgentLabel={planningAgentLabel}
+            onGenerate={onGenerateWorkItems}
+            onAdd={onAddWorkItem}
+            onUpdate={onUpdateWorkItem}
+            onClaim={onClaimWorkItem}
+          />
         </section>
       ) : (
         <section
@@ -439,10 +517,10 @@ export function DiscussionPanel({
           id="metadata-tabpanel"
           role="tabpanel"
           aria-labelledby="metadata-tab"
-          aria-label="议题元数据"
+          aria-label={t("议题元数据")}
         >
           <div className="metadata-field">
-            <span className="metadata-label">议题 ID</span>
+            <span className="metadata-label">{t("议题 ID")}</span>
             <div className="metadata-id-row">
               <code className="metadata-id-value">{topic.id}</code>
               <button
@@ -451,13 +529,13 @@ export function DiscussionPanel({
                 onClick={() => void handleCopyId()}
               >
                 {isIdCopied ? <Check size={14} /> : <Copy size={14} />}
-                <span>{isIdCopied ? "已复制" : "复制"}</span>
+                <span>{isIdCopied ? t("已复制") : t("复制")}</span>
               </button>
             </div>
           </div>
 
           <div className="metadata-field">
-            <span className="metadata-label">完整问题描述</span>
+            <span className="metadata-label">{t("完整问题描述")}</span>
             <div className="metadata-question-full">
               <MarkdownContent content={topic.question} />
             </div>
@@ -465,17 +543,17 @@ export function DiscussionPanel({
 
           <div className="metadata-field-row">
             <div className="metadata-field">
-              <span className="metadata-label">创建时间</span>
+              <span className="metadata-label">{t("创建时间")}</span>
               <span className="metadata-value">{topic.createdLabel}</span>
             </div>
             <div className="metadata-field">
-              <span className="metadata-label">最近更新</span>
+              <span className="metadata-label">{t("最近更新")}</span>
               <span className="metadata-value">{topic.updatedLabel}</span>
             </div>
           </div>
 
           <div className="metadata-field">
-            <span className="metadata-label">所有者</span>
+            <span className="metadata-label">{t("所有者")}</span>
             <div className="metadata-people-row">
               <span className="metadata-person">
                 <AgentAvatar agent={topic.owner} participant={owner} size="small" />
@@ -485,7 +563,7 @@ export function DiscussionPanel({
           </div>
 
           <div className="metadata-field">
-            <span className="metadata-label">参与者</span>
+            <span className="metadata-label">{t("参与者")}</span>
             <div className="metadata-people-row">
               {topic.participants.map((agent) => (
                 <span className="metadata-person" key={agent}>
@@ -502,11 +580,11 @@ export function DiscussionPanel({
 
           <div className="metadata-field-row">
             <div className="metadata-field">
-              <span className="metadata-label">已加载消息</span>
+              <span className="metadata-label">{t("已加载消息")}</span>
               <span className="metadata-value metadata-value-mono">{topic.messages.length}</span>
             </div>
             <div className="metadata-field">
-              <span className="metadata-label">消息总数</span>
+              <span className="metadata-label">{t("消息总数")}</span>
               <span className="metadata-value metadata-value-mono">
                 {topic.messageTotal ?? topic.messages.length}
               </span>

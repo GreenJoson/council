@@ -1,12 +1,13 @@
 /**
- * @input  依赖：项目 realpath、受控 Git 配置、已提交 ref 与 AbortSignal
- * @output 导出：过滤敏感路径、禁用外部驱动并受预算约束的只读 commit diff
- * @pos    ToolLoop 与 ACP DelegatedRuntime 共用的唯一 Git 读取边界；不经过 Shell、不读取工作区未提交内容
+ * @input  依赖：项目 realpath、本轮授权仓库/精确 commit、受控 Git 配置与 AbortSignal
+ * @output 导出：限定当前/同级仓库与冻结 commit、过滤敏感路径并受预算约束的只读 diff
+ * @pos    ToolLoop 与 ACP DelegatedRuntime 共用的多仓库 Git 读取边界；不经过 Shell、不读取工作区未提交内容
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { lstat, realpath } from "node:fs/promises";
+import path from "node:path";
 import { runBoundedProcess } from "./process-utils.js";
 import { isProtectedProjectRelativePath } from "./project-path-policy.js";
 
@@ -14,6 +15,11 @@ export const COUNCIL_GIT_DIFF_TOOL_NAME = "council_git_diff";
 
 const REF_PATTERN = /^(?![-.])[A-Za-z0-9._/-]{1,200}$/u;
 const OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const REPOSITORY_SEGMENT = String.raw`(?!\.{1,2}(?:/|$))[A-Za-z0-9._-]+`;
+const REPOSITORY_PATTERN = new RegExp(
+  String.raw`^(?:\.|(?:\.\./)?${REPOSITORY_SEGMENT}(?:/${REPOSITORY_SEGMENT})*)$`,
+  "u",
+);
 const OUTPUT_LIMIT_MESSAGE = "Council Git diff 输出超过安全上限。";
 
 interface ChangedRecord {
@@ -22,9 +28,22 @@ interface ChangedRecord {
 }
 
 export interface GitDiffRequest {
+  /** 相对议题项目目录的已授权仓库标签；当前仓库默认使用 `.`。 */
+  repository?: string;
   commit?: string;
   base?: string;
   head?: string;
+}
+
+export interface GitCommitGrant {
+  repository: string;
+  commit: string;
+}
+
+interface RepositoryAccess {
+  root?: string;
+  error?: ReadOnlyGitDiffError;
+  commits?: ReadonlySet<string>;
 }
 
 export interface ReadOnlyGitDiffConfig {
@@ -63,6 +82,71 @@ function normalizeRef(value: string | undefined, name: string): string {
     );
   }
   return ref;
+}
+
+export function normalizeGitRepositoryLabel(value: string | undefined): string {
+  const repository = value?.trim() || ".";
+  if (!REPOSITORY_PATTERN.test(repository)) {
+    throw new ReadOnlyGitDiffError(
+      "repository 必须是当前仓库、仓库内相对路径或一层同级仓库。",
+      "invalid_repository",
+    );
+  }
+  return repository;
+}
+
+export function normalizeGitCommitGrant(grant: GitCommitGrant): GitCommitGrant {
+  const repository = normalizeGitRepositoryLabel(grant.repository);
+  const commit = grant.commit.trim().toLowerCase();
+  if (!/^[0-9a-f]{7,64}$/u.test(commit)) {
+    throw new ReadOnlyGitDiffError(
+      "授权 commit 必须是 7 至 64 位十六进制对象名。",
+      "invalid_git_grant",
+    );
+  }
+  return { repository, commit };
+}
+
+function withinRoot(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+export async function resolveAuthorizedGitRepositoryRoot(
+  primaryRoot: string,
+  repository: string,
+): Promise<string> {
+  const candidate = await realpath(path.resolve(primaryRoot, repository));
+  const info = await lstat(candidate);
+  if (!info.isDirectory()) {
+    throw new ReadOnlyGitDiffError(
+      `关联仓库 ${repository} 不是目录。`,
+      "repository_unavailable",
+    );
+  }
+  if (repository === ".") {
+    return primaryRoot;
+  }
+  if (repository.startsWith("../")) {
+    const parent = path.dirname(primaryRoot);
+    if (
+      candidate === parent
+      || !withinRoot(parent, candidate)
+      || withinRoot(primaryRoot, candidate)
+    ) {
+      throw new ReadOnlyGitDiffError(
+        `关联仓库 ${repository} 超出允许的一层同级目录。`,
+        "repository_outside_scope",
+      );
+    }
+    return candidate;
+  }
+  if (!withinRoot(primaryRoot, candidate)) {
+    throw new ReadOnlyGitDiffError(
+      `关联仓库 ${repository} 通过链接逃逸出当前项目。`,
+      "repository_outside_scope",
+    );
+  }
+  return candidate;
 }
 
 function parseRequest(input: GitDiffRequest): {
@@ -207,17 +291,21 @@ function exceedsPatchBudget(
 }
 
 export class ReadOnlyGitDiff {
-  readonly #root: string;
+  readonly #repositories: ReadonlyMap<string, RepositoryAccess>;
   readonly #config: ReadOnlyGitDiffConfig;
 
-  private constructor(root: string, config: ReadOnlyGitDiffConfig) {
-    this.#root = root;
+  private constructor(
+    repositories: ReadonlyMap<string, RepositoryAccess>,
+    config: ReadOnlyGitDiffConfig,
+  ) {
+    this.#repositories = repositories;
     this.#config = config;
   }
 
   static async create(
     projectPath: string,
     config: ReadOnlyGitDiffConfig,
+    commitGrants: readonly GitCommitGrant[] = [],
   ): Promise<ReadOnlyGitDiff> {
     const root = await realpath(projectPath);
     const info = await lstat(root);
@@ -227,24 +315,85 @@ export class ReadOnlyGitDiff {
         "invalid_project_path",
       );
     }
-    return new ReadOnlyGitDiff(root, config);
+    const grants = commitGrants.map(normalizeGitCommitGrant);
+    const labels = grants.length > 0
+      ? [...new Set(grants.map((grant) => grant.repository))]
+      : ["."];
+    const repositories = new Map<string, RepositoryAccess>();
+    for (const repository of labels) {
+      try {
+        repositories.set(repository, {
+          root: await resolveAuthorizedGitRepositoryRoot(root, repository),
+          ...(grants.length > 0
+            ? {
+                commits: new Set(
+                  grants
+                    .filter((grant) => grant.repository === repository)
+                    .map((grant) => grant.commit),
+                ),
+              }
+            : {}),
+        });
+      } catch (error) {
+        if (repository === ".") {
+          throw error;
+        }
+        repositories.set(repository, {
+          error: error instanceof ReadOnlyGitDiffError
+            ? error
+            : new ReadOnlyGitDiffError(
+                `关联仓库 ${repository} 无法读取。`,
+                "repository_unavailable",
+              ),
+        });
+      }
+    }
+    return new ReadOnlyGitDiff(repositories, config);
   }
 
   async generate(
     input: GitDiffRequest,
     signal?: AbortSignal,
   ): Promise<string> {
+    const repository = normalizeGitRepositoryLabel(input.repository);
+    const access = this.#repositories.get(repository);
+    if (!access) {
+      throw new ReadOnlyGitDiffError(
+        `仓库 ${repository} 未被本轮议题授权。`,
+        "repository_not_authorized",
+      );
+    }
+    if (access.error || !access.root) {
+      throw access.error ?? new ReadOnlyGitDiffError(
+        `关联仓库 ${repository} 无法读取。`,
+        "repository_unavailable",
+      );
+    }
+    const root = access.root;
     const request = parseRequest(input);
+    if (access.commits) {
+      const requestedRefs = request.mode === "commit"
+        ? [request.commit!]
+        : [request.base!, request.head!];
+      if (requestedRefs.some((ref) => !access.commits!.has(ref.toLowerCase()))) {
+        throw new ReadOnlyGitDiffError(
+          `仓库 ${repository} 的该 commit/ref 未被本轮议题授权。`,
+          "commit_not_authorized",
+        );
+      }
+    }
     const head = await this.#resolveCommit(
+      root,
       request.mode === "commit" ? request.commit! : request.head!,
       signal,
     );
     let base: string | undefined;
     let rootCommit = false;
     if (request.mode === "range") {
-      base = await this.#resolveCommit(request.base!, signal);
+      base = await this.#resolveCommit(root, request.base!, signal);
     } else {
       const parents = (await this.#run(
+        root,
         ["rev-list", "--parents", "-n", "1", head],
         signal,
       )).trim().split(/\s+/u);
@@ -259,6 +408,7 @@ export class ReadOnlyGitDiff {
     }
 
     const records = parseNameStatus(await this.#run(
+      root,
       rootCommit
         ? [
             "show",
@@ -330,7 +480,7 @@ export class ReadOnlyGitDiff {
         ];
     let patch: string;
     try {
-      patch = await this.#run(patchArgs, signal);
+      patch = await this.#run(root, patchArgs, signal);
     } catch (error) {
       if (!(error instanceof ReadOnlyGitDiffError)
         || error.diagnosticCode !== "git_output_limit") {
@@ -339,7 +489,7 @@ export class ReadOnlyGitDiff {
       return [
         ...notices,
         "[Council：完整 patch 超过输出预算，已返回安全路径的统计摘要]",
-        await this.#stat(rootCommit, base, head, safePaths, signal),
+        await this.#stat(root, rootCommit, base, head, safePaths, signal),
       ].join("\n");
     }
     if (exceedsPatchBudget(
@@ -350,14 +500,19 @@ export class ReadOnlyGitDiff {
       return [
         ...notices,
         "[Council：完整 patch 超过行数或单文件 hunk 预算，已返回安全路径的统计摘要]",
-        await this.#stat(rootCommit, base, head, safePaths, signal),
+        await this.#stat(root, rootCommit, base, head, safePaths, signal),
       ].join("\n");
     }
     return [...notices, patch.trim() || "没有文本差异。"].join("\n");
   }
 
-  async #resolveCommit(ref: string, signal?: AbortSignal): Promise<string> {
+  async #resolveCommit(
+    root: string,
+    ref: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
     const output = (await this.#run(
+      root,
       ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
       signal,
     )).trim();
@@ -371,6 +526,7 @@ export class ReadOnlyGitDiff {
   }
 
   async #stat(
+    root: string,
     rootCommit: boolean,
     base: string | undefined,
     head: string,
@@ -378,6 +534,7 @@ export class ReadOnlyGitDiff {
     signal?: AbortSignal,
   ): Promise<string> {
     return (await this.#run(
+      root,
       rootCommit
         ? [
             "show",
@@ -405,7 +562,11 @@ export class ReadOnlyGitDiff {
     )).trim();
   }
 
-  async #run(args: string[], signal?: AbortSignal): Promise<string> {
+  async #run(
+    root: string,
+    args: string[],
+    signal?: AbortSignal,
+  ): Promise<string> {
     try {
       const result = await runBoundedProcess({
         command: this.#config.gitCommand,
@@ -419,7 +580,7 @@ export class ReadOnlyGitDiff {
           ...args,
         ],
         input: "",
-        cwd: this.#root,
+        cwd: root,
         env: sanitizedGitEnvironment(),
         ...(signal ? { signal } : {}),
         timeoutMs: this.#config.gitDiffTimeoutMs,

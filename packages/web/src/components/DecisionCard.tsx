@@ -1,5 +1,5 @@
 /**
- * @input  依赖：CouncilDecision 与决策状态徽章、MarkdownContent
+ * @input  依赖：界面语言上下文、CouncilDecision 与决策状态徽章、MarkdownContent
  * @output 导出：DecisionCard 决策正文卡（状态行 + 标题 + summary/rationale），尾部由调用方补
  * @pos    议题决策 tab 与决策记录视图共用的唯一决策渲染出口；右栏只放摘要不走这里
  *
@@ -9,6 +9,7 @@
 import { CheckCircle2, History, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { CouncilDecision } from "../types/council";
+import { useI18n } from "../i18n/I18nProvider";
 import { MarkdownContent } from "./MarkdownContent";
 import { DecisionStatusBadge, decisionStatusLabels } from "./presentation";
 
@@ -19,6 +20,7 @@ export interface DecisionCardProps {
 }
 
 export function DecisionCard({ decision, children }: DecisionCardProps) {
+  const { t } = useI18n();
   const accepted = decision.status === "accepted";
   const superseded = decision.status === "superseded";
   return (
@@ -34,7 +36,7 @@ export function DecisionCard({ decision, children }: DecisionCardProps) {
           ) : (
             <ShieldCheck size={17} />
           )}
-          <span>{decisionStatusLabels[decision.status]}</span>
+          <span>{t(decisionStatusLabels[decision.status])}</span>
         </div>
         <DecisionStatusBadge status={decision.status} />
       </div>

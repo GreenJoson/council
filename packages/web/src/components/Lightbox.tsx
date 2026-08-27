@@ -1,5 +1,5 @@
 /**
- * @input  依赖：图片 URL 或已渲染的 mermaid SVG 字符串
+ * @input  依赖：界面语言上下文、图片 URL 或已渲染的 mermaid SVG 字符串
  * @output 导出：LightboxContent 联合类型与 Lightbox 全屏大图浏览组件
  *         （body Portal、固定大视口、缩放、内部滚动、遮罩/Esc/关闭按钮）
  * @pos    MarkdownContent 图片缩略图与架构档案 mermaid 图集共用的唯一放大浏览入口；
@@ -11,6 +11,7 @@
 import { ImageOff, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "../i18n/I18nProvider";
 
 const DEFAULT_ZOOM_PERCENT = 100;
 const MIN_ZOOM_PERCENT = 50;
@@ -27,6 +28,7 @@ export interface LightboxProps {
 }
 
 export function Lightbox({ content, onClose }: LightboxProps) {
+  const { t } = useI18n();
   const [hasImageError, setHasImageError] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(DEFAULT_ZOOM_PERCENT);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -67,19 +69,19 @@ export function Lightbox({ content, onClose }: LightboxProps) {
       className="markdown-lightbox-scrim"
       role="dialog"
       aria-modal="true"
-      aria-label={content.alt || "查看大图"}
+      aria-label={content.alt || t("查看大图")}
       onClick={onClose}
     >
       <div className="markdown-lightbox-frame" onClick={(event) => event.stopPropagation()}>
         <header className="markdown-lightbox-toolbar">
           <span className="markdown-lightbox-title">
-            {content.alt || (content.kind === "diagram" ? "架构图" : "图片")}
+            {content.alt || (content.kind === "diagram" ? t("架构图") : t("图片"))}
           </span>
-          <div className="markdown-lightbox-controls" aria-label="大图缩放">
+          <div className="markdown-lightbox-controls" aria-label={t("大图缩放")}>
             <button
               type="button"
-              aria-label="缩小"
-              title="缩小（-）"
+              aria-label={t("缩小")}
+              title={t("缩小（-）")}
               disabled={zoomPercent === MIN_ZOOM_PERCENT}
               onClick={() =>
                 setZoomPercent((current) =>
@@ -90,8 +92,8 @@ export function Lightbox({ content, onClose }: LightboxProps) {
             <span aria-live="polite">{zoomPercent}%</span>
             <button
               type="button"
-              aria-label="放大"
-              title="放大（+）"
+              aria-label={t("放大")}
+              title={t("放大（+）")}
               disabled={zoomPercent === MAX_ZOOM_PERCENT}
               onClick={() =>
                 setZoomPercent((current) =>
@@ -101,8 +103,8 @@ export function Lightbox({ content, onClose }: LightboxProps) {
             </button>
             <button
               type="button"
-              aria-label="恢复默认大小"
-              title="恢复默认大小（0）"
+              aria-label={t("恢复默认大小")}
+              title={t("恢复默认大小（0）")}
               onClick={() => setZoomPercent(DEFAULT_ZOOM_PERCENT)}
             >
               <RotateCcw size={15} />
@@ -110,8 +112,8 @@ export function Lightbox({ content, onClose }: LightboxProps) {
             <button
               className="markdown-lightbox-close"
               type="button"
-              aria-label="关闭大图"
-              title="关闭（Esc）"
+              aria-label={t("关闭大图")}
+              title={t("关闭（Esc）")}
               ref={closeButtonRef}
               onClick={onClose}
             >
@@ -125,7 +127,7 @@ export function Lightbox({ content, onClose }: LightboxProps) {
               hasImageError ? (
                 <div className="markdown-lightbox-fallback">
                   <ImageOff size={26} aria-hidden="true" />
-                  <p>图片加载失败</p>
+                  <p>{t("图片加载失败")}</p>
                 </div>
               ) : (
                 <img
@@ -141,7 +143,7 @@ export function Lightbox({ content, onClose }: LightboxProps) {
               <div
                 className="markdown-lightbox-diagram"
                 role="img"
-                aria-label={content.alt || "架构图放大视图"}
+                aria-label={content.alt || t("架构图放大视图")}
                 dangerouslySetInnerHTML={{ __html: content.svg }}
               />
             )}

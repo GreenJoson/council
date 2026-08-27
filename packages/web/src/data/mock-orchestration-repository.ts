@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
- * @output 导出：MockOrchestrationRepository 运行与持久会话交互原型
+ * @output 导出：MockOrchestrationRepository 运行、AI 实施计划与持久会话交互原型
  * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,6 +11,8 @@ import type {
   SubmitFixesInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
+  GenerateWorkItemsInput,
+  GenerateWorkItemsResult,
   OrchestrationCapabilities,
   OrchestrationRun,
   OrchestrationSnapshot,
@@ -297,6 +299,11 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     this.#syncVisibleRuns();
     this.#publish();
     return structuredClone(run);
+  }
+
+  async generateWorkItems(_input: GenerateWorkItemsInput): Promise<GenerateWorkItemsResult> {
+    await waitForMock();
+    return { createdCount: 3 };
   }
 
   async startRun(runId: string): Promise<OrchestrationSnapshot> {

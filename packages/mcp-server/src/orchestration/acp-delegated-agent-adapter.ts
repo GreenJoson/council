@@ -31,6 +31,7 @@ import { COUNCIL_GIT_DIFF_TOOL_NAME } from "../read-only-git-diff.js";
 import { logger } from "../logger.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { buildTrustedPrompt } from "../prompt-budget.js";
+import { trustedGitCommitTargets } from "../trusted-git-targets.js";
 
 function buildPrompt(
   input: AgentInvocation,
@@ -264,6 +265,7 @@ export class AcpDelegatedAgentAdapter implements AgentAdapter {
           agent.displayName,
         ),
         model: agent.model,
+        gitCommitTargets: trustedGitCommitTargets(input.instruction),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         signal: options.signal,
         onPermission,

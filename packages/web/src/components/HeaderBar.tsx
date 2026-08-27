@@ -1,6 +1,6 @@
 /**
- * @input  依赖：项目、同步状态、主题、搜索与面板操作回调
- * @output 导出：HeaderBar 顶部命令栏
+ * @input  依赖：项目、同步状态、主题、界面语言、搜索与面板操作回调
+ * @output 导出：HeaderBar 顶部命令栏与中英双语切换入口
  * @pos    Operator Console 的全局导航和状态入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -24,6 +24,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { DesktopSettings } from "../data/desktop-bridge";
 import type { ThemePreference } from "../data/theme";
+import { useI18n } from "../i18n/I18nProvider";
 import type { ProjectSummary, SyncState } from "../types/council";
 import { BrandLogo } from "./presentation";
 
@@ -88,6 +89,7 @@ export function HeaderBar({
   onChooseLogLibrary,
   onSelectRecentProject,
 }: HeaderBarProps) {
+  const { locale, setLocale, t } = useI18n();
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false);
   const projectShellRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -139,12 +141,12 @@ export function HeaderBar({
         <button
           className="icon-button mobile-panel-button"
           type="button"
-          aria-label="打开议题导航"
+          aria-label={t("打开议题导航")}
           onClick={onOpenTopics}
         >
           <Menu size={19} />
         </button>
-        <a className="brand" href="#main-content" aria-label="Council 首页">
+        <a className="brand" href="#main-content" aria-label={t("Council 首页")}>
           <BrandLogo size={24} />
           <span>Council</span>
         </a>
@@ -153,7 +155,7 @@ export function HeaderBar({
             <button
               className="project-switcher"
               type="button"
-              aria-label="切换项目"
+              aria-label={t("切换项目")}
               aria-haspopup="menu"
               aria-expanded={isProjectMenuOpen}
               title={currentProjectPath ?? project.name}
@@ -174,7 +176,7 @@ export function HeaderBar({
               <div className="project-menu-scroll">
                 {currentProjectPath ? (
                   <>
-                    <div className="project-menu-label">当前项目</div>
+                    <div className="project-menu-label">{t("当前项目")}</div>
                     <div className="project-menu-current">
                       <FolderOpen size={15} />
                       <span className="project-entry">
@@ -187,7 +189,7 @@ export function HeaderBar({
                 ) : null}
                 {recentProjectPaths.length > 0 ? (
                   <>
-                    <div className="project-menu-label">最近项目</div>
+                    <div className="project-menu-label">{t("最近项目")}</div>
                     {recentProjectPaths.map((path) => (
                       <button
                         type="button"
@@ -212,11 +214,11 @@ export function HeaderBar({
               <button type="button" onClick={() => {
                 setIsProjectMenuOpen(false);
                 void onChooseProject?.();
-              }}><FolderOpen size={15} /><span>打开其他项目…</span></button>
+              }}><FolderOpen size={15} /><span>{t("打开其他项目…")}</span></button>
               <button type="button" onClick={() => {
                 setIsProjectMenuOpen(false);
                 void onChooseLogLibrary?.();
-              }}><Database size={15} /><span>设置日志库…</span></button>
+              }}><Database size={15} /><span>{t("设置日志库…")}</span></button>
             </div>
           ) : null}
         </div>
@@ -224,12 +226,12 @@ export function HeaderBar({
 
       <label className="global-search">
         <Search size={17} aria-hidden="true" />
-        <span className="sr-only">搜索议题</span>
+        <span className="sr-only">{t("搜索议题")}</span>
         <input
           ref={searchInputRef}
           value={searchQuery}
           onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="搜索议题标题或问题…"
+          placeholder={t("搜索议题标题或问题…")}
         />
         <kbd>⌘ K</kbd>
       </label>
@@ -239,31 +241,55 @@ export function HeaderBar({
           <button
             className={`sync-state sync-${sync.status}`}
             type="button"
-            title={`${sync.label}，点击重试`}
+            title={t("{label}，点击重试", { label: t(sync.label) })}
             onClick={onRetrySync}
           >
             <Sparkles size={14} aria-hidden="true" />
-            <span>{sync.label}</span>
+            <span>{t(sync.label)}</span>
           </button>
         ) : (
-          <span className={`sync-state sync-${sync.status}`} title={sync.label}>
+          <span className={`sync-state sync-${sync.status}`} title={t(sync.label)}>
             <Sparkles size={14} aria-hidden="true" />
-            <span>{sync.label}</span>
+            <span>{t(sync.label)}</span>
           </span>
         )}
         <button className="primary-button" type="button" onClick={onCreateTopic}>
           <Plus size={17} />
-          <span>新建议题</span>
+          <span>{t("新建议题")}</span>
         </button>
+        <div className="language-switcher" role="group" aria-label={t("界面语言")}>
+          <button
+            type="button"
+            className={locale === "zh-CN" ? "active" : ""}
+            aria-pressed={locale === "zh-CN"}
+            aria-label={t("中文")}
+            title={t("中文")}
+            onClick={() => setLocale("zh-CN")}
+          >
+            中
+          </button>
+          <button
+            type="button"
+            className={locale === "en" ? "active" : ""}
+            aria-pressed={locale === "en"}
+            aria-label={t("英文")}
+            title={t("英文")}
+            onClick={() => setLocale("en")}
+          >
+            EN
+          </button>
+        </div>
         <button
           className="icon-button desktop-action"
           type="button"
-          aria-label={`主题：${themePreferenceLabels[themePreference]}，点击切换为${
-            themePreferenceLabels[nextThemePreference[themePreference]]
-          }`}
-          title={`主题：${themePreferenceLabels[themePreference]}，点击切换为${
-            themePreferenceLabels[nextThemePreference[themePreference]]
-          }`}
+          aria-label={t("主题：{current}，点击切换为{next}", {
+            current: t(themePreferenceLabels[themePreference]),
+            next: t(themePreferenceLabels[nextThemePreference[themePreference]]),
+          })}
+          title={t("主题：{current}，点击切换为{next}", {
+            current: t(themePreferenceLabels[themePreference]),
+            next: t(themePreferenceLabels[nextThemePreference[themePreference]]),
+          })}
           onClick={onCycleTheme}
         >
           <ThemePreferenceIcon preference={themePreference} />
@@ -271,8 +297,8 @@ export function HeaderBar({
         <button
           className="icon-button desktop-action"
           type="button"
-          aria-label="打开模型与 Provider 设置"
-          title="模型与 Provider 设置"
+          aria-label={t("打开模型与 Provider 设置")}
+          title={t("模型与 Provider 设置")}
           onClick={onOpenSettings}
         >
           <Settings2 size={18} />
@@ -280,7 +306,7 @@ export function HeaderBar({
         <button
           className="icon-button inspector-mobile-button"
           type="button"
-          aria-label="打开议题摘要"
+          aria-label={t("打开议题摘要")}
           onClick={onOpenInspector}
         >
           <PanelRight size={18} />

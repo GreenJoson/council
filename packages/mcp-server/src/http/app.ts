@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、实施项、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、AI 实施计划、实施项、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,7 @@ import express, {
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import {
+  AgentInvocationError,
   LeaseConflictError,
   LeaseLostError,
   OrchestrationConfigError,
@@ -36,6 +37,11 @@ import { logger } from "../logger.js";
 import { ModelRouterPublicError } from "../model-router-service.js";
 import { normalizeProjectPath } from "../project-path.js";
 import type { CouncilOrchestrationService } from "../orchestration/service.js";
+import {
+  formatWorkItemPlanningContext,
+  parseWorkItemPlan,
+  WORK_ITEM_PLANNING_INSTRUCTION,
+} from "../orchestration/work-item-planner.js";
 import { COUNCIL_SCHEMA_VERSION } from "../schema-migrator.js";
 import type { CouncilHttpConfig } from "../types.js";
 import { HttpError, sendError, sendSuccess, validationIssues } from "./responses.js";
@@ -50,6 +56,7 @@ import {
   createProviderBodySchema,
   createTopicBodySchema,
   createWorkItemsBodySchema,
+  generateWorkItemsBodySchema,
   approveRunBodySchema,
   createRunBodySchema,
   emptyActionBodySchema,
@@ -167,6 +174,10 @@ function createErrorMiddleware(): ErrorRequestHandler {
     }
     if (error instanceof OrchestrationConfigError) {
       sendError(response, 400, error.message);
+      return;
+    }
+    if (error instanceof AgentInvocationError) {
+      sendError(response, 502, error.publicMessage ?? error.message);
       return;
     }
     if (error instanceof RunNotFoundError) {
@@ -454,6 +465,73 @@ export function createCouncilHttpApp(
       actorId: "human",
     });
     sendSuccess(response, workItems, "实施项已添加。", 201);
+  });
+
+  app.post("/api/v1/topics/:topicId/work-items/actions/generate", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "AI 任务规划服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(generateWorkItemsBodySchema, request.body);
+    const detail = database.getTopicDetail(params.topicId, config.defaultMessageLimit);
+    const decision = [...detail.decisions]
+      .reverse()
+      .find((candidate) => candidate.status === "accepted");
+    if (!decision) {
+      throw new HttpError(409, "只有 Accepted 决策才能生成实施计划。");
+    }
+
+    const controller = new AbortController();
+    const abortOnDisconnect = (): void => {
+      if (!response.writableEnded) {
+        controller.abort(new Error("客户端已断开任务规划请求。"));
+      }
+    };
+    response.once("close", abortOnDisconnect);
+    try {
+      const generated = await orchestration.generateWorkItemPlan({
+        topicId: params.topicId,
+        adapterId: input.adapterId,
+        instruction: WORK_ITEM_PLANNING_INSTRUCTION,
+        contextMessage: formatWorkItemPlanningContext(decision, detail.workItems),
+        signal: controller.signal,
+      });
+      const latestDetail = database.getTopicDetail(
+        params.topicId,
+        config.defaultMessageLimit,
+      );
+      const latestDecision = [...latestDetail.decisions]
+        .reverse()
+        .find((candidate) => candidate.status === "accepted");
+      if (latestDecision?.id !== decision.id) {
+        throw new HttpError(409, "AI 规划期间 Accepted 决策已变化，请重新生成。");
+      }
+      let items;
+      try {
+        items = parseWorkItemPlan(
+          generated.content,
+          latestDetail.workItems.map((item) => item.title),
+        );
+      } catch (error) {
+        throw new HttpError(
+          502,
+          error instanceof Error ? error.message : "AI 返回的任务草案无法解析。",
+        );
+      }
+      if (items.length === 0) {
+        sendSuccess(response, [], "AI 未发现需要补充的新任务。");
+        return;
+      }
+      const workItems = database.createWorkItemsAsActor({
+        topicId: params.topicId,
+        decisionId: decision.id,
+        items,
+        actorId: generated.actorId,
+      });
+      sendSuccess(response, workItems, `AI 已生成 ${String(workItems.length)} 个实施任务。`, 201);
+    } finally {
+      response.off("close", abortOnDisconnect);
+    }
   });
 
   app.put("/api/v1/topics/:topicId/work-items/:workItemId", (request, response) => {

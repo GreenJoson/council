@@ -1,5 +1,5 @@
 /**
- * @input  依赖：自动轮次快照、当前议题开放状态和受控运行操作
+ * @input  依赖：界面语言上下文、自动轮次快照、当前议题开放状态和受控运行操作
  * @output 导出：AutoRoundsPanel 按需运行状态、单一当前调用卡、折叠历史与恢复控制
  * @pos    Inspector 内仅在存在 Run/Binding 时出现的观察、批准、恢复和取消控制台；
  *         单次创建统一由 Composer @Agent 承担
@@ -23,6 +23,7 @@ import type {
   OrchestrationSnapshot,
   RuntimeBinding,
 } from "../types/orchestration";
+import { useI18n } from "../i18n/I18nProvider";
 import { BrandGlyph } from "./BrandGlyph";
 
 const STATUS_LABELS: Readonly<Record<OrchestrationRun["status"], string>> = {
@@ -141,6 +142,7 @@ export function AutoRoundsPanel({
   onCloseBinding,
   onReopenBinding,
 }: AutoRoundsPanelProps) {
+  const { t } = useI18n();
   const adapters = snapshot?.capabilities?.adapters ?? [];
   const runs = snapshot?.activeTopicId === topicId ? snapshot.runs : [];
   const runtimeBindings = snapshot?.activeTopicId === topicId
@@ -156,15 +158,15 @@ export function AutoRoundsPanel({
       <header className="auto-rounds-heading">
         <div>
           <span className="auto-rounds-kicker"><Zap size={12} /> Activity</span>
-          <h3 id="auto-rounds-title">运行状态</h3>
+          <h3 id="auto-rounds-title">{t("运行状态")}</h3>
         </div>
         <span className={`mini-sync mini-sync-${snapshot?.sync.status ?? "syncing"}`}>
-          {snapshot?.sync.status === "offline" ? "离线" : "LIVE"}
+          {snapshot?.sync.status === "offline" ? t("离线") : "LIVE"}
         </span>
       </header>
 
       {runtimeBindings.length > 0 ? (
-        <div className="runtime-binding-list" aria-label="当前议题持久会话">
+        <div className="runtime-binding-list" aria-label={t("当前议题持久会话")}>
           {runtimeBindings.map((binding) => {
             const adapter = adapters.find((candidate) => candidate.id === binding.agentId);
             const isClosed = binding.status === "closed";
@@ -178,8 +180,8 @@ export function AutoRoundsPanel({
                 <span className="runtime-binding-main">
                   <strong>{adapter?.label ?? binding.agentId}</strong>
                   <small>
-                    {BINDING_STATUS_LABELS[binding.status]}
-                    {binding.hasSession ? " · 已复用上下文" : " · 首轮上下文"}
+                    {t(BINDING_STATUS_LABELS[binding.status])}
+                    {binding.hasSession ? t(" · 已复用上下文") : t(" · 首轮上下文")}
                   </small>
                 </span>
                 <button
@@ -193,7 +195,7 @@ export function AutoRoundsPanel({
                   )}
                 >
                   {isClosed ? <RotateCcw size={12} /> : <CircleStop size={12} />}
-                  {isClosed ? "重开" : "关闭"}
+                  {isClosed ? t("重开") : t("关闭")}
                 </button>
               </article>
             );
@@ -214,7 +216,7 @@ export function AutoRoundsPanel({
           {historyRuns.length > 0 ? (
             <details className="run-history">
               <summary>
-                <span><History size={13} /> 历史调用</span>
+                <span><History size={13} /> {t("历史调用")}</span>
                 <span>{historyRuns.length} <ChevronDown size={13} /></span>
               </summary>
               <div className="run-history-list">
@@ -245,6 +247,7 @@ interface RunCardProps {
 }
 
 function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: RunCardProps) {
+  const { t } = useI18n();
   const isBusy = busyAction !== null;
   const isActive = ["running", "waiting_agent", "waiting_user"].includes(run.status);
   const recoveryBudgetExhausted = isRecoveryBudgetExhausted(run);
@@ -261,43 +264,43 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
       <header>
         <div>
           <span className="run-id">{run.id.slice(0, 14)}</span>
-          <strong>{STATUS_LABELS[run.status]}</strong>
+          <strong>{t(STATUS_LABELS[run.status])}</strong>
         </div>
         <span className="run-version">v{run.version}</span>
       </header>
       <dl className="run-metrics">
-        <div><dt>轮次</dt><dd>{displayedRound}/{totalRounds}</dd></div>
-        <div><dt>尝试</dt><dd>{run.currentAttempt}</dd></div>
+        <div><dt>{t("轮次")}</dt><dd>{displayedRound}/{totalRounds}</dd></div>
+        <div><dt>{t("尝试")}</dt><dd>{run.currentAttempt}</dd></div>
         <div><dt>Agent</dt><dd>{displayedAgent}</dd></div>
       </dl>
       {run.pendingGateId ? (
         <p className="run-gate">
           <ShieldAlert size={13} />
           {isCompletionGate
-            ? "回复已生成，等待你确认归档"
-            : "下一轮开始前等待你确认"}
+            ? t("回复已生成，等待你确认归档")
+            : t("下一轮开始前等待你确认")}
         </p>
       ) : null}
       {run.failure ? (
         <p className="run-failure"><ShieldAlert size={13} /> {run.failure.message}</p>
       ) : null}
       {recoveryBudgetExhausted ? (
-        <p className="run-budget"><ShieldAlert size={13} /> 人工恢复预算已耗尽</p>
+        <p className="run-budget"><ShieldAlert size={13} /> {t("人工恢复预算已耗尽")}</p>
       ) : null}
       <div className="run-actions">
         {run.status === "idle" ? (
           <RunButton disabled={isBusy} icon={<Play size={13} />} onClick={() => onStart(run.id)}>
-            启动
+            {t("启动")}
           </RunButton>
         ) : null}
         {run.status === "waiting_user" ? (
           <RunButton disabled={isBusy} icon={<CheckCircle2 size={13} />} onClick={() => onApprove(run)}>
-            {isCompletionGate ? "确认并完成" : "批准继续"}
+            {isCompletionGate ? t("确认并完成") : t("批准继续")}
           </RunButton>
         ) : null}
         {run.status === "failed" && !recoveryBudgetExhausted ? (
           <RunButton disabled={isBusy} icon={<RotateCcw size={13} />} onClick={() => onRecover(run.id)}>
-            恢复
+            {t("恢复")}
           </RunButton>
         ) : null}
         {isActive ? (
@@ -307,7 +310,7 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
             icon={<CircleStop size={13} />}
             onClick={() => onCancel(run.id)}
           >
-            取消
+            {t("取消")}
           </RunButton>
         ) : null}
       </div>
@@ -322,13 +325,14 @@ interface RunHistoryRowProps {
 }
 
 function RunHistoryRow({ run, busyAction, onRecover }: RunHistoryRowProps) {
+  const { t } = useI18n();
   const recoveryBudgetExhausted = isRecoveryBudgetExhausted(run);
   const agentId = run.activeAgentId ?? run.plan[0]?.adapterId ?? "—";
   return (
     <article className={`run-history-row run-status-${run.status}`}>
       <span className="run-history-status-dot" aria-hidden="true" />
       <span className="run-history-main">
-        <strong>{STATUS_LABELS[run.status]}</strong>
+        <strong>{t(STATUS_LABELS[run.status])}</strong>
         <small>{run.id.slice(0, 14)} · {agentId}</small>
       </span>
       {run.status === "failed" && !recoveryBudgetExhausted ? (
@@ -337,7 +341,7 @@ function RunHistoryRow({ run, busyAction, onRecover }: RunHistoryRowProps) {
           icon={<RotateCcw size={12} />}
           onClick={() => onRecover(run.id)}
         >
-          恢复
+          {t("恢复")}
         </RunButton>
       ) : null}
     </article>
