@@ -191,6 +191,7 @@ async function createHarness(): Promise<Harness> {
         return Promise.resolve({ id: `decision_${String(decisions.length)}` });
       },
     },
+    reviewLedger: () => undefined,
     now: () => NOW,
   });
 

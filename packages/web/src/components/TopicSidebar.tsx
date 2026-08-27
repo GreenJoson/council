@@ -1,6 +1,6 @@
 /**
- * @input  依赖：议题列表、选中状态、状态筛选、工作区视图路由与关闭回调
- * @output 导出：WorkspaceView 视图路由类型与 TopicSidebar 项目和议题导航
+ * @input  依赖：议题列表（含实施完成度）、选中状态、状态筛选、工作区视图路由与关闭回调
+ * @output 导出：WorkspaceView 视图路由类型与 TopicSidebar 项目和议题导航（时间与完成度左右分列）
  * @pos    Operator Console 左侧高密度导航区域，三个工作区视图共用
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import {
   Boxes,
+  Check,
   FileCheck2,
   GitBranch,
   SearchX,
@@ -43,6 +44,41 @@ export interface TopicSidebarProps {
   onStatusFilterChange: (filter: TopicStatusFilter) => void;
   onSelectTopic: (topicId: string) => void;
   onClose: () => void;
+}
+
+/**
+ * 议题完成度徽标。没有实施项时什么都不渲染——一排 `0/0` 只会增加噪音，
+ * 「还没拆」和「一条都没做完」是两件不同的事。
+ */
+function TopicProgressPill({
+  progress,
+}: {
+  progress: TopicSummary["workItemProgress"];
+}) {
+  if (!progress) {
+    return null;
+  }
+  const done = progress.completed === progress.total;
+  const tone = progress.openBlockingFindings > 0 || progress.blocked > 0
+    ? "blocked"
+    : done
+      ? "done"
+      : "active";
+  return (
+    <span
+      className={`topic-progress topic-progress-${tone}`}
+      title={
+        progress.openBlockingFindings > 0
+          ? `${String(progress.openBlockingFindings)} 条审核问题未关闭`
+          : progress.blocked > 0
+            ? `${String(progress.blocked)} 项受阻`
+            : "已完成 / 全部任务"
+      }
+    >
+      {done ? <Check size={11} /> : null}
+      {progress.completed} / {progress.total}
+    </span>
+  );
 }
 
 export function TopicSidebar({
@@ -119,6 +155,7 @@ export function TopicSidebar({
                 <span className="topic-title">{topic.title}</span>
                 <StatusBadge status={topic.status} />
                 <span className="topic-updated">{topic.updatedLabel}</span>
+                <TopicProgressPill progress={topic.workItemProgress} />
               </button>
             </div>
           ))

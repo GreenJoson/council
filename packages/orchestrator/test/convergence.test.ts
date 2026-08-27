@@ -464,3 +464,183 @@ test("已提交互审传递多仓库 commit，工作区互审明确读取可变�
     "独立评审只消费主审传来的 commit，不重复生成引用规格",
   );
 });
+
+test("审核账本接管收敛：清单没归零就停下等修复，归零才收敛", () => {
+  const reviewed = state({
+    stage: "critique",
+    participants: ["claude", "codex"],
+    turns: [
+      turn("claude", "proposal", 1, "blocking"),
+      turn("codex", "critique", 1, "blocking"),
+    ],
+    reviewLedger: { openBlockingFindings: 2 },
+  });
+
+  // 审核圆桌不走反驳：口头回应改不了 diff，只有真的修掉才算数。
+  assert.deepEqual(nextCycleAction(reviewed), {
+    kind: "await_fix",
+    openBlockingFindings: 2,
+  });
+  assert.equal(stageAfterAction(nextCycleAction(reviewed)), "awaiting_user");
+
+  // 同一份发言记录，清单归零后立刻收敛——不需要谁再改口说自己同意了。
+  assert.deepEqual(
+    nextCycleAction({ ...reviewed, reviewLedger: { openBlockingFindings: 0 } }),
+    { kind: "converge" },
+  );
+
+  // 没有账本的辩论圆桌仍按立场收敛，行为不受影响。
+  assert.deepEqual(nextCycleAction({ ...reviewed, reviewLedger: undefined }), {
+    kind: "invoke",
+    agentId: "claude",
+    stage: "rebuttal",
+    messageKind: "rebuttal",
+    round: 1,
+  });
+});
+
+test("单人审核圆桌不能自己宣布通过：清单未归零同样停在等修复", () => {
+  const solo = state({
+    stage: "proposal",
+    participants: ["claude"],
+    turns: [turn("claude", "proposal", 1, "blocking")],
+    reviewLedger: { openBlockingFindings: 1 },
+  });
+
+  assert.deepEqual(nextCycleAction(solo), {
+    kind: "await_fix",
+    openBlockingFindings: 1,
+  });
+  assert.deepEqual(
+    nextCycleAction({ ...solo, reviewLedger: { openBlockingFindings: 0 } }),
+    { kind: "converge" },
+  );
+});
+
+test("未答问题优先于账本：先把前提问清楚再谈修不修得完", () => {
+  assert.deepEqual(
+    nextCycleAction(state({
+      stage: "critique",
+      participants: ["claude", "codex"],
+      turns: [
+        turn("claude", "proposal", 1),
+        turn("codex", "critique", 1, "blocking"),
+      ],
+      hasOpenQuestion: true,
+      reviewLedger: { openBlockingFindings: 3 },
+    })),
+    { kind: "await_user" },
+  );
+});
+
+test("审核发现与复审判定的尾块解析：合法录入、非法失败关闭", () => {
+  const firstReview = parseAgentReply([
+    "读完 diff，两个问题。",
+    "",
+    "```council-findings",
+    JSON.stringify({
+      findings: [
+        {
+          title: "认领接口缺少版本校验",
+          severity: "blocking",
+          file: "src/x.ts",
+          line: 42,
+          evidence: "两个 Agent 同时认领时后写入方静默覆盖",
+          suggestion: "改为 CAS 更新",
+        },
+        { title: "注释过时", severity: "non_blocking", evidence: "与实现不符" },
+      ],
+    }),
+    "```",
+    "",
+    "```council-verdict",
+    JSON.stringify({ stance: "blocking", summary: "先修版本校验" }),
+    "```",
+  ].join("\n"));
+  assert.equal(firstReview.findings?.length, 2);
+  assert.deepEqual(firstReview.findings?.[0], {
+    title: "认领接口缺少版本校验",
+    severity: "blocking",
+    location: "src/x.ts:42",
+    evidence: "两个 Agent 同时认领时后写入方静默覆盖",
+    suggestion: "改为 CAS 更新",
+  });
+  assert.equal(firstReview.findingsMalformed, undefined);
+
+  // 空清单表示"审过且认可"，与不写尾块不是一回事。
+  assert.deepEqual(
+    parseAgentReply(["```council-findings", '{"findings":[]}', "```"].join("\n"))
+      .findings,
+    [],
+  );
+
+  // 写了但解析不了：调用方必须能区分出来，否则一次格式错误就能让审核悄悄通过。
+  const malformed = parseAgentReply([
+    "```council-findings",
+    '{"findings":[{"title":"缺少严重度","evidence":"x"}]}',
+    "```",
+  ].join("\n"));
+  assert.equal(malformed.findings, undefined);
+  assert.equal(malformed.findingsMalformed, true);
+  assert.equal(malformed.verdict.stance, "blocking");
+
+  const reReview = parseAgentReply([
+    "```council-review-result",
+    JSON.stringify({
+      results: [
+        { workItemId: "work_item_a", verdict: "fixed", note: "已改成 CAS" },
+        { workItemId: "work_item_b", verdict: "still_broken", note: "边界仍未覆盖" },
+        { workItemId: "work_item_a", verdict: "still_broken", note: "改主意了" },
+      ],
+    }),
+    "```",
+  ].join("\n"));
+  // 同一条目重复出现取最后一次：Agent 在同一条消息里改主意以最终判断为准。
+  assert.deepEqual(reReview.reviewResults, [
+    { workItemId: "work_item_a", verdict: "still_broken", note: "改主意了" },
+    { workItemId: "work_item_b", verdict: "still_broken", note: "边界仍未覆盖" },
+  ]);
+});
+
+test("修复互审指令带上待办清单，复审要求逐条判定", () => {
+  const firstRound = buildStageInstruction({
+    stage: "critique",
+    round: 1,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+    reviewScope: "commit",
+    reviewLedger: { round: 1, openItems: [] },
+  });
+  assert.ok(firstRound.includes("```council-findings\n"), "首轮必须给出录入格式");
+  assert.ok(!firstRound.includes("council-review-result"), "首轮没有可判定的旧条目");
+
+  const reReview = buildStageInstruction({
+    stage: "critique",
+    round: 2,
+    roundBudget: 3,
+    reviewers: ["codex"],
+    proposer: "claude",
+    reviewScope: "commit",
+    reviewLedger: {
+      round: 2,
+      openItems: [
+        { workItemId: "work_item_a", title: "认领接口缺少版本校验", severity: "blocking" },
+      ],
+    },
+  });
+  assert.ok(reReview.includes("work_item_a"), "复审必须看到要判定的条目 id");
+  assert.ok(reReview.includes("```council-review-result\n"));
+  assert.ok(reReview.includes("漏掉的条目视为仍未修复"));
+
+  // 辩论圆桌不该出现审核账本的任何指令。
+  assert.ok(
+    !buildStageInstruction({
+      stage: "critique",
+      round: 1,
+      roundBudget: 3,
+      reviewers: ["codex"],
+      proposer: "claude",
+    }).includes("council-findings"),
+  );
+});

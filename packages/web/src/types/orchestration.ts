@@ -243,9 +243,24 @@ export interface CycleBlockingQuestion {
   questionMessageId: string;
 }
 
+/**
+ * 状态机算出的下一步。界面只关心「在等什么」：
+ * `await_user` 等用户回答，`await_fix` 等外部 Agent 把审出的问题修掉。
+ */
+export type CycleActionKind =
+  | "invoke"
+  | "await_user"
+  | "await_fix"
+  | "converge"
+  | "abandon"
+  | "done";
+
 export interface DiscussionCycleView {
   cycle: DiscussionCycle;
   openQuestion?: CycleBlockingQuestion;
+  action?: { kind: CycleActionKind };
+  /** 仅修复互审：未关闭的阻断发现数，归零才收敛。 */
+  reviewLedger?: { openBlockingFindings: number };
 }
 
 export interface StartCycleInput {
@@ -259,6 +274,13 @@ export interface StartCycleInput {
     proposer?: RuntimeCapabilityKey[];
     reviewers?: RuntimeCapabilityKey[];
   };
+}
+
+/** 提交一批修复并开一轮复审；不带 targets 时只触发复审，自述由外部 Agent 自己发。 */
+export interface SubmitFixesInput {
+  topicId: string;
+  summary?: string;
+  targets?: Array<{ repository: string; commit: string }>;
 }
 
 export interface AnswerCycleQuestionInput {

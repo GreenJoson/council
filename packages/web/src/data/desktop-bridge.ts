@@ -44,6 +44,7 @@ export interface DesktopBridge {
   recordDecision(input: Record<string, unknown>): Promise<unknown>;
   addWorkItems(input: Record<string, unknown>): Promise<unknown>;
   updateWorkItem(input: Record<string, unknown>): Promise<unknown>;
+  claimWorkItem(input: Record<string, unknown>): Promise<unknown>;
   getStatus(): Promise<unknown>;
   listenChanged(handler: (payload: unknown) => void): Promise<UnlistenFn>;
   getOrchestrationConfig(): Promise<DesktopOrchestrationConfig>;
@@ -162,6 +163,7 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
     recordDecision: (input) => runtime.invoke("record_decision", { input }),
     addWorkItems: (input) => runtime.invoke("add_work_items", { input }),
     updateWorkItem: (input) => runtime.invoke("update_work_item", { input }),
+    claimWorkItem: (input) => runtime.invoke("claim_work_item", { input }),
     getStatus: () => runtime.invoke("get_status"),
     listenChanged: (handler) => runtime.listen("council://changed", handler),
     getOrchestrationConfig: async () =>

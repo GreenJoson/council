@@ -1,13 +1,13 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5/v10→v11、实施项、RuntimeBinding/Runtime 协议/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v12、实施项树、RuntimeBinding/Runtime 协议/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
 use council_core::{
-    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, CreateWorkItemEntry,
-    CreateWorkItemsInput, DecisionStatus, MessageKind, PostMessageInput, RecordDecisionInput,
-    TopicStatus, UpdateWorkItemInput, WorkItemStatus,
+    ClaimWorkItemInput, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput,
+    CreateWorkItemEntry, CreateWorkItemsInput, DecisionStatus, MessageKind, PostMessageInput,
+    RecordDecisionInput, TopicStatus, UpdateWorkItemInput, WorkItemProgress, WorkItemStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -145,6 +145,7 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
         .create_work_items(CreateWorkItemsInput {
             topic_id: topic.id.clone(),
             decision_id: None,
+            parent_id: None,
             items: vec![
                 CreateWorkItemEntry {
                     title: "实现跨语言读写".into(),
@@ -166,6 +167,7 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             work_item_id: work_items[0].id.clone(),
             status: WorkItemStatus::Completed,
             status_note: Some("Rust 验证通过。".into()),
+            fix_commit: None,
             expected_version: 1,
             actor_alias: CLAUDE_ALIAS.into(),
         })
@@ -179,6 +181,7 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             work_item_id: completed.id.clone(),
             status: WorkItemStatus::Blocked,
             status_note: None,
+            fix_commit: None,
             expected_version: 1,
             actor_alias: CODEX_ALIAS.into(),
         }),
@@ -191,6 +194,138 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             .work_items
             .len(),
         2
+    );
+
+    // ---- 实施项树：父状态只能由子任务派生 ----
+    let parent = work_items[1].clone();
+    let children = store
+        .create_work_items(CreateWorkItemsInput {
+            topic_id: topic.id.clone(),
+            decision_id: None,
+            parent_id: Some(parent.id.clone()),
+            items: vec![
+                CreateWorkItemEntry {
+                    title: "写并发用例".into(),
+                    details: String::new(),
+                },
+                CreateWorkItemEntry {
+                    title: "跑一遍 CI".into(),
+                    details: String::new(),
+                },
+            ],
+            actor_alias: CODEX_ALIAS.into(),
+        })
+        .expect("child work items should be created");
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0].parent_id.as_deref(), Some(parent.id.as_str()));
+    // 子任务继承父任务的决策锚点，一棵树不横跨两个 ADR。
+    assert_eq!(children[0].decision_id, parent.decision_id);
+    assert_eq!(children[0].sort_order, 0);
+    assert_eq!(children[1].sort_order, 1);
+
+    // 父任务不接受手动改状态，只能改它的子任务。
+    assert!(matches!(
+        store.update_work_item(UpdateWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: parent.id.clone(),
+            status: WorkItemStatus::Completed,
+            status_note: None,
+            fix_commit: None,
+            expected_version: 1,
+            actor_alias: CODEX_ALIAS.into(),
+        }),
+        Err(CouncilError::Conflict(_))
+    ));
+
+    // 认领一条子任务：父任务随之进入进行中。
+    let claimed = store
+        .claim_work_item(ClaimWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: children[0].id.clone(),
+            status_note: Some("先补并发用例。".into()),
+            expected_version: children[0].version,
+            actor_alias: CLAUDE_ALIAS.into(),
+        })
+        .expect("child should be claimable");
+    assert_eq!(claimed.status, WorkItemStatus::InProgress);
+    assert_eq!(claimed.assignee_actor_id.as_deref(), Some("claude"));
+    assert!(claimed.claimed_at.is_some());
+    let detail = store
+        .get_topic(&topic.id, 20, 0)
+        .expect("detail after claim");
+    let reloaded_parent = detail
+        .work_items
+        .iter()
+        .find(|item| item.id == parent.id)
+        .expect("parent still present");
+    assert_eq!(reloaded_parent.status, WorkItemStatus::InProgress);
+
+    // 父任务不能被认领——认领的对象只能是叶子。
+    assert!(matches!(
+        store.claim_work_item(ClaimWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: parent.id.clone(),
+            status_note: None,
+            expected_version: reloaded_parent.version,
+            actor_alias: CODEX_ALIAS.into(),
+        }),
+        Err(CouncilError::Conflict(_))
+    ));
+
+    // 子任务全部完成后，父任务自动结算为完成。
+    for child in &children {
+        let current = store
+            .get_topic(&topic.id, 20, 0)
+            .expect("detail before completing child")
+            .work_items
+            .iter()
+            .find(|item| item.id == child.id)
+            .cloned()
+            .expect("child present");
+        store
+            .update_work_item(UpdateWorkItemInput {
+                topic_id: topic.id.clone(),
+                work_item_id: child.id.clone(),
+                status: WorkItemStatus::Completed,
+                status_note: None,
+                fix_commit: Some("abc1234".into()),
+                expected_version: current.version,
+                actor_alias: CLAUDE_ALIAS.into(),
+            })
+            .expect("child should complete");
+    }
+    let settled = store
+        .get_topic(&topic.id, 20, 0)
+        .expect("detail after children done");
+    let settled_parent = settled
+        .work_items
+        .iter()
+        .find(|item| item.id == parent.id)
+        .expect("parent present");
+    assert_eq!(settled_parent.status, WorkItemStatus::Completed);
+    assert!(settled_parent.completed_at.is_some());
+
+    // 完成度只数叶子：两条子任务加上最初那条独立任务，父任务不计入分母。
+    assert_eq!(
+        settled.topic.work_item_progress,
+        Some(WorkItemProgress {
+            total: 3,
+            completed: 3,
+            blocked: 0,
+            open_blocking_findings: 0,
+        })
+    );
+    // 列表查询同样带出完成度，议题导航不必为此拉取详情。
+    let listed = store
+        .list_topics(None, 20, 0)
+        .expect("topics with progress");
+    assert_eq!(
+        listed
+            .topics
+            .iter()
+            .find(|item| item.id == topic.id)
+            .and_then(|item| item.work_item_progress),
+        settled.topic.work_item_progress,
     );
 
     let kimi_topic = store
@@ -211,9 +346,9 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
 }
 
 #[test]
-fn opens_node_v11_generic_acp_schema_and_preserves_cross_language_identity() {
+fn opens_node_current_schema_and_preserves_cross_language_identity() {
     let directory = tempdir().expect("temp directory");
-    let database_path = directory.path().join("node-v11.sqlite3");
+    let database_path = directory.path().join("node-current.sqlite3");
     prepare_node_schema(&database_path);
     let raw = Connection::open(&database_path).expect("inspection connection");
     let (user_version, binding_tables, binding_triggers): (i64, i64, i64) = (
@@ -239,15 +374,16 @@ fn opens_node_v11_generic_acp_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 11);
+    assert_eq!(user_version, 12);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 5);
     drop(raw);
 
-    let mut store = CouncilStore::open(&database_path, 5_000).expect("Rust opens Node v11");
+    let mut store =
+        CouncilStore::open(&database_path, 5_000).expect("Rust opens Node current schema");
     let topic = store
         .create_topic(topic_input(
-            "Node v11 到 Rust",
+            "Node 当前 schema 到 Rust",
             "/workspace/project-alpha",
             HUMAN_ALIAS,
         ))
@@ -483,7 +619,7 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    // v7 为 cycle/question 各加 3 个，v11 为实施项增加 3 个 revision 触发器。
+    // v7 为 cycle/question 各加 3 个，v11 为实施项增加 3 个 revision 触发器（v12 重建时原样重挂）。
     assert_eq!(trigger_count, 24);
 }
 
@@ -565,8 +701,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (12, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 12;",
+             VALUES (13, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 13;",
         )
         .expect("future schema fixture");
     assert!(matches!(

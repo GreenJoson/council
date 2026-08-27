@@ -13,6 +13,7 @@ import type {
 } from "./desktop-bridge";
 import type {
   AnswerCycleQuestionInput,
+  SubmitFixesInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   OrchestrationRun,
@@ -160,6 +161,10 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
     input: AnswerCycleQuestionInput,
   ): Promise<OrchestrationSnapshot> {
     return (await this.#requireLive()).answerCycleQuestion(input);
+  }
+
+  async submitFixes(input: SubmitFixesInput): Promise<OrchestrationSnapshot> {
+    return (await this.#requireLive()).submitFixes(input);
   }
 
   async abandonCycle(topicId: string): Promise<OrchestrationSnapshot> {

@@ -8,6 +8,7 @@
 
 import type {
   AnswerCycleQuestionInput,
+  SubmitFixesInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   CycleMetrics,
@@ -296,6 +297,13 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     return await this.#cycleAction(input.topicId, "/answers", {
       questionMessageId: input.questionMessageId,
       content: input.content,
+    });
+  }
+
+  async submitFixes(input: SubmitFixesInput): Promise<OrchestrationSnapshot> {
+    return await this.#cycleAction(input.topicId, "/fixes", {
+      ...(input.summary === undefined ? {} : { summary: input.summary }),
+      ...(input.targets === undefined ? {} : { targets: input.targets }),
     });
   }
 

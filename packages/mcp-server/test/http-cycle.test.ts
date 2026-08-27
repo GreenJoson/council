@@ -44,11 +44,22 @@ interface CycleView {
     roundBudget: number;
   };
   openQuestion?: { question: string; questionMessageId: string };
+  action?: { kind: string; openBlockingFindings?: number };
+  reviewLedger?: { openBlockingFindings: number };
 }
 
 interface TopicDetail {
   messages: { id: string; kind: string; content: string }[];
   decisions: { id: string; title: string; decision: string; status: string }[];
+  workItems: {
+    id: string;
+    parentId?: string;
+    title: string;
+    status: string;
+    origin: string;
+    severity?: string;
+    reviewRound?: number;
+  }[];
 }
 
 function verdict(stance: string): string {
@@ -108,6 +119,26 @@ async function readTopic(baseUrl: string, topicId: string): Promise<TopicDetail>
   const envelope = await readEnvelope<TopicDetail>(response);
   assert(envelope.data);
   return envelope.data;
+}
+
+/** 等到圆桌停在等修复；账本对账是在推进里做的，只能等状态。 */
+async function settleAwaitingFix(
+  baseUrl: string,
+  topicId: string,
+  timeoutMs = 5_000,
+): Promise<CycleView> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const view = await readCycle(baseUrl, topicId);
+    if (view?.action?.kind === "await_fix") {
+      return view;
+    }
+    if (!view) {
+      throw new Error("圆桌已结算，没有停在等修复。");
+    }
+    await delay(15);
+  }
+  throw new Error("圆桌未在期限内停到等修复。");
 }
 
 /** 等到圆桌结算或停在等用户；自动交接是异步的，只能等状态而不是等固定时长。 */
@@ -748,6 +779,118 @@ test("Agent 反复失败时圆桌停住等人，不对同一阶段无限重召�
     );
     assert.equal(abandoned.status, 200);
     assert.equal(await readCycle(harness.baseUrl, topicId), null);
+  } finally {
+    await harness.close();
+  }
+});
+
+test("审 → 修 → 复审闭环：发现落成任务，判定关闭清单后才收敛", async () => {
+  const reviewedCommit = "a1b2c3d";
+  const fixedCommit = "b2c3d4e";
+  const finding = [
+    "```council-findings",
+    JSON.stringify({
+      findings: [{
+        title: "认领接口缺少版本校验",
+        severity: "blocking",
+        file: "src/database.ts",
+        line: 1100,
+        evidence: "两个 Agent 同时认领时后写入方静默覆盖",
+        suggestion: "改为 CAS 更新并返回冲突",
+      }],
+    }),
+    "```",
+  ].join("\n");
+  // 主审只负责传递被审 commit；评审第一轮报出问题，第二轮判定它已修好。
+  const proposer = new ScriptedAgent("claude", (kind) => kind === "proposal"
+    ? [
+        "已核对提交。",
+        "",
+        "```council-fix",
+        `{"commit":"${reviewedCommit}","summary":"核对已有修复"}`,
+        "```",
+        "",
+        verdict("agree"),
+      ].join("\n")
+    : `${kind} 正文。\n\n${verdict("agree")}`);
+  let reviewedItemId = "";
+  const reviewer = new ScriptedAgent("codex", (_kind, call) => call === 1
+    ? `读完 diff，有一个阻断问题。\n\n${finding}\n\n${verdict("blocking")}`
+    : [
+        "复审通过。",
+        "",
+        "```council-review-result",
+        JSON.stringify({
+          results: [{ workItemId: reviewedItemId, verdict: "fixed", note: "已改成 CAS 更新" }],
+        }),
+        "```",
+        "",
+        verdict("agree"),
+      ].join("\n"));
+  const harness = await harnessWith(
+    proposer,
+    reviewer,
+    ["text", "repository_read", "git_diff"],
+  );
+  try {
+    const topicId = await createTopic(harness.baseUrl);
+    const started = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}/cycle`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ participants: ["claude", "codex"], kind: "fix_review" }),
+    });
+    assert.equal(started.status, 201);
+
+    // 一、审出问题后圆桌停在等修复，而不是走反驳或被判"预算耗尽"放弃。
+    const parked = await settleAwaitingFix(harness.baseUrl, topicId);
+    assert.equal(parked.cycle.status, "active", "圆桌不销毁，账本对用户始终可见");
+    assert.equal(parked.reviewLedger?.openBlockingFindings, 1);
+    assert.ok(
+      !parked.cycle.turns.some((turn) => turn.stage === "rebuttal"),
+      "审 bug 不走反驳：口头回应改不了 diff",
+    );
+
+    // 二、发现已经落成可认领的任务树，用户在实施进度里就能看到还差几条。
+    const afterReview = await readTopic(harness.baseUrl, topicId);
+    const batch = afterReview.workItems.find((item) => item.parentId === undefined);
+    const item = afterReview.workItems.find((candidate) => candidate.parentId === batch?.id);
+    assert.ok(batch && item);
+    assert.equal(item.title, "认领接口缺少版本校验");
+    assert.equal(item.origin, "review_finding");
+    assert.equal(item.severity, "blocking");
+    assert.equal(item.reviewRound, 1);
+    reviewedItemId = item.id;
+
+    // 三、外部 Agent 修完提交，复审读新 commit 并逐条判定。
+    const submitted = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topicId}/cycle/fixes`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({
+          summary: "认领接口改为 CAS 更新",
+          targets: [{ repository: ".", commit: fixedCommit }],
+        }),
+      },
+    );
+    assert.equal(submitted.status, 202);
+
+    // 四、清单归零后才收敛，并按既有路径产出 proposed 决策。
+    assert.equal(await settle(harness.baseUrl, topicId), null);
+    const finalDetail = await readTopic(harness.baseUrl, topicId);
+    assert.equal(
+      finalDetail.workItems.find((candidate) => candidate.id === reviewedItemId)?.status,
+      "completed",
+      "复审判定 fixed 才关闭条目，修复者不能自己宣布",
+    );
+    assert.equal(finalDetail.decisions.length, 1);
+    assert.equal(finalDetail.decisions[0]?.status, "proposed");
+
+    // 复审必须拿到新 commit 和待判定条目，否则等于再看一遍已经被改掉的 diff。
+    const reReviewInstruction = reviewer.instructions[1] ?? "";
+    assert.match(reReviewInstruction, new RegExp(`git -C \\. show ${fixedCommit}`));
+    assert.ok(reReviewInstruction.includes(reviewedItemId));
+    assert.deepEqual(reviewer.seen, ["critique", "critique"]);
   } finally {
     await harness.close();
   }

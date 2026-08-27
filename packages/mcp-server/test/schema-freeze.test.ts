@@ -14,12 +14,18 @@ import {
 } from "../src/schema-migrator.js";
 
 /**
- * 每个已发布版本的必需 schema 对象指纹。真实用户库就是按这些文本迁移出来的，
+ * 每个已发布版本的**全量** schema 对象指纹。真实用户库就是按这些文本迁移出来的，
  * 改动其中任何一条，旧库都会在 assertCanonicalSchema 处打不开——现场表现是
  * 桌面端整个起不来。要改结构就新增一个版本，不要动这里已有的行。
+ *
+ * v12 起口径从「必需对象投影」改为「全量对象」：投影用的 REQUIRED_* 清单描述的是
+ * 当前版本必须存在什么，每次增删索引都会变，拿它筛历史版本会让全部旧指纹一起漂移，
+ * 冻结测试便再也指认不出到底是谁被改了。换口径后 v3–v11 的指纹逐字节不变，
+ * 只有 v2 变化——它当时确实存在 `agent_settings` 等后来被删除的对象，
+ * 投影口径把这些真实存在过的表漏掉了。
  */
 const FROZEN_SCHEMA_DIGESTS: ReadonlyMap<number, string> = new Map([
-  [2, "44d763d90f387cf39007e9347772ba1aca4102bbaeade3f38a115258cb823396"],
+  [2, "dbb093693bf51577342c6844768577a1ec2b646a5e1e158b8b9cfc54d1eea383"],
   [3, "e69e4843727bb39bfdde584eda02c1306a53b3b126166b152efa28f3980ee885"],
   [4, "b53a7b9dfd74068cec951d43f83697e902cd6921bc322e509ebc733f14e73771"],
   [5, "b53a7b9dfd74068cec951d43f83697e902cd6921bc322e509ebc733f14e73771"],
@@ -29,6 +35,7 @@ const FROZEN_SCHEMA_DIGESTS: ReadonlyMap<number, string> = new Map([
   [9, "3ae0a6d0f5b4b9b074d224ac900e1be332b552141261d4274da6bb5bfe3b7645"],
   [10, "0ce9899af697da39ef32f78d280b92587644044a1766b178770840b2a87d8f2d"],
   [11, "582ae481713139587c4529bcd7007f70fbf45f23c53a9c215fb708d369928ca4"],
+  [12, "812e2610d61e967496da91d61d8d4b4395c8a8610fb9a629da492d95d8bab4b5"],
 ]);
 
 test("已发布迁移的 schema 文本被冻结", () => {

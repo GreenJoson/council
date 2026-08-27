@@ -10,6 +10,9 @@ import path from "node:path";
 import {
   CYCLE_REVIEW_SCOPES,
   DISCUSSION_CYCLE_KINDS,
+  MAX_FIX_REPOSITORY_CHARS,
+  MAX_FIX_SUMMARY_CHARS,
+  MAX_FIX_TARGETS,
   RUNTIME_CAPABILITY_KEYS,
 } from "council-orchestrator";
 import { z } from "zod/v4";
@@ -216,6 +219,7 @@ export const createWorkItemsBodySchema = z
       .max(MAX_ID_CHARS, "decisionId 过长")
       .regex(/^decision_[A-Za-z0-9-]+$/, "decisionId 格式无效")
       .optional(),
+    parentId: workItemIdSchema.optional(),
     items: z
       .array(
         z.object({
@@ -231,6 +235,14 @@ export const createWorkItemsBodySchema = z
 export const updateWorkItemBodySchema = z
   .object({
     status: z.enum(WORK_ITEM_STATUSES),
+    expectedVersion: z.number().int().positive(),
+    statusNote: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
+    fixCommit: z.string().max(MAX_ID_CHARS, "fixCommit 过长").optional(),
+  })
+  .strict();
+
+export const claimWorkItemBodySchema = z
+  .object({
     expectedVersion: z.number().int().positive(),
     statusNote: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
   })
@@ -336,6 +348,36 @@ export const answerCycleQuestionBodySchema = z
     content: nonBlankString(MAX_MESSAGE_CHARS),
   })
   .strict();
+
+/**
+ * 提交一批修复并开一轮复审。
+ *
+ * `targets` 给了就顺带公开一条修复自述，复审据此读新 diff；
+ * 外部 Agent 已经通过 MCP 自己发过自述时可以省略，只触发复审。
+ */
+export const submitFixesBodySchema = z
+  .object({
+    summary: nonBlankString(MAX_FIX_SUMMARY_CHARS).optional(),
+    targets: z
+      .array(
+        z
+          .object({
+            repository: nonBlankString(MAX_FIX_REPOSITORY_CHARS),
+            commit: z
+              .string()
+              .regex(/^[0-9a-f]{7,40}$/u, "commit 必须是 7 位以上的十六进制对象名"),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(MAX_FIX_TARGETS)
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (value) => (value.targets === undefined) === (value.summary === undefined),
+    { message: "targets 与 summary 必须同时给出或同时省略" },
+  );
 
 export const approveRunBodySchema = z
   .object({

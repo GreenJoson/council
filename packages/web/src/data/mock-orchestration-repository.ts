@@ -8,6 +8,7 @@
 
 import type {
   AnswerCycleQuestionInput,
+  SubmitFixesInput,
   ApproveOrchestrationRunInput,
   CreateOrchestrationRunInput,
   OrchestrationCapabilities,
@@ -429,6 +430,26 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       return cloneSnapshot(this.#snapshot);
     }
     this.#snapshot.cycle = { cycle: { ...view.cycle, stage: "critique" } };
+    return this.#publish();
+  }
+
+  async submitFixes(_input: SubmitFixesInput): Promise<OrchestrationSnapshot> {
+    await waitForMock();
+    const view = this.#snapshot.cycle;
+    if (!view || view.action?.kind !== "await_fix") {
+      return cloneSnapshot(this.#snapshot);
+    }
+    // 与服务端同口径：提交只推进轮次，条目是否关闭由复审判定。
+    this.#snapshot.cycle = {
+      ...view,
+      cycle: {
+        ...view.cycle,
+        stage: "critique",
+        currentRound: view.cycle.currentRound + 1,
+        roundBudget: Math.max(view.cycle.roundBudget, view.cycle.currentRound + 1),
+      },
+      action: { kind: "invoke" },
+    };
     return this.#publish();
   }
 

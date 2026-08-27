@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v11 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v12 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -40,7 +40,8 @@ export const REQUIRED_INDEXES = [
   "idx_messages_topic_created",
   "idx_decisions_topic_created",
   "idx_work_items_topic_status",
-  "idx_work_items_decision_title",
+  "idx_work_items_parent_title",
+  "idx_work_items_parent_order",
   "idx_actor_identities_status_slug",
   "idx_actor_aliases_actor",
   "idx_provider_profiles_status_slug",
@@ -614,6 +615,89 @@ export const WORK_ITEM_SCHEMA_SQL = `
   CREATE UNIQUE INDEX idx_work_items_decision_title
     ON work_items(decision_id, title COLLATE NOCASE);
 
+  CREATE TRIGGER trg_work_items_revision_insert
+    AFTER INSERT ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
+  CREATE TRIGGER trg_work_items_revision_update
+    AFTER UPDATE ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
+  CREATE TRIGGER trg_work_items_revision_delete
+    AFTER DELETE ON work_items BEGIN
+      UPDATE council_meta SET value = value + 1 WHERE key = 'revision';
+      UPDATE council_meta SET value = value + 1 WHERE key = 'content_revision';
+    END;
+`;
+
+/**
+ * v12 实施项：任务树 + 审核发现。三段拆开是为了让迁移能先建表复制数据、
+ * 最后再挂索引与触发器，避免复制过程把 revision 计数抬高 N 次。
+ *
+ * `parent_key` 是生成列而不是冗余列：SQLite 中 NULL 不参与唯一比较，
+ * 顶层任务若直接用 `parent_id IS NULL` 参与唯一索引就会失去约束。
+ * 它不出现在 PRAGMA table_info 中，因此不进入桌面核心的列断言，
+ * 由 `idx_work_items_parent_title` 的存在性间接保证不漂移。
+ */
+export const WORK_ITEM_V12_TABLE_SQL = `
+  CREATE TABLE work_items (
+    id TEXT PRIMARY KEY,
+    topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    decision_id TEXT REFERENCES decisions(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'in_progress', 'blocked', 'completed')
+    ),
+    status_note TEXT,
+    version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+    created_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+    created_by_snapshot_json TEXT NOT NULL,
+    updated_by_actor_id TEXT NOT NULL REFERENCES actor_identities(id),
+    updated_by_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    parent_id TEXT REFERENCES work_items(id) ON DELETE CASCADE,
+    parent_key TEXT GENERATED ALWAYS AS (COALESCE(parent_id, '')) VIRTUAL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL DEFAULT 'manual' CHECK (
+      origin IN ('manual', 'review_finding')
+    ),
+    severity TEXT CHECK (
+      severity IS NULL OR severity IN ('blocking', 'non_blocking')
+    ),
+    source_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    source_cycle_id TEXT REFERENCES discussion_cycles(id) ON DELETE SET NULL,
+    review_round INTEGER CHECK (review_round IS NULL OR review_round > 0),
+    fix_commit TEXT,
+    assignee_actor_id TEXT REFERENCES actor_identities(id),
+    claimed_at TEXT,
+    CHECK (
+      (status = 'completed' AND completed_at IS NOT NULL)
+      OR (status <> 'completed' AND completed_at IS NULL)
+    ),
+    CHECK (parent_id IS NULL OR parent_id <> id),
+    CHECK (origin <> 'review_finding' OR severity IS NOT NULL),
+    CHECK (
+      (assignee_actor_id IS NOT NULL AND claimed_at IS NOT NULL)
+      OR (assignee_actor_id IS NULL AND claimed_at IS NULL)
+    )
+  );
+`;
+
+export const WORK_ITEM_V12_INDEX_SQL = `
+  CREATE INDEX idx_work_items_topic_status
+    ON work_items(topic_id, status, created_at);
+  CREATE UNIQUE INDEX idx_work_items_parent_title
+    ON work_items(topic_id, parent_key, title COLLATE NOCASE);
+  CREATE INDEX idx_work_items_parent_order
+    ON work_items(topic_id, parent_key, sort_order, created_at);
+`;
+
+export const WORK_ITEM_V12_TRIGGER_SQL = `
   CREATE TRIGGER trg_work_items_revision_insert
     AFTER INSERT ON work_items BEGIN
       UPDATE council_meta SET value = value + 1 WHERE key = 'revision';

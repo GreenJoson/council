@@ -61,21 +61,26 @@ import {
   abandonDiscussionCycle,
   answerBlockingQuestion,
   completeDiscussionCycle,
+  convergeDiscussionCycle,
   findReusableProposalMessage,
   hasActiveOrchestrationRun,
   readActiveDiscussionCycle,
   readLatestDiscussionCycle,
+  readLatestFixTargets,
   readTopicProposalSeed,
+  resumeDiscussionCycleAfterFixes,
   startDiscussionCycle,
   type AbandonDiscussionCycleInput,
   type AnswerBlockingQuestionInput,
   type CompleteDiscussionCycleInput,
   type DiscussionCycleView,
+  type ResumeAfterFixesInput,
   type ReusableProposalMessage,
   type StartDiscussionCycleInput,
   type TopicProposalSeed,
 } from "../cycle/cycle-repository.js";
 import type { DiscussionCycle } from "../cycle/cycle-codec.js";
+import type { AgentFixTarget } from "../cycle/verdict.js";
 import {
   decodeCouncilMessageRows,
   loadRuntimeBindingInvocationContext,
@@ -1088,6 +1093,23 @@ export class SQLiteCouncilStore implements CouncilStore {
 
   answerBlockingQuestion(input: AnswerBlockingQuestionInput): DiscussionCycleView {
     return this.#transaction(() => answerBlockingQuestion(this.#database, input));
+  }
+
+  convergeDiscussionCycle(
+    input: { cycleId: string; expectedVersion: number; now: string },
+  ): DiscussionCycleView {
+    return this.#transaction(() => convergeDiscussionCycle(this.#database, input));
+  }
+
+  resumeDiscussionCycleAfterFixes(
+    input: ResumeAfterFixesInput,
+  ): DiscussionCycleView {
+    return this.#transaction(() =>
+      resumeDiscussionCycleAfterFixes(this.#database, input));
+  }
+
+  readLatestFixTargets(topicId: string): readonly AgentFixTarget[] {
+    return readLatestFixTargets(this.#database, topicId);
   }
 
   completeDiscussionCycle(input: CompleteDiscussionCycleInput): DiscussionCycle {

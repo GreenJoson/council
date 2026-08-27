@@ -15,6 +15,7 @@ import {
   Play,
   ThumbsUp,
   TriangleAlert,
+  Wrench,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
 import type {
@@ -81,7 +82,50 @@ export interface CyclePanelProps {
     reviewScope: CycleReviewScope,
   ) => Promise<boolean>;
   onAnswer: (questionMessageId: string, content: string) => Promise<boolean>;
+  /** 外部 Agent 修完之后开下一轮复审；条目是否关闭仍由复审判定。 */
+  onSubmitFixes: () => Promise<void>;
   onAbandon: () => Promise<void>;
+}
+
+/**
+ * 审核闭环的等待位。
+ *
+ * 圆桌不销毁也不空转：清单摆在这里，外部 Agent 认领修复、提交，
+ * 再由这颗按钮开下一轮复审——用户不必为了继续而重开一个新圆桌。
+ */
+function AwaitingFix({
+  view,
+  busy,
+  onSubmitFixes,
+}: {
+  view: DiscussionCycleView;
+  busy: boolean;
+  onSubmitFixes: CyclePanelProps["onSubmitFixes"];
+}): ReactElement | null {
+  if (view.action?.kind !== "await_fix") {
+    return null;
+  }
+  const open = view.reviewLedger?.openBlockingFindings ?? 0;
+  return (
+    <div className="cycle-await-fix">
+      <p className="cycle-await-fix-title">
+        <Wrench size={13} /> 等待修复
+        {open > 0 ? ` · 还有 ${String(open)} 条阻断问题未关闭` : ""}
+      </p>
+      <p className="cycle-await-fix-hint">
+        审出的问题已经落成实施项，可以认领和跟踪。修完并提交后开下一轮复审；
+        条目是否关闭由复审读真实 diff 判定，不由修复者宣布。
+      </p>
+      <button
+        type="button"
+        className="primary-button cycle-await-fix-action"
+        disabled={busy}
+        onClick={() => { void onSubmitFixes(); }}
+      >
+        <Wrench size={14} /> 已修复，开始复审
+      </button>
+    </div>
+  );
 }
 
 function adapterLabel(
@@ -464,6 +508,7 @@ export function CyclePanel({
   busyAction,
   onStart,
   onAnswer,
+  onSubmitFixes,
   onAbandon,
 }: CyclePanelProps): ReactElement | null {
   const adapters = snapshot?.capabilities?.adapters ?? [];
@@ -497,6 +542,7 @@ export function CyclePanel({
         <>
           <StageTrack view={activeView} />
           <BlockingQuestion view={activeView} busy={busy} onAnswer={onAnswer} />
+          <AwaitingFix view={activeView} busy={busy} onSubmitFixes={onSubmitFixes} />
           <ol className="cycle-turns">
             {activeView.cycle.turns.map((turn) => (
               <li key={turn.messageId} className={`cycle-turn is-${turn.stance}`}>

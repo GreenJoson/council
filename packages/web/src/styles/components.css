@@ -147,10 +147,35 @@
 
 .topic-updated {
   align-self: center;
-  justify-self: end;
+  /* 第二行左列：时间在左、完成度在右，一眼能对上「什么时候动过 / 还剩多少」。 */
+  justify-self: start;
   color: var(--color-text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
+}
+
+.topic-progress {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  justify-self: end;
+  gap: 3px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.topic-progress-active {
+  color: var(--color-text-secondary);
+}
+
+.topic-progress-done {
+  color: var(--color-positive);
+}
+
+.topic-progress-blocked {
+  color: var(--color-warning);
 }
 
 .status-badge {
@@ -782,8 +807,24 @@
   align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  padding: 10px 4px;
+  /* --work-item-depth 由组件按树深度写入；缩进本身就是层级的唯一视觉线索。 */
+  padding: 10px 4px 10px calc(4px + var(--work-item-depth, 0) * 16px);
   border-top: 1px solid var(--color-divider);
+}
+
+/* 子任务缩进后需要一条竖线回指父级，否则深两层就分不清挂在谁下面。 */
+.work-item-child::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(11px + (var(--work-item-depth, 0) - 1) * 16px);
+  width: 1px;
+  background: var(--color-divider);
+}
+
+.work-item-parent > .work-item-marker {
+  border-style: dashed;
 }
 
 .work-item-marker {
@@ -850,6 +891,71 @@
   font-size: 8px;
 }
 
+.work-item-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.work-item-tag-blocking {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.work-item-tag-non_blocking,
+.work-item-tag-derived {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+.work-item-commit {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.work-item-actions {
+  display: grid;
+  flex: none;
+  gap: 4px;
+  justify-items: end;
+}
+
+.work-item-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.work-item-mini-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.work-item-mini-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.work-item-mini-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .work-item-status-select {
   flex: none;
   width: 72px;
@@ -860,6 +966,13 @@
   background: var(--color-surface);
   color: var(--color-text-secondary);
   font-size: 9px;
+}
+
+/* 父任务的下拉是只读回显，不做成能点的样子，省得用户反复试。 */
+.work-item-parent .work-item-status-select:disabled {
+  border-style: dashed;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
 }
 
 .work-item-saving {
@@ -2241,6 +2354,39 @@
 .cycle-question-options {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+/* 等待外部修复：与阻塞提问同一类"停在这里等人"的容器，但等的是代码不是回答。 */
+.cycle-await-fix {
+  margin-top: 13px;
+  padding: 11px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-primary-soft) 46%, transparent);
+}
+
+.cycle-await-fix-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.cycle-await-fix-hint {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.cycle-await-fix-action {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
   margin-top: 9px;
 }

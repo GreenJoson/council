@@ -28,6 +28,7 @@ import { parseCouncilStatusRevisions } from "./status-revisions";
 import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
   AddWorkItemsInput,
+  ClaimWorkItemInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
@@ -214,6 +215,14 @@ export class NativeCouncilRepository implements CouncilRepository {
   async updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot> {
     const generation = this.#settingsGeneration;
     parseApiWorkItem(await this.#bridge.updateWorkItem({ ...input }));
+    this.#assertGeneration(generation);
+    this.#activeTopicId = input.topicId;
+    return this.loadWorkspace();
+  }
+
+  async claimWorkItem(input: ClaimWorkItemInput): Promise<WorkspaceSnapshot> {
+    const generation = this.#settingsGeneration;
+    parseApiWorkItem(await this.#bridge.claimWorkItem({ ...input }));
     this.#assertGeneration(generation);
     this.#activeTopicId = input.topicId;
     return this.loadWorkspace();

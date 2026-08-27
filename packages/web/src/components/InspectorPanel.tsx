@@ -45,8 +45,9 @@ export interface InspectorPanelProps {
   isOpen: boolean;
   onAccept: () => Promise<void>;
   workItemBusyAction: string | null;
-  onAddWorkItem: (title: string, details: string) => Promise<boolean>;
+  onAddWorkItem: (title: string, details: string, parentId?: string) => Promise<boolean>;
   onUpdateWorkItem: (item: CouncilWorkItem, status: WorkItemStatus) => Promise<void>;
+  onClaimWorkItem: (item: CouncilWorkItem) => Promise<void>;
   onRecordManualDecision: () => void;
   /** 切到主列「决策」tab 读全文 */
   onOpenDecision: () => void;
@@ -62,6 +63,7 @@ export interface InspectorPanelProps {
     questionMessageId: string,
     content: string,
   ) => Promise<boolean>;
+  onSubmitFixes: () => Promise<void>;
   onAbandonCycle: () => Promise<void>;
   onStartRun: (runId: string) => Promise<void>;
   onApproveRun: (run: OrchestrationRun) => Promise<void>;
@@ -81,6 +83,7 @@ export function InspectorPanel({
   workItemBusyAction,
   onAddWorkItem,
   onUpdateWorkItem,
+  onClaimWorkItem,
   onRecordManualDecision,
   onOpenDecision,
   onClose,
@@ -88,6 +91,7 @@ export function InspectorPanel({
   orchestrationBusyAction,
   onStartCycle,
   onAnswerCycleQuestion,
+  onSubmitFixes,
   onAbandonCycle,
   onStartRun,
   onApproveRun,
@@ -150,6 +154,7 @@ export function InspectorPanel({
         busyAction={workItemBusyAction}
         onAdd={onAddWorkItem}
         onUpdate={onUpdateWorkItem}
+        onClaim={onClaimWorkItem}
       />
 
       <CyclePanel
@@ -160,6 +165,7 @@ export function InspectorPanel({
         busyAction={orchestrationBusyAction}
         onStart={onStartCycle}
         onAnswer={onAnswerCycleQuestion}
+        onSubmitFixes={onSubmitFixes}
         onAbandon={onAbandonCycle}
       />
 

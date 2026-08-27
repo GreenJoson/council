@@ -7,6 +7,7 @@
  */
 
 import type {
+  CycleActionKind,
   CycleMetrics,
   CycleReviewScope,
   CycleStage,
@@ -103,6 +104,14 @@ const CYCLE_REVIEW_SCOPES: readonly CycleReviewScope[] = [
   "discussion",
   "workspace",
   "commit",
+];
+const CYCLE_ACTION_KINDS: readonly CycleActionKind[] = [
+  "invoke",
+  "await_user",
+  "await_fix",
+  "converge",
+  "abandon",
+  "done",
 ];
 const CYCLE_STOP_REASONS = [
   "converged",
@@ -485,12 +494,40 @@ export function parseDiscussionCycleView(value: unknown): DiscussionCycleView | 
   ) {
     throw new Error("cycle 终局详情与持久化状态不一致");
   }
+  // 状态机的下一步与账本是只读展示信号：缺省时界面退化为「只看阶段」，不报错。
+  const actionRecord = record.action === undefined || record.action === null
+    ? undefined
+    : recordValue(record.action, "action");
+  const actionKind = actionRecord
+    ? CYCLE_ACTION_KINDS.find(
+      (candidate) => candidate === actionRecord.kind,
+    )
+    : undefined;
+  const ledgerRecord = record.reviewLedger === undefined
+      || record.reviewLedger === null
+    ? undefined
+    : recordValue(record.reviewLedger, "reviewLedger");
+  const extras = {
+    ...(actionKind ? { action: { kind: actionKind } } : {}),
+    ...(ledgerRecord
+      ? {
+        reviewLedger: {
+          openBlockingFindings: integerValue(
+            ledgerRecord,
+            "openBlockingFindings",
+            0,
+          ),
+        },
+      }
+      : {}),
+  };
   if (record.openQuestion === undefined || record.openQuestion === null) {
-    return { cycle };
+    return { cycle, ...extras };
   }
   const questionRecord = recordValue(record.openQuestion, "openQuestion");
   return {
     cycle,
+    ...extras,
     openQuestion: {
       id: stringValue(questionRecord, "id"),
       askedByActorId: stringValue(questionRecord, "askedByActorId"),

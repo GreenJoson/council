@@ -14,6 +14,7 @@ import { createCouncilHttpApp } from "./http/app.js";
 import { loadHttpConfig } from "./http/config.js";
 import { logger } from "./logger.js";
 import { createCycleDecisionWriter } from "./orchestration/cycle-decisions.js";
+import { createReviewLedgerWriter } from "./orchestration/review-ledger.js";
 import { createProductionOrchestrationService } from "./orchestration/service.js";
 import {
   READ_ONLY_GIT_MCP_FLAG,
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
       councilConfig,
     );
     orchestration.attachDecisionWriter(createCycleDecisionWriter(database));
+    orchestration.attachReviewLedger(createReviewLedgerWriter(database));
     await orchestration.initialize();
   } catch (error) {
     await orchestration?.shutdown();

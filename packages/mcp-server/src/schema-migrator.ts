@@ -79,6 +79,10 @@ import {
   migrateVersionEleven,
 } from "./schema-v11-migration.js";
 import {
+  assertVersionElevenMigrationSource,
+  migrateVersionTwelve,
+} from "./schema-v12-migration.js";
+import {
   assertCountsPreserved,
   assertDatabaseIntegrity,
   createVerifiedSchemaBackup,
@@ -90,7 +94,7 @@ import {
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 11;
+export const COUNCIL_SCHEMA_VERSION = 12;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -448,11 +452,17 @@ const CANONICAL_MIGRATION_STEPS: readonly Readonly<{
   { version: 9, apply: (database) => { migrateVersionNine(database, false); } },
   { version: 10, apply: (database) => { migrateVersionTen(database, false); } },
   { version: 11, apply: (database) => { migrateVersionEleven(database, false); } },
+  { version: 12, apply: (database) => { migrateVersionTwelve(database, false); } },
 ];
 
 /**
- * 重放到指定版本，返回该版本必需 schema 对象的 SHA-256 指纹。
+ * 重放到指定版本，返回该版本**全量** schema 对象的 SHA-256 指纹。
  * 仅供冻结回归测试使用；生产路径读 canonicalRequiredSchemaObjects()。
+ *
+ * 刻意不经 REQUIRED_* 清单投影：那份清单描述的是「当前版本必须存在什么」，
+ * 会随每次增删索引而变。用它筛选历史版本，等于让 v3 的指纹取决于 v12 的清单——
+ * 冻结的就不再是该版本的迁移文本，而是它在今天清单下的投影，
+ * 于是每加一个索引，全部历史指纹一起漂移，冻结测试失去指认能力。
  */
 export function canonicalSchemaDigest(version: number): string {
   const steps = CANONICAL_MIGRATION_STEPS.filter((step) => step.version <= version);
@@ -464,7 +474,11 @@ export function canonicalSchemaDigest(version: number): string {
     for (const step of steps) {
       step.apply(canonical);
     }
-    const objects = [...requiredSchemaObjects(canonical)]
+    const objects = readCouncilSchemaObjects(canonical)
+      .map((row) => [
+        `${String(row.type)}:${String(row.name)}`,
+        normalizeSchemaSql(String(row.sql)),
+      ] as const)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, sql]) => `${key}\n${sql}`)
       .join("\n");
@@ -647,6 +661,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
     [9, "runtime-protocols"],
     [10, "generic-acp-runtime"],
     [11, "decision-work-items"],
+    [12, "work-item-tree-and-review-findings"],
   ] as const;
   if (
     migrationRows.length !== expectedMigrations.length ||
@@ -654,7 +669,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
       migrationRows[index]?.version !== versionNumber ||
       migrationRows[index]?.name !== name)
   ) {
-    throw new Error("Council v11 迁移账本内容无效。");
+    throw new Error("Council v12 迁移账本内容无效。");
   }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
@@ -1253,6 +1268,13 @@ export async function migrateCouncilSchema(
         }
         migrateVersionEleven(database);
         migratingVersion = 11;
+      }
+      if (migratingVersion === 11) {
+        if (initialVersion === 11) {
+          assertVersionElevenMigrationSource(database);
+        }
+        migrateVersionTwelve(database);
+        migratingVersion = 12;
       }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");

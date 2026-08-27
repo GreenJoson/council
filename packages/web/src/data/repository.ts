@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council Web 领域类型
- * @output 导出：含人工 Accepted、显式选题、实施项写入与只读议题详情加载的 CouncilRepository 接口
+ * @output 导出：含人工 Accepted、显式选题、实施项树写入/认领与只读议题详情加载的 CouncilRepository 接口
  * @pos    mock 与 HTTP/SSE 数据实现的稳定可替换边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import type {
   AddWorkItemsInput,
+  ClaimWorkItemInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
@@ -28,6 +29,8 @@ export interface CouncilRepository {
   recordManualDecision(input: RecordManualDecisionInput): Promise<WorkspaceSnapshot>;
   addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot>;
   updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot>;
+  /** 认领一条叶子任务：写上执行者并置为进行中，界面据此显示「谁在做哪一条」。 */
+  claimWorkItem(input: ClaimWorkItemInput): Promise<WorkspaceSnapshot>;
   /** 只读加载完整议题详情；不改变 activeTopicId，不触发订阅快照 */
   loadTopicDetail(topicId: string): Promise<TopicDetail>;
   subscribe(listener: WorkspaceListener): () => void;

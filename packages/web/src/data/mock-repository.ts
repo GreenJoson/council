@@ -9,8 +9,15 @@
 
 import { createMockWorkspace, mockActorSnapshot } from "./mock-data";
 import type { CouncilRepository, WorkspaceListener } from "./repository";
+import {
+  deriveParentStatus,
+  hasChildren,
+  summarizeWorkItemProgress,
+} from "./work-item-tree";
 import type {
   AddWorkItemsInput,
+  ClaimWorkItemInput,
+  CouncilWorkItem,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
@@ -21,8 +28,24 @@ import type {
 
 const DEFAULT_MOCK_OPERATION_DELAY_MS = 120;
 
+/**
+ * 每份对外快照都现算一次完成度，与真实后端「列表接口自带聚合」的行为对齐：
+ * 存储态只保留实施项本身，避免同一事实存两份后写漏一处就开始互相打架。
+ */
+function withWorkItemProgress(topic: TopicDetail): TopicDetail {
+  const progress = summarizeWorkItemProgress(topic.workItems);
+  if (!progress) {
+    delete topic.workItemProgress;
+    return topic;
+  }
+  topic.workItemProgress = progress;
+  return topic;
+}
+
 function cloneSnapshot(snapshot: WorkspaceSnapshot): WorkspaceSnapshot {
-  return structuredClone(snapshot);
+  const clone = structuredClone(snapshot);
+  clone.topics = clone.topics.map(withWorkItemProgress);
+  return clone;
 }
 
 async function waitForMockOperation(delayMs: number): Promise<void> {
@@ -138,27 +161,95 @@ export class MockCouncilRepository implements CouncilRepository {
   async addWorkItems(input: AddWorkItemsInput): Promise<WorkspaceSnapshot> {
     await waitForMockOperation(this.#operationDelayMs);
     const topic = this.#findTopic(input.topicId);
-    if (topic.decision?.status !== "accepted") {
+    const parent = input.parentId
+      ? topic.workItems.find((candidate) => candidate.id === input.parentId)
+      : undefined;
+    if (input.parentId && !parent) {
+      throw new Error("父实施项不存在");
+    }
+    if (!parent && topic.decision?.status !== "accepted") {
       throw new Error("当前议题没有可绑定的 Accepted 决策");
     }
     const snapshot = mockActorSnapshot("human");
-    topic.workItems.push(...input.items.map((item) => ({
-      id: `work_item_${crypto.randomUUID()}`,
-      decisionId: input.decisionId ?? `${topic.id}-accepted-decision`,
-      title: item.title.trim(),
-      details: item.details?.trim() ?? "",
-      status: "pending" as const,
-      version: 1,
-      createdBy: "human",
-      createdBySnapshot: snapshot,
-      updatedBy: "human",
-      updatedBySnapshot: snapshot,
-      createdLabel: "刚刚",
-      updatedLabel: "刚刚",
-    })));
+    const parentKey = input.parentId ?? "";
+    const siblings = topic.workItems.filter(
+      (candidate) => (candidate.parentId ?? "") === parentKey,
+    );
+    let sortOrder = siblings.reduce(
+      (highest, candidate) => Math.max(highest, candidate.sortOrder + 1),
+      0,
+    );
+    for (const item of input.items) {
+      const title = item.title.trim();
+      if (siblings.some((candidate) => candidate.title.toLowerCase() === title.toLowerCase())) {
+        throw new Error(`实施项“${title}”已经存在`);
+      }
+      topic.workItems.push({
+        id: `work_item_${crypto.randomUUID()}`,
+        // 子任务继承父任务的决策锚点，一棵树不横跨两个 ADR。
+        ...(parent
+          ? parent.decisionId ? { decisionId: parent.decisionId } : {}
+          : { decisionId: input.decisionId ?? `${topic.id}-accepted-decision` }),
+        ...(input.parentId ? { parentId: input.parentId } : {}),
+        title,
+        details: item.details?.trim() ?? "",
+        status: "pending" as const,
+        version: 1,
+        sortOrder,
+        origin: "manual" as const,
+        createdBy: "human",
+        createdBySnapshot: snapshot,
+        updatedBy: "human",
+        updatedBySnapshot: snapshot,
+        createdLabel: "刚刚",
+        updatedLabel: "刚刚",
+      });
+      sortOrder += 1;
+    }
+    if (input.parentId) {
+      // 新子任务会把一个已完成的父任务重新拉回进行中。
+      this.#recomputeAncestors(topic, input.parentId);
+    }
     topic.updatedLabel = "刚刚";
     this.#snapshot.activeTopicId = input.topicId;
     return this.#publishSnapshot();
+  }
+
+  /** 与服务端同口径：父任务状态只能由子任务派生，界面不提供手动改父状态的入口。 */
+  #recomputeAncestors(topic: TopicDetail, fromWorkItemId: string): void {
+    const visited = new Set<string>();
+    let cursor: string | undefined = fromWorkItemId;
+    while (cursor) {
+      if (visited.has(cursor)) {
+        return;
+      }
+      visited.add(cursor);
+      const current: CouncilWorkItem | undefined = topic.workItems.find(
+        (candidate) => candidate.id === cursor,
+      );
+      if (!current) {
+        return;
+      }
+      const childStatuses = topic.workItems
+        .filter((candidate) => candidate.parentId === current.id)
+        .map((candidate) => candidate.status);
+      if (childStatuses.length > 0) {
+        const derived = deriveParentStatus(childStatuses);
+        if (derived !== current.status) {
+          current.status = derived;
+          current.version += 1;
+          current.updatedBy = "human";
+          current.updatedBySnapshot = mockActorSnapshot("human");
+          current.updatedLabel = "刚刚";
+          if (derived === "completed") {
+            current.completedLabel ??= "刚刚";
+          } else {
+            delete current.completedLabel;
+          }
+        }
+      }
+      cursor = current.parentId;
+    }
   }
 
   async updateWorkItem(input: UpdateWorkItemInput): Promise<WorkspaceSnapshot> {
@@ -171,6 +262,9 @@ export class MockCouncilRepository implements CouncilRepository {
     if (item.version !== input.expectedVersion) {
       throw new Error("实施项已被其他参与者更新，请刷新后重试");
     }
+    if (hasChildren(topic.workItems, item.id)) {
+      throw new Error("这是一个父任务，状态由子任务派生；请更新它的子任务");
+    }
     item.status = input.status;
     item.version += 1;
     item.updatedBy = "human";
@@ -179,10 +273,51 @@ export class MockCouncilRepository implements CouncilRepository {
     if (input.statusNote?.trim()) {
       item.statusNote = input.statusNote.trim();
     }
+    if (input.fixCommit?.trim()) {
+      item.fixCommit = input.fixCommit.trim();
+    }
     if (input.status === "completed") {
       item.completedLabel = "刚刚";
     } else {
       delete item.completedLabel;
+    }
+    if (item.parentId) {
+      this.#recomputeAncestors(topic, item.parentId);
+    }
+    topic.updatedLabel = "刚刚";
+    this.#snapshot.activeTopicId = input.topicId;
+    return this.#publishSnapshot();
+  }
+
+  async claimWorkItem(input: ClaimWorkItemInput): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    const topic = this.#findTopic(input.topicId);
+    const item = topic.workItems.find((candidate) => candidate.id === input.workItemId);
+    if (!item) {
+      throw new Error("实施项不存在");
+    }
+    if (item.version !== input.expectedVersion) {
+      throw new Error("实施项已被其他参与者更新，请刷新后重试");
+    }
+    if (hasChildren(topic.workItems, item.id)) {
+      throw new Error("父任务不能被认领；请认领它的子任务");
+    }
+    if (item.status === "completed") {
+      throw new Error("这条实施项已经完成，无需认领");
+    }
+    item.status = "in_progress";
+    item.version += 1;
+    item.assignee = "human";
+    item.claimedLabel = "刚刚";
+    item.updatedBy = "human";
+    item.updatedBySnapshot = mockActorSnapshot("human");
+    item.updatedLabel = "刚刚";
+    delete item.completedLabel;
+    if (input.statusNote?.trim()) {
+      item.statusNote = input.statusNote.trim();
+    }
+    if (item.parentId) {
+      this.#recomputeAncestors(topic, item.parentId);
     }
     topic.updatedLabel = "刚刚";
     this.#snapshot.activeTopicId = input.topicId;
@@ -191,7 +326,7 @@ export class MockCouncilRepository implements CouncilRepository {
 
   async loadTopicDetail(topicId: string): Promise<TopicDetail> {
     await waitForMockOperation(this.#operationDelayMs);
-    return structuredClone(this.#findTopic(topicId));
+    return withWorkItemProgress(structuredClone(this.#findTopic(topicId)));
   }
 
   subscribe(listener: WorkspaceListener): () => void {

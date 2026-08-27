@@ -29,6 +29,7 @@ import { parseCouncilStatusRevisions } from "./status-revisions";
 import { mapApiTopicDetail, mapWorkspaceFromTopics } from "./workspace-mapper";
 import type {
   AddWorkItemsInput,
+  ClaimWorkItemInput,
   CreateTopicInput,
   PublishMessageInput,
   RecordManualDecisionInput,
@@ -287,7 +288,29 @@ export class HttpCouncilRepository implements CouncilRepository {
           status: input.status,
           expectedVersion: input.expectedVersion,
           ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+          ...(input.fixCommit !== undefined ? { fixCommit: input.fixCommit } : {}),
         }, "PUT"),
+      );
+    } catch (error: unknown) {
+      this.#publishSync("offline", "API 写入失败 · 可重试");
+      throw error;
+    }
+    return this.#reloadAfterMutation(input.topicId);
+  }
+
+  async claimWorkItem(input: ClaimWorkItemInput): Promise<WorkspaceSnapshot> {
+    try {
+      await requestApiData(
+        this.#fetcher,
+        createApiUrl(
+          this.#baseUrl,
+          `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items/${encodeURIComponent(input.workItemId)}/claim`,
+        ),
+        parseApiWorkItem,
+        jsonRequest({
+          expectedVersion: input.expectedVersion,
+          ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+        }, "POST"),
       );
     } catch (error: unknown) {
       this.#publishSync("offline", "API 写入失败 · 可重试");

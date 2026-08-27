@@ -1,6 +1,6 @@
 /**
  * @input  依赖：收敛阶段枚举、周期类型与结构化尾块契约
- * @output 导出：四段协议、工作区审查/commit 互审边界与尾块格式说明
+ * @output 导出：四段协议、工作区审查/commit 互审边界、审核账本复审与尾块格式说明
  * @pos    Agent 侧协议契约的唯一正本；改这里就等于改协议，必须同步 verdict.ts 的解析
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,7 +8,14 @@
 
 import type { DebateStage } from "./convergence.js";
 import type { CycleReviewScope } from "./runtime-capabilities.js";
-import type { AgentFixTarget } from "./verdict.js";
+import type { AgentFixTarget, FindingSeverity } from "./verdict.js";
+
+/** 复审时摆在评审面前的一条未关闭发现。id 必须原样回传，账本据此对账。 */
+export interface OpenFindingBrief {
+  workItemId: string;
+  title: string;
+  severity: FindingSeverity;
+}
 
 export interface StageInstructionInput {
   stage: DebateStage;
@@ -25,6 +32,14 @@ export interface StageInstructionInput {
   reviewedCommitTargets?: readonly AgentFixTarget[];
   /** 决定本轮审的是方案、可变工作区还是冻结 commit。 */
   reviewScope?: CycleReviewScope;
+  /**
+   * 修复互审的账本。存在即说明本轮圆桌按「问题是否修掉」收敛而不是「是否被说服」；
+   * `openItems` 非空即为复审轮，评审必须逐条给出判定。
+   */
+  reviewLedger?: {
+    round: number;
+    openItems: readonly OpenFindingBrief[];
+  };
 }
 
 /**
@@ -75,6 +90,49 @@ const FIX_SPEC = [
   "已经存在的对象名（7 位以上十六进制），不能填分支名或 tag。找不到明确引用、对象",
   "不存在或任一仓库无法读取时，不要猜；标记 `blocking`，并通过 `council-question` 补证据。",
 ].join("\n");
+
+/**
+ * 审核发现的录入格式。这里的每一条都会直接落成执行账本上的一行任务，
+ * 所以标题必须自解释：账本上看到的是标题，不是这段正文。
+ */
+const FINDINGS_SPEC = [
+  "## 审出的问题要能被认领和修复",
+  "",
+  "正文之外，把每个需要动代码的问题结构化列出来。系统会把它们直接录成任务条目，",
+  "由外部 Agent 认领修复，修完再回到本圆桌复审——所以标题要能独立看懂，",
+  "不要写「见上文第三点」这类只在本条消息内成立的指代：",
+  "",
+  "```council-findings",
+  '{"findings":[{"title":"认领接口缺少版本校验","severity":"blocking","file":"src/x.ts","line":42,"evidence":"两个 Agent 同时认领时后写入方静默覆盖","suggestion":"改为 CAS 更新并返回冲突"}]}',
+  "```",
+  "",
+  "- `blocking`：不修掉就不能通过本次审核",
+  "- `non_blocking`：记录在案，不拦截通过",
+  "",
+  "没有任何问题时给出空清单 `{\"findings\":[]}`，这与不写尾块是两回事：",
+  "前者表示你审过且认可，后者会被当作协议违例按 `blocking` 处理。",
+].join("\n");
+
+/** 复审：只针对上一轮留下的未关闭条目逐条判定，不重开新战场。 */
+function reReviewSpec(openItems: readonly OpenFindingBrief[]): string {
+  return [
+    "## 这是复审：逐条判定上一轮的未关闭问题",
+    "",
+    "修复者已经提交了新的改动。先读真实 diff，再对下列每一条给出判定——",
+    "不要凭修复者的说明判断，也不要因为「改动看起来合理」就放行：",
+    "",
+    ...openItems.map((item) =>
+      `- \`${item.workItemId}\`（${item.severity === "blocking" ? "阻断" : "非阻断"}）：${item.title}`
+    ),
+    "",
+    "```council-review-result",
+    '{"results":[{"workItemId":"work_item_...","verdict":"fixed|still_broken","note":"依据哪一段 diff 做出的判定"}]}',
+    "```",
+    "",
+    "`fixed` 表示问题确实不存在了；`still_broken` 会把这一条重新打开，循环继续。",
+    "漏掉的条目视为仍未修复。若这次改动引入了新问题，另外用 `council-findings` 追加。",
+  ].join("\n");
+}
 
 const WORKSPACE_SPEC = [
   "## 这是一次当前工作区只读互审",
@@ -207,6 +265,11 @@ export function buildStageInstruction(input: StageInstructionInput): string {
   const wantsFixSpec = reviewScope === "commit"
     && (input.stage === "proposal" || input.stage === "rebuttal");
   const wantsWorkspaceSpec = reviewScope === "workspace";
+  const ledger = input.reviewLedger;
+  // 只有真正在看代码的两段需要录入发现；synthesis 是收尾陈述，不该再开新问题。
+  const wantsFindings = ledger !== undefined
+    && (input.stage === "proposal" || input.stage === "critique");
+  const wantsReReview = wantsFindings && ledger.openItems.length > 0;
   return [
     `# 当前阶段：${input.stage}（第 ${String(input.round)}/${String(input.roundBudget)} 轮）`,
     "",
@@ -214,6 +277,8 @@ export function buildStageInstruction(input: StageInstructionInput): string {
     "",
     ...(wantsWorkspaceSpec ? [WORKSPACE_SPEC, ""] : []),
     ...(wantsFixSpec ? [FIX_SPEC, ""] : []),
+    ...(wantsReReview ? [reReviewSpec(ledger.openItems), ""] : []),
+    ...(wantsFindings ? [FINDINGS_SPEC, ""] : []),
     TRAILER_SPEC,
   ].join("\n");
 }

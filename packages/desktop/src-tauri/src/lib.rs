@@ -10,9 +10,10 @@ mod settings;
 mod validation;
 
 use council_core::{
-    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, CreateWorkItemEntry,
-    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput,
-    RecordDecisionInput, Topic, TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemStatus,
+    ClaimWorkItemInput, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput,
+    CreateWorkItemEntry, CreateWorkItemsInput, Decision, DecisionStatus, MessageKind,
+    PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
+    UpdateWorkItemInput, WorkItem, WorkItemStatus,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -97,6 +98,8 @@ struct CreateWorkItemCommandEntry {
 struct CreateWorkItemsCommand {
     topic_id: String,
     decision_id: Option<String>,
+    /// 给了就挂成子任务；决策锚点继承自父任务。
+    parent_id: Option<String>,
     items: Vec<CreateWorkItemCommandEntry>,
 }
 
@@ -106,6 +109,16 @@ struct UpdateWorkItemCommand {
     topic_id: String,
     work_item_id: String,
     status: WorkItemStatus,
+    status_note: Option<String>,
+    fix_commit: Option<String>,
+    expected_version: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaimWorkItemCommand {
+    topic_id: String,
+    work_item_id: String,
     status_note: Option<String>,
     expected_version: u32,
 }
@@ -395,6 +408,9 @@ fn add_work_items(
     if let Some(decision_id) = input.decision_id.as_deref() {
         validation::identifier(decision_id, "decision_", "decisionId")?;
     }
+    if let Some(parent_id) = input.parent_id.as_deref() {
+        validation::identifier(parent_id, "work_item_", "parentId")?;
+    }
     if input.items.is_empty() || input.items.len() > validation::MAX_WORK_ITEM_COUNT {
         return Err(format!(
             "items 数量必须在 1 到 {} 之间",
@@ -414,6 +430,7 @@ fn add_work_items(
         let items = store.create_work_items(CreateWorkItemsInput {
             topic_id: input.topic_id,
             decision_id: input.decision_id,
+            parent_id: input.parent_id,
             items: input
                 .items
                 .into_iter()
@@ -455,6 +472,41 @@ fn update_work_item(
             topic_id: input.topic_id,
             work_item_id: input.work_item_id,
             status: input.status,
+            status_note: input.status_note,
+            fix_commit: input.fix_commit,
+            expected_version: input.expected_version,
+            actor_alias: "human".into(),
+        })?;
+        let revisions = store.get_revisions()?;
+        Ok((item, revisions))
+    })?;
+    emit_content_changed(&app, revisions);
+    Ok(item)
+}
+
+#[tauri::command]
+fn claim_work_item(
+    input: ClaimWorkItemCommand,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<WorkItem, String> {
+    validation::identifier(&input.topic_id, "topic_", "topicId")?;
+    validation::identifier(&input.work_item_id, "work_item_", "workItemId")?;
+    if input.expected_version == 0 {
+        return Err("expectedVersion 必须是正整数".into());
+    }
+    if let Some(note) = input.status_note.as_deref()
+        && note.chars().count() > validation::MAX_WORK_ITEM_STATUS_NOTE_CHARS
+    {
+        return Err(format!(
+            "statusNote 不能超过 {} 个字符",
+            validation::MAX_WORK_ITEM_STATUS_NOTE_CHARS
+        ));
+    }
+    let (item, revisions) = with_store(&state, |store| {
+        let item = store.claim_work_item(ClaimWorkItemInput {
+            topic_id: input.topic_id,
+            work_item_id: input.work_item_id,
             status_note: input.status_note,
             expected_version: input.expected_version,
             actor_alias: "human".into(),
@@ -670,6 +722,7 @@ pub fn run() {
             record_decision,
             add_work_items,
             update_work_item,
+            claim_work_item,
             get_status,
             get_orchestration_config,
             check_orchestration_service,

@@ -482,12 +482,17 @@ export default function App() {
     }
   }
 
-  async function handleAddWorkItem(title: string, details: string): Promise<boolean> {
+  async function handleAddWorkItem(
+    title: string,
+    details: string,
+    parentId?: string,
+  ): Promise<boolean> {
     setWorkItemBusyAction("add");
     setContentErrorMessage(null);
     try {
       const snapshot = await repository.addWorkItems({
         topicId: activeTopicId,
+        ...(parentId ? { parentId } : {}),
         items: [{ title, ...(details ? { details } : {}) }],
       });
       setWorkspace(snapshot);
@@ -519,6 +524,24 @@ export default function App() {
       });
       setWorkspace(snapshot);
       setToastMessage(status === "completed" ? "实施项已标记完成" : "实施状态已更新");
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    } finally {
+      setWorkItemBusyAction(null);
+    }
+  }
+
+  async function handleClaimWorkItem(item: CouncilWorkItem): Promise<void> {
+    setWorkItemBusyAction(`claim:${item.id}`);
+    setContentErrorMessage(null);
+    try {
+      const snapshot = await repository.claimWorkItem({
+        topicId: activeTopicId,
+        workItemId: item.id,
+        expectedVersion: item.version,
+      });
+      setWorkspace(snapshot);
+      setToastMessage(`已认领「${item.title}」`);
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
     } finally {
@@ -632,6 +655,21 @@ export default function App() {
     } catch (error: unknown) {
       setRunsErrorMessage(getErrorMessage(error));
       return false;
+    } finally {
+      setOrchestrationBusyAction(null);
+    }
+  }
+
+  async function handleSubmitFixes(): Promise<void> {
+    setOrchestrationBusyAction("cycle");
+    setRunsErrorMessage(null);
+    try {
+      setOrchestration(
+        await orchestrationRepository.submitFixes({ topicId: activeTopicId }),
+      );
+      setToastMessage("修复已提交，复审开始");
+    } catch (error: unknown) {
+      setRunsErrorMessage(getErrorMessage(error));
     } finally {
       setOrchestrationBusyAction(null);
     }
@@ -802,6 +840,7 @@ export default function App() {
               workItemBusyAction={workItemBusyAction}
               onAddWorkItem={handleAddWorkItem}
               onUpdateWorkItem={handleUpdateWorkItem}
+              onClaimWorkItem={handleClaimWorkItem}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               onOpenDecision={() =>
                 setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}
@@ -810,6 +849,7 @@ export default function App() {
               orchestrationBusyAction={orchestrationBusyAction}
               onStartCycle={handleStartCycle}
               onAnswerCycleQuestion={handleAnswerCycleQuestion}
+              onSubmitFixes={handleSubmitFixes}
               onAbandonCycle={handleAbandonCycle}
               onStartRun={(runId) => handleRunAction("start", runId)}
               onApproveRun={handleApproveRun}

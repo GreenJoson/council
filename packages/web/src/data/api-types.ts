@@ -16,6 +16,15 @@ export type ApiMessageKind =
   | "note";
 export type ApiDecisionStatus = "proposed" | "accepted" | "rejected" | "superseded";
 export type ApiWorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
+export type ApiWorkItemOrigin = "manual" | "review_finding";
+export type ApiWorkItemSeverity = "blocking" | "non_blocking";
+
+export interface ApiWorkItemProgress {
+  total: number;
+  completed: number;
+  blocked: number;
+  openBlockingFindings: number;
+}
 
 export interface ApiActorSnapshot {
   schemaVersion: 1;
@@ -37,6 +46,8 @@ export interface ApiTopic {
   createdBySnapshot: ApiActorSnapshot;
   createdAt: string;
   updatedAt: string;
+  /** 列表查询顺带聚合出来的完成度；没有实施项的议题不带这个字段。 */
+  workItemProgress?: ApiWorkItemProgress;
 }
 
 export interface ApiMessage {
@@ -67,11 +78,21 @@ export interface ApiDecision {
 export interface ApiWorkItem {
   id: string;
   topicId: string;
-  decisionId: string;
+  decisionId?: string;
+  parentId?: string;
   title: string;
   details: string;
   status: ApiWorkItemStatus;
   statusNote?: string;
+  sortOrder: number;
+  origin: ApiWorkItemOrigin;
+  severity?: ApiWorkItemSeverity;
+  sourceMessageId?: string;
+  sourceCycleId?: string;
+  reviewRound?: number;
+  fixCommit?: string;
+  assigneeActorId?: string;
+  claimedAt?: string;
   version: number;
   createdByActorId: string;
   createdBySnapshot: ApiActorSnapshot;
@@ -220,6 +241,26 @@ const WORK_ITEM_STATUSES: readonly ApiWorkItemStatus[] = [
   "blocked",
   "completed",
 ];
+const WORK_ITEM_ORIGINS: readonly ApiWorkItemOrigin[] = ["manual", "review_finding"];
+const WORK_ITEM_SEVERITIES: readonly ApiWorkItemSeverity[] = ["blocking", "non_blocking"];
+
+function readNonNegativeInteger(record: Record<string, unknown>, key: string): number {
+  const value = readNumber(record, key);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${key} 必须是非负整数`);
+  }
+  return value;
+}
+
+function parseApiWorkItemProgress(value: unknown): ApiWorkItemProgress {
+  const record = readRecord(value, "work item progress");
+  return {
+    total: readNonNegativeInteger(record, "total"),
+    completed: readNonNegativeInteger(record, "completed"),
+    blocked: readNonNegativeInteger(record, "blocked"),
+    openBlockingFindings: readNonNegativeInteger(record, "openBlockingFindings"),
+  };
+}
 
 export function parseApiEnvelope(value: unknown): ApiEnvelope {
   const record = readRecord(value, "响应");
@@ -270,6 +311,9 @@ export function parseApiTopic(value: unknown): ApiTopic {
     createdBySnapshot,
     createdAt: readString(record, "createdAt"),
     updatedAt: readString(record, "updatedAt"),
+    ...(record.workItemProgress === undefined
+      ? {}
+      : { workItemProgress: parseApiWorkItemProgress(record.workItemProgress) }),
   };
 }
 
@@ -329,6 +373,17 @@ export function parseApiWorkItem(value: unknown): ApiWorkItem {
   }
   const statusNote = readOptionalString(record, "statusNote");
   const completedAt = readOptionalString(record, "completedAt");
+  const decisionId = readOptionalString(record, "decisionId");
+  const parentId = readOptionalString(record, "parentId");
+  const severity = record.severity === undefined
+    ? undefined
+    : readEnum(record, "severity", WORK_ITEM_SEVERITIES);
+  const sourceMessageId = readOptionalString(record, "sourceMessageId");
+  const sourceCycleId = readOptionalString(record, "sourceCycleId");
+  const reviewRound = readOptionalNumber(record, "reviewRound");
+  const fixCommit = readOptionalString(record, "fixCommit");
+  const assigneeActorId = readOptionalString(record, "assigneeActorId");
+  const claimedAt = readOptionalString(record, "claimedAt");
   const version = readNumber(record, "version");
   if (!Number.isSafeInteger(version) || version < 1) {
     throw new Error("work item version 必须是正整数");
@@ -336,11 +391,21 @@ export function parseApiWorkItem(value: unknown): ApiWorkItem {
   return {
     id: readString(record, "id"),
     topicId: readString(record, "topicId"),
-    decisionId: readString(record, "decisionId"),
+    ...(decisionId ? { decisionId } : {}),
+    ...(parentId ? { parentId } : {}),
     title: readString(record, "title"),
     details: readString(record, "details"),
     status: readEnum(record, "status", WORK_ITEM_STATUSES),
     ...(statusNote ? { statusNote } : {}),
+    sortOrder: readNonNegativeInteger(record, "sortOrder"),
+    origin: readEnum(record, "origin", WORK_ITEM_ORIGINS),
+    ...(severity ? { severity } : {}),
+    ...(sourceMessageId ? { sourceMessageId } : {}),
+    ...(sourceCycleId ? { sourceCycleId } : {}),
+    ...(reviewRound === undefined ? {} : { reviewRound }),
+    ...(fixCommit ? { fixCommit } : {}),
+    ...(assigneeActorId ? { assigneeActorId } : {}),
+    ...(claimedAt ? { claimedAt } : {}),
     version,
     createdByActorId,
     createdBySnapshot,

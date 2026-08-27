@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council SQLite、收敛 codec、状态机与编排错误
- * @output 导出：可复用提案查询、cycle 开局/推进/收敛/放弃与阻塞提问事务仓储
+ * @output 导出：可复用提案查询、cycle 开局/推进/收敛/放弃、阻塞提问与审核账本复审事务仓储
  * @pos    收敛协议的持久化边界；所有写入走 state_version CAS，重放一律幂等
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,6 +15,7 @@ import {
   type CycleAction,
   type CycleStopReason,
   type DebateStage,
+  type ReviewLedger,
 } from "./convergence.js";
 import {
   decodeBlockingQuestion,
@@ -133,6 +134,12 @@ export interface AnswerBlockingQuestionInput {
   now: string;
 }
 
+export interface ResumeAfterFixesInput {
+  cycleId: string;
+  expectedVersion: number;
+  now: string;
+}
+
 export interface CompleteDiscussionCycleInput {
   cycleId: string;
   expectedVersion: number;
@@ -151,6 +158,8 @@ export interface AbandonDiscussionCycleInput {
 export interface DiscussionCycleView {
   cycle: DiscussionCycle;
   openQuestion?: BlockingQuestion;
+  /** 仅 fix_review：未关闭的阻断发现数，UI 与驱动器据此说明「还差几条」。 */
+  reviewLedger?: ReviewLedger;
   /** 依据当前持久化状态算出的下一步；调用方据此决定召唤谁。 */
   action: CycleAction;
 }
@@ -180,14 +189,47 @@ function readOpenQuestion(
   return row ? decodeBlockingQuestion(row) : undefined;
 }
 
+/**
+ * 本轮审核还有几条未关闭的阻断发现。
+ *
+ * 只数叶子：审核批次是父条目，状态由子条目派生，把它也数进来清单永远归不了零。
+ * 只数本 cycle 产出的发现：同议题上一轮遗留的问题不该悄悄拦住这一轮的收敛，
+ * 那会让用户看到一个「没人提过异议却过不去」的圆桌。
+ */
+function readOpenBlockingFindings(
+  database: DatabaseSync,
+  cycleId: string,
+): number {
+  const row = database.prepare(`
+    SELECT COUNT(*) AS value
+    FROM work_items AS item
+    WHERE item.source_cycle_id = ?
+      AND item.origin = 'review_finding'
+      AND item.severity = 'blocking'
+      AND item.status <> 'completed'
+      AND NOT EXISTS (
+        SELECT 1 FROM work_items AS child WHERE child.parent_id = item.id
+      )
+  `).get(cycleId) as unknown as { value: unknown } | undefined;
+  return typeof row?.value === "number" ? row.value : 0;
+}
+
 function view(database: DatabaseSync, cycleId: string): DiscussionCycleView {
   const cycle = readCycleRow(database, cycleId);
   const openQuestion = readOpenQuestion(database, cycle.id);
+  // 只有修复互审带账本；辩论圆桌没有可修的清单，仍按立场收敛。
+  const reviewLedger = cycle.kind === "fix_review"
+    ? { openBlockingFindings: readOpenBlockingFindings(database, cycle.id) }
+    : undefined;
   return {
     cycle,
     ...(openQuestion ? { openQuestion } : {}),
+    ...(reviewLedger ? { reviewLedger } : {}),
     action: cycle.status === "active"
-      ? nextCycleAction(toConvergenceState(cycle, openQuestion !== undefined))
+      ? nextCycleAction({
+        ...toConvergenceState(cycle, openQuestion !== undefined),
+        ...(reviewLedger ? { reviewLedger } : {}),
+      })
       : { kind: "done" },
   };
 }
@@ -539,13 +581,24 @@ export function recordCycleTurn(
     throw new InvalidRunStateError("Council 收敛已结束，不能再记录发言。");
   }
   const turns = [...current.turns, input.turn];
-  const action = nextCycleAction(
-    toConvergenceState({ ...current, turns }, false),
-  );
+  // 审核圆桌必须带账本进状态机：不带的话它会退回辩论路径，
+  // 把「有人判了 blocking」当成要提案人口头反驳——而口头反驳改不了 diff。
+  const reviewLedger = current.kind === "fix_review"
+    ? { openBlockingFindings: readOpenBlockingFindings(database, current.id) }
+    : undefined;
+  const action = nextCycleAction({
+    ...toConvergenceState({ ...current, turns }, false),
+    ...(reviewLedger ? { reviewLedger } : {}),
+  });
   // 只有还要继续说话的动作才改阶段。`done` / `abandon` 是终止判定，
   // 必须原地保留阶段，让重新读取时算出同一个终止动作——而终态本身
   // 只能由 completeDiscussionCycle / abandonDiscussionCycle 带着结论或原因写入。
-  const stage = action.kind === "invoke" || action.kind === "converge"
+  //
+  // 修复互审的 `converge` 同样不在这里落地：这条发言里的审核发现要等本次事务
+  // 提交之后才录进账本，此刻读到的清单必然是旧的。就地推进到 synthesis，
+  // 等于用「上一轮的问题数」宣布这一轮通过。收敛判定交给对完账的驱动器。
+  const stage = action.kind === "invoke"
+      || (action.kind === "converge" && current.kind !== "fix_review")
     ? stageAfterAction(action)
     : current.stage;
   const round = action.kind === "invoke" ? action.round : current.currentRound;
@@ -662,6 +715,93 @@ export function answerBlockingQuestion(
     cycle.stateVersion,
   );
   return view(database, cycle.id);
+}
+
+/**
+ * 外部 Agent 提交了一批修复，开一轮复审。
+ *
+ * 轮次预算跟着抬高而不是拦住：预算约束的是「Agent 自己能吵几轮」，
+ * 而每一次复审都由外部显式提交触发，不存在自动空转。真要停下来，
+ * 用户放弃圆桌即可——把一个还在推进的修复循环判成"预算耗尽"没有任何意义。
+ */
+export function resumeDiscussionCycleAfterFixes(
+  database: DatabaseSync,
+  input: ResumeAfterFixesInput,
+): DiscussionCycleView {
+  const current = readCycleRow(database, input.cycleId);
+  if (current.status !== "active") {
+    throw new InvalidRunStateError("Council 圆桌已结束，不能再提交复审。");
+  }
+  if (current.kind !== "fix_review") {
+    throw new InvalidRunStateError("只有修复互审圆桌可以提交修复并复审。");
+  }
+  casUpdate(
+    database,
+    `current_round = current_round + 1,
+     round_budget = MAX(round_budget, current_round + 1),
+     stage = COALESCE(resume_stage, stage), resume_stage = NULL,
+     updated_at = ?`,
+    [input.now],
+    input.cycleId,
+    input.expectedVersion,
+  );
+  return view(database, input.cycleId);
+}
+
+/**
+ * 议题上最新一次自述的修复目标。
+ *
+ * 复审必须读新 diff：修复提交后并没有新的 Agent 发言携带 commit，
+ * 只能回到公开消息里取最后一次 `council-fix` 自述。倒序扫描后即止，
+ * 因此永远拿到的是最新一次提交，而不是开局那一份。
+ */
+export function readLatestFixTargets(
+  database: DatabaseSync,
+  topicId: string,
+  limit = 50,
+): readonly AgentFixTarget[] {
+  const rows = database.prepare(`
+    SELECT content FROM messages
+    WHERE topic_id = ?
+    ORDER BY created_at DESC, rowid DESC
+    LIMIT ?
+  `).all(topicId, limit) as unknown as { content: unknown }[];
+  for (const row of rows) {
+    if (typeof row.content !== "string") {
+      continue;
+    }
+    const fix = parseAgentReply(row.content).fix;
+    if (fix) {
+      return fix.targets;
+    }
+  }
+  return [];
+}
+
+/**
+ * 账本归零，进入收敛陈述。
+ *
+ * 只有修复互审会走到这里：辩论圆桌的收敛在发言提交事务里就地完成，
+ * 而审核发现要等提交之后才录进账本，收敛必须推迟到对完账再判。
+ */
+export function convergeDiscussionCycle(
+  database: DatabaseSync,
+  input: { cycleId: string; expectedVersion: number; now: string },
+): DiscussionCycleView {
+  const current = readCycleRow(database, input.cycleId);
+  if (current.status !== "active") {
+    throw new InvalidRunStateError("Council 圆桌已结束，不能再进入收敛。");
+  }
+  if (current.stage !== "synthesis") {
+    casUpdate(
+      database,
+      `stage = 'synthesis', resume_stage = NULL, updated_at = ?`,
+      [input.now],
+      input.cycleId,
+      input.expectedVersion,
+    );
+  }
+  return view(database, input.cycleId);
 }
 
 export function completeDiscussionCycle(

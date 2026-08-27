@@ -73,6 +73,7 @@ import {
   type CycleDecisionWriter,
   type CycleRunner,
 } from "./cycle-driver.js";
+import type { ReviewLedgerWriter } from "./review-ledger.js";
 import { RunExecutionManager } from "./execution-manager.js";
 import { AgentProgressHub } from "./agent-progress-hub.js";
 import { AcpDelegatedAgentAdapter } from "./acp-delegated-agent-adapter.js";
@@ -161,6 +162,7 @@ export class CouncilOrchestrationService {
   readonly #cycles: CycleDriver;
   /** 决策写入器需要 CouncilDatabase，晚于本服务构造；开局时校验已挂载。 */
   #decisions: CycleDecisionWriter | undefined;
+  #reviewLedger: ReviewLedgerWriter | undefined;
   #availabilityCheckedAt = 0;
   #availabilityRefresh: Promise<void> | null = null;
   #configurationTail = Promise.resolve();
@@ -264,6 +266,7 @@ export class CouncilOrchestrationService {
           return await this.#decisions.recordProposedDecision(input);
         },
       },
+      reviewLedger: () => this.#reviewLedger,
       now: () => new Date().toISOString(),
     });
   }
@@ -276,6 +279,14 @@ export class CouncilOrchestrationService {
    */
   attachDecisionWriter(writer: CycleDecisionWriter): void {
     this.#decisions = writer;
+  }
+
+  /**
+   * 挂载审核账本写入器。与决策写入器同理由事后注入；
+   * 未挂载时修复互审仍能跑，只是审出的问题不会自动落成任务。
+   */
+  attachReviewLedger(ledger: ReviewLedgerWriter): void {
+    this.#reviewLedger = ledger;
   }
 
   /** 用户点「开始圆桌」：发起人入选时冻结为提案人并跳过首轮，随后自动交接。 */
@@ -419,6 +430,27 @@ export class CouncilOrchestrationService {
     this.#store.answerBlockingQuestion({
       questionMessageId: input.questionMessageId,
       answerMessageId: input.answerMessageId,
+      now: new Date().toISOString(),
+    });
+    return await this.#cycles.advance(input.topicId);
+  }
+
+  /**
+   * 外部 Agent 提交了一批修复，开一轮复审。
+   *
+   * 提交动作本身不改任何条目状态：条目是「修好了没有」的账本，
+   * 判定权在复审者手里。这里只负责把轮次推进一格并重新召唤评审。
+   */
+  async submitFixes(input: {
+    topicId: string;
+  }): Promise<DiscussionCycleView | undefined> {
+    const current = this.#store.readActiveDiscussionCycle(input.topicId);
+    if (!current) {
+      throw new OrchestrationConfigError("该议题没有进行中的圆桌，无法提交复审。");
+    }
+    this.#store.resumeDiscussionCycleAfterFixes({
+      cycleId: current.cycle.id,
+      expectedVersion: current.cycle.stateVersion,
       now: new Date().toISOString(),
     });
     return await this.#cycles.advance(input.topicId);

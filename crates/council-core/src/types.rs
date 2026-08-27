@@ -62,6 +62,50 @@ pub enum WorkItemStatus {
     Completed,
 }
 
+/// 审核发现由评审尾块自动录入，manual 是手工拆的交付项。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemOrigin {
+    Manual,
+    ReviewFinding,
+}
+
+impl WorkItemOrigin {
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::ReviewFinding => "review_finding",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "manual" => Some(Self::Manual),
+            "review_finding" => Some(Self::ReviewFinding),
+            _ => None,
+        }
+    }
+}
+
+/// 只有 blocking 会拦住审核收敛；non_blocking 记录在案但放行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemSeverity {
+    Blocking,
+    NonBlocking,
+}
+
+impl WorkItemSeverity {
+    // 桌面端只读严重度：审核发现由服务端解析评审尾块写入，这里不需要 as_db。
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "blocking" => Some(Self::Blocking),
+            "non_blocking" => Some(Self::NonBlocking),
+            _ => None,
+        }
+    }
+}
+
 impl WorkItemStatus {
     pub(crate) const fn as_db(self) -> &'static str {
         match self {
@@ -108,6 +152,10 @@ pub struct Topic {
     pub created_by_snapshot: ActorSnapshot,
     pub created_at: String,
     pub updated_at: String,
+    /// 不是 topics 表的列，而是列表查询顺带聚合出的派生属性：
+    /// 议题导航要在不拉取每个议题详情的前提下显示「12 / 15」。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_item_progress: Option<WorkItemProgress>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,13 +193,33 @@ pub struct Decision {
 pub struct WorkItem {
     pub id: String,
     pub topic_id: String,
-    pub decision_id: String,
+    /// 审核发现可以先于决策存在，因此锚点是可选的。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
     pub title: String,
     pub details: String,
     pub status: WorkItemStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_note: Option<String>,
     pub version: u32,
+    pub sort_order: i64,
+    pub origin: WorkItemOrigin,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<WorkItemSeverity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_cycle_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_round: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assignee_actor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_at: Option<String>,
     pub created_by_actor_id: String,
     pub created_by_snapshot: ActorSnapshot,
     pub updated_by_actor_id: String,
@@ -160,6 +228,17 @@ pub struct WorkItem {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+}
+
+/// 议题级完成度。父任务状态由子任务派生，分母只数叶子节点，
+/// 否则一次两层拆解会把同一件事数两次。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItemProgress {
+    pub total: u64,
+    pub completed: u64,
+    pub blocked: u64,
+    pub open_blocking_findings: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,6 +315,8 @@ pub struct CreateWorkItemEntry {
 pub struct CreateWorkItemsInput {
     pub topic_id: String,
     pub decision_id: Option<String>,
+    /// 给了就挂成子任务，并继承父任务的决策锚点。
+    pub parent_id: Option<String>,
     pub items: Vec<CreateWorkItemEntry>,
     pub actor_alias: String,
 }
@@ -245,6 +326,17 @@ pub struct UpdateWorkItemInput {
     pub topic_id: String,
     pub work_item_id: String,
     pub status: WorkItemStatus,
+    pub status_note: Option<String>,
+    /// 标记完成时附上修复所在的 commit，作为复审的证据入口。
+    pub fix_commit: Option<String>,
+    pub expected_version: u32,
+    pub actor_alias: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimWorkItemInput {
+    pub topic_id: String,
+    pub work_item_id: String,
     pub status_note: Option<String>,
     pub expected_version: u32,
     pub actor_alias: String,

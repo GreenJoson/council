@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Agent 提交的公开消息正文
- * @output 导出：立场/阻塞提问/修复 commit 引用的结构化尾块、议题证据解析与失败关闭判定
+ * @output 导出：立场/阻塞提问/修复 commit/审核发现/复审判定的结构化尾块、议题证据解析与失败关闭判定
  * @pos    自然语言回复与收敛状态机之间唯一的结构化边界；解析不了一律按最保守立场处理
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,22 @@ export const MAX_QUESTION_OPTION_CHARS = 200;
 export const MAX_FIX_SUMMARY_CHARS = 400;
 export const MAX_FIX_TARGETS = 8;
 export const MAX_FIX_REPOSITORY_CHARS = 200;
+/** 一轮审核最多录入的发现数：再多说明该拆议题，而不是堆一张关不完的清单。 */
+export const MAX_FINDINGS = 20;
+/** 与 work item 标题上限保持一致，超长直接判非法而不是截断——截断会让同一条发现在复审时对不上。 */
+export const MAX_FINDING_TITLE_CHARS = 200;
+export const MAX_FINDING_TEXT_CHARS = 4_000;
+export const MAX_FINDING_LOCATION_CHARS = 400;
+export const MAX_REVIEW_RESULTS = 50;
+export const MAX_REVIEW_NOTE_CHARS = 1_000;
+export const MAX_WORK_ITEM_ID_CHARS = 250;
+
+/** 审核发现的严重度：只有 blocking 会挡住收敛。 */
+export const FINDING_SEVERITIES = ["blocking", "non_blocking"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
+
+export const REVIEW_VERDICTS = ["fixed", "still_broken"] as const;
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
 
 export interface AgentVerdict {
   stance: VerdictStance;
@@ -53,10 +69,41 @@ export interface AgentFixClaim {
   summary: string;
 }
 
+/**
+ * 一条待修复的审核发现。它会原样落成一条 work item——
+ * 标题就是账本上那一行，所以必须自解释，不能写成「见上文第三点」。
+ */
+export interface AgentFinding {
+  title: string;
+  severity: FindingSeverity;
+  /** 出问题的位置，形如 `src/x.ts:42`；读不出确切位置时留空而不是编一个。 */
+  location?: string;
+  /** 什么输入会触发、观察到什么，供修复者复现。 */
+  evidence: string;
+  suggestion?: string;
+}
+
+/** 复审对某一条未关闭发现的判定。`still_broken` 会把它重新打开，循环继续。 */
+export interface AgentReviewResult {
+  workItemId: string;
+  verdict: ReviewVerdict;
+  note: string;
+}
+
 export interface ParsedAgentReply {
   verdict: AgentVerdict;
   question?: AgentQuestion;
   fix?: AgentFixClaim;
+  /** 首轮审核产出的发现清单；空数组与缺省是两件事，前者表示「审过、没问题」。 */
+  findings?: readonly AgentFinding[];
+  /** 复审逐条判定；只针对当时未关闭的条目。 */
+  reviewResults?: readonly AgentReviewResult[];
+  /**
+   * 尾块写了但解析不了。调用方据此失败关闭：
+   * 宁可多留一条「格式非法」的阻塞条目，也不能让一次格式错误把审核判成通过。
+   */
+  findingsMalformed?: true;
+  reviewResultsMalformed?: true;
   /**
    * 立场是从尾块读出来的还是兜底推定的。推定意味着 Agent 没按协议回复，
    * 调用方应当把它当作协议违例记录下来，而不是当作正常的 blocking。
@@ -67,6 +114,8 @@ export interface ParsedAgentReply {
 const VERDICT_FENCE = "council-verdict";
 const QUESTION_FENCE = "council-question";
 const FIX_FENCE = "council-fix";
+const FINDINGS_FENCE = "council-findings";
+const REVIEW_RESULT_FENCE = "council-review-result";
 
 /**
  * 只接受看起来像 git 对象名的引用：40 位全 sha，或 7 位以上的缩写。
@@ -104,7 +153,15 @@ function extractFencedBlock(content: string, fence: string): string | undefined 
  */
 export function stripProtocolTrailers(content: string): string {
   let stripped = content;
-  for (const fence of [VERDICT_FENCE, QUESTION_FENCE, FIX_FENCE]) {
+  for (
+    const fence of [
+      VERDICT_FENCE,
+      QUESTION_FENCE,
+      FIX_FENCE,
+      FINDINGS_FENCE,
+      REVIEW_RESULT_FENCE,
+    ]
+  ) {
     stripped = stripped.replace(
       new RegExp(
         `^\`\`\`${fence}[ \\t]*\\r?\\n[\\s\\S]*?\\r?\\n?^\`\`\`[ \\t]*$`,
@@ -233,6 +290,92 @@ function parseFix(content: string): AgentFixClaim | undefined {
   return uniqueTargets.size === targets.length ? { targets, summary } : undefined;
 }
 
+/**
+ * 解析审核发现清单。返回 `undefined` 表示没写这个尾块，返回 `"malformed"`
+ * 表示写了但不合法——两者对调用方的意义完全不同，不能都折叠成「没有发现」。
+ */
+function parseFindings(
+  content: string,
+): readonly AgentFinding[] | "malformed" | undefined {
+  const raw = extractFencedBlock(content, FINDINGS_FENCE);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const record = parseJsonObject(raw);
+  const rawFindings = record?.findings;
+  if (!Array.isArray(rawFindings) || rawFindings.length > MAX_FINDINGS) {
+    return "malformed";
+  }
+  const findings: AgentFinding[] = [];
+  for (const candidate of rawFindings) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      return "malformed";
+    }
+    const entry = candidate as Record<string, unknown>;
+    const title = boundedText(entry.title, MAX_FINDING_TITLE_CHARS);
+    const severity = FINDING_SEVERITIES.find(
+      (allowed) => allowed === entry.severity,
+    );
+    const evidence = boundedText(entry.evidence, MAX_FINDING_TEXT_CHARS);
+    if (title === undefined || severity === undefined || evidence === undefined) {
+      return "malformed";
+    }
+    // file/line 是给人看的定位，缺了不影响这条发现成立，因此不参与合法性判定。
+    const location = locationOf(entry);
+    const suggestion = boundedText(entry.suggestion, MAX_FINDING_TEXT_CHARS);
+    findings.push({
+      title,
+      severity,
+      evidence,
+      ...(location ? { location } : {}),
+      ...(suggestion ? { suggestion } : {}),
+    });
+  }
+  return findings;
+}
+
+function locationOf(entry: Record<string, unknown>): string | undefined {
+  const file = boundedText(entry.file, MAX_FINDING_LOCATION_CHARS);
+  if (!file) {
+    return undefined;
+  }
+  const line = typeof entry.line === "number" && Number.isSafeInteger(entry.line)
+    && entry.line > 0
+    ? entry.line
+    : undefined;
+  return line === undefined ? file : `${file}:${String(line)}`;
+}
+
+/** 解析复审逐条判定。同一条目重复出现时后者覆盖前者：Agent 改主意以最后一次为准。 */
+function parseReviewResults(
+  content: string,
+): readonly AgentReviewResult[] | "malformed" | undefined {
+  const raw = extractFencedBlock(content, REVIEW_RESULT_FENCE);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const record = parseJsonObject(raw);
+  const rawResults = record?.results;
+  if (!Array.isArray(rawResults) || rawResults.length > MAX_REVIEW_RESULTS) {
+    return "malformed";
+  }
+  const byWorkItem = new Map<string, AgentReviewResult>();
+  for (const candidate of rawResults) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+      return "malformed";
+    }
+    const entry = candidate as Record<string, unknown>;
+    const workItemId = boundedText(entry.workItemId, MAX_WORK_ITEM_ID_CHARS);
+    const verdict = REVIEW_VERDICTS.find((allowed) => allowed === entry.verdict);
+    const note = boundedText(entry.note, MAX_REVIEW_NOTE_CHARS);
+    if (workItemId === undefined || verdict === undefined || note === undefined) {
+      return "malformed";
+    }
+    byWorkItem.set(workItemId, { workItemId, verdict, note });
+  }
+  return [...byWorkItem.values()];
+}
+
 const COMMIT_MARKER_PATTERN = /(?:提交|commit(?:\s+sha)?)/iu;
 const REPOSITORY_MARKER_PATTERN = /(?:仓库|repository|repo)/iu;
 const CURRENT_REPOSITORY_PATTERN = /(?:当前(?:仓库|目录)|current\s+(?:repository|repo|directory)|this\s+(?:repository|repo))/iu;
@@ -346,21 +489,27 @@ export function parseAgentReply(content: string): ParsedAgentReply {
   const verdict = parseVerdict(content);
   const question = parseQuestion(content);
   const fix = parseFix(content);
+  const findings = parseFindings(content);
+  const reviewResults = parseReviewResults(content);
+  const extras = {
+    ...(question ? { question } : {}),
+    ...(fix ? { fix } : {}),
+    ...(Array.isArray(findings) ? { findings } : {}),
+    ...(findings === "malformed" ? { findingsMalformed: true as const } : {}),
+    ...(Array.isArray(reviewResults) ? { reviewResults } : {}),
+    ...(reviewResults === "malformed"
+      ? { reviewResultsMalformed: true as const }
+      : {}),
+  };
   if (!verdict) {
     return {
       verdict: {
         stance: "blocking",
         summary: "未按协议给出 council-verdict 尾块，按最保守立场处理。",
       },
-      ...(question ? { question } : {}),
-      ...(fix ? { fix } : {}),
+      ...extras,
       verdictDeclared: false,
     };
   }
-  return {
-    verdict,
-    ...(question ? { question } : {}),
-    ...(fix ? { fix } : {}),
-    verdictDeclared: true,
-  };
+  return { verdict, ...extras, verdictDeclared: true };
 }

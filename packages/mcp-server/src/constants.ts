@@ -24,6 +24,12 @@ export const DECISION_STATUSES = [
   "rejected",
   "superseded",
 ] as const;
+/** 审核发现（review_finding）由评审尾块自动录入，manual 是用户或 Agent 手工拆的交付项。 */
+export const WORK_ITEM_ORIGINS = ["manual", "review_finding"] as const;
+
+/** 只有 blocking 发现会拦住审核收敛；non_blocking 记录在案但不阻塞。 */
+export const WORK_ITEM_SEVERITIES = ["blocking", "non_blocking"] as const;
+
 export const WORK_ITEM_STATUSES = [
   "pending",
   "in_progress",

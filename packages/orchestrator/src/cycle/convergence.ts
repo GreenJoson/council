@@ -1,6 +1,6 @@
 /**
  * @input  依赖：消息类型枚举与 Agent 立场分级
- * @output 导出：固定四段收敛协议的纯状态机、下一步动作与停止原因
+ * @output 导出：辩论四段协议与审核账本两种收敛口径的纯状态机、下一步动作与停止原因
  * @pos    圆桌"什么时候该谁说话、什么时候该停"的唯一判定处；无 IO、无时间、无随机
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -42,6 +42,14 @@ export interface CycleTurn {
   stance: VerdictStance;
 }
 
+/**
+ * 审核账本。存在时本轮圆桌的收敛条件从「没人再反对」换成「未关闭的阻断发现归零」——
+ * 代码审查要的是问题被修掉，不是有人被说服。
+ */
+export interface ReviewLedger {
+  openBlockingFindings: number;
+}
+
 export interface ConvergenceState {
   stage: CycleStage;
   /** 仅在 `awaiting_user` 时存在，指向用户回答后要回到的发言阶段。 */
@@ -52,6 +60,8 @@ export interface ConvergenceState {
   participants: readonly string[];
   turns: readonly CycleTurn[];
   hasOpenQuestion: boolean;
+  /** 只有 fix_review 圆桌带账本；辩论圆桌没有可修的清单，仍按立场收敛。 */
+  reviewLedger?: ReviewLedger;
 }
 
 export type CycleAction =
@@ -63,6 +73,11 @@ export type CycleAction =
     round: number;
   }
   | { kind: "await_user" }
+  /**
+   * 停下等外部 Agent 修复未关闭的发现。与 `await_user` 同为容器状态，
+   * 但等的是代码而不是回答，UI 与驱动器据此显示不同的下一步。
+   */
+  | { kind: "await_fix"; openBlockingFindings: number }
   | { kind: "converge" }
   | { kind: "abandon"; reason: CycleStopReason }
   | { kind: "done" };
@@ -107,6 +122,17 @@ function hasBlockingCritique(state: ConvergenceState, round: number): boolean {
     turn.stage === "critique"
     && turn.round === round
     && turn.stance === "blocking");
+}
+
+/**
+ * 账本判定：还有未关闭的阻断发现就停下等修复，归零才收敛。
+ * 这里不看轮次预算——预算约束的是「Agent 自己能吵几轮」，
+ * 而每一次复审都由外部显式提交修复触发，不存在自动空转。
+ */
+function reviewLedgerAction(ledger: ReviewLedger): CycleAction {
+  return ledger.openBlockingFindings > 0
+    ? { kind: "await_fix", openBlockingFindings: ledger.openBlockingFindings }
+    : { kind: "converge" };
 }
 
 /** 阶段与它产出的公开消息类型一一对应，不额外映射。 */
@@ -160,9 +186,12 @@ export function nextCycleAction(state: ConvergenceState): CycleAction {
         round,
       };
     }
-    // 只有提案人时没有互审可言，直接由它自己收敛成结论。
+    // 只有提案人时没有互审可言，直接由它自己收敛成结论；
+    // 但审核圆桌仍要等清单归零，否则单人主审能一边报出阻断问题一边宣布通过。
     return critics.length === 0
-      ? { kind: "converge" }
+      ? (state.reviewLedger
+        ? reviewLedgerAction(state.reviewLedger)
+        : { kind: "converge" })
       : nextCycleAction({ ...state, stage: "critique" });
   }
 
@@ -178,7 +207,12 @@ export function nextCycleAction(state: ConvergenceState): CycleAction {
         round,
       };
     }
-    // 全体评审到齐后才判定：只要还有 blocking，就必须让提案人正面回应。
+    // 全体评审到齐后才判定。
+    if (state.reviewLedger) {
+      // 审核圆桌不走反驳：口头回应改不了 diff，只有真的修掉才算数。
+      return reviewLedgerAction(state.reviewLedger);
+    }
+    // 辩论圆桌：只要还有 blocking，就必须让提案人正面回应。
     return hasBlockingCritique(state, round)
       ? nextCycleAction({ ...state, stage: "rebuttal" })
       : { kind: "converge" };
@@ -229,6 +263,7 @@ export function stageAfterAction(action: CycleAction): CycleStage {
     case "converge":
       return "synthesis";
     case "await_user":
+    case "await_fix":
       return "awaiting_user";
     default:
       return "completed";

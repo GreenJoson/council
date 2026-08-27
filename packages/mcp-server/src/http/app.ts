@@ -43,6 +43,7 @@ import { RevisionEventStream } from "./revision-stream.js";
 import {
   agentParamsSchema,
   answerCycleQuestionBodySchema,
+  submitFixesBodySchema,
   createAgentBodySchema,
   createDecisionBodySchema,
   createMessageBodySchema,
@@ -65,6 +66,7 @@ import {
   updateAgentBodySchema,
   updateProviderBodySchema,
   updateWorkItemBodySchema,
+  claimWorkItemBodySchema,
   workItemParamsSchema,
 } from "./schemas.js";
 
@@ -447,6 +449,7 @@ export function createCouncilHttpApp(
     const workItems = database.createWorkItemsAsActor({
       topicId: params.topicId,
       ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+      ...(input.parentId ? { parentId: input.parentId } : {}),
       items: input.items,
       actorId: "human",
     });
@@ -462,9 +465,23 @@ export function createCouncilHttpApp(
       status: input.status,
       expectedVersion: input.expectedVersion,
       ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+      ...(input.fixCommit !== undefined ? { fixCommit: input.fixCommit } : {}),
       actorId: "human",
     });
     sendSuccess(response, workItem, "实施进度已更新。");
+  });
+
+  app.post("/api/v1/topics/:topicId/work-items/:workItemId/claim", (request, response) => {
+    const params = parse(workItemParamsSchema, request.params);
+    const input = parse(claimWorkItemBodySchema, request.body);
+    const workItem = database.claimWorkItemAsActor({
+      topicId: params.topicId,
+      workItemId: params.workItemId,
+      expectedVersion: input.expectedVersion,
+      ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
+      actorId: "human",
+    });
+    sendSuccess(response, workItem, "实施项已认领。");
   });
 
   app.get("/api/v1/topics/:topicId/runtime-bindings", async (request, response) => {
@@ -629,6 +646,32 @@ export function createCouncilHttpApp(
       answerMessageId: answer.id,
     });
     sendSuccess(response, view ?? null, "回答已记录，讨论继续。", 202);
+  });
+
+  app.post("/api/v1/topics/:topicId/cycle/fixes", async (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "编排服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(submitFixesBodySchema, request.body ?? {});
+    // 修复自述必须留在公开讨论里：复审者读的是这条消息里的 commit，
+    // 只在服务端内存里传一次的话，下一轮谁也说不清审的是哪份 diff。
+    if (input.targets && input.summary) {
+      database.createMessageAsActor({
+        topicId: params.topicId,
+        actorId: "human",
+        kind: "note",
+        content: [
+          "已提交一批修复，请复审。",
+          "",
+          "```council-fix",
+          JSON.stringify({ targets: input.targets, summary: input.summary }),
+          "```",
+        ].join("\n"),
+      });
+    }
+    const view = await orchestration.submitFixes({ topicId: params.topicId });
+    sendSuccess(response, view ?? null, "修复已提交，复审开始。", 202);
   });
 
   app.post("/api/v1/runs/:runId/actions/start", async (request, response) => {

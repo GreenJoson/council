@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v11 Actor/Model Router/RuntimeBinding/Cycle/实施项 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v11 schema、内容与实施项查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v12 Actor/Model Router/RuntimeBinding/Cycle/实施项树 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v12 schema、内容与实施项查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,17 +8,20 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::{SecondsFormat, Utc};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
 use crate::types::{
-    ActorSnapshot, CouncilMessage, CouncilRevisions, CreateTopicInput, CreateWorkItemsInput,
-    Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput,
-    Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemStatus,
+    ActorSnapshot, ClaimWorkItemInput, CouncilMessage, CouncilRevisions, CreateTopicInput,
+    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput,
+    RecordDecisionInput, Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem,
+    WorkItemOrigin, WorkItemProgress, WorkItemSeverity, WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 11;
+const SUPPORTED_SCHEMA_VERSION: i64 = 12;
 const REQUIRED_TABLES: &[&str] = &[
     "topics",
     "messages",
@@ -44,7 +47,8 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_messages_topic_created",
     "idx_decisions_topic_created",
     "idx_work_items_topic_status",
-    "idx_work_items_decision_title",
+    "idx_work_items_parent_title",
+    "idx_work_items_parent_order",
     "idx_actor_identities_status_slug",
     "idx_actor_aliases_actor",
     "idx_agent_sessions_current",
@@ -144,6 +148,16 @@ const WORK_ITEM_COLUMNS: &[&str] = &[
     "created_at",
     "updated_at",
     "completed_at",
+    "parent_id",
+    "sort_order",
+    "origin",
+    "severity",
+    "source_message_id",
+    "source_cycle_id",
+    "review_round",
+    "fix_commit",
+    "assignee_actor_id",
+    "claimed_at",
 ];
 const SESSION_COLUMNS: &[&str] = &[
     "id",
@@ -484,6 +498,7 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "decision_id", "decisions", "id")?;
+    assert_foreign_key(connection, "work_items", "parent_id", "work_items", "id")?;
     assert_foreign_key(connection, "runtime_bindings", "topic_id", "topics", "id")?;
     assert_foreign_key(
         connection,
@@ -533,10 +548,17 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "idx_work_items_topic_status",
         &["topic_id", "status", "created_at"],
     )?;
+    // v12 起唯一性按父级判定：同决策不同父级的同名子任务是树的正常形态。
+    // parent_key 是生成列，PRAGMA table_info 看不到它，这条索引断言就是它没有漂移的凭据。
     assert_index_columns(
         connection,
-        "idx_work_items_decision_title",
-        &["decision_id", "title"],
+        "idx_work_items_parent_title",
+        &["topic_id", "parent_key", "title"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_items_parent_order",
+        &["topic_id", "parent_key", "sort_order", "created_at"],
     )?;
     assert_index_columns(
         connection,
@@ -612,6 +634,10 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
             "version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0)",
             "(status = 'completed' AND completed_at IS NOT NULL)",
             "(status <> 'completed' AND completed_at IS NULL)",
+            "parent_key TEXT GENERATED ALWAYS AS (COALESCE(parent_id, '')) VIRTUAL",
+            "origin IN ('manual', 'review_finding')",
+            "severity IS NULL OR severity IN ('blocking', 'non_blocking')",
+            "CHECK (parent_id IS NULL OR parent_id <> id)",
         ],
     )?;
     assert_table_sql_contains(
@@ -711,11 +737,19 @@ struct DecisionRow {
     updated_at: String,
 }
 
+/// 实施项读取列清单。read_work_item_row 按位置索引取值，
+/// 所以每一处 SELECT 都必须用这个常量，不能各写各的顺序。
+const WORK_ITEM_SELECT_COLUMNS: &str = "id, topic_id, decision_id, title, details, status, \
+     status_note, version, created_by_actor_id, created_by_snapshot_json, \
+     updated_by_actor_id, updated_by_snapshot_json, created_at, updated_at, completed_at, \
+     parent_id, sort_order, origin, severity, source_message_id, source_cycle_id, \
+     review_round, fix_commit, assignee_actor_id, claimed_at";
+
 #[derive(Debug)]
 struct WorkItemRow {
     id: String,
     topic_id: String,
-    decision_id: String,
+    decision_id: Option<String>,
     title: String,
     details: String,
     status: String,
@@ -728,6 +762,16 @@ struct WorkItemRow {
     created_at: String,
     updated_at: String,
     completed_at: Option<String>,
+    parent_id: Option<String>,
+    sort_order: i64,
+    origin: String,
+    severity: Option<String>,
+    source_message_id: Option<String>,
+    source_cycle_id: Option<String>,
+    review_round: Option<i64>,
+    fix_commit: Option<String>,
+    assignee_actor_id: Option<String>,
+    claimed_at: Option<String>,
 }
 
 struct ResolvedActor {
@@ -850,10 +894,23 @@ impl CouncilStore {
                 .query_map(params![i64::from(limit), i64::from(offset)], read_topic_row)?
                 .collect::<Result<Vec<_>, _>>()?,
         };
-        let topics = rows
+        let mut topics = rows
             .into_iter()
             .map(topic_from_row)
             .collect::<CouncilResult<Vec<_>>>()?;
+        // 议题导航要在不拉取每个议题详情的前提下显示完成度，只能由列表查询顺带带下来。
+        let progress = read_work_item_progress(
+            &self.connection,
+            &topics
+                .iter()
+                .map(|topic| topic.id.clone())
+                .collect::<Vec<_>>(),
+        )?;
+        for topic in &mut topics {
+            // 没有实施项的议题不带这个字段：界面据此区分「还没拆」和「0 / N」，
+            // 前者不该在列表里显示一个毫无信息量的 0/0 徽章。
+            topic.work_item_progress = progress.get(&topic.id).copied();
+        }
         let total = non_negative(count, "topics count")?;
         let count = u64::try_from(topics.len())
             .map_err(|_| CouncilError::InvalidData("topics count 超出范围。".into()))?;
@@ -911,12 +968,10 @@ impl CouncilStore {
             .into_iter()
             .map(decision_from_row)
             .collect::<CouncilResult<Vec<_>>>()?;
-        let mut work_item_statement = self.connection.prepare(
-            "SELECT id, topic_id, decision_id, title, details, status, status_note, version, \
-             created_by_actor_id, created_by_snapshot_json, updated_by_actor_id, \
-             updated_by_snapshot_json, created_at, updated_at, completed_at \
-             FROM work_items WHERE topic_id = ?1 ORDER BY created_at ASC, rowid ASC",
-        )?;
+        let mut work_item_statement = self.connection.prepare(&format!(
+            "SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items WHERE topic_id = ?1 \
+             ORDER BY parent_key ASC, sort_order ASC, created_at ASC, rowid ASC"
+        ))?;
         let work_item_rows = work_item_statement
             .query_map(params![id], read_work_item_row)?
             .collect::<Result<Vec<_>, _>>()?;
@@ -929,6 +984,9 @@ impl CouncilStore {
             .map_err(|_| CouncilError::InvalidData("messages count 超出范围。".into()))?;
         let next_message_offset = u64::from(message_offset) + returned_count;
         let has_more_messages = next_message_offset < message_total;
+        let mut topic = topic;
+        // 详情已经手握全量实施项，就地汇总即可，不必为同一个数字再查一次库。
+        topic.work_item_progress = summarize_work_item_progress(&work_items);
         Ok(TopicDetail {
             topic,
             messages,
@@ -1095,35 +1153,17 @@ impl CouncilStore {
             return Err(CouncilError::Conflict("至少需要一个实施项。".into()));
         }
         let actor = self.resolve_active_actor(&input.actor_alias)?;
-        let decision = if let Some(decision_id) = input.decision_id.as_deref() {
-            self.connection
-                .query_row(
-                    "SELECT id, status FROM decisions WHERE id = ?1 AND topic_id = ?2",
-                    params![decision_id, input.topic_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()?
-        } else {
-            self.connection
-                .query_row(
-                    "SELECT id, status FROM decisions \
-                     WHERE topic_id = ?1 AND status = 'accepted' \
-                     ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                    params![input.topic_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()?
+        // 子任务不自己选决策：它属于父任务所属的那次决策，否则一棵树会横跨两个 ADR。
+        let decision_id = match input.parent_id.as_deref() {
+            Some(parent_id) => {
+                self.require_work_item(parent_id, &input.topic_id)?
+                    .decision_id
+            }
+            None => Some(
+                self.require_accepted_decision_id(&input.topic_id, input.decision_id.as_deref())?,
+            ),
         };
-        let Some((decision_id, decision_status)) = decision else {
-            return Err(CouncilError::NotFound(
-                "当前议题没有可绑定的 Accepted 决策。".into(),
-            ));
-        };
-        if decision_status != "accepted" {
-            return Err(CouncilError::Conflict(
-                "实施项只能绑定 Accepted 决策。".into(),
-            ));
-        }
+        let parent_key = input.parent_id.clone().unwrap_or_default();
         let mut normalized_items = Vec::with_capacity(input.items.len());
         let mut normalized_titles = std::collections::HashSet::new();
         for item in input.items {
@@ -1143,12 +1183,18 @@ impl CouncilStore {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut sort_order: i64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM work_items \
+             WHERE topic_id = ?1 AND parent_key = ?2",
+            params![input.topic_id, parent_key],
+            |row| row.get(0),
+        )?;
         let mut created_ids = Vec::with_capacity(normalized_items.len());
         for (title, details) in normalized_items {
             let duplicate: bool = transaction.query_row(
                 "SELECT EXISTS(SELECT 1 FROM work_items \
-                 WHERE decision_id = ?1 AND title = ?2 COLLATE NOCASE)",
-                params![decision_id, title],
+                 WHERE topic_id = ?1 AND parent_key = ?2 AND title = ?3 COLLATE NOCASE)",
+                params![input.topic_id, parent_key, title],
                 |row| row.get(0),
             )?;
             if duplicate {
@@ -1157,17 +1203,26 @@ impl CouncilStore {
             let id = format!("work_item_{}", Uuid::new_v4());
             transaction.execute(
                 "INSERT INTO work_items (
-                   id, topic_id, decision_id, title, details, status, status_note, version,
+                   id, topic_id, decision_id, parent_id, title, details, status, status_note,
+                   version, sort_order, origin, severity,
                    created_by_actor_id, created_by_snapshot_json,
                    updated_by_actor_id, updated_by_snapshot_json,
                    created_at, updated_at, completed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', NULL, 1, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+                 ) VALUES (
+                   ?1, ?2, ?3, ?4, ?5, ?6, 'pending', NULL,
+                   1, ?7, ?8, NULL,
+                   ?9, ?10, ?11, ?12, ?13, ?14, NULL
+                 )",
                 params![
                     id,
                     input.topic_id,
                     decision_id,
+                    input.parent_id,
                     title,
                     details,
+                    sort_order,
+                    // 桌面端只做手工拆解；审核发现由服务端解析评审尾块写入。
+                    WorkItemOrigin::Manual.as_db(),
                     actor.id,
                     actor.snapshot_json,
                     actor.id,
@@ -1177,6 +1232,17 @@ impl CouncilStore {
                 ],
             )?;
             created_ids.push(id);
+            sort_order += 1;
+        }
+        if let Some(parent_id) = input.parent_id.as_deref() {
+            // 新子任务会把一个已完成的父任务重新拉回进行中，这一步不能省。
+            recompute_ancestors(
+                &transaction,
+                parent_id,
+                &actor.id,
+                &actor.snapshot_json,
+                &now,
+            )?;
         }
         transaction.execute(
             "UPDATE topics SET updated_at = ?1 WHERE id = ?2",
@@ -1198,6 +1264,11 @@ impl CouncilStore {
                 "实施项已被其他参与者更新，请刷新后重试。".into(),
             ));
         }
+        if self.has_children(&input.work_item_id)? {
+            return Err(CouncilError::Conflict(
+                "这是一个父任务，状态由子任务派生；请更新它的子任务。".into(),
+            ));
+        }
         let now = now_iso();
         let status_note = match input.status_note {
             Some(note) => {
@@ -1205,6 +1276,13 @@ impl CouncilStore {
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }
             None => current.status_note,
+        };
+        let fix_commit = match input.fix_commit {
+            Some(commit) => {
+                let trimmed = commit.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            None => current.fix_commit,
         };
         let completed_at = if input.status == WorkItemStatus::Completed {
             current.completed_at.or_else(|| Some(now.clone()))
@@ -1215,13 +1293,15 @@ impl CouncilStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let changed = transaction.execute(
-            "UPDATE work_items SET status = ?1, status_note = ?2, version = version + 1,
-               updated_by_actor_id = ?3, updated_by_snapshot_json = ?4,
-               updated_at = ?5, completed_at = ?6
-             WHERE id = ?7 AND topic_id = ?8 AND version = ?9",
+            "UPDATE work_items SET status = ?1, status_note = ?2, fix_commit = ?3,
+               version = version + 1,
+               updated_by_actor_id = ?4, updated_by_snapshot_json = ?5,
+               updated_at = ?6, completed_at = ?7
+             WHERE id = ?8 AND topic_id = ?9 AND version = ?10",
             params![
                 input.status.as_db(),
                 status_note,
+                fix_commit,
                 actor.id,
                 actor.snapshot_json,
                 now,
@@ -1236,12 +1316,139 @@ impl CouncilStore {
                 "实施项已被其他参与者更新，请刷新后重试。".into(),
             ));
         }
+        if let Some(parent_id) = current.parent_id.as_deref() {
+            recompute_ancestors(
+                &transaction,
+                parent_id,
+                &actor.id,
+                &actor.snapshot_json,
+                &now,
+            )?;
+        }
         transaction.execute(
             "UPDATE topics SET updated_at = ?1 WHERE id = ?2",
             params![now, input.topic_id],
         )?;
         transaction.commit()?;
         self.require_work_item(&input.work_item_id, &input.topic_id)
+    }
+
+    /// 认领一条待办：写上执行者并置为进行中。
+    /// 这是「谁正在做哪一条」唯一可信的来源——执行方开工前必须先在账本上签名，
+    /// 否则用户只看得到一个跑了很久却不知道在干什么的 Agent。
+    pub fn claim_work_item(&mut self, input: ClaimWorkItemInput) -> CouncilResult<WorkItem> {
+        self.require_topic(&input.topic_id)?;
+        let actor = self.resolve_active_actor(&input.actor_alias)?;
+        let current = self.require_work_item(&input.work_item_id, &input.topic_id)?;
+        if current.version != input.expected_version {
+            return Err(CouncilError::Conflict(
+                "实施项已被其他参与者更新，请刷新后重试。".into(),
+            ));
+        }
+        if self.has_children(&input.work_item_id)? {
+            return Err(CouncilError::Conflict(
+                "父任务不能被认领；请认领它的子任务。".into(),
+            ));
+        }
+        if current.status == WorkItemStatus::Completed {
+            return Err(CouncilError::Conflict(
+                "这条实施项已经完成，无需认领。".into(),
+            ));
+        }
+        let now = now_iso();
+        let status_note = match input.status_note {
+            Some(note) => {
+                let trimmed = note.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            None => current.status_note,
+        };
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE work_items SET status = 'in_progress', status_note = ?1,
+               version = version + 1, assignee_actor_id = ?2, claimed_at = ?3,
+               updated_by_actor_id = ?4, updated_by_snapshot_json = ?5,
+               updated_at = ?6, completed_at = NULL
+             WHERE id = ?7 AND topic_id = ?8 AND version = ?9",
+            params![
+                status_note,
+                actor.id,
+                now,
+                actor.id,
+                actor.snapshot_json,
+                now,
+                input.work_item_id,
+                input.topic_id,
+                input.expected_version,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(CouncilError::Conflict(
+                "实施项已被其他参与者更新，请刷新后重试。".into(),
+            ));
+        }
+        if let Some(parent_id) = current.parent_id.as_deref() {
+            recompute_ancestors(
+                &transaction,
+                parent_id,
+                &actor.id,
+                &actor.snapshot_json,
+                &now,
+            )?;
+        }
+        transaction.execute(
+            "UPDATE topics SET updated_at = ?1 WHERE id = ?2",
+            params![now, input.topic_id],
+        )?;
+        transaction.commit()?;
+        self.require_work_item(&input.work_item_id, &input.topic_id)
+    }
+
+    fn has_children(&self, work_item_id: &str) -> CouncilResult<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM work_items WHERE parent_id = ?1)",
+            params![work_item_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn require_accepted_decision_id(
+        &self,
+        topic_id: &str,
+        decision_id: Option<&str>,
+    ) -> CouncilResult<String> {
+        let decision = if let Some(decision_id) = decision_id {
+            self.connection
+                .query_row(
+                    "SELECT id, status FROM decisions WHERE id = ?1 AND topic_id = ?2",
+                    params![decision_id, topic_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+        } else {
+            self.connection
+                .query_row(
+                    "SELECT id, status FROM decisions \
+                     WHERE topic_id = ?1 AND status = 'accepted' \
+                     ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                    params![topic_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?
+        };
+        let Some((decision_id, decision_status)) = decision else {
+            return Err(CouncilError::NotFound(
+                "当前议题没有可绑定的 Accepted 决策。".into(),
+            ));
+        };
+        if decision_status != "accepted" {
+            return Err(CouncilError::Conflict(
+                "实施项只能绑定 Accepted 决策。".into(),
+            ));
+        }
+        Ok(decision_id)
     }
 
     pub fn get_revisions(&self) -> CouncilResult<CouncilRevisions> {
@@ -1291,10 +1498,10 @@ impl CouncilStore {
         let row = self
             .connection
             .query_row(
-                "SELECT id, topic_id, decision_id, title, details, status, status_note, version,
-                 created_by_actor_id, created_by_snapshot_json, updated_by_actor_id,
-                 updated_by_snapshot_json, created_at, updated_at, completed_at
-                 FROM work_items WHERE id = ?1 AND topic_id = ?2",
+                &format!(
+                    "SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items \
+                     WHERE id = ?1 AND topic_id = ?2"
+                ),
                 params![id, topic_id],
                 read_work_item_row,
             )
@@ -1367,6 +1574,198 @@ fn read_work_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItemRow> 
         created_at: row.get(12)?,
         updated_at: row.get(13)?,
         completed_at: row.get(14)?,
+        parent_id: row.get(15)?,
+        sort_order: row.get(16)?,
+        origin: row.get(17)?,
+        severity: row.get(18)?,
+        source_message_id: row.get(19)?,
+        source_cycle_id: row.get(20)?,
+        review_round: row.get(21)?,
+        fix_commit: row.get(22)?,
+        assignee_actor_id: row.get(23)?,
+        claimed_at: row.get(24)?,
+    })
+}
+
+/// 父任务状态的派生规则。顺序即优先级：
+/// 有子任务受阻就是受阻（先解依赖），全部完成才算完成，
+/// 只要有人动过（进行中或已完成一部分）就是进行中，否则待处理。
+fn derive_parent_status(child_statuses: &[String]) -> WorkItemStatus {
+    if child_statuses.iter().any(|status| status == "blocked") {
+        return WorkItemStatus::Blocked;
+    }
+    if child_statuses.iter().all(|status| status == "completed") {
+        return WorkItemStatus::Completed;
+    }
+    if child_statuses
+        .iter()
+        .any(|status| status == "in_progress" || status == "completed")
+    {
+        return WorkItemStatus::InProgress;
+    }
+    WorkItemStatus::Pending
+}
+
+/// 父任务状态完全由子任务派生，任何一条写入路径都不接受手动设置。
+/// 允许手动改父状态，就等于允许「父已完成、子未完成」这种自相矛盾的账本，
+/// Agent 也会直接把父节点标完成来跳过实际交付。
+fn recompute_ancestors(
+    transaction: &Transaction<'_>,
+    from_work_item_id: &str,
+    actor_id: &str,
+    actor_snapshot_json: &str,
+    now: &str,
+) -> CouncilResult<()> {
+    let mut cursor = Some(from_work_item_id.to_string());
+    let mut visited = std::collections::HashSet::new();
+    while let Some(current_id) = cursor {
+        if !visited.insert(current_id.clone()) {
+            return Err(CouncilError::Conflict(
+                "实施项父子关系存在环，已停止派生。".into(),
+            ));
+        }
+        let current = transaction
+            .query_row(
+                "SELECT status, completed_at, parent_id FROM work_items WHERE id = ?1",
+                params![current_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((status, completed_at, parent_id)) = current else {
+            return Ok(());
+        };
+        let child_statuses = {
+            let mut statement =
+                transaction.prepare("SELECT status FROM work_items WHERE parent_id = ?1")?;
+            statement
+                .query_map(params![current_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if !child_statuses.is_empty() {
+            let derived = derive_parent_status(&child_statuses);
+            if derived.as_db() != status {
+                let derived_completed_at = if derived == WorkItemStatus::Completed {
+                    completed_at.or_else(|| Some(now.to_string()))
+                } else {
+                    None
+                };
+                transaction.execute(
+                    "UPDATE work_items SET status = ?1, version = version + 1,
+                       updated_by_actor_id = ?2, updated_by_snapshot_json = ?3,
+                       updated_at = ?4, completed_at = ?5
+                     WHERE id = ?6",
+                    params![
+                        derived.as_db(),
+                        actor_id,
+                        actor_snapshot_json,
+                        now,
+                        derived_completed_at,
+                        current_id,
+                    ],
+                )?;
+            }
+        }
+        cursor = parent_id;
+    }
+    Ok(())
+}
+
+/// 只统计叶子节点：父任务的状态本来就是子任务汇总出来的，
+/// 再把它计入分母等于同一件事数两次，界面上的「12 / 15」会凭空变大。
+fn read_work_item_progress(
+    connection: &Connection,
+    topic_ids: &[String],
+) -> CouncilResult<std::collections::HashMap<String, WorkItemProgress>> {
+    let mut progress = std::collections::HashMap::new();
+    if topic_ids.is_empty() {
+        return Ok(progress);
+    }
+    let placeholders = (1..=topic_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut statement = connection.prepare(&format!(
+        "SELECT topic_id, COUNT(*),
+           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+           SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END),
+           SUM(
+             CASE
+               WHEN origin = 'review_finding'
+                 AND severity = 'blocking'
+                 AND status <> 'completed'
+               THEN 1 ELSE 0
+             END
+           )
+         FROM work_items AS item
+         WHERE topic_id IN ({placeholders})
+           AND NOT EXISTS (
+             SELECT 1 FROM work_items AS child WHERE child.parent_id = item.id
+           )
+         GROUP BY topic_id"
+    ))?;
+    let parameters = rusqlite::params_from_iter(topic_ids.iter());
+    let rows = statement
+        .query_map(parameters, |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (topic_id, total, completed, blocked, open_blocking) in rows {
+        progress.insert(
+            topic_id,
+            WorkItemProgress {
+                total: non_negative(total, "work item total")?,
+                completed: non_negative(completed, "work item completed")?,
+                blocked: non_negative(blocked, "work item blocked")?,
+                open_blocking_findings: non_negative(open_blocking, "open blocking findings")?,
+            },
+        );
+    }
+    Ok(progress)
+}
+
+/// 与 read_work_item_progress 的 SQL 同口径：只数叶子。两处必须一起改。
+fn summarize_work_item_progress(work_items: &[WorkItem]) -> Option<WorkItemProgress> {
+    let parent_ids = work_items
+        .iter()
+        .filter_map(|item| item.parent_id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let leaves = work_items
+        .iter()
+        .filter(|item| !parent_ids.contains(&item.id))
+        .collect::<Vec<_>>();
+    if leaves.is_empty() {
+        return None;
+    }
+    Some(WorkItemProgress {
+        total: leaves.len() as u64,
+        completed: leaves
+            .iter()
+            .filter(|item| item.status == WorkItemStatus::Completed)
+            .count() as u64,
+        blocked: leaves
+            .iter()
+            .filter(|item| item.status == WorkItemStatus::Blocked)
+            .count() as u64,
+        open_blocking_findings: leaves
+            .iter()
+            .filter(|item| {
+                item.origin == WorkItemOrigin::ReviewFinding
+                    && item.severity == Some(WorkItemSeverity::Blocking)
+                    && item.status != WorkItemStatus::Completed
+            })
+            .count() as u64,
     })
 }
 
@@ -1386,6 +1785,8 @@ fn topic_from_row(row: TopicRow) -> CouncilResult<Topic> {
         created_by_snapshot,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        // 完成度是查询侧聚合出来的，行映射本身不认识它。
+        work_item_progress: None,
     })
 }
 
@@ -1433,10 +1834,20 @@ fn work_item_from_row(row: WorkItemRow) -> CouncilResult<WorkItem> {
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| CouncilError::InvalidData("实施项 version 无效。".into()))?;
+    let origin = WorkItemOrigin::from_db(&row.origin).ok_or_else(|| {
+        CouncilError::InvalidData(format!("未知 WorkItem origin：{}", row.origin))
+    })?;
+    let severity = match row.severity.as_deref().filter(|value| !value.is_empty()) {
+        Some(value) => Some(WorkItemSeverity::from_db(value).ok_or_else(|| {
+            CouncilError::InvalidData(format!("未知 WorkItem severity：{value}"))
+        })?),
+        None => None,
+    };
     Ok(WorkItem {
         id: row.id,
         topic_id: row.topic_id,
-        decision_id: row.decision_id,
+        decision_id: row.decision_id.filter(|value| !value.is_empty()),
+        parent_id: row.parent_id.filter(|value| !value.is_empty()),
         title: row.title,
         details: row.details,
         status: WorkItemStatus::from_db(&row.status).ok_or_else(|| {
@@ -1444,6 +1855,15 @@ fn work_item_from_row(row: WorkItemRow) -> CouncilResult<WorkItem> {
         })?,
         status_note: row.status_note.filter(|value| !value.is_empty()),
         version,
+        sort_order: row.sort_order,
+        origin,
+        severity,
+        source_message_id: row.source_message_id.filter(|value| !value.is_empty()),
+        source_cycle_id: row.source_cycle_id.filter(|value| !value.is_empty()),
+        review_round: row.review_round,
+        fix_commit: row.fix_commit.filter(|value| !value.is_empty()),
+        assignee_actor_id: row.assignee_actor_id.filter(|value| !value.is_empty()),
+        claimed_at: row.claimed_at.filter(|value| !value.is_empty()),
         created_by_actor_id: row.created_by_actor_id,
         created_by_snapshot,
         updated_by_actor_id: row.updated_by_actor_id,

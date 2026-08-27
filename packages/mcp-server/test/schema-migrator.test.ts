@@ -1,6 +1,7 @@
 /**
  * @input  依赖：临时 v1/v2/v4/v5/v10/fresh SQLite、Node online backup 与 schema 迁移故障注入
- * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、v10→v11 实施项、备份、回滚和 revision
+ * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、v10→v11 实施项、
+ *         v11→v12 实施项树与跨决策同名去重、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +24,7 @@ import {
   assertCouncilSchema,
   migrateCouncilSchema,
 } from "../src/schema-migrator.js";
+import { WORK_ITEM_SCHEMA_SQL } from "../src/schema-definitions.js";
 import { migrateVersionNine } from "../src/schema-v9-migration.js";
 
 const LEGACY_SCHEMA_SQL = `
@@ -802,7 +804,7 @@ test("v9→v10 将 Kimi 专用协议归一为 ACP 且无损保留 session、leas
   }
 });
 
-test("v10→v11 原子增加实施项表且保留既有议题与决策", async () => {
+test("v10 起链式升级到当前版本且保留既有议题与决策", async () => {
   const fixture = temporaryDatabase();
   try {
     await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
@@ -832,7 +834,7 @@ test("v10→v11 原子增加实施项表且保留既有议题与决策", async (
       `).run(HUMAN_SNAPSHOT_JSON, now, now);
       versionTen.exec(`
         DROP TABLE work_items;
-        DELETE FROM schema_migrations WHERE version = 11;
+        DELETE FROM schema_migrations WHERE version >= 11;
         PRAGMA user_version = 10;
       `);
     } finally {
@@ -843,7 +845,7 @@ test("v10→v11 原子增加实施项表且保留既有议题与决策", async (
       maxAttempts: 3,
     });
     assert.equal(result.migrated, true);
-    assert.equal(result.version, 11);
+    assert.equal(result.version, COUNCIL_SCHEMA_VERSION);
     assert.ok(result.backupPath);
 
     const migrated = new DatabaseSync(fixture.databasePath);
@@ -870,9 +872,184 @@ test("v10→v11 原子增加实施项表且保留既有议题与决策", async (
       );
       assert.deepEqual(
         plainSqlValue(migrated.prepare(`
-          SELECT version, name FROM schema_migrations WHERE version = 11
-        `).get()),
-        { version: 11, name: "decision-work-items" },
+          SELECT version, name FROM schema_migrations WHERE version >= 11 ORDER BY version
+        `).all()),
+        [
+          { version: 11, name: "decision-work-items" },
+          { version: 12, name: "work-item-tree-and-review-findings" },
+        ],
+      );
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("v11→v12 重建实施项表：树字段就位、跨决策同名去重且旧账本无损", async () => {
+  const fixture = temporaryDatabase();
+  try {
+    await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
+    const now = "2026-02-01T00:00:00.000Z";
+    const versionEleven = new DatabaseSync(fixture.databasePath);
+    try {
+      versionEleven.prepare(`
+        INSERT INTO topics (
+          id, title, question, constraints_json, project_path,
+          status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+          created_at, updated_at
+        ) VALUES (
+          'topic-v11-tree', '实施项树', '同名子任务能否共存', '[]', NULL,
+          'decided', 'human', ?, NULL, ?, ?
+        )
+      `).run(HUMAN_SNAPSHOT_JSON, now, now);
+      for (const decisionId of ["decision-v11-a", "decision-v11-b"]) {
+        versionEleven.prepare(`
+          INSERT INTO decisions (
+            id, topic_id, title, decision, rationale, alternatives_json, status,
+            created_by_actor_id, created_by_snapshot_json, created_by_legacy,
+            created_at, updated_at
+          ) VALUES (?, 'topic-v11-tree', '决策', '内容', '理由', '[]', 'accepted',
+            'human', ?, NULL, ?, ?)
+        `).run(decisionId, HUMAN_SNAPSHOT_JSON, now, now);
+      }
+      // 还原成 v11 形态：DROP 会连带删掉它的索引与触发器，重放冻结常量即可。
+      versionEleven.exec("DROP TABLE work_items;");
+      versionEleven.exec(WORK_ITEM_SCHEMA_SQL);
+      const insertWorkItem = versionEleven.prepare(`
+        INSERT INTO work_items (
+          id, topic_id, decision_id, title, details, status, status_note, version,
+          created_by_actor_id, created_by_snapshot_json,
+          updated_by_actor_id, updated_by_snapshot_json,
+          created_at, updated_at, completed_at
+        ) VALUES (?, 'topic-v11-tree', ?, ?, '', ?, NULL, 1,
+          'human', ?, 'human', ?, ?, ?, ?)
+      `);
+      // 旧唯一索引只按决策判定，同一议题的两个决策各有一条「写单测」是合法历史数据。
+      insertWorkItem.run(
+        "work_item_old_a", "decision-v11-a", "写单测", "pending",
+        HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, now, now, null,
+      );
+      insertWorkItem.run(
+        "work_item_old_b", "decision-v11-b", "写单测", "completed",
+        HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, "2026-02-01T00:00:01.000Z",
+        "2026-02-01T00:00:01.000Z", "2026-02-01T00:00:01.000Z",
+      );
+      insertWorkItem.run(
+        "work_item_old_c", "decision-v11-a", "接后端接口", "in_progress",
+        HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, "2026-02-01T00:00:02.000Z",
+        "2026-02-01T00:00:02.000Z", null,
+      );
+      versionEleven.exec(`
+        DELETE FROM schema_migrations WHERE version >= 12;
+        PRAGMA user_version = 11;
+      `);
+    } finally {
+      versionEleven.close();
+    }
+
+    const result = await migrateCouncilSchema(fixture.databasePath, 5_000, {
+      maxAttempts: 3,
+    });
+    assert.equal(result.migrated, true);
+    assert.equal(result.version, COUNCIL_SCHEMA_VERSION);
+
+    const migrated = new DatabaseSync(fixture.databasePath);
+    try {
+      assertCouncilSchema(migrated);
+      // 三条历史条目一条都不能少，状态与完成时间原样保留。
+      assert.deepEqual(
+        plainSqlValue(migrated.prepare(`
+          SELECT id, title, status, decision_id, parent_id, origin, severity, sort_order
+          FROM work_items ORDER BY created_at
+        `).all()),
+        [
+          {
+            id: "work_item_old_a",
+            title: "写单测",
+            status: "pending",
+            decision_id: "decision-v11-a",
+            parent_id: null,
+            origin: "manual",
+            severity: null,
+            sort_order: 0,
+          },
+          {
+            id: "work_item_old_b",
+            // 新唯一索引按父级判定，跨决策的同名历史条目必须先去重才建得出索引。
+            title: "写单测 #2",
+            status: "completed",
+            decision_id: "decision-v11-b",
+            parent_id: null,
+            origin: "manual",
+            severity: null,
+            sort_order: 1,
+          },
+          {
+            id: "work_item_old_c",
+            title: "接后端接口",
+            status: "in_progress",
+            decision_id: "decision-v11-a",
+            parent_id: null,
+            origin: "manual",
+            severity: null,
+            sort_order: 2,
+          },
+        ],
+      );
+
+      const insertItem = migrated.prepare(`
+        INSERT INTO work_items (
+          id, topic_id, decision_id, parent_id, title, details, status, version,
+          created_by_actor_id, created_by_snapshot_json,
+          updated_by_actor_id, updated_by_snapshot_json,
+          created_at, updated_at, completed_at
+        ) VALUES (?, 'topic-v11-tree', ?, ?, ?, '', 'pending', 1,
+          'human', ?, 'human', ?, ?, ?, NULL)
+      `);
+      // 同一父级下标题唯一。
+      assert.throws(
+        () =>
+          insertItem.run(
+            "work_item_dup", "decision-v11-a", null, "接后端接口",
+            HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, now, now,
+          ),
+        /UNIQUE/u,
+      );
+      // 不同父级下同名是树的正常形态，必须放行。
+      insertItem.run(
+        "work_item_child", "decision-v11-a", "work_item_old_a", "接后端接口",
+        HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, now, now,
+      );
+      // 决策锚点放宽为可空：审核发现在议题尚无 accepted 决策时也要落得下来。
+      insertItem.run(
+        "work_item_no_decision", null, null, "审核发现的问题",
+        HUMAN_SNAPSHOT_JSON, HUMAN_SNAPSHOT_JSON, now, now,
+      );
+      // 自环会让父状态派生进入死循环，存储层直接挡住。
+      assert.throws(
+        () =>
+          migrated.prepare(
+            "UPDATE work_items SET parent_id = id WHERE id = 'work_item_child'",
+          ).run(),
+        /CHECK/u,
+      );
+      // 审核发现必须带严重度，否则收敛判定无从区分阻塞与非阻塞。
+      assert.throws(
+        () =>
+          migrated.prepare(`
+            UPDATE work_items SET origin = 'review_finding' WHERE id = 'work_item_child'
+          `).run(),
+        /CHECK/u,
+      );
+      // 删父任务级联清掉子任务，不留孤儿。
+      migrated.prepare("DELETE FROM work_items WHERE id = 'work_item_old_a'").run();
+      assert.equal(
+        (migrated.prepare(`
+          SELECT COUNT(*) AS count FROM work_items WHERE id = 'work_item_child'
+        `).get() as { count: number }).count,
+        0,
       );
     } finally {
       migrated.close();
@@ -1722,8 +1899,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (9, 'runtime-protocols', '2026-01-09T00:00:00.000Z'),
         (10, 'generic-acp-runtime', '2026-01-10T00:00:00.000Z'),
         (11, 'decision-work-items', '2026-01-11T00:00:00.000Z'),
-        (12, 'future', '2026-01-12T00:00:00.000Z');
-      PRAGMA user_version = 12;
+        (12, 'work-item-tree-and-review-findings', '2026-01-12T00:00:00.000Z'),
+        (13, 'future', '2026-01-13T00:00:00.000Z');
+      PRAGMA user_version = 13;
     `);
     futureDatabase.close();
     await assert.rejects(

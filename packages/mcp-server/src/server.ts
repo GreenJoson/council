@@ -8,6 +8,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  MAX_FIX_REPOSITORY_CHARS,
+  MAX_FIX_SUMMARY_CHARS,
+  MAX_FIX_TARGETS,
+} from "council-orchestrator";
 import { z } from "zod/v4";
 import { ClaudeClient } from "./claude-client.js";
 import {
@@ -28,6 +33,8 @@ import {
   SERVER_NAME,
   SERVER_VERSION,
   TOPIC_STATUSES,
+  WORK_ITEM_ORIGINS,
+  WORK_ITEM_SEVERITIES,
   WORK_ITEM_STATUSES,
 } from "./constants.js";
 import { CouncilDatabase } from "./database.js";
@@ -62,6 +69,12 @@ const actorSnapshotOutput = z.object({
   shortName: z.string(),
   role: z.string(),
 });
+const workItemProgressOutput = z.object({
+  total: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  blocked: z.number().int().nonnegative(),
+  openBlockingFindings: z.number().int().nonnegative(),
+});
 const topicOutput = z.object({
   id: z.string(),
   title: z.string(),
@@ -73,6 +86,7 @@ const topicOutput = z.object({
   createdBySnapshot: actorSnapshotOutput,
   createdAt: z.string(),
   updatedAt: z.string(),
+  workItemProgress: workItemProgressOutput.optional(),
 });
 const messageOutput = z.object({
   id: z.string(),
@@ -100,12 +114,23 @@ const decisionOutput = z.object({
 const workItemOutput = z.object({
   id: z.string(),
   topicId: z.string(),
-  decisionId: z.string(),
+  // 审核发现可以先于决策存在，所以锚点是可选的。
+  decisionId: z.string().optional(),
+  parentId: z.string().optional(),
   title: z.string(),
   details: z.string(),
   status: workItemStatusField,
   statusNote: z.string().optional(),
   version: z.number().int().positive(),
+  sortOrder: z.number().int().nonnegative(),
+  origin: z.enum(WORK_ITEM_ORIGINS),
+  severity: z.enum(WORK_ITEM_SEVERITIES).optional(),
+  sourceMessageId: z.string().optional(),
+  sourceCycleId: z.string().optional(),
+  reviewRound: z.number().int().positive().optional(),
+  fixCommit: z.string().optional(),
+  assigneeActorId: z.string().optional(),
+  claimedAt: z.string().optional(),
   createdByActorId: z.string(),
   createdBySnapshot: actorSnapshotOutput,
   updatedByActorId: z.string(),
@@ -207,9 +232,13 @@ function formatDecision(decision: Decision): string {
 
 function formatWorkItem(workItem: WorkItem): string {
   return [
-    `- [${workItem.status === "completed" ? "x" : " "}] **${workItem.title}** · ${workItem.status} · v${String(workItem.version)}`,
+    `- [${workItem.status === "completed" ? "x" : " "}] **${workItem.title}** · ${workItem.status} · v${String(workItem.version)}`
+    + (workItem.severity ? ` · ${workItem.severity}` : "")
+    + (workItem.parentId ? " · 子任务" : ""),
     ...(workItem.details ? [`  ${workItem.details}`] : []),
     ...(workItem.statusNote ? [`  状态说明：${workItem.statusNote}`] : []),
+    ...(workItem.fixCommit ? [`  修复提交：${workItem.fixCommit}`] : []),
+    ...(workItem.assigneeActorId ? [`  执行者：${workItem.assigneeActorId}`] : []),
     `  实施项 ID：${workItem.id}`,
   ].join("\n");
 }
@@ -489,6 +518,14 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
           .regex(/^decision_[A-Za-z0-9-]+$/, "decision_id 格式无效")
           .optional()
           .describe("省略时绑定该议题最新的 Accepted 决策"),
+        parent_id: z
+          .string()
+          .max(MAX_ID_CHARS)
+          .regex(/^work_item_[A-Za-z0-9-]+$/, "parent_id 格式无效")
+          .optional()
+          .describe(
+            "挂到这个父任务下形成子任务；父任务状态由子任务派生，不能手动更新",
+          ),
         items: z
           .array(z.object({
             title: z.string().min(1).max(MAX_TITLE_CHARS),
@@ -505,11 +542,12 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
         openWorldHint: false,
       },
     },
-    async ({ topic_id, decision_id, items }) =>
+    async ({ topic_id, decision_id, parent_id, items }) =>
       await executeTool("council_add_work_items", () => {
         const workItems = database.createWorkItemsAsActor({
           topicId: topic_id,
           ...(decision_id ? { decisionId: decision_id } : {}),
+          ...(parent_id ? { parentId: parent_id } : {}),
           items,
           actorId: caller.actorId,
         });
@@ -535,6 +573,11 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
         status: workItemStatusField,
         expected_version: z.number().int().positive(),
         status_note: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
+        fix_commit: z
+          .string()
+          .max(MAX_ID_CHARS)
+          .optional()
+          .describe("标记完成时附上修复所在的 commit，作为复审的证据入口"),
       },
       outputSchema: { workItem: workItemOutput },
       annotations: {
@@ -544,7 +587,7 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
         openWorldHint: false,
       },
     },
-    async ({ topic_id, work_item_id, status, expected_version, status_note }) =>
+    async ({ topic_id, work_item_id, status, expected_version, status_note, fix_commit }) =>
       await executeTool("council_update_work_item", () => {
         const workItem = database.updateWorkItemAsActor({
           topicId: topic_id,
@@ -552,9 +595,157 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
           status,
           expectedVersion: expected_version,
           ...(status_note !== undefined ? { statusNote: status_note } : {}),
+          ...(fix_commit !== undefined ? { fixCommit: fix_commit } : {}),
           actorId: caller.actorId,
         });
         return success(formatWorkItem(workItem), { workItem });
+      }),
+  );
+
+  server.registerTool(
+    "council_list_work_items",
+    {
+      title: "查看实施项清单",
+      description:
+        "列出议题的实施项待办，可按状态、来源或「只看我认领的」过滤。开工前先读这里，"
+        + "认领一条再动手，不要凭记忆猜自己在做哪一项。",
+      inputSchema: {
+        topic_id: topicIdField,
+        status: workItemStatusField.optional(),
+        origin: z
+          .enum(WORK_ITEM_ORIGINS)
+          .optional()
+          .describe("review_finding 只看审核发现，manual 只看手工拆解的交付项"),
+        mine: z
+          .boolean()
+          .optional()
+          .describe("只返回自己已认领的条目"),
+      },
+      outputSchema: { workItems: z.array(workItemOutput) },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, status, origin, mine }) =>
+      await executeTool("council_list_work_items", () => {
+        const workItems = database.listWorkItems({
+          topicId: topic_id,
+          ...(status ? { status } : {}),
+          ...(origin ? { origin } : {}),
+          ...(mine ? { assigneeActorId: caller.actorId } : {}),
+        });
+        return success(
+          workItems.length > 0
+            ? workItems.map(formatWorkItem).join("\n")
+            : "没有匹配的实施项。",
+          { workItems },
+        );
+      }),
+  );
+
+  server.registerTool(
+    "council_claim_work_item",
+    {
+      title: "认领实施项",
+      description:
+        "在开始修复之前认领一条实施项：写上执行者并置为进行中。这是界面上「谁正在做哪一条」"
+        + "的唯一来源——不认领就动手，用户只会看到一个跑了很久却不知道在干什么的 Agent。"
+        + "父任务不能被认领，只能认领叶子任务。",
+      inputSchema: {
+        topic_id: topicIdField,
+        work_item_id: z
+          .string()
+          .max(MAX_ID_CHARS)
+          .regex(/^work_item_[A-Za-z0-9-]+$/, "work_item_id 格式无效"),
+        expected_version: z.number().int().positive(),
+        status_note: z
+          .string()
+          .max(MAX_WORK_ITEM_STATUS_NOTE_CHARS)
+          .optional()
+          .describe("打算怎么修，一句话即可"),
+      },
+      outputSchema: { workItem: workItemOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, work_item_id, expected_version, status_note }) =>
+      await executeTool("council_claim_work_item", () => {
+        const workItem = database.claimWorkItemAsActor({
+          topicId: topic_id,
+          workItemId: work_item_id,
+          expectedVersion: expected_version,
+          ...(status_note !== undefined ? { statusNote: status_note } : {}),
+          actorId: caller.actorId,
+        });
+        return success(formatWorkItem(workItem), { workItem });
+      }),
+  );
+
+  server.registerTool(
+    "council_submit_fixes",
+    {
+      title: "提交修复并请求复审",
+      description:
+        "改完代码、提交之后调用：把这一批修复的仓库与 commit 公开自述出来，交回圆桌复审。"
+        + "不要自己宣布问题已解决——条目是否关闭由复审者读真实 diff 判定，"
+        + "你只负责把改动摆到台面上。commit 必须是已经存在的对象名（7 位以上十六进制），"
+        + "不能填分支名或 tag，否则复审者过几分钟读到的就不是你改的那份 diff。"
+        + "调用后请在界面上开始复审，或等待用户触发。",
+      inputSchema: {
+        topic_id: topicIdField,
+        summary: z
+          .string()
+          .min(1)
+          .max(MAX_FIX_SUMMARY_CHARS)
+          .describe("这批改动解决了哪些条目，一句话"),
+        targets: z
+          .array(
+            z.object({
+              repository: z
+                .string()
+                .min(1)
+                .max(MAX_FIX_REPOSITORY_CHARS)
+                .describe("相对议题项目目录的仓库路径；当前仓库写 ."),
+              commit: z
+                .string()
+                .regex(/^[0-9a-f]{7,40}$/u, "commit 必须是 7 位以上的十六进制对象名"),
+            }),
+          )
+          .min(1)
+          .max(MAX_FIX_TARGETS),
+      },
+      outputSchema: { message: messageOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, summary, targets }) =>
+      await executeTool("council_submit_fixes", () => {
+        const message = database.createMessageAsActor({
+          topicId: topic_id,
+          actorId: caller.actorId,
+          kind: "note",
+          content: [
+            "已提交一批修复，请复审。",
+            "",
+            `修复摘要：${summary}`,
+            "",
+            "```council-fix",
+            JSON.stringify({ targets, summary }),
+            "```",
+          ].join("\n"),
+        });
+        return success(formatMessage(message), { message });
       }),
   );
 

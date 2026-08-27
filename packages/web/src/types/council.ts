@@ -21,6 +21,19 @@ export type TopicStatus = "open" | "proposed" | "discussing" | "synthesis" | "de
 
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 export type WorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
+export type WorkItemOrigin = "manual" | "review_finding";
+export type WorkItemSeverity = "blocking" | "non_blocking";
+
+/**
+ * 议题实施完成度。分母只数叶子节点——父任务状态由子任务派生，
+ * 把它也计进去等于同一件事数两次。
+ */
+export interface WorkItemProgress {
+  total: number;
+  completed: number;
+  blocked: number;
+  openBlockingFindings: number;
+}
 
 export interface Participant {
   id: AgentId;
@@ -45,6 +58,11 @@ export interface TopicSummary {
   status: TopicStatus;
   updatedLabel: string;
   unreadCount?: number;
+  /**
+   * 议题导航要在不拉取每个议题详情的前提下显示「12 / 15」，只能由列表接口带下来。
+   * 没有实施项的议题不带这个字段，导航据此区分「还没拆」和「一条都没做完」。
+   */
+  workItemProgress?: WorkItemProgress;
 }
 
 export interface CouncilMessage {
@@ -101,12 +119,23 @@ export interface CouncilDecision {
 
 export interface CouncilWorkItem {
   id: string;
-  decisionId: string;
+  /** 审核发现可以先于决策存在，因此锚点是可选的。 */
+  decisionId?: string;
+  parentId?: string;
   title: string;
   details: string;
   status: WorkItemStatus;
   statusNote?: string;
   version: number;
+  sortOrder: number;
+  origin: WorkItemOrigin;
+  severity?: WorkItemSeverity;
+  /** 产出这条发现的那次评审发言，用于从任务跳回原始论据。 */
+  sourceMessageId?: string;
+  reviewRound?: number;
+  fixCommit?: string;
+  assignee?: AgentId;
+  claimedLabel?: string;
   createdBy: AgentId;
   createdBySnapshot: ActorSnapshot;
   updatedBy: AgentId;
@@ -172,6 +201,8 @@ export interface CreateTopicInput {
 export interface AddWorkItemsInput {
   topicId: string;
   decisionId?: string;
+  /** 给了就挂成子任务；决策锚点继承自父任务。 */
+  parentId?: string;
   items: Array<{ title: string; details?: string }>;
 }
 
@@ -179,6 +210,14 @@ export interface UpdateWorkItemInput {
   topicId: string;
   workItemId: string;
   status: WorkItemStatus;
+  statusNote?: string;
+  fixCommit?: string;
+  expectedVersion: number;
+}
+
+export interface ClaimWorkItemInput {
+  topicId: string;
+  workItemId: string;
   statusNote?: string;
   expectedVersion: number;
 }

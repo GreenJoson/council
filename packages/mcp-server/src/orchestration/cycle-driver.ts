@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLiteCouncilStore 收敛入口、编排 Run 生命周期与阶段指令契约
- * @output 导出：复用既有提案、自动交接下一位 Agent、终态结算的圆桌驱动器
+ * @output 导出：复用既有提案、自动交接下一位 Agent、审核账本同步与终态结算的圆桌驱动器
  * @pos    把「谁下一个说话」从用户手里接过来的唯一处；自身不召唤 Agent，只创建并启动 Run
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,7 @@ import {
   type SQLiteCouncilStore,
 } from "council-orchestrator";
 import { logger } from "../logger.js";
+import type { ReviewLedgerWriter } from "./review-ledger.js";
 
 /** 默认轮次预算：够一次提案 + 一轮反驳 + 一轮复核，再多通常是分歧不该由 Agent 解决。 */
 export const DEFAULT_ROUND_BUDGET = 3;
@@ -56,6 +57,8 @@ export interface CycleDriverDependencies {
   store: SQLiteCouncilStore;
   runner: CycleRunner;
   decisions: CycleDecisionWriter;
+  /** 审核账本；未挂载时修复互审退化为普通只读互审，不会因此崩掉圆桌。 */
+  reviewLedger: () => ReviewLedgerWriter | undefined;
   now: () => string;
 }
 
@@ -63,6 +66,7 @@ export class CycleDriver {
   readonly #store: SQLiteCouncilStore;
   readonly #runner: CycleRunner;
   readonly #decisions: CycleDecisionWriter;
+  readonly #reviewLedger: () => ReviewLedgerWriter | undefined;
   readonly #now: () => string;
   /** 同一议题串行推进，避免一次提交触发两条并发驱动。 */
   readonly #inFlight = new Map<string, Promise<DiscussionCycleView | undefined>>();
@@ -71,6 +75,7 @@ export class CycleDriver {
     this.#store = dependencies.store;
     this.#runner = dependencies.runner;
     this.#decisions = dependencies.decisions;
+    this.#reviewLedger = dependencies.reviewLedger;
     this.#now = dependencies.now;
   }
 
@@ -115,6 +120,30 @@ export class CycleDriver {
     return this.#store.readActiveDiscussionCycle(input.topicId) ?? opened;
   }
 
+  /**
+   * 把本轮圆桌里新出现的审核发现落成任务、把复审判定写回条目状态。
+   *
+   * 同步失败不阻断推进：账本是给人看的执行视图，把它的故障升级成
+   * "圆桌卡死"只会让用户既拿不到清单也拿不到结论。
+   */
+  #syncReviewLedger(view: DiscussionCycleView): DiscussionCycleView | undefined {
+    const ledger = this.#reviewLedger();
+    if (!ledger || view.cycle.kind !== "fix_review" || view.cycle.status !== "active") {
+      return undefined;
+    }
+    try {
+      ledger.syncCycleLedger({
+        topicId: view.cycle.topicId,
+        cycleId: view.cycle.id,
+        turns: view.cycle.turns,
+      });
+    } catch (error: unknown) {
+      logger.warn("orchestration", "审核账本同步失败，本轮按既有清单推进。", error);
+      return undefined;
+    }
+    return this.#store.readActiveDiscussionCycle(view.cycle.topicId);
+  }
+
   /** 用户主动放弃圆桌；失败卡住时这是把议题解锁的唯一出口。 */
   abandon(topicId: string): DiscussionCycleView | undefined {
     const view = this.#store.readActiveDiscussionCycle(topicId);
@@ -149,10 +178,13 @@ export class CycleDriver {
   }
 
   async #advanceOnce(topicId: string): Promise<DiscussionCycleView | undefined> {
-    const view = this.#store.readActiveDiscussionCycle(topicId);
-    if (!view) {
+    const opened = this.#store.readActiveDiscussionCycle(topicId);
+    if (!opened) {
       return undefined;
     }
+    // 先对账再判断下一步：发现录入会改变「还差几条」，
+    // 顺序反了就会拿着上一轮的清单决定要不要收敛。
+    const view = this.#syncReviewLedger(opened) ?? opened;
     const { cycle, action } = view;
     switch (action.kind) {
       case "invoke": {
@@ -171,6 +203,14 @@ export class CycleDriver {
             .reverse()
             .find((turn) => turn.stage === "proposal" || turn.stage === "rebuttal")
           : undefined;
+        // 修复提交后没有新的 Agent 发言携带 commit，被审目标只能回到公开消息里取；
+        // 拿旧 commit 复审等于让评审再看一遍已经被改掉的那份 diff。
+        const latestTargets = cycle.kind === "fix_review"
+          ? this.#store.readLatestFixTargets(topicId)
+          : [];
+        const commitTargets = latestTargets.length > 0
+          ? latestTargets
+          : reviewed?.commitTargets ?? [];
         const run = await this.#runner.createRun(topicId, [{
           adapterId: action.agentId,
           messageKind: action.stage,
@@ -181,8 +221,17 @@ export class CycleDriver {
             reviewers,
             proposer,
             reviewScope,
-            ...(reviewScope === "commit" && reviewed?.commitTargets?.length
-              ? { reviewedCommitTargets: reviewed.commitTargets }
+            ...(reviewScope === "commit" && commitTargets.length > 0
+              ? { reviewedCommitTargets: commitTargets }
+              : {}),
+            ...(cycle.kind === "fix_review"
+              ? {
+                reviewLedger: {
+                  round: action.round,
+                  openItems: this.#reviewLedger()
+                    ?.readOpenFindings(topicId, cycle.id) ?? [],
+                },
+              }
               : {}),
           }),
         }]);
@@ -191,6 +240,24 @@ export class CycleDriver {
       }
       case "await_user":
         // 停在这里是刻意的：问题没答之前继续推进，后面每一段都建立在错误前提上。
+        return view;
+      case "converge": {
+        // 只有修复互审会把 `converge` 留给驱动器：清单归零的判定必须在对完账之后做，
+        // 所以这一步在这里落地，然后立刻接着推进到收敛陈述。
+        this.#store.convergeDiscussionCycle({
+          cycleId: cycle.id,
+          expectedVersion: cycle.stateVersion,
+          now: this.#now(),
+        });
+        return await this.#advanceOnce(topicId);
+      }
+      case "await_fix":
+        // 审核闭环的等待位：账本上还有没修掉的问题，圆桌不销毁也不空转，
+        // 等外部 Agent 认领、修复、提交，再由 submitFixes 开下一轮复审。
+        logger.info(
+          "orchestration",
+          `圆桌等待修复：topic=${topicId} 未关闭阻断=${String(action.openBlockingFindings)}`,
+        );
         return view;
       case "abandon": {
         const blockingItems = cycle.turns
