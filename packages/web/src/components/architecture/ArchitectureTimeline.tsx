@@ -1,5 +1,5 @@
 /**
- * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureTimelineEntry 列表与议题/决策记录跳转回调
+ * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureTimelineEntry 列表、议题/决策记录跳转回调与折叠开关
  * @output 导出：ArchitectureTimeline 架构档案第二区块——按时间排列的决策演进时间线
  * @pos    ArchitectureView 的第二区块；已接受/被取代条目带稳定 ADR 编号并可跳转决策记录，
  *         仍在提案中的条目跳转回讨论视图；不发起请求，纯展示 + 回调
@@ -9,7 +9,9 @@
 
 import { CheckCircle2, GitCommitHorizontal, History, ShieldCheck } from "lucide-react";
 import type { ArchitectureTimelineEntry } from "../../data/selectors";
+import type { SectionId } from "../../data/section-collapse";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ArchitectureSection } from "./ArchitectureSection";
 
 export interface ArchitectureTimelineProps {
   entries: ArchitectureTimelineEntry[];
@@ -17,20 +19,28 @@ export interface ArchitectureTimelineProps {
   onOpenTopic: (topicId: string) => void;
   /** 已接受/被取代的条目：跳到决策记录视图对应的 ADR 条目 */
   onOpenDecisionRecord: (topicId: string) => void;
+  isCollapsed: boolean;
+  onToggleCollapse: (id: SectionId) => void;
 }
 
-export function ArchitectureTimeline({ entries, onOpenTopic, onOpenDecisionRecord }: ArchitectureTimelineProps) {
+export function ArchitectureTimeline({
+  entries,
+  onOpenTopic,
+  onOpenDecisionRecord,
+  isCollapsed,
+  onToggleCollapse,
+}: ArchitectureTimelineProps) {
   const { t } = useI18n();
   return (
-    <section className="architecture-timeline" aria-label={t("架构演进时间线")}>
-      <header className="architecture-section-header">
-        <h2>
-          <GitCommitHorizontal size={17} aria-hidden="true" />
-          {t("架构演进时间线")}
-        </h2>
-        <span className="count-pill">{entries.length}</span>
-      </header>
-
+    <ArchitectureSection
+      id="timeline"
+      className="architecture-timeline"
+      icon={<GitCommitHorizontal size={17} aria-hidden="true" />}
+      title="架构演进时间线"
+      count={entries.length}
+      isCollapsed={isCollapsed}
+      onToggle={onToggleCollapse}
+    >
       {entries.length === 0 ? (
         <p className="architecture-section-empty">
           {t("还没有决策记录。在决策里写下 summary/rationale 并接受后，会按时间出现在这里。")}
@@ -96,6 +106,6 @@ export function ArchitectureTimeline({ entries, onOpenTopic, onOpenDecisionRecor
           })}
         </ol>
       )}
-    </section>
+    </ArchitectureSection>
   );
 }

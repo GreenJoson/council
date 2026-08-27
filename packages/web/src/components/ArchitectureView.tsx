@@ -4,15 +4,16 @@
  *         data/selectors.ts 的架构档案聚合纯函数（buildArchitectureTimeline/
  *         aggregateConstraints/collectArchitectureDiagrams）
  * @output 导出：ArchitectureView 项目架构档案——从讨论决策中聚合生成的架构沉淀页，
- *         由项目概览、架构演进时间线、架构不变量、架构图/业务解析图集四个区块组成
+ *         由项目概览、架构演进时间线、架构不变量、架构图/业务解析图集四个区块组成；
+ *         后三个区块可折叠，折叠状态跨会话保留
  * @pos    Operator Console 架构档案视图：只读聚合已加载数据，不改变全局选中状态；
- *         四个内容区块拆分在 components/architecture/ 下，本文件只做数据编排与 Lightbox 状态
+ *         四个内容区块拆分在 components/architecture/ 下，本文件只做数据编排、折叠状态与 Lightbox 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { Boxes, Plus, RefreshCw, TriangleAlert } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ArchitectureConstraints } from "./architecture/ArchitectureConstraints";
 import { ArchitectureDiagramGallery } from "./architecture/ArchitectureDiagramGallery";
 import { ArchitectureOverview } from "./architecture/ArchitectureOverview";
@@ -24,6 +25,11 @@ import {
   buildArchitectureTimeline,
   collectArchitectureDiagrams,
 } from "../data/selectors";
+import {
+  readCollapsedSections,
+  writeCollapsedSections,
+  type SectionId,
+} from "../data/section-collapse";
 import type { Participant, TopicDetail, TopicSummary } from "../types/council";
 import { useI18n } from "../i18n/I18nProvider";
 
@@ -55,6 +61,20 @@ export function ArchitectureView({
   const topicIds = useMemo(() => topics.map((topic) => topic.id), [topics]);
   const { details, errors, retry } = useTopicDetails(topicIds, onLoadDetail);
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<SectionId>>(
+    readCollapsedSections,
+  );
+
+  const toggleSection = useCallback((id: SectionId) => {
+    setCollapsedSections((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) {
+        next.add(id);
+      }
+      writeCollapsedSections(next);
+      return next;
+    });
+  }, []);
 
   // 只用已经加载完成的议题详情聚合四个区块：不阻塞整页渲染，随加载进度逐步补全。
   const loadedTopics = useMemo(
@@ -131,12 +151,20 @@ export function ArchitectureView({
           entries={timelineEntries}
           onOpenTopic={onOpenTopic}
           onOpenDecisionRecord={onOpenDecisionRecord}
+          isCollapsed={collapsedSections.has("timeline")}
+          onToggleCollapse={toggleSection}
         />
-        <ArchitectureConstraints constraints={constraints} />
+        <ArchitectureConstraints
+          constraints={constraints}
+          isCollapsed={collapsedSections.has("constraints")}
+          onToggleCollapse={toggleSection}
+        />
         <ArchitectureDiagramGallery
           diagrams={diagrams}
           participants={participants}
           onOpenLightbox={setLightboxContent}
+          isCollapsed={collapsedSections.has("diagrams")}
+          onToggleCollapse={toggleSection}
         />
       </div>
 

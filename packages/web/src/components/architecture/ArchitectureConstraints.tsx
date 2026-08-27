@@ -1,5 +1,5 @@
 /**
- * @input  依赖：界面语言上下文、selectors.ts 聚合并去重后的 AggregatedConstraint 列表
+ * @input  依赖：界面语言上下文、selectors.ts 聚合并去重后的 AggregatedConstraint 列表与折叠开关
  * @output 导出：ArchitectureConstraints 架构档案第三区块——跨议题聚合的架构不变量
  * @pos    ArchitectureView 的第三区块；每条约束标注全部来源议题（已有已接受/被取代
  *         决策的来源附带 ADR 编号 + 时间）；纯展示，不发起请求
@@ -9,24 +9,32 @@
 
 import { Check, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { AggregatedConstraint } from "../../data/selectors";
+import type { SectionId } from "../../data/section-collapse";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ArchitectureSection } from "./ArchitectureSection";
 
 export interface ArchitectureConstraintsProps {
   constraints: AggregatedConstraint[];
+  isCollapsed: boolean;
+  onToggleCollapse: (id: SectionId) => void;
 }
 
-export function ArchitectureConstraints({ constraints }: ArchitectureConstraintsProps) {
+export function ArchitectureConstraints({
+  constraints,
+  isCollapsed,
+  onToggleCollapse,
+}: ArchitectureConstraintsProps) {
   const { t } = useI18n();
   return (
-    <section className="architecture-constraints" aria-label={t("架构不变量")}>
-      <header className="architecture-section-header">
-        <h2>
-          <ShieldAlert size={17} aria-hidden="true" />
-          {t("架构不变量")}
-        </h2>
-        <span className="count-pill">{constraints.length}</span>
-      </header>
-
+    <ArchitectureSection
+      id="constraints"
+      className="architecture-constraints"
+      icon={<ShieldAlert size={17} aria-hidden="true" />}
+      title="架构不变量"
+      count={constraints.length}
+      isCollapsed={isCollapsed}
+      onToggle={onToggleCollapse}
+    >
       {constraints.length === 0 ? (
         <p className="architecture-section-empty">
           {t("还没有约束条件。在议题里添加约束后，会去重聚合展示在这里。")}
@@ -58,6 +66,6 @@ export function ArchitectureConstraints({ constraints }: ArchitectureConstraints
           ))}
         </ul>
       )}
-    </section>
+    </ArchitectureSection>
   );
 }

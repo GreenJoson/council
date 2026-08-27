@@ -123,6 +123,8 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "已修复，开始复审": "Fixed · start re-review",
   "已认领「{title}」": "Claimed “{title}”",
   "修复已提交，复审开始": "Fixes submitted · re-review started",
+  "展开{title}": "Expand {title}",
+  "收起{title}": "Collapse {title}",
   "创建于 {time}": "Created {time}",
   "更新于 {time}": "Updated {time}",
   "议题参与者": "Topic participants",

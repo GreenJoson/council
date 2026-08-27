@@ -1,5 +1,5 @@
 /**
- * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureDiagramSource 列表、参与者展示名与 Lightbox 放大回调
+ * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureDiagramSource 列表、参与者展示名、Lightbox 放大回调与折叠开关
  * @output 导出：ArchitectureDiagramGallery 架构档案第四区块——聚合渲染的架构图/业务解析图集
  * @pos    ArchitectureView 的第四区块；每张图复用 MermaidDiagram（含首屏懒加载、主题联动、
  *         渲染失败降级）渲染并标注来源（ADR 编号或消息作者 + 时间），点击复用共享 Lightbox 放大
@@ -12,31 +12,37 @@ import type { LightboxContent } from "../Lightbox";
 import { MermaidDiagram } from "../MermaidDiagram";
 import type { ArchitectureDiagramSource } from "../../data/selectors";
 import type { Participant } from "../../types/council";
+import type { SectionId } from "../../data/section-collapse";
 import { AgentAvatar } from "../presentation";
 import { useI18n } from "../../i18n/I18nProvider";
+import { ArchitectureSection } from "./ArchitectureSection";
 
 export interface ArchitectureDiagramGalleryProps {
   diagrams: ArchitectureDiagramSource[];
   participants: Map<string, Participant>;
   onOpenLightbox: (content: LightboxContent) => void;
+  isCollapsed: boolean;
+  onToggleCollapse: (id: SectionId) => void;
 }
 
 export function ArchitectureDiagramGallery({
   diagrams,
   participants,
   onOpenLightbox,
+  isCollapsed,
+  onToggleCollapse,
 }: ArchitectureDiagramGalleryProps) {
   const { t } = useI18n();
   return (
-    <section className="architecture-diagrams" aria-label={t("架构图与业务解析图")}>
-      <header className="architecture-section-header">
-        <h2>
-          <Images size={17} aria-hidden="true" />
-          {t("架构图 / 业务解析图")}
-        </h2>
-        <span className="count-pill">{diagrams.length}</span>
-      </header>
-
+    <ArchitectureSection
+      id="diagrams"
+      className="architecture-diagrams"
+      icon={<Images size={17} aria-hidden="true" />}
+      title="架构图 / 业务解析图"
+      count={diagrams.length}
+      isCollapsed={isCollapsed}
+      onToggle={onToggleCollapse}
+    >
       {diagrams.length === 0 ? (
         <p className="architecture-section-empty">
           {t("还没有架构图。在方案、综合消息或已接受决策里用 ```mermaid 围栏画图，会集中展示在这里。")}
@@ -62,7 +68,7 @@ export function ArchitectureDiagramGallery({
           ))}
         </div>
       )}
-    </section>
+    </ArchitectureSection>
   );
 }
 

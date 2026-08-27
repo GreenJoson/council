@@ -24,7 +24,7 @@
 | `AutoRoundsPanel.tsx` | 编排 | 仅在存在 Run 或持久会话时展示紧凑运行状态、单一当前调用卡、折叠历史及会话关闭/重开；单次启动统一由 Composer `@Agent` 承担 |
 | `CreateTopicDialog.tsx` | 创建 | 收集议题问题和约束，桌面端可选择目标项目（当前/最近/浏览），失败时保留输入以便重试 |
 | `ManualDecisionDialog.tsx` | 决策 | 让用户填写最终结论与可选验证/部署说明，明确以 Human / Accepted 直接结束议题且不创建 Agent Run |
-| `ArchitectureView.tsx` | 视图 | 项目架构档案：从讨论决策聚合生成的架构沉淀页（项目概览/演进时间线/不变量/图集四区块，拆分在 `architecture/` 子目录），经 `useTopicDetails` 一次性加载全部议题详情，内容区块见 `architecture/_README.md` |
+| `ArchitectureView.tsx` | 视图 | 项目架构档案：从讨论决策聚合生成的架构沉淀页（项目概览/演进时间线/不变量/图集四区块，拆分在 `architecture/` 子目录），经 `useTopicDetails` 一次性加载全部议题详情；后三个长区块可点标题栏收起，折叠状态跨会话保留，内容区块见 `architecture/_README.md` |
 | `DecisionRecordsView.tsx` | 视图 | 左列表右详情的 ADR 归档；owner、决策提出者和备选作者优先使用历史行冻结快照，详情按需加载并支持失败重试与定位 |
 | `presentation.tsx` | 基础 | 统一品牌 logo、冻结 Actor 快照到 Participant 的转换、动态头像回退、议题状态与决策状态标签/徽章 |
 | `StatusBar.tsx` | 基础 | 底部状态条：右下角显示构建身份（版本 · commit · 构建时间），由 vite.config 在构建期注入；semver 不随重建变化，靠 commit 与时间区分手上跑的是哪个包 |

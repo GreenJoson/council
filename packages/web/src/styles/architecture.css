@@ -54,21 +54,82 @@
   margin-bottom: 12px;
 }
 
+/*
+ * 整条标题栏就是折叠开关。长清单里只让一个 16px 的箭头可点是刁难，
+ * 而标题栏本来就没有别的用途。
+ */
+.architecture-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 只染区块图标，别把箭头一起染了——箭头是次要信息，抢色会让标题栏读起来有两个重点。 */
+.architecture-section-toggle > svg:not(.architecture-section-chevron) {
+  flex: none;
+  color: var(--color-primary);
+}
+
+.architecture-section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.architecture-section-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.architecture-section-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.architecture-section-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  transition: transform 140ms ease;
+}
+
+/* 收起时箭头指向右侧：方向本身就是「还有内容藏在这后面」的提示。 */
+.architecture-section-collapsed .architecture-section-chevron {
+  transform: rotate(-90deg);
+}
+
+/* 折叠后区块只剩一行标题：收掉下边距和竖向内边距，让它读起来是一条窄条而不是空卡片。 */
+.architecture-section-collapsed .architecture-section-header {
+  margin-bottom: 0;
+}
+
+.architecture-section-collapsed {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
 .architecture-section-header h2 {
   display: flex;
   flex: 1;
+  min-width: 0;
   align-items: center;
-  gap: 8px;
   margin: 0;
   color: var(--color-text);
   font-size: 14px;
   font-weight: 650;
 }
 
-.architecture-section-header h2 svg {
-  flex: none;
-  color: var(--color-primary);
-}
 
 .architecture-section-empty {
   margin: 0;
