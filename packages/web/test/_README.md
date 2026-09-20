@@ -19,6 +19,7 @@
 | `native-repository.test.ts` | 桌面仓储 | 验证 Rust 同形响应映射、最近项目切换、旧加载世代隔离与只读议题详情加载 |
 | `mention-parser.test.ts` | 查询测试 | 验证动态 mentionAlias、同 Provider 多 Agent、未知名/代码围栏/多标记边界、自动补全光标定位和前导芯片提取 |
 | `commit-association.test.tsx` | 协议/UI 回归 | 验证批量 SHA 多分隔符展开、同仓库多轮 commit、多仓库校验与协议编解码，并确保消息卡隐藏协议 JSON、展示可读关联提交 |
+| `delegation-recovery.test.tsx` | 恢复回归 | 验证中英草稿接续/提交恢复入口、缺少基线提示与活动状态限制 |
 | `implementation-progress.test.tsx` | 进度回归 | 验证中英界面下右栏摘要从叶子任务派生完成度，父任务缩进渲染且状态按钮只读，审核发现标出严重度与轮次，已认领叶子显示执行者与修复提交 |
 | `discussion-task-tab.test.tsx` | 布局回归 | 验证长任务清单进入主区任务 tab，tab 以完成数/总数展示紧凑进度 |
 | `i18n.test.tsx` | 国际化回归 | 验证保存偏好与系统语言回退、中英词典插值、用户内容不翻译及顶部语言切换入口 |

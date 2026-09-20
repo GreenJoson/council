@@ -6,7 +6,8 @@
 |---|---|---|
 | `runtime-audit-store.ts` | 执行证据 | 持久化脱敏阶段/工具事件，提供不可覆盖的游标分页记录，不存私有草稿与未知用量 |
 | `work-attention-store.ts` | 聚合查询 | 按当前项目汇总待决策、待验收、阻断、失败与待回复，较新执行取代历史状态 |
-| `delegation-recovery.ts` | 恢复边界 | 区分事件流/最终回复超限等失败，核验受管目录、Git 仓库、原提交及干净状态后恢复检查点 |
+| `delegation-workspace-snapshot.ts` | 草稿快照 | 临时索引保留原 HEAD/索引/文件；拒绝配置、运行数据、二进制、符号链接和疑似凭据后接续未提交代码 |
+| `delegation-recovery.ts` | 恢复边界 | 区分事件流/最终回复超限等失败，核验受管目录、Git 仓库、原 HEAD 与提交/草稿恢复条件 |
 | `agent-progress-hub.ts` | 兼容桥 | 把统一 RuntimeEvent 投影为现有 SSE 草稿、单调 sequence 和重连快照，不写 SQLite |
 | `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，首轮发送完整公开上下文、后续恢复 session 并发出统一文本事件，只公开脱敏诊断 |
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并把公开 JSONL 消息转成统一文本事件 |

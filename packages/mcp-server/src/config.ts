@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流预算的 CouncilConfig 与绑定调用者身份的 McpCouncilConfig
+ * @output 导出：含独立 CLI 事件流与委派 Git 检查预算的 CouncilConfig 与绑定调用者身份的 McpCouncilConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,7 @@ const DEFAULT_GIT_DIFF_MAX_FILES = 200;
 const DEFAULT_GIT_DIFF_MAX_LINES = 4_000;
 const DEFAULT_GIT_DIFF_MAX_HUNKS_PER_FILE = 200;
 const DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS = 30_000;
+const DEFAULT_DELEGATION_GIT_MAX_OUTPUT_CHARS = 1_000_000;
 const DEFAULT_CLI_MAX_STREAM_CHARS = 32_000_000;
 
 const FORBIDDEN_CLAUDE_ARGS = new Set([
@@ -334,6 +335,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS,
     ),
     delegationWorktreeRoot,
+    delegationGitMaxOutputChars: parseOptionalPositiveInteger(
+      "COUNCIL_DELEGATION_GIT_MAX_OUTPUT_CHARS", env, DEFAULT_DELEGATION_GIT_MAX_OUTPUT_CHARS,
+    ),
     delegationRetryDelayMs: parseOptionalTimer("COUNCIL_DELEGATION_RETRY_DELAY_MS", env, 1500),
     ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),

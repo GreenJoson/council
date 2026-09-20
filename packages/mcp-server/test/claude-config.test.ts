@@ -1,6 +1,6 @@
 /**
  * @input  依赖：隔离数据目录、COUNCIL_CLAUDE_* 环境变量与 loadConfig
- * @output 导出：独立 CLI 事件流预算、Claude 权限、调用者绑定、迁移必填项与定时器配置测试
+ * @output 导出：独立 CLI 事件流/委派 Git 检查预算、Claude 权限、调用者绑定、迁移必填项与定时器配置测试
  * @pos    后台运行时启动前的配置边界单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -45,6 +45,21 @@ test("CLI 事件流预算独立于最终回复，兼容旧配置并校验正整�
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("委派 Git 检查预算独立于只读 diff 展示，校验非法配置", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-config-git-budget-"));
+  try {
+    const env = createEnv(directory);
+    assert.equal(loadConfig(env).delegationGitMaxOutputChars, 1_000_000);
+    const config = loadConfig({ ...env, COUNCIL_GIT_DIFF_MAX_OUTPUT_CHARS: "100",
+      COUNCIL_DELEGATION_GIT_MAX_OUTPUT_CHARS: "2000000" });
+    assert.equal(config.gitDiffMaxOutputChars, 100);
+    assert.equal(config.delegationGitMaxOutputChars, 2_000_000);
+    for (const value of ["0", "-1", "1.5", "Infinity"]) {
+      assert.throws(() => loadConfig({ ...env, COUNCIL_DELEGATION_GIT_MAX_OUTPUT_CHARS: value }), /COUNCIL_DELEGATION_GIT_MAX_OUTPUT_CHARS.*正整数/);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("Claude 配置只允许 plan 权限模式", () => {

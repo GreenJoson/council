@@ -5,7 +5,8 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `execution-evidence.test.ts` | 跨层验收 | 验证审计脱敏/不可覆盖/分页、项目隔离、待办消退与 v14→v16 失败回滚 |
-| `work-item-delegation.test.ts` | 执行闭环 | 验证完成策略、人工验收、并发版本、超限分类/文件保留、提交检查点恢复及只读重试/写入不自动重放 |
+| `delegation-workspace-snapshot.test.ts` | 草稿边界 | 验证增删改、换行文件名、原索引不变和运行数据/凭据/符号链接拒绝 |
+| `work-item-delegation.test.ts` | 执行闭环 | 验证完成策略、人工验收、并发版本、超限分类/文件保留、提交/草稿恢复、反复中断与并发接续及只读重试/写入不自动重放 |
 | `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v16：身份/运行数据无损、通用 ACP 协议迁移、Runtime 能力快照、漂移拒绝、备份、回滚与 WAL 阻塞 |
 | `schema-v7-migration.test.ts` | 安全验收 | 在当前迁移库上继续冻结 v7 收敛容器不变量，并验证 accepted 决策使用 canonical 停止原因终结 cycle |
 | `schema-v8-migration.test.ts` | 数据迁移 | 用最小现场 v7 cycle 直接验证需求/能力 backfill、旧停止原因规范化和 accepted trigger 修复 |
@@ -15,7 +16,7 @@
 | `claude-runtime.test.ts` | 单元测试 | 验证大量编程事件仍可交付、事件流/最终回复独立限额、超限计数、单独提取结果、按需逐字预览、恢复与进程回收 |
 | `codex-runtime.test.ts` | 单元测试 | 验证只读沙箱、公开 JSONL 消息增量、独立事件流额度与计数诊断、最终正文限长、取消与脱敏错误分类 |
 | `acp-delegated-runtime.test.ts` | ACP 进程测试 | 用五 Agent 生产注册表与真实 stdio 假 Agent 验证供应商无关启动、launch/session 模型选择、同 binding 进程/session 复用、服务重开 resume、只读工具、敏感文件阻断和执行权限拒绝 |
-| `claude-config.test.ts` | 单元测试 | 验证独立事件流预算的缺省/覆盖/非法值、权限模式、调用者身份、HTTP 配置隔离和定时器边界 |
+| `claude-config.test.ts` | 单元测试 | 验证独立事件流/委派 Git 检查预算的缺省/覆盖/非法值、权限模式、调用者身份、HTTP 配置隔离和定时器边界 |
 | `codex-config.test.ts` | 单元测试 | 验证 Codex 只读沙箱、五类 ACP 命令、默认值、保留参数和定时器配置边界 |
 | `claude-client.test.ts` | 集成测试 | 验证数据库兼容层的后台会话恢复及取消零写入 |
 | `server.test.ts` | 协议测试 | 通过内存传输验证 MCP 作者参数已移除、调用者 actorId 冻结、运行中 alias 重绑/同名 alias 不可劫持、停用后失败关闭、只能 proposed 决策、工具调用和取消零写入 |

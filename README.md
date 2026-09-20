@@ -153,7 +153,7 @@ flowchart TB
 
 **Discussion and implementation.** Discussion tools are constrained by a read-only policy. Explicit implementation delegation currently uses supported native Claude/Codex CLI executors with the selected permission profile. ACP and compatible API tool loops remain within their declared read-only capabilities. A Git worktree separates changes; it is not an operating-system security boundary.
 
-**Recovery and evidence.** Runtime events are stored after redaction. A recovery request verifies the recorded commit, repository, managed directory, clean worktree, permissions, and task version before creating a new run. Missing tool detail is shown as unavailable; context usage is not presented as billing tokens or a calculated cost.
+**Recovery and evidence.** Runtime events are stored after redaction. Recovery verifies the repository, managed directory, recorded HEAD, permissions, and task version before creating a new run. A clean delivery commit goes back to review. If execution failed before committing, “Continue unfinished work” copies checked source changes into a new isolated workspace for implementation and review, preserving the original files and history. Missing tool detail is shown as unavailable; context usage is not presented as billing tokens or a calculated cost.
 
 ## Security and current limits
 
@@ -161,7 +161,7 @@ flowchart TB
 - Official API addresses in the provider catalog are editable defaults, not private upstream services. Environment-dependent paths, ports, and runtime settings belong in local configuration.
 - The HTTP control plane is **loopback-only and intended for one local user**. It has no per-instance authentication token. Do not expose it through a tunnel, reverse proxy, or public listener.
 - Only deliberately published topic content is shared between agent clients. Model calls and authorized code reads still leave the machine through the selected provider; local storage does not mean offline inference.
-- New delegations default to human acceptance. Write failures and uncommitted changes are not automatically replayed. Recovery does not reconstruct work that was never committed.
+- New delegations default to human acceptance. Write failures and uncommitted changes are not automatically replayed. Explicit continuation can retain uncommitted source files in a verified workspace; private configuration, runtime data, binary files, symlinks, and suspected secrets are rejected.
 - SQLite audit records are local evidence, not an independently tamper-proof audit service. Native CLI delegations currently provide stage/commit evidence rather than complete tool transcripts.
 - This is a macOS-first, single-user workspace. Multi-user hosting, Windows/Linux desktop releases, cost accounting, automatic ADR export, and automatic merging/deployment are not current release promises.
 

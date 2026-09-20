@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 中文界面源文案
- * @output 导出：英文界面词典；占位符使用 {name} 形式
+ * @output 导出：英文界面词典，含提交恢复与草稿接续；占位符使用 {name} 形式
  * @pos    中英双语的英文单一真源，用户内容不经过本词典
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,7 +11,11 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "完成条件": "Completion rule",
   "审核通过后，人工验收": "Human acceptance after agent review",
   "以 Agent 审核通过为完成条件": "Complete when agent review passes",
-  "没有已记录提交；重新委派将从项目当前基线开始。": "No recorded commit. A new delegation starts from the current project baseline.",
+  "没有可恢复的工作区；重新委派将从项目当前基线开始。": "No recoverable workspace. A new delegation starts from the current project baseline.",
+  "尚未生成交付提交；可以检查并接续原工作区中的代码，旧文件与失败记录会保留。": "No delivery commit yet. Check and continue the code in the previous workspace; its files and failure record will be preserved.",
+  "接续未完成工作": "Continue unfinished work",
+  "已接续未完成工作，将继续执行并审核。": "Unfinished work restored for continued execution and review.",
+  "服务曾中断；可恢复提交或检查并接续未完成工作。": "The service was interrupted. Resume a commit or check and continue unfinished work.",
   "历史委派": "Past delegation",
   "查看执行记录": "View execution record",
   "记录派发、执行摘要、提交与审核；当前 CLI 未提供的工具明细不会补造。": "Includes assignment, execution summaries, commits and reviews. Tool details unavailable from the CLI are omitted.",

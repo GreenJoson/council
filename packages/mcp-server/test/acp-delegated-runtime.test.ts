@@ -313,6 +313,7 @@ function config(directory: string, command: string): CouncilConfig {
     gitDiffMaxFiles: 20,
     gitDiffMaxLines: 200,
     gitDiffMaxHunksPerFile: 20,
+    delegationGitMaxOutputChars: 1_000_000,
     gitDiffMaxOutputChars: 10_000,
     sqliteBusyTimeoutMs: 5_000,
     schemaMigrationMaxAttempts: 3,

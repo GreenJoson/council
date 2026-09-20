@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 Git 仓库、Claude/Codex 假 CLI、Model Router 与委派管理器
- * @output 验证：委派闭环、Council 提交、人工验收、超限文件保留与分类审计、检查点恢复和 checkout 隔离
+ * @output 验证：委派闭环、Council 提交、人工验收、超限文件保留与分类审计、提交/草稿恢复和 checkout 隔离
  * @pos    Agent 互相指挥并实际改代码的端到端安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -122,6 +122,7 @@ function createConfig(directory: string, databasePath: string, claudeScript: str
     gitDiffMaxFiles: 20,
     gitDiffMaxLines: 200,
     gitDiffMaxHunksPerFile: 20,
+    delegationGitMaxOutputChars: 1_000_000,
     gitDiffMaxOutputChars: 100_000,
     sqliteBusyTimeoutMs: 5_000,
     schemaMigrationMaxAttempts: 3,
@@ -199,7 +200,7 @@ async function createDelegationHarness(
     gitCommand: config.gitCommand,
     gitTimeoutMs: config.gitDiffTimeoutMs,
     gitKillGraceMs: config.gitDiffKillGraceMs,
-    gitMaxOutputChars: config.gitDiffMaxOutputChars,
+    gitMaxOutputChars: config.delegationGitMaxOutputChars,
     maxContextChars: config.maxContextChars,
   }, router, new ClaudeRuntime(config), new CodexRuntime(config));
   return { manager, router, claude, codex };
@@ -293,7 +294,7 @@ test("Claude 与 Codex 可双向指挥，在隔离 worktree 改代码并完成�
     gitCommand: config.gitCommand,
     gitTimeoutMs: config.gitDiffTimeoutMs,
     gitKillGraceMs: config.gitDiffKillGraceMs,
-    gitMaxOutputChars: config.gitDiffMaxOutputChars,
+    gitMaxOutputChars: config.delegationGitMaxOutputChars,
     maxContextChars: config.maxContextChars,
   }, router, new ClaudeRuntime(config), new CodexRuntime(config));
 
@@ -658,6 +659,65 @@ const events =`));
     assert.equal(events.find(event => event.kind === "delegation.failed")?.data.failureCode, "stream_output_limit");
     assert.doesNotMatch(JSON.stringify(events), /private tool detail/);
   } finally { audit.close(); await h.close(); }
+});
+
+test("未提交草稿显式接续到新工作区，保留历史并重新执行审核与人工验收", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace("const content =", 'process.stderr.write("executor stopped"); process.exit(1);\nconst content ='));
+    const failed = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.headCommit, undefined);
+    const oldRoot = path.join(h.directory, "delegated-worktrees", failed.id);
+    writeFileSync(path.join(oldRoot, "unfinished.ts"), "export const retained = true;\n");
+    writeFileSync(path.join(oldRoot, "README.md"), "draft README\n");
+    writeFileSync(path.join(oldRoot, "large-draft.txt"), "unfinished line\n".repeat(3000));
+    git(oldRoot, ["add", "README.md"]);
+    const oldIndex = readFileSync(path.resolve(oldRoot, git(oldRoot, ["rev-parse", "--git-path", "index"])));
+    const oldStatus = git(oldRoot, ["status", "--porcelain=v1"]);
+    const item = h.database.listWorkItems({ topicId: h.topic.id })[0]!;
+    // 恢复后即使首次只读说明失败，草稿仍进入新工作区，可以再次显式接续。
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace("const content =", 'process.stdout.write(JSON.stringify({type:"result",result:"unauthorized",is_error:true})); process.exit(1);\nconst content ='));
+    const firstResume = await h.manager.resume(failed.id, item.version);
+    const interrupted = await waitForTerminal(h.manager, h.topic.id, firstResume.id);
+    assert.equal(interrupted.status, "failed");
+    assert.equal(interrupted.headCommit, undefined);
+    assert.equal(readFileSync(path.join(h.directory, "delegated-worktrees", interrupted.id, "unfinished.ts"), "utf8"), "export const retained = true;\n");
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT);
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace("const content =", `
+if (readFileSync("unfinished.ts", "utf8") !== "export const retained = true;\\n") process.exit(7);
+if (readFileSync("README.md", "utf8") !== "draft README\\n") process.exit(8);
+const content =`));
+    const current = h.database.listWorkItems({ topicId: h.topic.id })[0]!;
+    const results = await Promise.allSettled([
+      h.manager.resume(interrupted.id, current.version), h.manager.resume(interrupted.id, current.version),
+    ]);
+    assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+    const resumed = results.find(result => result.status === "fulfilled");
+    assert(resumed?.status === "fulfilled");
+    const approved = await waitForTerminal(h.manager, h.topic.id, resumed.value.id);
+    assert.equal(approved.status, "approved", approved.error ?? "");
+    assert(approved.headCommit);
+    assert.equal(approved.resumedFromId, interrupted.id);
+    assert.equal(approved.completionPolicy, "human");
+    assert.equal(approved.acceptanceCriteria, failed.acceptanceCriteria);
+    assert.equal(approved.executorAgentId, failed.executorAgentId);
+    assert.equal(approved.supervisorAgentId, failed.supervisorAgentId);
+    assert.equal(h.database.listWorkItems({ topicId: h.topic.id })[0]!.status, "in_progress");
+    assert.equal(git(h.repositoryPath, ["rev-parse", "HEAD"]), failed.baseCommit);
+    assert.equal(git(h.repositoryPath, ["status", "--porcelain=v1"]), "");
+    assert.equal(git(oldRoot, ["status", "--porcelain=v1"]), oldStatus);
+    assert.deepEqual(readFileSync(path.resolve(oldRoot, git(oldRoot, ["rev-parse", "--git-path", "index"]))), oldIndex);
+    assert.equal(h.manager.list(h.topic.id).find(entry => entry.id === failed.id)?.status, "failed");
+    const audit = new RuntimeAuditStore(h.databasePath, 5000);
+    try {
+      const events = audit.list(h.topic.id, "delegation", approved.id).events;
+      assert.equal(events.find(event => event.kind === "delegation.resumed")?.data.recoveryMode, "workspace");
+      assert.equal(events.find(event => event.kind === "delegation.resumed")?.data.restoredFiles, 4);
+      assert(events.some(event => event.kind === "execution.started"));
+      assert(events.some(event => event.kind === "review.completed"));
+    } finally { audit.close(); }
+  } finally { await h.close(); }
 });
 
 test("重启仅将未结束委派标为中断并追加一次证据，不自动重放", async () => {

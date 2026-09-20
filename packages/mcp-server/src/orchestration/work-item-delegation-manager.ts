@@ -1,12 +1,13 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：带完成条件的单项/串行批量委派、安全初始基线、审计、只读重试、检查点恢复和优雅关闭
+ * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿恢复、只读重试与优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-recovery.js";
+import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { setTimeout as retryDelay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
@@ -53,8 +54,6 @@ const GIT_MESSAGES: BoundedProcessMessages = {
 };
 
 const ACTIVE_STATUSES = new Set(["queued", "executing", "reviewing", "changes_requested"]);
-const FORBIDDEN_STAGED_PATH = /(?:^|\/)(?:\.env(?:\..*)?|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\.(?:pem|p12|pfx|key))$/iu;
-const SECRET_DIFF_PATTERN = /(?:BEGIN [A-Z ]*PRIVATE KEY|(?:api[_-]?key|secret|password|token)\s*[:=]\s*["'][^"']{8,})/iu;
 
 interface RuntimeResult {
   content: string;
@@ -96,6 +95,7 @@ interface PreparedWorkspace {
   cwd: string;
   baseCommit: string;
   branchName: string;
+  restoredWork?: boolean;
 }
 
 interface DelegationAssignment {
@@ -208,7 +208,7 @@ export class WorkItemDelegationManager {
       gitCommand: councilConfig.gitCommand,
       gitTimeoutMs: councilConfig.gitDiffTimeoutMs,
       gitKillGraceMs: councilConfig.gitDiffKillGraceMs,
-      gitMaxOutputChars: councilConfig.gitDiffMaxOutputChars,
+      gitMaxOutputChars: councilConfig.delegationGitMaxOutputChars,
       maxContextChars: councilConfig.maxContextChars,
     }, modelRouter, claudeRuntime, codexRuntime);
   }
@@ -383,6 +383,11 @@ export class WorkItemDelegationManager {
       worktreeRoot: this.config.worktreeRoot,
       git: async (cwd, args) => (await this.#git(cwd, args, signal)).stdout,
     });
+    const snapshot = checkpoint.mode === "workspace" ? await snapshotUncommittedWork({
+      root: checkpoint.oldRoot, headCommit: checkpoint.headCommit,
+      maxFileChars: this.config.gitMaxOutputChars,
+      git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+    }) : undefined;
     if (this.#taskContext(previous.topicId, previous.workItemId).item.version !== expectedVersion) {
       throw new CouncilConflictError("实施项在恢复检查期间已变化，请刷新后重试。");
     }
@@ -405,10 +410,17 @@ export class WorkItemDelegationManager {
       const branchName = `codex/council-${created.id.slice(-12)}`;
       const root = path.join(this.config.worktreeRoot, created.id);
       await this.#git(checkpoint.originalRoot, ["worktree", "add", "-b", branchName, root, checkpoint.headCommit], controller.signal);
-      this.#recordAudit(created.id, "delegation.resumed", { previousId: id, headCommit: checkpoint.headCommit, criteria: created.acceptanceCriteria });
+      this.#store.update(created.id, { baseCommit: checkpoint.baseCommit, branchName, worktreePath: root, now: new Date().toISOString() });
+      if (snapshot) {
+        // 只写新隔离工作区；HEAD 仍是原基线，草稿经过执行和审核后才生成交付提交。
+        await this.#git(root, ["read-tree", "--reset", "-u", snapshot.tree], controller.signal);
+      }
+      this.#recordAudit(created.id, "delegation.resumed", { previousId: id, headCommit: checkpoint.headCommit,
+        recoveryMode: checkpoint.mode, restoredFiles: snapshot?.fileCount ?? 0, criteria: created.acceptanceCriteria });
       await this.#executeInWorkspace(created.id, {
         root, cwd: path.join(root, checkpoint.relativeProjectPath), baseCommit: checkpoint.baseCommit, branchName,
-      }, controller.signal, { headCommit: checkpoint.headCommit, summary: previous.summary ?? "请直接检查保留的提交。" });
+        ...(snapshot ? { restoredWork: true } : {}),
+      }, controller.signal, snapshot ? undefined : { headCommit: checkpoint.headCommit, summary: previous.summary ?? "请直接检查保留的提交。" });
     })().catch((error: unknown) => this.#recordFailure(created.id, error, true)).finally(() => {
       this.#controllers.delete(created.id); this.#tasks.delete(created.id);
       this.#workItemVersions.delete(created.id);
@@ -880,6 +892,7 @@ export class WorkItemDelegationManager {
           "你是本次代码任务的 supervisor。只讨论当前议题，不读取或总结历史议题。",
           "请给执行 Agent 一份精确、可验证的实施指令：明确范围、必须保留的不变量、测试与验收标准。",
           "不要修改文件，不要运行写操作。",
+          ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
           "",
           `验收标准：${delegation.acceptanceCriteria}`,
           task.context,
@@ -913,6 +926,7 @@ export class WorkItemDelegationManager {
             "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
             "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
             "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
+            ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。"] : []),
             "",
             "Supervisor 指令：",
             briefResponse.content,

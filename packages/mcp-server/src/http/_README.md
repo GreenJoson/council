@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `app.ts` | 核心 | 组装内容/编排/圆桌/RuntimeBinding/Model Router、委派验收/恢复、审计与项目待处理 REST 路由、ready 状态、安全中间件与脱敏异常处理 |
+| `app.ts` | 核心 | 组装内容/编排/圆桌/RuntimeBinding/Model Router、委派验收/提交恢复/草稿接续、审计与项目待处理 REST 路由、ready 状态、安全中间件与脱敏异常处理 |
 | `config.ts` | 配置 | 用 Zod 校验迁移重试、HTTP、双 lease、sweeper、空闲绑定和 Agent 清理预算 |
 | `schemas.ts` | 边界 | 严格校验 path、query、圆桌名册/审查范围与作答、RuntimeBinding 动作、兼容完成复核、委派完成策略/验收标准、审计游标、恢复版本与 Agent 设置，拒绝冲突模式和伪造 Actor 身份 |
 | `responses.ts` | 契约 | 输出统一 JSON envelope 与安全错误 |

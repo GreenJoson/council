@@ -51,7 +51,7 @@
 | `model-router-store.ts` | 数据 | 事务管理 Provider、Agent、单调 configRevision、Actor/alias 与 BrandAsset；支持已删除 Provider 原行复活，并阻止系统身份修改与活动 Run 下的危险变更 |
 | `model-router-service.ts` | 应用 | 校验 Provider/Agent 命令、补偿 Keychain 写入/轮换、组合公开快照并执行连接测试；重建同模板 Provider 时复活旧行而非制造重复配置 |
 | `keychain-secret-store.ts` | 安全边界 | 将远程 Provider API Key 隔离到 macOS Keychain，并区分凭据不存在与命令故障 |
-| `config.ts` | 配置 | 集中校验通用运行参数；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，HTTP 不受该必填项影响 |
+| `config.ts` | 配置 | 集中校验通用运行参数、独立 CLI 事件流和委派 Git 检查预算；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，HTTP 不受该必填项影响 |
 | `constants.ts` | 常量 | 定义协议枚举和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型与 RuntimeBinding HTTP 配置 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |

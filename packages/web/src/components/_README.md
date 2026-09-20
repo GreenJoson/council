@@ -6,7 +6,7 @@
 |---|---|---|
 | `RuntimeAuditDetails.tsx` | 执行记录 | 按来源分页加载阶段/工具/提交证据，保留空态、错误和刷新反馈 |
 | `WorkAttentionView.tsx` | 待处理 | 聚合当前项目真实待处理状态，点击回到原议题 |
-| `DelegationRecoveryActions.tsx` | 恢复 | 展示失败分类指引，显式恢复已提交进度并反馈冲突 |
+| `DelegationRecoveryActions.tsx` | 恢复 | 展示失败分类指引，显式恢复已提交进度或接续未提交代码，保留原记录并反馈冲突 |
 | `HeaderBar.tsx` | 导航 | 提供品牌 logo、原生项目切换、日志库设置、模型设置、⌘K 搜索、中/EN 持久语言切换、主题切换和同步状态 |
 | `ModelRouterDialog.tsx` | 设置 | 以固定高度左侧路由管理 Provider 与其 Agent；未配置模板仅在添加目录中按需出现，Claude/Codex 系统 Provider/Agent 均锁定身份且不显示删除入口 |
 | `ModelRouterEditor.tsx` | 设置 | 右侧一次只编辑一个 Provider 连接或 Agent 身份；可设置顾问/执行/审核职责与显式委派的权限上限，普通 `@` 讨论始终只读 |
