@@ -26,9 +26,11 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 | Web 自动轮次 | 希望在 Operator Console 创建、观察、批准、取消或恢复多 Agent 轮次 | 本机 Agent 需要登录；远程 Provider 需要 API Key |
 | 桌面工作台 | 希望双击启动、原生切项目并用本机或远程 Agent 直召 | 内容协作不需要；直召需要相应 CLI 登录或 API Key |
 
-日常建议优先使用双桌面手动接力。你仍然使用熟悉的两个桌面界面，只是不再复制粘贴内容。
+桌面工作台可以独立使用；双桌面手动接力适合继续沿用熟悉的客户端界面，共享同一议题而不再复制粘贴。
 
 ## 首次使用
+
+首次接入先按 [MCP 接入](mcp-setup.md) 配置并构建服务；单独使用桌面应用无需配置 MCP。
 
 1. 重启 Codex App 和 Claude Desktop，或分别新建一个任务，让客户端重新加载 `$council` Skill 和 `council` MCP。
 2. 在两个客户端中打开同一个项目。

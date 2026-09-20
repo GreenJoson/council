@@ -1,148 +1,183 @@
+<p align="center"><img src="packages/desktop/src-tauri/icons/128x128.png" width="80" alt="Council icon" /></p>
+
 # Council
 
-Council 是一个本地、可追踪的多 Agent 架构讨论项目。它让 Codex App、Claude Desktop Code 和可选的 Claude Code CLI 围绕同一议题交换公开方案、批评、反驳和决策，避免人工复制粘贴。
+**A local workspace where coding agents challenge proposals, record decisions, and deliver work with evidence.**
 
-> ⚠️ 任何功能、架构或写法更新后，必须同步更新相关目录的 `_README.md` 和本文件。
+English · [简体中文](README.zh.md)
 
-## 架构
+Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-```text
-Codex App ───────┐
-                 ├── Council MCP ─────────────── SQLite
-Claude Desktop ──┘                │
-                                  └── Claude/Codex CLI + 兼容模型 API
+The current desktop release is **0.9.2**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
-浏览器 ───────────── Operator Console ── REST/SSE ─┘
+## Why Council?
 
-Council.app ───────── React UI ── Tauri IPC ── Rust council-core ── SQLite
-        └──────────── 内置 Agent Service sidecar ── Node schema migrator ── SQLite
-                                              └──── ExecutionManager
-                                                     ├── Claude/Codex CLI
-                                                     └── ACP DelegatedRuntime
-                                                          └── 受控 RuntimeDefinition 注册表
-                                                               ├── Kimi / Gemini / Grok
-                                                               └── Codex / Claude ACP 适配器
+Using several capable agents often leaves the coordination work to you:
 
-Operator Console ──运行 REST──> ExecutionManager ──> ClaudeRuntime / CodexRuntime
-                                      │
-                                      └── SQLiteCouncilStore / lease fencing
+| The friction | What Council provides |
+|---|---|
+| Copying one agent's answer into another chat loses context and takes time. | A shared topic with explicit proposals, critiques, rebuttals, and synthesis, accessible through the desktop UI or MCP. |
+| Agents agree, but nobody records what was actually accepted. | Proposed decisions remain proposals until a human accepts them; accepted decisions become a traceable decision package. |
+| “Done” can mean anything from an idea to a tested change. | Work items have frozen acceptance criteria, execution evidence, and an explicit completion policy. New delegations default to human acceptance. |
+| A failed run leaves you unsure what changed or whether retrying is safe. | Isolated Git worktrees, recorded commits, classified failures, and recovery from a verified commit without blindly replaying writes. |
+| Pending decisions and blocked tasks disappear across conversations. | **Needs my attention** collects actionable items for the current project and takes you back to the original topic. |
 
-全局 Skill ──软链──> skills/council
+Council keeps discussion records on your machine. Model calls still send the selected topic context and permitted code evidence to the provider or CLI you choose. It does not import the private history of your other chat applications.
+
+## The workflow
+
+```mermaid
+flowchart LR
+  T[Topic and constraints] --> R[Proposal and independent review]
+  R --> D[Human accepts decisions]
+  D --> W[Work items and acceptance criteria]
+  W --> E[Explicit delegation in a Git worktree]
+  E --> V[Agent review and execution evidence]
+  V --> H[Human acceptance by default]
+  E --> F[Failure with a recorded checkpoint]
+  F --> V
 ```
 
-- `skills/council/`：Agent 触发规则、协作流程和讨论协议。
-- `packages/mcp-server/`：MCP、版本化本地 API、SSE、SQLite 和 Claude/Codex 后台适配器。
-- `packages/web/`：方案 A 的 React Operator Console，支持显式 `mock` 或真实 `http` 数据模式。
-- `packages/desktop/`：Tauri 2 桌面壳、本机日志库设置、原生项目切换和 Rust IPC。
-- `crates/council-core/`：与现有 TypeScript schema 同构的 Rust SQLite 内容核心。
-- `packages/orchestrator/`：与具体模型解耦的受控轮次状态机和适配器接口。
-- 运行数据：由 `COUNCIL_DATA_DIR` 指定，始终放在源码目录之外，不提交 Git。
-- SQLite schema 只允许 Node Agent Service 迁移；Rust 与各 Store 只验证并消费已迁移结构。
+1. **Frame the question.** Select a project and create a topic with the problem, constraints, and desired outcome.
+2. **Get independent review.** Mention an agent in the composer, start a roundtable, or have MCP clients publish their own findings. Roundtables can review a proposal, the workspace, or frozen commits, subject to each runtime's capabilities.
+3. **Make the decision.** Accept the chosen decisions yourself. Agreement between models does not grant acceptance. You can also record a human decision without calling a model.
+4. **Define the work.** Add work items manually or explicitly ask an agent to generate a plan for an accepted decision. Accepting a decision does not automatically start implementation.
+5. **Delegate deliberately.** Choose an executor, a reviewer, permissions, acceptance criteria, and a completion policy. Single-item and sequential batch delegation are supported.
+6. **Check the result.** Read the review and recorded evidence. With the default policy, enter your own acceptance evidence before completing the task. Failed or cancelled work with a valid commit can resume in a new worktree, starting with review.
 
-## 当前能力
+A delegated commit remains in its worktree and branch. Review and integrate it into your project through your normal Git workflow; Council does not automatically merge or deploy it.
 
-- 创建、查询和分页列出架构议题。
-- 发布带类型的方案、批评、反驳、综合与备注。
-- 记录可追踪的架构决策及其状态。
-- 把 Accepted 决策拆成待处理、进行中、受阻、已完成四态实施项；右侧自动汇总完成度，Codex/Claude 可通过 MCP 回写实际进展和证据备注。
-- 用户可直接记录 Human / Accepted 人工决策并结束议题；该路径不创建 Run、不调用 Agent，适合外部修复、验证或部署已经完成的场景。
-- 以动态 Actor Identity、大小写不敏感 alias 和冻结快照记录公开身份；Claude、Codex、
-  DeepSeek、Kimi 各自独立，历史 `other` 只进入待审计兼容身份。
-- 让多个 MCP 客户端共享同一份本地 SQLite 数据。
-- 可选通过兼容 MCP 工具调用 Claude Code CLI，并保留该直调工具的顾问 session。
-- 明确隔离私有聊天历史，只共享主动发布的公开结论与证据。
-- 提供安全的 loopback REST API 和跨进程 SQLite revision 事件流。
-- Operator Console 可读取真实议题；Agent 写回同一 topic 后页面自动刷新，无需复制粘贴。
-- Operator Console 与桌面应用通过 Composer `@Agent` 发起单次调用、通过圆桌发起多 Agent 自动互审；右栏只在存在调用或持久会话时展示紧凑运行状态、取消、恢复与历史。
-- Agent 进入准备或调用阶段时，讨论时间线末尾会显示具体 Agent 的动态回复状态与实时草稿；Claude 和兼容远程模型转发公开文本增量，Codex 转发公开 JSONL 消息并平滑展示较大输出块。草稿按议题隔离、不落 SQLite，运行结束、失败或取消后由正式消息接替。
-- 中央 Claude/Codex 消息列随大屏流体扩展，为代码、表格和架构图释放空间；普通正文继续保持可读行长。
-- 顶部议题说明超过高度阈值时默认收起，并在说明底部提供“展开议题 / 收起议题”；短议题不显示多余控件。
-- 消息图片和 Mermaid 图以固定缩略尺寸展示，点击后进入支持缩放与滚动的全视口大图浏览；长卡片在正文底部展开或收起。
-- 讨论区左侧按消息卡数量显示一一对应的阶梯节点，可直接跳转到任意卡片并跟随滚动高亮当前位置。
-- 顶栏 Model Router 将 Provider 连接与 Agent 身份分层：同一 Provider 可创建多个独立
-  Agent/Actor/`@alias`；OpenAI、Claude、Kimi、DeepSeek、Grok 等名称与离线品牌保持原样，
-  未知 Provider 使用通用 glyph，不退化为 `Other`。
-- 远程 API Key 只保存在 macOS Keychain；SQLite 和设置响应只保存/返回非敏感配置及是否已配置凭据。
-- Model Router 写入只由桌面内置 HTTP sidecar 持有；同一日志库只允许一个配置写进程。
-  stdio MCP 只读共享议题与发布公开结论，不能修改 Provider、Agent 或 Keychain。
-- 提供 SQLite 持久化运行、人工批准、进程重启恢复、lease/epoch fencing 和同议题单活动运行约束。
-- 圆桌开局会冻结方案讨论、当前工作区或已提交 commit 三种审查范围，以及参与 Agent/Provider/Runtime 修订、实际授权能力与任务需求；能力缺口在模型调用前直接拒绝，避免纯文本 Provider 假装已经读过代码。
-- 议题发起人入选时由服务端按 Actor 身份自动置为提案人，议题正文直接冻结为首轮提案，不受勾选顺序影响，也不重复召唤发起人；Commit 互审会从议题正文及发起人的最新说明提取一个或多个本地仓库/commit，首个真实调用直接交给其他评审。发起人未入选时才由首位 Agent 形成提案。
-- 工作区与 commit 互审都保持只读，不在 headless Agent 中修改、测试、提交、推送或部署。Claude/Codex resume Runtime 可读取当前代码并在只读 Shell 中检查工作区 diff；获授权 ACP 与兼容 API ToolLoop 可读取当前项目、议题明确关联的一层同级仓库及其受控已提交 diff，但没有 Shell，未关联仓库或未提交 diff 不可验证时必须明确阻断。
-- 编排核心提供统一 `RuntimeEvent` 与 `RuntimeSessionRef`：后者只是 `RuntimeBinding` 的只读投影，session/cursor/epoch 仍以 SQLite 绑定为唯一真源。Delegated Runtime 自己拥有工具调用；Council ToolLoop 的事件只携带工具名，所需能力必须由本地可信 ToolHost 注册表解析，未注册工具立即拒绝。
-- 圆桌轮次预算耗尽时保存结构化阻断分歧；缺少 `council-verdict` 的新发言进入独立度量并在界面提示，不再只靠日志发现协议退化。
-- 本机 Agent 按“议题 + Agent”复用逻辑 session：同一绑定串行复用，不同议题严格隔离，活动外部 session 不能被第二个议题认领；首轮发送完整公开上下文，后续只发送上次实际消费水位后的公开增量。每个 human 请求成功提交时会在同一事务写入“议题 + Agent + 请求消息”逻辑账本，即使物理绑定关闭、删除、空闲回收或配置变更也拒绝重复调用；session 丢失时清空游标并重新发送完整公开上下文。Claude/Codex 当前按轮启动 CLI 并恢复 session；ACP DelegatedRuntime 让同一 RuntimeBinding 复用一个常驻进程与 ACP session。所有迟到回复都受 lease/fencing 阻止；兼容远程 Provider 的 ToolLoop 单轮无状态，但每一步工具调用都留在同一次模型对话内。
-- Council 已正式拆分 Agent、Provider、Runtime 三层：Provider 持久化 `runtimeDefinitionId`，受控注册表声明 ACP 命令、模型选择协议、启动参数与 Runtime 能力，Council 独立 policy 再计算实际授权。`AcpDelegatedRuntime` 不含供应商分支，统一驱动 Kimi、Gemini、Grok、Codex 和 Claude ACP Agent；供应商自己的 AgentLoop 负责工具循环，Council 只负责 RuntimeBinding、权限、取消、事件投影与原子公开提交。未注册或未授权能力不会进入 ACP 握手。accepted 决策、配置变更、手动关闭或空闲回收会终止对应进程。
-- DeepSeek、Kimi API、OpenAI、Grok 与自定义兼容 Provider 使用 Council-owned 只读四层路径：`ModelClient → ToolHost → AgentLoop → RuntimeEvent`。ModelClient 只通信和解析 Tool Call；ToolHost 暴露项目内读文件、列目录、文本搜索和受控已提交 Git diff；AgentLoop 让同轮工具共享结果预算，按需把模型已经读过的旧结果压成带调用参数、原文长度、哈希和首尾摘录的证据凭据。上下文吃紧时会收回工具并要求基于现有证据收尾，同时追加最后一个 `blocking` 覆盖保护，避免不完整审核误收敛，不再把整轮直接报成上下文超限；具备官方 Agent Runtime 的 Provider 则走 DelegatedRuntime，不重复套 ToolLoop。
-- 只有 open 议题可以创建调用或重开持久会话；决策 accepted 后所有绑定被 fencing 并关闭，Web 同步隐藏启动入口、禁用重开。
-- Composer 的 `@Agent` 回复完成后自动归档；运行状态面板只负责观察、取消、恢复、历史和持久会话关闭，不再提供重复的手工启动表单。
-- Agent 失败只向运行卡片暴露显式脱敏的原因；未登录、模型不可用、工具回合耗尽，以及兼容 Provider 的认证、权限、额度、HTTP 429 限流、服务故障和请求拒绝均可直接辨认，原始上游输出不会进入议题记录。
-- 桌面安装包内置 Agent Service，打开 App 自动启动、退出自动回收；无需手动运行 Node/npm 或常驻 API 服务。
-- Node 迁移器在服务就绪前执行连续版本镜像校验、WAL checkpoint、官方在线备份、只读备份验证、canonical schema 校验和排他事务迁移；桌面 Rust 层只有收到 `ready` 且数据库实例 UUID 与 Store 一致后才打开数据库。
-- 桌面端可用原生目录选择器设置日志库和切换项目，设置只保存在操作系统应用配置目录。
-- 桌面端使用独立的多 Agent 圆桌图标，并生成各平台所需的打包尺寸。
+## Quick start
 
-## 开发
+### Try the interface without model credentials
+
+Requires **Node.js 24 or newer** and npm.
 
 ```bash
+git clone https://github.com/GreenJoson/council.git
+cd council
 npm run install:all
-npm run check
-npm test
-npm run test:e2e
-npm run audit
+npm run dev:web
+```
+
+Open the local address printed by Vite. The default `mock` mode uses sample data; it does not connect to your real project, call models, or persist real work.
+
+### Build the macOS app
+
+Also install a current stable Rust toolchain and Xcode Command Line Tools. The Rust packages declare a minimum of Rust 1.85; use a current toolchain compatible with the locked dependencies.
+
+```bash
+npm run dev:desktop
+# Or create the application and disk image:
 npm run build:desktop
 ```
 
-`test:e2e` 需要本机已安装 Python Playwright 及 Chromium；它使用临时 SQLite 和测试专用 Claude CLI 协议替身，不读写日常 Council 数据，也不产生真实模型费用。
+Build outputs are under `packages/desktop/src-tauri/target/release/bundle/`. The build downloads a pinned official Node runtime and verifies its SHA-256 before producing the embedded Agent Service. The installed app does not require Node or npm; model CLIs remain separate dependencies.
 
-真实数据模式需要先分别复制并填写两个包的环境文件：
+On first launch:
+
+1. Select a **data library outside the source checkout**. Council creates or opens `council.sqlite3` there.
+2. Select the project you want to discuss or implement.
+3. Open **Model & Provider settings**. Configure a local CLI or a compatible API provider, then create or enable its agents.
+4. For local agents, install and sign in to the corresponding CLI yourself. For remote providers, enter your own API URL, model, and key in settings.
+5. Create a topic and use `@Agent` or the roundtable controls to begin.
+
+The app starts and stops its embedded local service. Current local builds use ad-hoc signing; the default build does not provide Apple notarization.
+
+### Run the web UI against real local data
 
 ```bash
 cp packages/mcp-server/.env.example packages/mcp-server/.env
 cp packages/web/.env.example packages/web/.env.local
+```
+
+Edit these files before running `npm run dev`:
+
+| Setting | Meaning |
+|---|---|
+| `COUNCIL_DATA_DIR` | Absolute path to your data library, outside the repository. |
+| `VITE_COUNCIL_DATA_MODE` | Set to `http` for real data. |
+| `VITE_COUNCIL_API_URL` | The API's loopback origin; the example backend uses `http://127.0.0.1:4317`. |
+| `VITE_COUNCIL_PROJECT_PATH` | Absolute path to the project the agents may inspect. |
+| `COUNCIL_HTTP_CORS_ORIGINS_JSON` | The exact web origin printed by Vite, for example `http://localhost:5173`. |
+
+```bash
 npm run dev
 ```
 
-API 的 `COUNCIL_DATA_DIR` 必须与 Codex、Claude MCP 使用同一目录；Web 数据模式改为 `http`，`VITE_COUNCIL_PROJECT_PATH` 填当前项目绝对路径，API origin 与 CORS 白名单必须精确匹配。`npm run dev` 会先构建编排包，再同时启动 API 与 WebUI。单独运行可使用 `npm run dev:api` 或 `npm run dev:web`。
+The desktop service and a standalone development API must not both own Model Router writes for the same data library. Stop the desktop service first or use a separate development library and port.
 
-Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP 配置应调用 MCP 构建产物，并通过环境变量注入数据目录和运行参数。
+### Connect existing agent clients through MCP
 
-桌面开发使用 `npm run dev:desktop`；正式构建使用 `npm run build:desktop`。两条命令都会先生成内置 Agent Service sidecar；构建配置固定在 `packages/desktop/sidecar-build.json`，下载的官方 Node 运行时必须通过锁定的 SHA-256 校验。安装后的 Council.app 打开即自动启动 sidecar，不需要 Node/npm。首次启动时只需选择日志库和项目目录；MCP 客户端仍应把 `COUNCIL_DATA_DIR` 指向同一日志库。
+Build the MCP server, point each client at the same data library, and bind a distinct caller identity (`codex` or `claude`). See [MCP setup / MCP 接入](docs/mcp-setup.md) for configuration examples. The optional [Council skill](skills/council/SKILL.md) supplies the discussion protocol; it is not required for the desktop UI.
 
-当前 HTTP 控制面仅监听 loopback，按本机单用户桌面应用建模，尚未使用实例令牌；因此不能转发端口、暴露给其他用户会话或改为非 loopback 监听。后续若支持多用户或外部客户端，必须先加入每实例随机令牌、请求认证与权限分域。
+Example prompts:
 
-## 使用方式
+> Create a Council topic for the current project's retry strategy. Inspect the code, publish a proposal, and include failure conditions and a verification plan.
 
-最短用法是在 Claude Desktop Code 中发布方案：
+> Read topic `<topic-id>`. Independently challenge the proposal using code evidence, then publish a critique. Keep any decision proposed until I accept it.
 
-> 使用 council，把当前架构方案发布到 Council，并告诉我 topic ID。
+An `@codex` invocation starts a local Codex CLI call. It does not control an already-open private Codex App task; the same distinction applies to Claude.
 
-再到 Codex App 中审查：
+## Architecture
 
-> 使用 `$council` 读取 topic `<topic-id>`，检查项目代码，审查方案并把 critique 发布回去。
+```mermaid
+flowchart TB
+  Clients[Agent clients] -->|MCP stdio| Node[Node service: MCP, HTTP, orchestration]
+  Browser[React web UI] -->|REST and SSE| Node
+  Desktop[Tauri desktop with React UI] -->|IPC| Rust[Rust council-core]
+  Desktop -->|Local orchestration API| Node
+  Rust --> DB[(Local SQLite)]
+  Node --> DB
+  Node --> Runtime[Runtime adapters and permission policy]
+  Runtime --> CLI[Claude and Codex CLI]
+  Runtime --> ACP[Registered ACP agents]
+  Runtime --> API[Compatible model APIs and read-only tools]
+  Node --> Worktree[Git worktrees and commit checkpoints]
+```
 
-自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI、Codex CLI 或 Kimi Code CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。Model Router 中的“`Kimi Code`”使用本机 ACP，可只读项目、读取受控已提交 diff 并持续复用议题会话；“`Kimi`”则使用兼容 API 和 Council 只读 ToolLoop。DeepSeek、Kimi API 等远程 Provider 只接收 Council 已公开上下文，并可通过 Council 明确授权的只读工具检查当前项目和已提交 diff；它们不能读取未提交工作区、运行 Shell、写文件、提交、推送或部署。
+| Module | Responsibility |
+|---|---|
+| [`packages/web`](packages/web) | React UI, repository adapters, runtime status, decisions, tasks, and attention views. |
+| [`packages/desktop`](packages/desktop) | Tauri shell, native directory selection, local settings, and sidecar lifecycle. |
+| [`crates/council-core`](crates/council-core) | Rust content reads/writes and validation of the shared SQLite schema. |
+| [`packages/mcp-server`](packages/mcp-server) | MCP/HTTP boundaries, the sole schema migrator, provider routing, credentials, runtime adapters, and delegation. |
+| [`packages/orchestrator`](packages/orchestrator) | Model-independent run and roundtable state machines, persistence, leases, and cancellation. |
+| [`skills/council`](skills/council) | The shared discussion protocol for agent clients. |
 
-完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
-显式委派的完成策略、执行记录、需要我处理与检查点恢复见 [执行交付](docs/execution-delivery.md)。
-SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全](docs/schema-migration-safety.md)。
-动态身份、旧作者映射和 v2 回滚边界见 [Actor Identity v2 迁移](docs/actor-identity-migration.md)。
+**Data and concurrency.** SQLite is the source of truth. Node owns schema migration; Rust waits for service readiness and verifies the same database identity before opening it. Content and orchestration revisions refresh views across processes. Leases and epochs reject stale agent replies; work-item versions reject overwrites of newer human edits.
 
-## WebUI 设计探索
+**Agent, Provider, Runtime.** An Agent is a named participant with its own identity and model configuration. A Provider describes the connection and credential reference. A Runtime implements execution and advertises capabilities. A catalog entry does not imply that its CLI is installed or its capabilities are authorized.
 
-第一轮包含三种信息架构。当前已选择方案 A，并完成深色 Operator Console、真实 REST/SSE 数据层及 Tauri 桌面适配；设计稿、实现截图与取舍见 [WebUI 设计方向](docs/designs/ui-directions.md)。
+**Discussion and implementation.** Discussion tools are constrained by a read-only policy. Explicit implementation delegation currently uses supported native Claude/Codex CLI executors with the selected permission profile. ACP and compatible API tool loops remain within their declared read-only capabilities. A Git worktree separates changes; it is not an operating-system security boundary.
 
-当前边界：消息传播与后台 Agent 触发仍是两个独立能力。只有在 Composer 中明确写 `@claude` 或 `@codex`，或在 Agent 调用面板创建运行，系统才会调用对应 CLI；普通消息只写入共享议题。逻辑绑定会在接受决策、手动关闭、模型配置变化或空闲超时后关闭；Agent 回复不会自动标记为 `accepted`。
+**Recovery and evidence.** Runtime events are stored after redaction. A recovery request verifies the recorded commit, repository, managed directory, clean worktree, permissions, and task version before creating a new run. Missing tool detail is shown as unavailable; context usage is not presented as billing tokens or a calculated cost.
 
-决策接受后，右侧“实施进度”可以继续写入，不受讨论会话关闭影响。完成度只按已完成实施项数量自动计算，避免手填百分比与真实交付脱节；并发更新使用实施项版本号拒绝覆盖。
+## Security and current limits
 
-新委派默认由人工验收后完成，也可明确选择 Agent 审核即完成；验收标准随委派冻结。运行卡与任务卡可查看持久执行记录，侧栏“需要我处理”汇总当前项目的决策、验收、阻断及失败。失败委派可从已验证提交创建新工作区恢复，先复审已有成果；未提交改动和写入失败不会自动重放。
+- Supply your own provider credentials. macOS Keychain stores remote API keys; SQLite stores credential references and public settings. No usable API key is included.
+- Official API addresses in the provider catalog are editable defaults, not private upstream services. Environment-dependent paths, ports, and runtime settings belong in local configuration.
+- The HTTP control plane is **loopback-only and intended for one local user**. It has no per-instance authentication token. Do not expose it through a tunnel, reverse proxy, or public listener.
+- Only deliberately published topic content is shared between agent clients. Model calls and authorized code reads still leave the machine through the selected provider; local storage does not mean offline inference.
+- New delegations default to human acceptance. Write failures and uncommitted changes are not automatically replayed. Recovery does not reconstruct work that was never committed.
+- SQLite audit records are local evidence, not an independently tamper-proof audit service. Native CLI delegations currently provide stage/commit evidence rather than complete tool transcripts.
+- This is a macOS-first, single-user workspace. Multi-user hosting, Windows/Linux desktop releases, cost accounting, automatic ADR export, and automatic merging/deployment are not current release promises.
 
-## 后续演进
+See [Security / 安全说明](SECURITY.md), [execution and recovery](docs/execution-delivery.md) (Chinese), and [schema migration safety](docs/schema-migration-safety.md) (Chinese).
 
-优先顺序建议：
+## Development and verification
 
-1. 将最终决策导出为项目 ADR。
-2. 将现有阶段审计扩展到更多 Runtime 工具证据和跨项目筛选，不把协议绑定到单一模型。
-3. 增加运行诊断日志入口和自定义 Provider 增删界面。
-4. 将 ToolLoop 的本轮证据凭据与持久事件关联，支持跨运行证据检索。
+```bash
+npm run check       # TypeScript, Rust formatting, Clippy
+npm test            # Unit and integration tests, including Rust
+npm run test:e2e    # Real HTTP/SSE and browser flows with test agents
+npm run audit       # npm dependency advisories
+```
+
+E2E requires Python 3, the Python Playwright package, and its Chromium browser. It uses temporary databases and fake agents, so a passing E2E run is not proof of live provider compatibility or model quality. See the [0.9.2 review record](docs/release-0.9.2.md).
+
+For contributions, describe the user-visible problem, keep changes within the owning module, run the relevant checks, and update both language READMEs plus the affected directory's `_README.md`. Never include local databases, `.env` files, credentials, or private project captures in a contribution. Detailed Chinese usage is available in the [user guide](docs/usage.md).
+
+## License
+
+[MIT](LICENSE). Third-party dependencies and brand assets retain their own licenses and trademark rights; provider marks identify integrations and do not imply endorsement. Asset provenance is recorded in the [provider catalog](packages/mcp-server/resources/provider-catalog.json). The desktop build includes Node and bundled dependency notices.
