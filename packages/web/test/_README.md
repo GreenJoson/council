@@ -29,3 +29,5 @@
 | `webui-smoke.py` | 浏览器测试 | 验证人工决策零 Agent Run、圆桌三段审查范围、Composer `@Agent` 单一当前调用、Model Router 身份只读、实时草稿、议题隔离、大屏讨论列、移动端抽屉与控制台错误 |
 | `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、远程 Provider 双 Agent 在圆桌名册热加载、HTTP 安全失败原因展示、别名/停用/删除恢复边界、Provider 滚动、外部 API 回帖经 SSE 自动出现、Claude 子进程编排、人工门与 Web 回写 |
 | `error-message.test.ts` | 单元测试 | 验证启动失败路径的文案归一化：Tauri 字符串 reject 与对象 message 必须保留，只有空白值才回落到通用文案 |
+
+HTTP/SSE 浏览器验收覆盖运行审计展开、待处理导航及确认后的自动消退；HTTP 和 Mock 浏览器显式设置 zh-CN，嵌套审计折叠区使用精确父级定位。

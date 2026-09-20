@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与动态 Actor Rust Store
- * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/实施项、设置和编排服务命令
+ * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/议题关闭/决策包接受/实施项、设置和编排服务命令
  * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,10 +10,10 @@ mod settings;
 mod validation;
 
 use council_core::{
-    ClaimWorkItemInput, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput,
-    CreateWorkItemEntry, CreateWorkItemsInput, Decision, DecisionStatus, MessageKind,
-    PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
-    UpdateWorkItemInput, WorkItem, WorkItemStatus,
+    AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
+    CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, Decision,
+    DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic,
+    TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemStatus,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -83,6 +83,13 @@ struct RecordDecisionCommand {
     rationale: String,
     alternatives: Vec<String>,
     status: DecisionStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceptDecisionsCommand {
+    topic_id: String,
+    decision_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -341,6 +348,25 @@ fn create_topic(
 }
 
 #[tauri::command]
+fn close_topic(
+    topic_id: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Topic, String> {
+    validation::identifier(&topic_id, "topic_", "topicId")?;
+    let (topic, revisions) = with_store(&state, |store| {
+        let topic = store.close_topic(CloseTopicInput {
+            topic_id,
+            actor_alias: "human".into(),
+        })?;
+        let revisions = store.get_revisions()?;
+        Ok((topic, revisions))
+    })?;
+    emit_content_changed(&app, revisions);
+    Ok(topic)
+}
+
+#[tauri::command]
 fn post_message(
     topic_id: String,
     kind: MessageKind,
@@ -396,6 +422,35 @@ fn record_decision(
     })?;
     emit_content_changed(&app, revisions);
     Ok(recorded)
+}
+
+#[tauri::command]
+fn accept_decisions(
+    input: AcceptDecisionsCommand,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<Decision>, String> {
+    validation::identifier(&input.topic_id, "topic_", "topicId")?;
+    if input.decision_ids.is_empty() || input.decision_ids.len() > validation::MAX_DECISION_COUNT {
+        return Err(format!(
+            "decisionIds 数量必须在 1 到 {} 之间",
+            validation::MAX_DECISION_COUNT
+        ));
+    }
+    for decision_id in &input.decision_ids {
+        validation::identifier(decision_id, "decision_", "decisionId")?;
+    }
+    let (accepted, revisions) = with_store(&state, |store| {
+        let accepted = store.accept_decisions(AcceptDecisionsInput {
+            topic_id: input.topic_id,
+            decision_ids: input.decision_ids,
+            actor_alias: "human".into(),
+        })?;
+        let revisions = store.get_revisions()?;
+        Ok((accepted, revisions))
+    })?;
+    emit_content_changed(&app, revisions);
+    Ok(accepted)
 }
 
 #[tauri::command]
@@ -718,8 +773,10 @@ pub fn run() {
             list_topics,
             get_topic,
             create_topic,
+            close_topic,
             post_message,
             record_decision,
+            accept_decisions,
             add_work_items,
             update_work_item,
             claim_work_item,

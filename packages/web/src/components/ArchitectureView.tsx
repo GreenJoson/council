@@ -3,7 +3,7 @@
  *         hook 一次性加载全部议题）、跳转讨论/决策记录/创建议题三个回调，以及
  *         data/selectors.ts 的架构档案聚合纯函数（buildArchitectureTimeline/
  *         aggregateConstraints/collectArchitectureDiagrams）
- * @output 导出：ArchitectureView 项目架构档案——从讨论决策中聚合生成的架构沉淀页，
+ * @output 导出：ArchitectureView 项目架构档案——按每条决策而非每个议题聚合生成的架构沉淀页，
  *         由项目概览、架构演进时间线、架构不变量、架构图/业务解析图集四个区块组成；
  *         后三个区块可折叠，折叠状态跨会话保留
  * @pos    Operator Console 架构档案视图：只读聚合已加载数据，不改变全局选中状态；
@@ -89,8 +89,14 @@ export function ArchitectureView({
   const constraints = useMemo(() => aggregateConstraints(loadedTopics), [loadedTopics]);
   const diagrams = useMemo(() => collectArchitectureDiagrams(loadedTopics), [loadedTopics]);
 
-  const acceptedCount = loadedTopics.filter((topic) => topic.decision?.status === "accepted").length;
-  const proposedCount = loadedTopics.filter((topic) => topic.decision?.status === "proposed").length;
+  const acceptedCount = loadedTopics.reduce(
+    (count, topic) => count + topic.decisions.filter((decision) => decision.status === "accepted").length,
+    0,
+  );
+  const proposedCount = loadedTopics.reduce(
+    (count, topic) => count + topic.decisions.filter((decision) => decision.status === "proposed").length,
+    0,
+  );
 
   const loadingProgressLabel =
     details.size < topics.length

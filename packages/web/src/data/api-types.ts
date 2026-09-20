@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council REST API 返回的未知 JSON 值
- * @output 导出：含动态 Actor 快照与实施项的后端协议类型及严格运行时解析函数
+ * @output 导出：含动态 Actor 快照、完整 decisions[] 与实施项的后端协议类型及严格运行时解析函数
  * @pos    HTTP 边界的唯一数据校验入口，禁止未验证数据进入 UI
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -422,6 +422,13 @@ export function parseApiWorkItems(value: unknown): ApiWorkItem[] {
     throw new Error("work items 必须是数组");
   }
   return value.map((item) => parseApiWorkItem(item));
+}
+
+export function parseApiDecisions(value: unknown): ApiDecision[] {
+  if (!Array.isArray(value)) {
+    throw new Error("decisions 必须是数组");
+  }
+  return value.map((item) => parseApiDecision(item));
 }
 
 export function parseApiTopicDetail(value: unknown): ApiTopicDetail {

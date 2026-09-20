@@ -16,21 +16,37 @@ MCP 进程的公开身份由启动配置绑定。工具参数不得选择、覆�
 - **Continue a manual handoff**: read the latest messages, respond to the strongest unresolved objections, and post a `rebuttal`, `proposal`, or `note`.
 - **Run an automatic debate from Codex App**: create the topic, call `council_ask_claude` for an independent proposal, produce and post Codex's critique, call `council_ask_claude` for a rebuttal, synthesize the result, and call `council_record_decision` only when a real decision exists.
 - **Work inside Claude Desktop Code**: use shared topic tools directly. Do not call `council_ask_claude` merely to ask another Claude process unless the user explicitly requests a second independent Claude perspective.
-- **Track implementation after acceptance**: use `council_add_work_items` only after the user has accepted a decision, then use `council_update_work_item` as delivery evidence changes. Read the latest item version before every update; never mark `completed` from intent alone.
+- **Track implementation after acceptance**: accepting a decision only changes decision state. It must never automatically invoke Claude, Codex, or another planner and must never automatically create work items. Wait for the user to explicitly choose an Agent or request task breakdown; only then use `council_add_work_items`. Use `council_update_work_item` as delivery evidence changes, read the latest item version before every update, and never mark `completed` from intent alone.
 
 Read [references/discussion-protocol.md](references/discussion-protocol.md) before running an automatic debate or recording a decision.
+
+## Topic creation contract
+
+`council_create_topic` creates an issue frame, not the first analysis message. Keep `question` short enough to scan without scrolling through an investigation; normally target 1,500 Chinese characters or fewer. It may contain only:
+
+1. the observed behavior or decision goal;
+2. the exact questions the Council must answer;
+3. scope boundaries and acceptance criteria that help every participant discuss the same thing.
+
+Do **not** put completed analysis, hypotheses, code excerpts, diffs, logs, historical conversation, large tables, or an agent's private reasoning into `question`. Publish those afterward with `council_post_message`: use `brief` for investigation context and evidence, `proposal` for a recommended design, and `critique`/`rebuttal` for disagreement. If the source material is long, create the compact frame first, then split the evidence into one or more self-contained messages.
+
+Use `constraints` for short non-negotiable invariants only. Do not duplicate the entire question or analysis there.
+
+After creation, immediately inspect the returned topic. If the open topic's title, question, or constraints are wrong, call `council_get_topic`, copy its latest `updatedAt` into `expected_updated_at`, and correct it with `council_update_topic`. Do not create a duplicate topic just to fix wording. Never rewrite a decided or closed topic; preserve its history and create a follow-up topic when the decision itself has changed.
+
+Close an abandoned or accidental topic with `council_close_topic`. Closing is archival and keeps its messages, decisions, and tasks; it is not physical deletion. Stop active roundtables or Agent sessions in the desktop app before closing.
 
 ## Core workflow
 
 1. Establish the real project path, question, constraints, expected invariants, and evidence.
-2. Reuse an existing topic when the user names or clearly continues it; otherwise create one with `council_create_topic`.
-3. Keep messages typed as `brief`, `proposal`, `critique`, `rebuttal`, `synthesis`, or `note`.
+2. Reuse an existing topic when the user names or clearly continues it; otherwise create one compact issue frame with `council_create_topic`, following the topic creation contract above.
+3. Publish investigation and argument as typed `brief`, `proposal`, `critique`, `rebuttal`, `synthesis`, or `note` messages; never append them to the topic frame.
 4. Challenge weak assumptions. Do not manufacture consensus or accept another model's claim without current evidence.
 5. Keep each posted message self-contained and concise. Reference files and test results instead of dumping large logs.
 6. Format every posted message as clean GFM Markdown: start with a one-sentence conclusion, organize the body with `## ` sections (pick from 方案 / 理由 / 风险 / 失败条件 / 验证 as needed), use `- ` bullet lists, fenced ``` blocks for code, commands, and directory trees, tables for comparisons, and blank lines between paragraphs. Describe architecture, module-dependency, business-flow, and sequence diagrams with ```mermaid fences — the UI renders them as diagrams and archives diagrams from decisions and syntheses into the architecture view. Never post a single wall-of-text paragraph — the Council UI renders Markdown as-is.
 7. Record a decision only after alternatives, risks, and verification are explicit. Use `proposed` when the user has not accepted it.
 8. Tell the user the topic ID and current status so either desktop app can continue later.
-9. After an Accepted decision, split only concrete deliverables into implementation items. Use `pending`, `in_progress`, `blocked`, and `completed`; include a concise `status_note` with completion evidence or the blocking dependency. Overall percentage is derived by the UI and must not be guessed.
+9. After an Accepted decision, stop and leave the task list empty unless the user explicitly asks for breakdown or selects a planning Agent in the task view. Acceptance is not permission to auto-run the decision author (including Claude) as planner. Once explicitly requested, split only concrete deliverables into implementation items. Use `pending`, `in_progress`, `blocked`, and `completed`; include a concise `status_note` with completion evidence or the blocking dependency. Overall percentage is derived by the UI and must not be guessed.
 
 ## Background Claude rules
 

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
- * @output 导出：写入时冻结 Mock Actor 快照、支持人工 Accepted 与实施项流转的同构数据实现
- * @pos    UI 原型阶段模拟选题、共享发布、议题创建、决策接受（同时写入 decidedAt 供架构档案
+ * @output 导出：写入时冻结 Mock Actor 快照、议题关闭、决策包按 ID 接受、人工 Accepted 与实施项流转的同构数据实现
+ * @pos    UI 原型阶段模拟选题、共享发布、议题创建、批量决策接受（同时写入 decidedAt 供架构档案
  *         ADR 编号排序）与只读议题详情加载
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -98,6 +98,7 @@ export class MockCouncilRepository implements CouncilRepository {
       evidence: [],
       alternatives: [],
       workItems: [],
+      decisions: [],
     };
     this.#snapshot.topics.unshift(topic);
     this.#snapshot.activeTopicId = topicId;
@@ -105,6 +106,14 @@ export class MockCouncilRepository implements CouncilRepository {
       status: "connected",
       label: `Mock 已更新 ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
     };
+    return this.#publishSnapshot();
+  }
+
+  async closeTopic(topicId: string): Promise<WorkspaceSnapshot> {
+    await waitForMockOperation(this.#operationDelayMs);
+    const topic = this.#findTopic(topicId);
+    topic.status = "closed";
+    topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();
   }
 
@@ -126,16 +135,31 @@ export class MockCouncilRepository implements CouncilRepository {
     return this.#publishSnapshot();
   }
 
-  async acceptDecision(topicId: string): Promise<WorkspaceSnapshot> {
+  async acceptDecisions(topicId: string, decisionIds: string[]): Promise<WorkspaceSnapshot> {
     await waitForMockOperation(this.#operationDelayMs);
     const topic = this.#findTopic(topicId);
     this.#snapshot.activeTopicId = topicId;
-    if (!topic.decision) {
-      throw new Error("当前议题没有可接受的拟议决策");
+    if (decisionIds.length === 0) {
+      throw new Error("请选择至少一条待确认决策");
     }
-    topic.decision.status = "accepted";
-    topic.decision.decidedAt = new Date().toISOString();
-    topic.status = "decided";
+    const selected = new Set(decisionIds);
+    if (topic.decisions.filter((decision) => selected.has(decision.id)).length !== selected.size) {
+      throw new Error("部分决策不存在或不属于当前议题");
+    }
+    const now = new Date().toISOString();
+    for (const decision of topic.decisions) {
+      if (!selected.has(decision.id)) {
+        continue;
+      }
+      if (decision.status !== "proposed" && decision.status !== "accepted") {
+        throw new Error("已拒绝或已被取代的决策不能重新接受");
+      }
+      decision.status = "accepted";
+      decision.decidedAt = now;
+    }
+    topic.status = topic.decisions.some((decision) => decision.status === "proposed")
+      ? "discussing"
+      : "decided";
     topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();
   }
@@ -144,15 +168,23 @@ export class MockCouncilRepository implements CouncilRepository {
     await waitForMockOperation(this.#operationDelayMs);
     const topic = this.#findTopic(input.topicId);
     this.#snapshot.activeTopicId = input.topicId;
-    topic.decision = {
+    for (const decision of topic.decisions) {
+      if (decision.status === "proposed") {
+        decision.status = "superseded";
+        decision.decidedAt = new Date().toISOString();
+      }
+    }
+    topic.decisions.push({
+      id: crypto.randomUUID(),
       title: input.title,
       summary: input.summary,
       rationale: input.rationale,
       status: "accepted",
       proposedBy: "human",
       proposedBySnapshot: mockActorSnapshot("human"),
+      createdAt: new Date().toISOString(),
       decidedAt: new Date().toISOString(),
-    };
+    });
     topic.status = "decided";
     topic.updatedLabel = "刚刚";
     return this.#publishSnapshot();
@@ -167,7 +199,14 @@ export class MockCouncilRepository implements CouncilRepository {
     if (input.parentId && !parent) {
       throw new Error("父实施项不存在");
     }
-    if (!parent && topic.decision?.status !== "accepted") {
+    const acceptedDecision = input.decisionId
+      ? topic.decisions.find(
+        (decision) => decision.id === input.decisionId && decision.status === "accepted",
+      )
+      : [...topic.decisions]
+        .reverse()
+        .find((decision) => decision.status === "accepted");
+    if (!parent && !acceptedDecision) {
       throw new Error("当前议题没有可绑定的 Accepted 决策");
     }
     const snapshot = mockActorSnapshot("human");
@@ -189,7 +228,7 @@ export class MockCouncilRepository implements CouncilRepository {
         // 子任务继承父任务的决策锚点，一棵树不横跨两个 ADR。
         ...(parent
           ? parent.decisionId ? { decisionId: parent.decisionId } : {}
-          : { decisionId: input.decisionId ?? `${topic.id}-accepted-decision` }),
+          : acceptedDecision ? { decisionId: acceptedDecision.id } : {}),
         ...(input.parentId ? { parentId: input.parentId } : {}),
         title,
         details: item.details?.trim() ?? "",

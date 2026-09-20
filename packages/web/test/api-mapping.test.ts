@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council API 严格解析器、Workspace 映射器与协议夹具
- * @output 导出：动态 Actor/实施项行快照、重命名保真、身份不一致拒绝和无伪造证据测试
+ * @output 导出：动态 Actor/完整 decisions[]/实施项行快照、重命名保真、身份不一致拒绝和无伪造证据测试
  * @pos    REST 数据进入 Operator Console 前的领域边界验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -86,7 +86,7 @@ describe("Council API 解析与映射", () => {
     expect(mapped.owner).toBe("human");
     expect(mapped.messages[0]).toMatchObject({ author: "legacy-unknown", kind: "note" });
     expect(mapped.evidence).toEqual([]);
-    expect(mapped.decision).toBeUndefined();
+    expect(mapped.decisions).toEqual([]);
     expect(mapped.status).toBe("discussing");
   });
 
@@ -164,11 +164,11 @@ describe("Council API 解析与映射", () => {
     });
 
     expect(workspace.project.name).toBe("project");
-    expect(workspace.topics[0]?.decision?.summary).toBe("采用版本号校验。");
+    expect(workspace.topics[0]?.decisions[0]?.summary).toBe("采用版本号校验。");
     expect(workspace.topics[0]?.alternatives[0]?.title).toBe("只依赖固定 TTL");
   });
 
-  it("最新决策被拒绝后不复活更早的 proposed decision", () => {
+  it("拒绝项与更早的 proposed decision 都完整保留", () => {
     const fixture = createDetailFixture();
     fixture.decisions.push(
       {
@@ -200,7 +200,7 @@ describe("Council API 解析与映射", () => {
     );
 
     const mapped = mapApiTopicDetail(parseApiTopicDetail(fixture));
-    expect(mapped.decision).toBeUndefined();
+    expect(mapped.decisions.map((decision) => decision.status)).toEqual(["proposed", "rejected"]);
     expect(mapped.alternatives).toEqual([]);
   });
 });

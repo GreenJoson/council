@@ -85,6 +85,8 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
   const config: CouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [fakeClaudePath],
     claudePermissionMode: "plan",
@@ -171,6 +173,8 @@ test("ClaudeClient 取消生成时不写 session 或消息", async () => {
   const config: CouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [fakeClaudePath, pidFile],
     claudePermissionMode: "plan",
@@ -247,6 +251,8 @@ test("ClaudeClient 拒绝数据库中绕过入口校验的相对项目路径", a
   const config: CouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: ["--version"],
     claudePermissionMode: "plan",
@@ -317,6 +323,8 @@ test("ClaudeClient 可信议题超限时不调用 Runtime 且数据库零写入"
   const config: CouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [],
     claudePermissionMode: "plan",
@@ -390,6 +398,8 @@ test("ClaudeClient 超长公开输出不推进 session 且不写消息", async (
   const config: CouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [],
     claudePermissionMode: "plan",

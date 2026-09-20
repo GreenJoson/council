@@ -6,6 +6,9 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import type { WorkAttention } from "./work-attention";
+import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+
 import type {
   AnswerCycleQuestionInput,
   SubmitFixesInput,
@@ -18,6 +21,9 @@ import type {
   OrchestrationSnapshot,
   RuntimeBinding,
   StartCycleInput,
+  StartWorkItemDelegationInput,
+  StartWorkItemDelegationBatchInput,
+  WorkItemDelegation,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -43,6 +49,8 @@ const CAPABILITIES: OrchestrationCapabilities = {
       actorId: "claude",
       label: "Claude",
       available: true,
+      permissionProfile: "read_only",
+      executionRole: "hybrid",
       runtimeCapabilities: [
         "text",
         "repository_read",
@@ -56,6 +64,8 @@ const CAPABILITIES: OrchestrationCapabilities = {
       actorId: "codex",
       label: "Codex",
       available: false,
+      permissionProfile: "read_only",
+      executionRole: "hybrid",
       runtimeCapabilities: [
         "text",
         "repository_read",
@@ -134,6 +144,8 @@ const MOCK_MODEL_ROUTER: ModelRouterSnapshot = {
       model: "claude-opus-4-8",
       mentionAlias: "claude",
       enabled: true,
+      permissionProfile: "read_only",
+      executionRole: "hybrid",
       createdAt: MOCK_TIME,
       updatedAt: MOCK_TIME,
     },
@@ -146,6 +158,8 @@ const MOCK_MODEL_ROUTER: ModelRouterSnapshot = {
       model: "",
       mentionAlias: "codex",
       enabled: true,
+      permissionProfile: "read_only",
+      executionRole: "hybrid",
       createdAt: MOCK_TIME,
       updatedAt: MOCK_TIME,
     },
@@ -233,6 +247,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
   readonly #listeners = new Set<OrchestrationListener>();
   readonly #runs: OrchestrationRun[] = [];
   readonly #bindings: RuntimeBinding[] = [];
+  readonly #delegations: WorkItemDelegation[] = [];
   readonly #modelRouter = structuredClone(MOCK_MODEL_ROUTER);
   #snapshot: OrchestrationSnapshot = {
     capabilities: structuredClone(CAPABILITIES),
@@ -605,6 +620,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       model: input.model,
       mentionAlias: input.mentionAlias,
       enabled: input.enabled,
+      permissionProfile: input.permissionProfile,
+      executionRole: input.executionRole,
       createdAt: now,
       updatedAt: now,
     };
@@ -628,6 +645,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     agent.model = input.model;
     agent.mentionAlias = input.mentionAlias;
     agent.enabled = input.enabled;
+    agent.permissionProfile = input.permissionProfile;
+    agent.executionRole = input.executionRole;
     agent.updatedAt = new Date().toISOString();
     return structuredClone(agent);
   }
@@ -647,6 +666,83 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
   async testAgent(_agentId: string): Promise<AgentConnectionTest> {
     await waitForMock();
     return { ok: true, latencyMs: MOCK_DELAY_MS };
+  }
+
+  async resumeWorkItemDelegation(_id: string, _expectedVersion: number): Promise<WorkItemDelegation> {
+    throw new Error("演示模式没有可恢复的真实提交。");
+  }
+
+  async listWorkAttention(_topicId: string): Promise<WorkAttention[]> {
+    return [];
+  }
+
+  async listRuntimeAudit(input: RuntimeAuditQuery): Promise<RuntimeAuditPage> {
+    return { events: [], hasMore: false, nextCursor: input.after ?? 0 };
+  }
+
+  async listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]> {
+    await waitForMock();
+    return structuredClone(this.#delegations.filter((item) => item.topicId === topicId));
+  }
+
+  async startWorkItemDelegation(
+    input: StartWorkItemDelegationInput,
+  ): Promise<WorkItemDelegation> {
+    await waitForMock();
+    const now = new Date().toISOString();
+    const delegation: WorkItemDelegation = {
+      id: `delegation-${crypto.randomUUID()}`,
+      topicId: input.topicId,
+      workItemId: input.workItemId,
+      supervisorAgentId: input.supervisorAgentId,
+      executorAgentId: input.executorAgentId,
+      permissionProfile: input.requestedPermission,
+      completionPolicy: input.completionPolicy ?? "human",
+      acceptanceCriteria: input.acceptanceCriteria ?? "",
+      status: "queued",
+      attempt: 0,
+      maxAttempts: 2,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#delegations.unshift(delegation);
+    return structuredClone(delegation);
+  }
+
+  async startWorkItemDelegationBatch(
+    input: StartWorkItemDelegationBatchInput,
+  ): Promise<WorkItemDelegation[]> {
+    await waitForMock();
+    const now = new Date().toISOString();
+    const branchName = `codex/council-batch-${crypto.randomUUID()}`;
+    const delegations = input.workItems.map((item): WorkItemDelegation => ({
+      id: `delegation-${crypto.randomUUID()}`,
+      topicId: input.topicId,
+      workItemId: item.workItemId,
+      supervisorAgentId: input.supervisorAgentId,
+      executorAgentId: input.executorAgentId,
+      permissionProfile: input.requestedPermission,
+      completionPolicy: input.completionPolicy ?? "human",
+      acceptanceCriteria: input.acceptanceCriteria ?? "",
+      status: "queued",
+      attempt: 0,
+      maxAttempts: 2,
+      branchName,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    this.#delegations.unshift(...delegations);
+    return structuredClone(delegations);
+  }
+
+  async cancelWorkItemDelegation(delegationId: string): Promise<WorkItemDelegation> {
+    await waitForMock();
+    const delegation = this.#delegations.find((item) => item.id === delegationId);
+    if (!delegation) throw new Error("任务委派不存在");
+    delegation.status = "cancelled";
+    delegation.updatedAt = new Date().toISOString();
+    delegation.completedAt = delegation.updatedAt;
+    return structuredClone(delegation);
   }
 
   subscribe(listener: OrchestrationListener): () => void {

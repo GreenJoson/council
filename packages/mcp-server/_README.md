@@ -5,7 +5,7 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `package.json` | 核心 | 锁定 MCP/HTTP 依赖、已修复的传递依赖覆盖与构建、测试、双入口命令 |
-| `package-lock.json` | 锁定 | 固化依赖解析结果 |
+| `package-lock.json` | 锁定 | 固化依赖解析结果，包含 fast-uri、Hono、qs 安全修复 |
 | `tsconfig.json` | 配置 | 启用严格 TypeScript 编译 |
 | `.env.example` | 配置 | 列出全部可配置运行参数，包括迁移重试上限 |
 | `resources/` | 配置 | 保存不含密钥的 Provider catalog、默认连接模板与品牌来源元数据 |
@@ -57,10 +57,12 @@ Actor；工具 schema 不接受作者覆盖。HTTP 入口不读取该配置，�
 | `GET` | `/api/v1/topics` | `PaginatedTopics` |
 | `GET` | `/api/v1/topics/:topicId` | `TopicDetail` |
 | `POST` | `/api/v1/topics` | 新建 `Topic` |
+| `PUT` | `/api/v1/topics/:topicId` | 以 `expectedUpdatedAt` 更正仍为 open 的标题、问题或约束 |
+| `POST` | `/api/v1/topics/:topicId/actions/close` | 停止活动运行后归档议题，保留全部历史 |
 | `POST` | `/api/v1/topics/:topicId/messages` | 新建 `CouncilMessage` |
 | `POST` | `/api/v1/topics/:topicId/decisions` | 新建 `Decision` |
 | `POST` | `/api/v1/topics/:topicId/work-items` | 为 Accepted 决策批量新增 `WorkItem` |
-| `POST` | `/api/v1/topics/:topicId/work-items/actions/generate` | 指定只读 Agent，为 Accepted 决策生成并写入缺失实施任务 |
+| `POST` | `/api/v1/topics/:topicId/work-items/actions/generate` | 用户显式指定只读 Agent 后，为 Accepted 决策生成并写入缺失实施任务；接受决策不会自动调用此入口 |
 | `PUT` | `/api/v1/topics/:topicId/work-items/:workItemId` | 以 `expectedVersion` 更新实施状态与证据备注 |
 | `GET` | `/api/v1/orchestration/capabilities` | Agent 可用性与默认公开策略 |
 | `GET` | `/api/v1/settings/model-router` | Provider、Agent、BrandAsset 与可添加模板的公开快照 |
@@ -89,6 +91,10 @@ claim/renew/release 不推进任何 revision，避免心跳制造 SSE 风暴。
 
 SQLite trigger 维护全库单调 revision，HTTP 进程按配置轮询。因此另一个 MCP 进程
 写入同一数据库时也会产生事件，不依赖进程内 emitter。
+
+MCP 通过 `council_update_topic` 携带最近读取的 `updatedAt` 更正仍为 open 的议题框架；
+过期写入与已结束议题都会失败关闭。`council_close_topic` 只做可审计归档，不物理删除，
+存在活动圆桌、Agent 会话或任务委派时要求先由桌面编排入口正常停止。
 
 schema v11 增加与 Accepted 决策绑定的 `work_items` 执行账本。状态限定为
 `pending`、`in_progress`、`blocked`、`completed`，完成时间由状态不变量维护；MCP
@@ -134,3 +140,5 @@ Model Router 写命令只开放在桌面 HTTP sidecar，同一日志库只支持
 stdio MCP 不注册 Provider/Agent/Keychain 修改工具。HTTP 仅监听 loopback，当前按本机
 单用户威胁模型运行且没有实例令牌，禁止端口转发或改成外部监听。未来若开放外部客户端，
 必须先加入每实例随机令牌、认证与权限分域。
+
+交付协议新增显式完成策略、持久执行证据、当前项目待处理聚合和提交检查点恢复；契约及限制见 [执行交付](../../docs/execution-delivery.md)。

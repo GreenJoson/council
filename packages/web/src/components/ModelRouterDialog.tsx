@@ -68,6 +68,8 @@ function agentDraft(agent: AgentDefinition): AgentDefinitionDraft {
     model: agent.model,
     mentionAlias: agent.mentionAlias,
     enabled: agent.enabled,
+    permissionProfile: agent.permissionProfile,
+    executionRole: agent.executionRole,
   };
 }
 
@@ -91,6 +93,8 @@ function newAgentDraft(provider: ProviderProfile): AgentDefinitionDraft {
     model: "",
     mentionAlias: base,
     enabled: provider.status === "active",
+    permissionProfile: "read_only",
+    executionRole: "advisor",
   };
 }
 
@@ -116,7 +120,9 @@ function sameAgentDraft(agent: AgentDefinition, draft: AgentDefinitionDraft): bo
   return agent.displayName === draft.displayName
     && agent.model === draft.model
     && agent.mentionAlias === draft.mentionAlias
-    && agent.enabled === draft.enabled;
+    && agent.enabled === draft.enabled
+    && agent.permissionProfile === draft.permissionProfile
+    && agent.executionRole === draft.executionRole;
 }
 
 function sameProviderDraft(provider: ProviderProfile, draft: ProviderProfileDraft): boolean {
@@ -306,6 +312,8 @@ export function ModelRouterDialog({
             model: agentForm.model,
             mentionAlias: agentForm.mentionAlias,
             enabled: agentForm.enabled,
+            permissionProfile: agentForm.permissionProfile,
+            executionRole: agentForm.executionRole,
           })
         : await repository.updateAgent({
             agentId: selectedAgent?.id ?? "",
@@ -313,6 +321,8 @@ export function ModelRouterDialog({
             model: agentForm.model,
             mentionAlias: agentForm.mentionAlias,
             enabled: agentForm.enabled,
+            permissionProfile: agentForm.permissionProfile,
+            executionRole: agentForm.executionRole,
           });
       await reload({ kind: "agent", id: saved.id });
       setAgentForm(agentDraft(saved));

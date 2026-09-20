@@ -2,7 +2,7 @@
  * @input  依赖：严格解析后的 API Actor 快照、议题详情和 Web 领域模型
  * @output 导出：动态参与者、实施项、Topic 摘要、TopicDetail 与 WorkspaceSnapshot 映射函数
  * @pos    后端 ActorIdentity 协议和 Operator Console 展示模型之间的纯转换层；
- *         决策状态原样透传 accepted/superseded（只丢弃 rejected）
+ *         决策数组与 proposed/accepted/rejected/superseded 四态原样透传
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -144,30 +144,21 @@ function mapWorkItem(item: ApiWorkItem): CouncilWorkItem {
   };
 }
 
-/**
- * 只有 rejected 决策整条丢弃；proposed/accepted/superseded 都需要进入决策档案。
- */
-function findCurrentDecision(decisions: ApiDecision[]): ApiDecision | undefined {
-  const latestDecision = decisions.at(-1);
-  return latestDecision?.status === "rejected" ? undefined : latestDecision;
-}
-
 function mapDecisionStatus(status: ApiDecision["status"]): DecisionStatus {
-  if (status === "accepted" || status === "superseded") {
-    return status;
-  }
-  return "proposed";
+  return status;
 }
 
 function mapDecision(decision: ApiDecision): CouncilDecision {
   const status = mapDecisionStatus(decision.status);
   return {
+    id: decision.id,
     title: decision.title,
     summary: decision.decision,
     rationale: decision.rationale,
     status,
     proposedBy: decision.createdByActorId,
     proposedBySnapshot: actorSnapshotFromApi(decision.createdBySnapshot),
+    createdAt: decision.createdAt,
     // 后端尚无 acceptedAt，当前用 updatedAt 作为可审计的最佳近似。
     ...(status === "accepted" || status === "superseded"
       ? { decidedAt: decision.updatedAt }
@@ -175,11 +166,17 @@ function mapDecision(decision: ApiDecision): CouncilDecision {
   };
 }
 
-function mapTopicStatus(detail: ApiTopicDetail, decision: ApiDecision | undefined): TopicStatus {
-  if (detail.topic.status === "decided" || detail.topic.status === "closed") {
+function mapTopicStatus(detail: ApiTopicDetail): TopicStatus {
+  if (detail.topic.status === "closed") {
+    return "closed";
+  }
+  if (detail.topic.status === "decided") {
     return "decided";
   }
-  if (decision?.status === "accepted" || decision?.status === "superseded") {
+  if (
+    detail.decisions.some((decision) => decision.status === "accepted")
+    && !detail.decisions.some((decision) => decision.status === "proposed")
+  ) {
     return "decided";
   }
   if (detail.messages.at(-1)?.kind === "synthesis") {
@@ -189,7 +186,7 @@ function mapTopicStatus(detail: ApiTopicDetail, decision: ApiDecision | undefine
 }
 
 function mapSummaryStatus(topic: ApiTopic): TopicStatus {
-  return topic.status === "open" ? "open" : "decided";
+  return topic.status === "open" ? "open" : topic.status;
 }
 
 export function mapApiTopicSummary(topic: ApiTopic): TopicDetail {
@@ -214,11 +211,14 @@ export function mapApiTopicSummary(topic: ApiTopic): TopicDetail {
     evidence: [],
     alternatives: [],
     workItems: [],
+    decisions: [],
   };
 }
 
 export function mapApiTopicDetail(detail: ApiTopicDetail): TopicDetail {
-  const decision = findCurrentDecision(detail.decisions);
+  const referenceDecision = [...detail.decisions]
+    .reverse()
+    .find((decision) => decision.status === "proposed" || decision.status === "accepted");
   const owner = detail.topic.createdByActorId;
   const participantIds = new Set<string>([
     owner,
@@ -230,7 +230,7 @@ export function mapApiTopicDetail(detail: ApiTopicDetail): TopicDetail {
   return {
     id: detail.topic.id,
     title: detail.topic.title,
-    status: mapTopicStatus(detail, decision),
+    status: mapTopicStatus(detail),
     updatedLabel: formatTimestamp(detail.topic.updatedAt),
     ...(detail.topic.workItemProgress
       ? { workItemProgress: detail.topic.workItemProgress }
@@ -248,17 +248,17 @@ export function mapApiTopicDetail(detail: ApiTopicDetail): TopicDetail {
       tone: "positive" as const,
     })),
     evidence: [],
-    alternatives: (decision?.alternatives ?? []).map((title, index) => ({
-      id: `${decision?.id ?? detail.topic.id}-alternative-${String(index)}`,
+    alternatives: (referenceDecision?.alternatives ?? []).map((title, index) => ({
+      id: `${referenceDecision?.id ?? detail.topic.id}-alternative-${String(index)}`,
       title,
-      author: decision?.createdByActorId ?? owner,
-      ...(decision
-        ? { authorSnapshot: actorSnapshotFromApi(decision.createdBySnapshot) }
+      author: referenceDecision?.createdByActorId ?? owner,
+      ...(referenceDecision
+        ? { authorSnapshot: actorSnapshotFromApi(referenceDecision.createdBySnapshot) }
         : { authorSnapshot: actorSnapshotFromApi(detail.topic.createdBySnapshot) }),
-      createdLabel: decision ? formatTimestamp(decision.createdAt) : "",
+      createdLabel: referenceDecision ? formatTimestamp(referenceDecision.createdAt) : "",
     })),
     workItems: detail.workItems.map(mapWorkItem),
-    ...(decision ? { decision: mapDecision(decision) } : {}),
+    decisions: detail.decisions.map(mapDecision),
   };
 }
 

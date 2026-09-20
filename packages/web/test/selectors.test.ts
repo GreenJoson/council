@@ -3,7 +3,7 @@
  *         buildArchitectureTimeline、aggregateConstraints、collectArchitectureDiagrams
  *         与脱敏议题摘要/详情夹具
  * @output 导出：议题导航搜索与架构档案聚合纯函数的行为验证，覆盖空输入、多围栏、
- *         嵌套围栏、ADR 编号稳定性与被取代关系等边界
+ *         嵌套围栏、同议题多决策、按 decisionId 的 ADR 编号稳定性与被取代关系等边界
  * @pos    议题导航搜索与架构档案视图共用查询/聚合逻辑的纯函数验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -18,7 +18,39 @@ import {
   extractMermaidBlocks,
   filterTopics,
 } from "../src/data/selectors";
-import type { TopicDetail, TopicSummary } from "../src/types/council";
+import type { CouncilDecision, TopicDetail, TopicSummary } from "../src/types/council";
+
+const HUMAN_SNAPSHOT = {
+  schemaVersion: 1 as const,
+  actorId: "human",
+  slug: "human",
+  displayName: "User",
+  shortName: "U",
+  role: "决策者",
+};
+
+function buildDecision(
+  id: string,
+  overrides: Partial<CouncilDecision>,
+): CouncilDecision {
+  const proposedBy = overrides.proposedBy ?? "claude";
+  return {
+    id,
+    title: "决策",
+    summary: "s",
+    rationale: "r",
+    status: "proposed",
+    proposedBy,
+    proposedBySnapshot: {
+      ...HUMAN_SNAPSHOT,
+      actorId: proposedBy,
+      slug: proposedBy,
+      displayName: proposedBy,
+    },
+    createdAt: "2026-07-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 const topics: (TopicSummary & { question?: string })[] = [
   { id: "one", title: "支付回调幂等方案", status: "proposed", updatedLabel: "刚刚" },
@@ -130,11 +162,14 @@ function buildTopicFixture(overrides: Partial<TopicDetail> & Pick<TopicDetail, "
     question: "",
     createdLabel: "刚刚",
     owner: "human",
+    ownerSnapshot: HUMAN_SNAPSHOT,
     participants: ["human"],
     messages: [],
     constraints: [],
     evidence: [],
     alternatives: [],
+    workItems: [],
+    decisions: [],
     ...overrides,
   };
 }
@@ -144,51 +179,43 @@ describe("computeAdrNumberAssignments / buildArchitectureTimeline", () => {
     const legacy = buildTopicFixture({
       id: "legacy",
       title: "旧传输协议",
-      decision: {
+      decisions: [buildDecision("legacy", {
         title: "REST 回调",
-        summary: "s",
-        rationale: "r",
         status: "superseded",
         proposedBy: "codex",
         decidedAt: "2026-07-10T00:00:00.000Z",
         supersededByTopicId: "grpc",
-      },
+      })],
     });
     const eventBus = buildTopicFixture({
       id: "event-bus",
       title: "事件总线选型",
-      decision: {
+      decisions: [buildDecision("event-bus", {
         title: "沿用数据库事件表",
-        summary: "s",
-        rationale: "r",
         status: "accepted",
         proposedBy: "codex",
         decidedAt: "2026-07-14T00:00:00.000Z",
-      },
+      })],
     });
     const grpc = buildTopicFixture({
       id: "grpc",
       title: "新传输协议",
-      decision: {
+      decisions: [buildDecision("grpc", {
         title: "gRPC 双向流",
-        summary: "s",
-        rationale: "r",
         status: "accepted",
         proposedBy: "claude",
         decidedAt: "2026-07-19T00:00:00.000Z",
-      },
+      })],
     });
     const pending = buildTopicFixture({
       id: "pending",
       title: "仍在讨论",
       status: "proposed",
-      decision: {
+      decisions: [buildDecision("pending", {
         title: "候选方案",
-        summary: "s",
-        rationale: "r",
         status: "proposed",
         proposedBy: "claude",
-      },
+      })],
     });
 
     const assignments = computeAdrNumberAssignments([legacy, eventBus, grpc, pending]);
@@ -215,6 +242,32 @@ describe("computeAdrNumberAssignments / buildArchitectureTimeline", () => {
     expect(computeAdrNumberAssignments([noDecision]).size).toBe(0);
   });
 
+  it("批量接受产生相同 decidedAt 时仍按创建时间和 decisionId 稳定编号", () => {
+    const batch = buildTopicFixture({
+      id: "batch",
+      title: "批量决策",
+      decisions: [
+        buildDecision("decision-later", {
+          status: "accepted",
+          createdAt: "2026-07-01T02:00:00.000Z",
+          decidedAt: "2026-07-02T00:00:00.000Z",
+        }),
+        buildDecision("decision-earlier", {
+          status: "accepted",
+          createdAt: "2026-07-01T01:00:00.000Z",
+          decidedAt: "2026-07-02T00:00:00.000Z",
+        }),
+      ],
+    });
+    const assignments = computeAdrNumberAssignments([batch]);
+    expect(assignments.get("decision-earlier")).toBe("ADR-001");
+    expect(assignments.get("decision-later")).toBe("ADR-002");
+    expect(buildArchitectureTimeline([batch]).map((entry) => entry.decisionId)).toEqual([
+      "decision-earlier",
+      "decision-later",
+    ]);
+  });
+
   it("空数组不抛出异常", () => {
     expect(buildArchitectureTimeline([])).toEqual([]);
     expect(computeAdrNumberAssignments([]).size).toBe(0);
@@ -227,14 +280,11 @@ describe("aggregateConstraints", () => {
       id: "a",
       title: "议题 A",
       constraints: [{ id: "a-1", label: "保持接口兼容", tone: "positive" }],
-      decision: {
-        title: "d",
-        summary: "s",
-        rationale: "r",
+      decisions: [buildDecision("a", {
         status: "accepted",
         proposedBy: "claude",
         decidedAt: "2026-07-01T00:00:00.000Z",
-      },
+      })],
     });
     const topicB = buildTopicFixture({
       id: "b",
@@ -266,14 +316,14 @@ describe("collectArchitectureDiagrams", () => {
     const decided = buildTopicFixture({
       id: "decided",
       title: "已接受的议题",
-      decision: {
+      decisions: [buildDecision("decided", {
         title: "d",
         summary: "```mermaid\ngraph TD\n  A --> B\n```",
         rationale: "没有图的说明文字",
         status: "accepted",
         proposedBy: "claude",
         decidedAt: "2026-07-01T00:00:00.000Z",
-      },
+      })],
     });
     const withSynthesis = buildTopicFixture({
       id: "with-synthesis",
@@ -282,6 +332,7 @@ describe("collectArchitectureDiagrams", () => {
         {
           id: "m1",
           author: "council",
+          actorSnapshot: { ...HUMAN_SNAPSHOT, actorId: "council", slug: "council" },
           kind: "synthesis",
           title: "综合结论",
           content: "```mermaid\nflowchart TD\n  X --> Y\n```",
@@ -290,6 +341,7 @@ describe("collectArchitectureDiagrams", () => {
         {
           id: "m2",
           author: "claude",
+          actorSnapshot: { ...HUMAN_SNAPSHOT, actorId: "claude", slug: "claude" },
           kind: "proposal",
           title: "普通提案",
           content: "```mermaid\ngraph TD\n  不该被提取\n```",
@@ -317,13 +369,13 @@ describe("collectArchitectureDiagrams", () => {
       id: "proposed",
       title: "仍在提案中",
       status: "proposed",
-      decision: {
+      decisions: [buildDecision("proposed", {
         title: "d",
         summary: "```mermaid\ngraph TD\n  不该出现\n```",
         rationale: "r",
         status: "proposed",
         proposedBy: "claude",
-      },
+      })],
     });
     expect(collectArchitectureDiagrams([proposed])).toEqual([]);
   });

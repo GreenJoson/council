@@ -1,9 +1,9 @@
 /**
- * @input  依赖：界面语言上下文、含 owner/备选/实施进度冻结快照的当前议题、参与者回退、自动轮次与决策操作
- * @output 导出：InspectorPanel 议题摘要、紧凑实施进度、圆桌/按需运行状态、人工签署入口和决策状态卡
+ * @input  依赖：界面语言上下文、含 owner/完整决策包/备选/实施进度冻结快照的当前议题、
+ *         参与者回退、自动轮次与决策入口
+ * @output 导出：InspectorPanel 议题摘要、紧凑实施进度、圆桌/按需运行状态、人工签署入口和决策包摘要卡
  * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
- *         接受操作和「查看全文」入口——summary/rationale 是长文档，交给主列的决策 tab；
- *         决策状态徽章走 presentation.tsx 的 DecisionStatusBadge，三态共用同一套文案
+ *         数量/待办状态和「查看全部」入口；接受动作必须在能看见具体决策的主列完成
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,15 +12,14 @@ import {
   ArrowRight,
   BookOpen,
   Check,
-  CheckCircle2,
   FileText,
-  History,
   Plus,
   ShieldCheck,
   TriangleAlert,
   X,
 } from "lucide-react";
 import type { Participant, TopicDetail } from "../types/council";
+import { selectDecisionPackageLead, summarizeDecisionPackage } from "../data/decision-package";
 import type {
   CycleReviewScope,
   OrchestrationRun,
@@ -32,7 +31,6 @@ import { CyclePanel } from "./CyclePanel";
 import { ImplementationSummary } from "./ImplementationProgress";
 import {
   AgentAvatar,
-  decisionStatusLabels,
   DecisionStatusBadge,
   participantFromActorSnapshot,
   StatusBadge,
@@ -41,10 +39,8 @@ import {
 export interface InspectorPanelProps {
   topic: TopicDetail;
   participants: Map<string, Participant>;
-  isAccepting: boolean;
   isRecordingManualDecision: boolean;
   isOpen: boolean;
-  onAccept: () => Promise<void>;
   onRecordManualDecision: () => void;
   /** 切到主列「决策」tab 读全文 */
   onOpenDecision: () => void;
@@ -73,10 +69,8 @@ export interface InspectorPanelProps {
 export function InspectorPanel({
   topic,
   participants,
-  isAccepting,
   isRecordingManualDecision,
   isOpen,
-  onAccept,
   onRecordManualDecision,
   onOpenDecision,
   onClose,
@@ -98,9 +92,8 @@ export function InspectorPanel({
     topic.ownerSnapshot,
     participants.get(topic.owner),
   );
-  const decision = topic.decision;
-  const decisionAccepted = decision?.status === "accepted";
-  const decisionSuperseded = decision?.status === "superseded";
+  const decisionSummary = summarizeDecisionPackage(topic.decisions);
+  const leadDecision = selectDecisionPackageLead(topic.decisions);
 
   return (
     <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label={t("议题摘要")}>
@@ -147,7 +140,7 @@ export function InspectorPanel({
       <CyclePanel
         topicId={topic.id}
         initiatorActorId={topic.owner}
-        isTopicOpen={topic.status !== "decided"}
+        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
         snapshot={orchestration}
         busyAction={orchestrationBusyAction}
         onStart={onStartCycle}
@@ -158,7 +151,7 @@ export function InspectorPanel({
 
       <AutoRoundsPanel
         topicId={topic.id}
-        isTopicOpen={topic.status !== "decided"}
+        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
         snapshot={orchestration}
         busyAction={orchestrationBusyAction}
         onStart={onStartRun}
@@ -230,53 +223,41 @@ export function InspectorPanel({
         )}
       </InspectorSection>
 
-      {decision ? (
-        <section
-          className={`decision-card ${decisionAccepted ? "decision-accepted" : ""} ${decisionSuperseded ? "decision-superseded" : ""}`}
-        >
+      {leadDecision ? (
+        <section className="decision-card decision-package-summary-card">
           <div className="decision-title-row">
             <div>
-              {decisionAccepted ? (
-                <CheckCircle2 size={17} />
-              ) : decisionSuperseded ? (
-                <History size={17} />
-              ) : (
-                <ShieldCheck size={17} />
-              )}
-              <span>{t(decisionStatusLabels[decision.status])}</span>
+              <ShieldCheck size={17} />
+              <span>{t("决策包")}</span>
             </div>
-            <DecisionStatusBadge status={decision.status} />
+            <span className="count-pill">{decisionSummary.total}</span>
           </div>
-          <h3>{decision.title}</h3>
-          {/*
-            右栏只放状态与入口，不放正文。决策是带章节、表格和 mermaid 的长文档，
-            340–440px 的窄栏读不了——正文交给主列的「决策」tab。
-          */}
+          <h3>
+            {decisionSummary.proposed > 0
+              ? t("{count} 条决策待确认", { count: decisionSummary.proposed })
+              : t("决策包已处理")}
+          </h3>
+          <p>
+            {t("{accepted} 条已接受，{rejected} 条已拒绝，{superseded} 条已取代", {
+              accepted: decisionSummary.accepted,
+              rejected: decisionSummary.rejected,
+              superseded: decisionSummary.superseded,
+            })}
+          </p>
+          <div className="decision-package-lead">
+            <DecisionStatusBadge status={leadDecision.status} />
+            <span>{leadDecision.title}</span>
+          </div>
           <button className="decision-open-button" type="button" onClick={onOpenDecision}>
             <BookOpen size={16} />
-            {t("查看全文")}
+            {t("查看全部 {count} 条决策", { count: decisionSummary.total })}
             <ArrowRight size={15} />
           </button>
-          <button
-            className="accept-button"
-            type="button"
-            disabled={decision.status !== "proposed" || isAccepting}
-            onClick={() => void onAccept()}
-          >
-            <CheckCircle2 size={17} />
-            {decisionAccepted
-              ? t("决策已接受")
-              : decisionSuperseded
-                ? t("决策已被取代")
-                : isAccepting
-                  ? t("记录中…")
-                  : t("标记为 Accepted")}
-          </button>
-          {decision.status === "proposed" ? (
+          {topic.status !== "decided" && topic.status !== "closed" ? (
             <button
               className="secondary-button manual-decision-entry"
               type="button"
-              disabled={isAccepting || isRecordingManualDecision}
+              disabled={isRecordingManualDecision}
               onClick={onRecordManualDecision}
             >
               <FileText size={15} />

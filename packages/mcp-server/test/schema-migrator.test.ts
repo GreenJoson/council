@@ -1,7 +1,7 @@
 /**
  * @input  依赖：临时 v1/v2/v4/v5/v10/fresh SQLite、Node online backup 与 schema 迁移故障注入
  * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、v10→v11 实施项、
- *         v11→v12 实施项树与跨决策同名去重、备份、回滚和 revision
+ *         v11→v12 实施项树、v12→v13 决策包、v13→v14 Agent 委派、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -292,6 +292,9 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
+      DROP TABLE IF EXISTS runtime_audit_events;
+      DROP TABLE work_item_delegations;
       DROP TRIGGER trg_decisions_cycle_close_update;
       DROP TRIGGER trg_decisions_cycle_close_insert;
       DROP TABLE work_items;
@@ -371,6 +374,17 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   } finally {
     database.close();
   }
+}
+
+/** 当前库机械回退到 v13 以前时，必须连同委派表和 Agent 新列一起移除。 */
+function downgradeAgentDefinitionsBeforeVersionFourteen(database: DatabaseSync): void {
+  database.exec(`
+    DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
+    DROP TABLE IF EXISTS runtime_audit_events;
+    DROP TABLE IF EXISTS work_item_delegations;
+    ALTER TABLE agent_definitions DROP COLUMN permission_profile;
+    ALTER TABLE agent_definitions DROP COLUMN execution_role;
+  `);
 }
 
 async function createCanonicalV4Database(databasePath: string): Promise<{
@@ -568,6 +582,7 @@ function plainSqlValue<T>(value: T): T {
  * 不能只改 user_version，否则得到的不是历史 schema。
  */
 function downgradeProviderProfilesBeforeVersionTen(database: DatabaseSync): void {
+  downgradeAgentDefinitionsBeforeVersionFourteen(database);
   database.exec("PRAGMA foreign_keys = OFF;");
   try {
     database.exec(`
@@ -810,6 +825,7 @@ test("v10 起链式升级到当前版本且保留既有议题与决策", async (
     await migrateCouncilSchema(fixture.databasePath, 5_000, { maxAttempts: 3 });
     const versionTen = new DatabaseSync(fixture.databasePath);
     try {
+      downgradeAgentDefinitionsBeforeVersionFourteen(versionTen);
       const now = "2026-01-11T00:00:00.000Z";
       versionTen.prepare(`
         INSERT INTO topics (
@@ -877,6 +893,10 @@ test("v10 起链式升级到当前版本且保留既有议题与决策", async (
         [
           { version: 11, name: "decision-work-items" },
           { version: 12, name: "work-item-tree-and-review-findings" },
+          { version: 13, name: "decision-package-acceptance" },
+          { version: 14, name: "agent-work-delegation" },
+          { version: 15, name: "delegation-acceptance" },
+          { version: 16, name: "runtime-audit-and-recovery" },
         ],
       );
     } finally {
@@ -894,6 +914,7 @@ test("v11→v12 重建实施项表：树字段就位、跨决策同名去重且�
     const now = "2026-02-01T00:00:00.000Z";
     const versionEleven = new DatabaseSync(fixture.databasePath);
     try {
+      downgradeAgentDefinitionsBeforeVersionFourteen(versionEleven);
       versionEleven.prepare(`
         INSERT INTO topics (
           id, title, question, constraints_json, project_path,
@@ -1900,8 +1921,12 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (10, 'generic-acp-runtime', '2026-01-10T00:00:00.000Z'),
         (11, 'decision-work-items', '2026-01-11T00:00:00.000Z'),
         (12, 'work-item-tree-and-review-findings', '2026-01-12T00:00:00.000Z'),
-        (13, 'future', '2026-01-13T00:00:00.000Z');
-      PRAGMA user_version = 13;
+        (13, 'decision-package-acceptance', '2026-01-13T00:00:00.000Z'),
+        (14, 'agent-work-delegation', '2026-01-14T00:00:00.000Z'),
+        (15, 'delegation-acceptance', '2026-01-15T00:00:00.000Z'),
+        (16, 'runtime-audit-and-recovery', '2026-01-16T00:00:00.000Z'),
+        (17, 'future', '2026-01-17T00:00:00.000Z');
+      PRAGMA user_version = 17;
     `);
     futureDatabase.close();
     await assert.rejects(

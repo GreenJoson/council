@@ -1,6 +1,6 @@
 /**
  * @input  依赖：MockCouncilRepository 和 mock 工作区
- * @output 导出：建议题、发帖、人工 Accepted、接受决策与只读详情测试
+ * @output 导出：建议题、议题关闭、发帖、人工 Accepted、批量接受决策与只读详情测试
  * @pos    WebUI 数据状态转换的单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,8 +23,20 @@ describe("MockCouncilRepository", () => {
 
     expect(snapshot.topics[0]?.title).toBe("缓存一致性边界");
     expect(snapshot.topics[0]?.constraints).toHaveLength(1);
-    expect(snapshot.topics[0]?.decision).toBeUndefined();
+    expect(snapshot.topics[0]?.decisions).toEqual([]);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("关闭议题但保留其讨论历史", async () => {
+    const repository = new MockCouncilRepository(0);
+    const initial = await repository.loadWorkspace();
+    const topic = initial.topics[0];
+    expect(topic).toBeDefined();
+
+    const snapshot = await repository.closeTopic(topic?.id ?? "");
+    const closed = snapshot.topics.find((candidate) => candidate.id === topic?.id);
+    expect(closed?.status).toBe("closed");
+    expect(closed?.messages).toHaveLength(topic?.messages.length ?? 0);
   });
 
   it("发布公开消息并接受拟议决策", async () => {
@@ -43,9 +55,13 @@ describe("MockCouncilRepository", () => {
     expect(postedTopic?.messages.at(-1)?.content).toContain("失败恢复");
     expect(postedTopic?.status).toBe("discussing");
 
-    const afterDecision = await repository.acceptDecision(topicId ?? "");
+    const decisionIds = postedTopic?.decisions
+      .filter((decision) => decision.status === "proposed")
+      .map((decision) => decision.id) ?? [];
+    const afterDecision = await repository.acceptDecisions(topicId ?? "", decisionIds);
     const decidedTopic = afterDecision.topics.find((topic) => topic.id === topicId);
-    expect(decidedTopic?.decision.status).toBe("accepted");
+    expect(decidedTopic?.decisions.filter((decision) => decision.status === "accepted"))
+      .toHaveLength(decisionIds.length);
     expect(decidedTopic?.status).toBe("decided");
   });
 
@@ -67,7 +83,7 @@ describe("MockCouncilRepository", () => {
     const topic = snapshot.topics.find((candidate) => candidate.id === topicId);
 
     expect(topic?.status).toBe("decided");
-    expect(topic?.decision).toMatchObject({
+    expect(topic?.decisions.at(-1)).toMatchObject({
       title: "修复已上线",
       status: "accepted",
       proposedBy: "human",
@@ -87,7 +103,7 @@ describe("MockCouncilRepository", () => {
 
     const detail = await repository.loadTopicDetail(otherTopicId);
     expect(detail.id).toBe(otherTopicId);
-    expect(detail.decision).toBeDefined();
+    expect(detail.decisions.length).toBeGreaterThan(0);
     expect(detail.constraints).toBeDefined();
     expect(detail.evidence).toBeDefined();
     expect(detail.alternatives).toBeDefined();

@@ -110,6 +110,10 @@ def verify_topic_question_collapse_control(page) -> None:
     expanded_box = measure_element(collapse_frame)
     assert expanded_box["height"] > collapsed_box["height"] + 120
     assert collapse_toggle.get_attribute("aria-expanded") == "true"
+    assert "is-expanded-toggle" in (collapse_toggle.get_attribute("class") or "")
+    assert collapse_toggle.evaluate(
+        "button => button.nextElementSibling?.classList.contains('markdown-collapse-frame')"
+    )
 
     collapse_toggle.click()
     expand_toggle.wait_for()
@@ -189,8 +193,8 @@ def verify_compact_run_history(page) -> None:
     assert page.locator(".run-card").count() == 1
     history = page.locator(".run-history")
     assert history.count() == 1
-    assert "2" in history.locator("summary").inner_text()
-    history.locator("summary").click()
+    assert "2" in history.locator(":scope > summary").inner_text()
+    history.locator(":scope > summary").click()
     assert page.locator(".run-history-row").count() == 2
 
 
@@ -212,7 +216,7 @@ def verify_cycle_mode_layout(page) -> None:
 
 
 def verify_manual_decision_without_agent_run(page) -> None:
-    page.get_by_role("tab", name="决策", exact=True).click()
+    page.get_by_role("tab", name="决策", exact=False).click()
     assert page.locator(".run-card").count() == 0
     page.get_by_role("button", name="记录人工决策", exact=True).click()
 
@@ -227,7 +231,7 @@ def verify_manual_decision_without_agent_run(page) -> None:
     )
     dialog.get_by_role("button", name="记录并结束议题", exact=True).click()
 
-    page.get_by_text("人工决策已记录，议题已结束", exact=True).wait_for()
+    page.get_by_text("人工决策已记录；任务尚未分拆，请在任务页选择 Agent 后手动开始", exact=True).wait_for()
     dialog.wait_for(state="hidden")
     decision_panel = page.locator("#decision-tabpanel")
     decision_panel.get_by_text(
@@ -344,7 +348,7 @@ def verify_media_preview_and_lightbox(page) -> None:
 
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
-    page = browser.new_page(viewport={"width": 1536, "height": 1024})
+    page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
     page.on("console", lambda message: collect_console_error(message, errors))
     page.goto(WEB_URL)
     page.wait_for_load_state("networkidle")
@@ -415,8 +419,9 @@ def verify_desktop(browser) -> list[str]:
     assert page.locator(".message-jump-step").count() == page.locator(".message-card").count()
     verify_last_card_tail_access(page)
 
-    page.get_by_role("button", name="标记为 Accepted", exact=True).click()
-    page.get_by_text("决策已记录为 Accepted", exact=True).wait_for()
+    page.get_by_role("tab", name="决策", exact=False).click()
+    page.locator(".decision-package-item", has_text="组合式幂等处理").get_by_role("button", name="接受此决策", exact=True).click()
+    page.get_by_text("决策已接受；任务尚未分拆，请在任务页选择 Agent 后手动开始", exact=True).wait_for()
 
     page.get_by_role("button", name="新建议题", exact=True).click()
     page.get_by_label("议题标题").fill("本地事件同步策略")
@@ -458,7 +463,7 @@ def verify_desktop(browser) -> list[str]:
 
 
 def verify_mobile(browser) -> None:
-    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page = browser.new_page(viewport={"width": 390, "height": 844}, locale="zh-CN")
     page.goto(WEB_URL)
     page.wait_for_load_state("networkidle")
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()

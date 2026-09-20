@@ -4,12 +4,14 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `schema-v15-migration.ts` | 迁移步骤 | 冻结完成策略与验收标准，约束人工验收；历史记录保留审核即完成语义 |
+| `schema-v16-migration.ts` | 迁移步骤 | 增加追加审计、失败分类、恢复来源及审计 revision |
 | `index.ts` | 入口 | 加载配置，等待 schema 迁移完成后连接 stdio MCP |
 | `http-index.ts` | 入口 | 默认迁移 schema 后启动本地 REST/SSE；sidecar 子模式只启动 Kimi 使用的单工具 Git MCP |
-| `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题、消息、proposed 决策和可传递请求取消的 Claude 工具 |
+| `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题创建/更正/关闭、消息、proposed 决策和可传递请求取消的 Claude 工具 |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
-| `schema-definitions.ts` | Schema 正本 | 保存 v1–v8 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1–v16 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
 | `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移、备份与失败关闭 |
 | `schema-migration-values.ts` | 迁移值边界 | 严格读取历史行字段并映射旧作者/Agent 身份，不接触迁移事务 |
 | `schema-storage.ts` | 存储边界 | 提供迁移共用的 pragma/完整性/行数校验、schema 快照、在线备份验证和文件保护 |
@@ -21,15 +23,20 @@
 | `schema-v8-migration.ts` | 迁移步骤 | 为 DiscussionCycle 持久化周期类型、需求快照、Agent/Provider/Runtime 修订与能力快照，以及预算耗尽的结构化阻断结果 |
 | `schema-v9-migration.ts` | 迁移步骤 | 原子扩展 Provider/Runtime 约束以接纳 Kimi ACP 与兼容 API ToolLoop，并保留 Provider、Agent、RuntimeBinding、lease、请求账本和 revision 触发器 |
 | `schema-v10-migration.ts` | 迁移步骤 | 将 Kimi 专用协议/transport 原子归一为通用 ACP，并无损保留 Provider、Agent、RuntimeBinding session、lease 与请求账本 |
-| `database.ts` | 核心 | 验证已迁移 schema，区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
+| `schema-v11-migration.ts` | 迁移步骤 | 增加实施项审核账本字段、父子任务、认领证据与 revision 触发器 |
+| `schema-v12-migration.ts` | 迁移步骤 | 重建实施项表，固定树唯一性、父任务派生状态与审核发现约束 |
+| `schema-v13-migration.ts` | 迁移步骤 | 将议题从单决策接受扩展为稳定 ID 的多决策包，最后一项接受后才结束议题 |
+| `schema-v14-migration.ts` | 迁移步骤 | 为 Agent 增加职责/权限上限，并建立 supervisor→executor→review 的实施项委派账本 |
+| `agent-execution-policy.ts` | 权限正本 | 定义顾问/执行/审核职责、只读/工作区/完全控制权限，以及每次委派与 Agent 上限的交集规则 |
+| `database.ts` | 核心 | 验证已迁移 schema，以 `updatedAt` CAS 更正 open 议题并安全归档静止议题；区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
 | `process-utils.ts` | 安全基础 | 提供有界子进程运行、stdout 停止/首尾截断策略、长驻进程树终止与 CLI 选项规范化 |
 | `project-path-policy.ts` | 路径策略 | 为文件工具与 Git diff 提供同一敏感目录/文件判定，防止入口间规则漂移 |
 | `runtime-stream.ts` | 流式基础 | 定义公开文本增量事件并对任意 stdout 分片做 JSONL 解码 |
-| `claude-runtime.ts` | 核心 | 纯生成、可取消地管理 Claude Code stream-json，只转发公开 text delta，并将失败分类为脱敏诊断 |
-| `codex-runtime.ts` | 核心 | 强制只读沙箱地管理 Codex；转发公开 JSONL 消息、约束总事件流并独立限制最终正文 |
+| `claude-runtime.ts` | 核心 | 普通讨论固定 plan；仅显式委派按结构化权限映射 acceptEdits/危险模式，始终隔离 Council MCP 并转发公开 stream-json 文本 |
+| `codex-runtime.ts` | 核心 | 普通讨论固定 read-only；仅显式委派按结构化权限映射 workspace-write/危险模式；忽略用户配置以隔离 MCP，同时保留 CLI 认证并限制 JSONL/最终正文 |
 | `acp-runtime-registry.ts` | Runtime 注册 | 声明 Kimi、Gemini、Grok、Codex、Claude Agent 到 ACP 命令、模型选择协议、启动参数和 Runtime 能力的受控映射；实际授权再与独立 Council policy 取交集 |
 | `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、当前及已关联仓库的只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |

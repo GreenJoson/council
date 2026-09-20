@@ -51,15 +51,17 @@ function createDetail(): TopicDetail {
       createdLabel: "更名前",
     }],
     workItems: [],
-    decision: {
+    decisions: [{
+      id: "decision-frozen-actor",
       title: "采用冻结身份",
       summary: "历史内容不随 Actor 改名漂移。",
       rationale: "地址簿描述当前身份，行快照描述历史事实。",
       status: "accepted",
       proposedBy: ACTOR_ID,
       proposedBySnapshot: actorSnapshot("Decision Old", "DO"),
+      createdAt: "2026-01-01T00:00:00.000Z",
       decidedAt: "2026-01-01T00:00:00.000Z",
-    },
+    }],
   };
 }
 
@@ -82,9 +84,10 @@ describe("冻结 Actor 快照渲染", () => {
       <InspectorPanel
         topic={createDetail()}
         participants={currentParticipants()}
-        isAccepting={false}
+        isRecordingManualDecision={false}
         isOpen
-        onAccept={async () => undefined}
+        onRecordManualDecision={() => undefined}
+        onOpenDecision={() => undefined}
         onClose={() => undefined}
         orchestration={null}
         orchestrationBusyAction={null}

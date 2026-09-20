@@ -267,6 +267,8 @@ describe("HttpOrchestrationRepository", () => {
     await repository.loadCapabilities();
     await repository.selectTopic("topic-one");
 
+    const settledRevision = snapshots.at(-1)?.revision;
+    const settledSnapshotCount = snapshots.length;
     const base = {
       runId: "run-one",
       topicId: "topic-one",
@@ -296,6 +298,7 @@ describe("HttpOrchestrationRepository", () => {
       content: "过期",
     });
     expect(snapshots.at(-1)?.agentOutputs?.[0]?.content).toBe("公开草稿");
+    expect(snapshots.slice(settledSnapshotCount).every((snapshot) => snapshot.revision === settledRevision)).toBe(true);
 
     fixture.emitAgentOutput(stream, {
       ...base,

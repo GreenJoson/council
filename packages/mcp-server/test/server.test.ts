@@ -1,6 +1,6 @@
 /**
  * @input  依赖：内存 MCP 传输、临时数据库与 createCouncilServer
- * @output 导出：绑定调用者身份、禁止 MCP 接受决策、实施项进度、共享读写与请求取消的协议测试
+ * @output 导出：绑定调用者身份、议题更正/关闭、禁止 MCP 接受决策、实施项进度、共享读写与请求取消的协议测试
  * @pos    Codex App 与 Claude Desktop 客户端兼容性的端到端验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -66,6 +66,8 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
   const config: McpCouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: ["--version"],
     claudePermissionMode: "plan",
@@ -114,6 +116,8 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
     assert.ok(names.includes("council_create_topic"));
+    assert.ok(names.includes("council_update_topic"));
+    assert.ok(names.includes("council_close_topic"));
     assert.ok(names.includes("council_ask_claude"));
     assert.ok(names.includes("council_get_topic"));
     assert.ok(names.includes("council_add_work_items"));
@@ -141,6 +145,28 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     const topic = asRecord(asRecord(created.structuredContent).topic);
     const topicId = topic.id;
     assert.equal(typeof topicId, "string");
+
+    const corrected = await client.callTool({
+      name: "council_update_topic",
+      arguments: {
+        topic_id: topicId,
+        question: "两个客户端如何通过共享存储协作？",
+        expected_updated_at: topic.updatedAt,
+      },
+    });
+    assert.equal(corrected.isError, undefined);
+    const correctedTopic = asRecord(asRecord(corrected.structuredContent).topic);
+    assert.equal(correctedTopic.question, "两个客户端如何通过共享存储协作？");
+
+    const staleCorrection = await client.callTool({
+      name: "council_update_topic",
+      arguments: {
+        topic_id: topicId,
+        question: "这次写入使用了过期版本。",
+        expected_updated_at: topic.updatedAt,
+      },
+    });
+    assert.equal(staleCorrection.isError, true);
 
     const posted = await client.callTool({
       name: "council_post_message",
@@ -217,6 +243,16 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
       asRecord(asRecord(updated.structuredContent).workItem).updatedByActorId,
       "codex",
     );
+
+    const closed = await client.callTool({
+      name: "council_close_topic",
+      arguments: { topic_id: topicId },
+    });
+    assert.equal(closed.isError, undefined);
+    assert.equal(
+      asRecord(asRecord(closed.structuredContent).topic).status,
+      "closed",
+    );
   } finally {
     await client.close();
     await bundle.server.close();
@@ -254,6 +290,8 @@ test("MCP 调用者冻结 actorId，运行中 alias 重绑或同名 alias 不能
   const config: McpCouncilConfig = {
     dataDir: directory,
     databasePath,
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: ["--version"],
     claudePermissionMode: "plan",
@@ -387,6 +425,8 @@ test("MCP 取消 council_ask_claude 会终止进程且不写共享数据库", as
   const config: McpCouncilConfig = {
     dataDir: directory,
     databasePath: path.join(directory, "council.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [fakeClaudePath, pidFile],
     claudePermissionMode: "plan",

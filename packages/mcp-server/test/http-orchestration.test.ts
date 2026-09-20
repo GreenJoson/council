@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、SQLite Store、Fake Agent 与后台执行管理器
- * @output 导出：编排、AI 实施计划与持久会话 REST、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
+ * @output 导出：编排、AI 实施计划与持久会话 REST、多决策包完成边界、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
  * @pos    Web 已冻结协议和跨进程自动执行语义的主验收套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -28,6 +28,7 @@ import {
   ModelRouterStore,
 } from "../src/model-router-store.js";
 import { CouncilOrchestrationService } from "../src/orchestration/service.js";
+import type { Decision } from "../src/types.js";
 import { readEnvelope, startHttpHarness } from "./http-harness.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -442,7 +443,7 @@ test("AI 可为 Accepted 决策拆分实施任务并按 Agent 身份写入，重
   }
 });
 
-test("持久会话 REST 只返回公开字段并支持手动关闭、重开和 accepted 决策关闭", async () => {
+test("持久会话 REST 只返回公开字段，且决策包最后一项接受后才关闭会话", async () => {
   const agent = new FakeAgent("claude", async () => ({ content: "不会启动" }));
   const harness = await startHttpHarness({}, [{
     adapter: agent,
@@ -497,21 +498,56 @@ test("持久会话 REST 只返回公开字段并支持手动关闭、重开和 a
     assert.notEqual(reopened.data.id, initial.id);
     assert.equal(reopened.data.status, "starting");
 
-    const decisionResponse = await fetch(
-      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions`,
+    const proposals: Decision[] = [];
+    for (const title of ["确认关闭逻辑绑定", "冻结最终实施边界"]) {
+      const proposalResponse = await fetch(
+        `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions`,
+        {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            title,
+            decision: `${title}的正文。`,
+            rationale: "避免已结束议题继续持有可恢复上下文。",
+            alternatives: [],
+            status: "proposed",
+          }),
+        },
+      );
+      assert.equal(proposalResponse.status, 201);
+      const proposal = await readEnvelope<Decision>(proposalResponse);
+      assert(proposal.data);
+      proposals.push(proposal.data);
+    }
+
+    const acceptFirstResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions/accept`,
       {
         method: "POST",
         headers: JSON_HEADERS,
-        body: JSON.stringify({
-          title: "确认关闭逻辑绑定",
-          decision: "议题已经决策，关闭所有 Agent 持久会话。",
-          rationale: "避免已结束议题继续持有可恢复上下文。",
-          alternatives: [],
-          status: "accepted",
-        }),
+        body: JSON.stringify({ decisionIds: [proposals[0]?.id] }),
       },
     );
-    assert.equal(decisionResponse.status, 201);
+    assert.equal(acceptFirstResponse.status, 200);
+    const partialListResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/runtime-bindings?includeClosed=true`,
+    );
+    const partialList = await readEnvelope<PublicRuntimeBinding[]>(partialListResponse);
+    assert.equal(
+      partialList.data?.find((binding) => binding.id === reopened.data?.id)?.status,
+      "starting",
+    );
+    assert.equal(harness.database.getTopic(topic.id).status, "open");
+
+    const acceptFinalResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions/accept`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ decisionIds: [proposals[1]?.id] }),
+      },
+    );
+    assert.equal(acceptFinalResponse.status, 200);
 
     const finalListResponse = await fetch(
       `${harness.baseUrl}/api/v1/topics/${topic.id}/runtime-bindings?includeClosed=true`,

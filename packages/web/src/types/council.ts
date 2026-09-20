@@ -1,9 +1,9 @@
 /**
  * @input  依赖：无
- * @output 导出：Council Web 的动态 Actor、Topic/Message/Decision/实施项行快照、
+ * @output 导出：Council Web 的动态 Actor、含关闭态的 Topic/Message/Decision/实施项行快照、
  *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
- *         同时供讨论面板、决策记录与架构档案三处消费
+ *         同时供讨论面板、决策包、决策记录与架构档案四处消费
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -17,9 +17,9 @@ export type MessageKind =
   | "synthesis"
   | "note";
 
-export type TopicStatus = "open" | "proposed" | "discussing" | "synthesis" | "decided";
+export type TopicStatus = "open" | "proposed" | "discussing" | "synthesis" | "decided" | "closed";
 
-export type DecisionStatus = "proposed" | "accepted" | "superseded";
+export type DecisionStatus = "proposed" | "accepted" | "rejected" | "superseded";
 export type WorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
 export type WorkItemOrigin = "manual" | "review_finding";
 export type WorkItemSeverity = "blocking" | "non_blocking";
@@ -96,12 +96,14 @@ export interface AlternativeItem {
 }
 
 export interface CouncilDecision {
+  id: string;
   title: string;
   summary: string;
   rationale: string;
   status: DecisionStatus;
   proposedBy: AgentId;
   proposedBySnapshot: ActorSnapshot;
+  createdAt: string;
   /**
    * 决策进入 accepted/superseded 状态的时间（ISO 8601）；仍是 proposed 时留空。
    * 架构档案时间线用它生成稳定的 ADR 编号——编号按"最初被接受的时间"升序分配，
@@ -164,7 +166,8 @@ export interface TopicDetail extends TopicSummary {
   evidence: EvidenceItem[];
   alternatives: AlternativeItem[];
   workItems: CouncilWorkItem[];
-  decision?: CouncilDecision;
+  /** 当前议题的完整决策包；按创建时间升序，任何状态都不得静默丢弃。 */
+  decisions: CouncilDecision[];
 }
 
 export interface ProjectSummary {

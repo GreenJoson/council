@@ -1,6 +1,6 @@
 /**
  * @input  依赖：界面语言上下文、Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、工作区视图路由和三栏组件
- * @output 导出：含既有提案复用、Human Decision、AI 任务拆分与证据化进度路径的 App 根组件
+ * @output 导出：含决策包、Human Decision、显式选 Agent 的任务拆分、跨 Agent 代码委派与证据化进度的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
  *         handlePublish 承接 Composer 的 @claude/@codex 召唤语法糖——公开发帖成功后
@@ -61,7 +61,10 @@ import type {
   OrchestrationSnapshot,
 } from "./types/orchestration";
 import { useI18n } from "./i18n/I18nProvider";
+import { useWorkItemDelegations } from "./hooks/useWorkItemDelegations";
 
+import { WorkAttentionView } from "./components/WorkAttentionView";
+import { ExecutionRepositoryContext } from "./hooks/useExecutionRepository";
 
 export default function App() {
   const { t } = useI18n();
@@ -96,6 +99,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isClosingTopic, setIsClosingTopic] = useState(false);
   const [workItemBusyAction, setWorkItemBusyAction] = useState<string | null>(null);
   const [isRecordingManualDecision, setIsRecordingManualDecision] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -216,15 +220,11 @@ export default function App() {
     ? workspace.topics.find((topic) => topic.id === selectedTopicId) ?? workspace.topics[0]
     : undefined;
   const activeTopicId = selectedTopic?.id ?? "";
-  const availablePlanningAgents = orchestration?.capabilities?.adapters.filter(
-    (adapter) => adapter.available,
-  ) ?? [];
-  const planningAgent = availablePlanningAgents.find(
-    (adapter) => adapter.actorId === selectedTopic?.decision?.proposedBy,
-  ) ?? availablePlanningAgents.find(
-    (adapter) => adapter.runtimeCapabilities.includes("repository_read"),
-  ) ?? availablePlanningAgents[0];
-
+  const workItemDelegations = useWorkItemDelegations(
+    orchestrationRepository,
+    activeTopicId,
+    orchestration,
+  );
   useEffect(() => {
     if (!activeTopicId) {
       return;
@@ -481,13 +481,21 @@ export default function App() {
     }
   }
 
-  async function handleAccept(): Promise<void> {
+  async function handleAccept(decisionIds: string[]): Promise<void> {
+    if (decisionIds.length === 0) {
+      return;
+    }
     setIsAccepting(true);
     try {
-      const snapshot = await repository.acceptDecision(activeTopicId);
+      const snapshot = await repository.acceptDecisions(activeTopicId, decisionIds);
       setWorkspace(snapshot);
-      setToastMessage(t("决策已接受，正在生成实施计划"));
-      void generateImplementationPlan(activeTopicId, snapshot);
+      if (decisionIds.length === 1) {
+        setToastMessage(t("决策已接受；任务尚未分拆，请在任务页选择 Agent 后手动开始"));
+      } else {
+        setToastMessage(t("已接受 {count} 条决策；任务尚未自动分拆", {
+          count: decisionIds.length,
+        }));
+      }
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
     } finally {
@@ -495,21 +503,46 @@ export default function App() {
     }
   }
 
+  async function handleCloseTopic(): Promise<void> {
+    if (!activeTopicId || !selectedTopic || selectedTopic.status === "closed") {
+      return;
+    }
+    const confirmed = window.confirm(t(
+      "关闭后将停止该议题的圆桌和 Agent 会话，但会保留全部讨论、决策和任务历史。确定关闭吗？",
+    ));
+    if (!confirmed) {
+      return;
+    }
+    setIsClosingTopic(true);
+    setContentErrorMessage(null);
+    try {
+      const snapshot = await repository.closeTopic(activeTopicId);
+      setWorkspace(snapshot);
+      setToastMessage(t("议题已关闭，历史记录仍被保留"));
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsClosingTopic(false);
+    }
+  }
+
   async function generateImplementationPlan(
     topicId: string,
     snapshot: WorkspaceSnapshot,
+    adapterId: string,
+    decisionId?: string,
   ): Promise<void> {
     const topic = snapshot.topics.find((candidate) => candidate.id === topicId);
-    const available = orchestration?.capabilities?.adapters.filter(
-      (adapter) => adapter.available,
-    ) ?? [];
-    const agent = available.find(
-      (adapter) => adapter.actorId === topic?.decision?.proposedBy,
-    ) ?? available.find(
-      (adapter) => adapter.runtimeCapabilities.includes("repository_read"),
-    ) ?? available[0];
+    const selectedDecision = decisionId
+      ? topic?.decisions.find((decision) => decision.id === decisionId)
+      : [...(topic?.decisions ?? [])]
+        .reverse()
+        .find((decision) => decision.status === "accepted");
+    const agent = orchestration?.capabilities?.adapters.find(
+      (adapter) => adapter.id === adapterId && adapter.available,
+    );
     if (!agent) {
-      setToastMessage(t("决策已接受；没有可用 Agent，可手动添加任务"));
+      setContentErrorMessage(t("所选任务拆分 Agent 当前不可用，请重新选择"));
       return;
     }
 
@@ -518,7 +551,8 @@ export default function App() {
     try {
       const result = await orchestrationRepository.generateWorkItems({
         topicId,
-        adapterId: agent.id,
+        adapterId,
+        ...(selectedDecision ? { decisionId: selectedDecision.id } : {}),
       });
       const refreshed = await repository.loadWorkspace();
       setWorkspace(refreshed);
@@ -539,11 +573,11 @@ export default function App() {
     }
   }
 
-  async function handleGenerateWorkItems(): Promise<void> {
+  async function handleGenerateWorkItems(adapterId: string): Promise<void> {
     if (!workspace || !activeTopicId) {
       return;
     }
-    await generateImplementationPlan(activeTopicId, workspace);
+    await generateImplementationPlan(activeTopicId, workspace, adapterId);
   }
 
   async function handleAddWorkItem(
@@ -615,6 +649,68 @@ export default function App() {
     }
   }
 
+  async function handleDelegateWorkItem(
+    item: CouncilWorkItem,
+    input: {
+      supervisorAgentId: string;
+      executorAgentId: string;
+      requestedPermission: "workspace_write" | "danger_full_access";
+      completionPolicy?: "review" | "human";
+      acceptanceCriteria?: string;
+      createInitialBaseline?: boolean;
+    },
+  ): Promise<void> {
+    setContentErrorMessage(null);
+    try {
+      await workItemDelegations.start({
+        topicId: activeTopicId,
+        workItemId: item.id,
+        expectedVersion: item.version,
+        ...input,
+      });
+      setToastMessage(t("Agent 协作已开始：执行后自动交给另一位 Agent 审核"));
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleDelegateWorkItems(
+    items: CouncilWorkItem[],
+    input: {
+      supervisorAgentId: string;
+      executorAgentId: string;
+      requestedPermission: "workspace_write" | "danger_full_access";
+      completionPolicy?: "review" | "human";
+      acceptanceCriteria?: string;
+      createInitialBaseline?: boolean;
+    },
+  ): Promise<void> {
+    setContentErrorMessage(null);
+    try {
+      await workItemDelegations.startBatch({
+        topicId: activeTopicId,
+        workItems: items.map((item) => ({
+          workItemId: item.id,
+          expectedVersion: item.version,
+        })),
+        ...input,
+      });
+      setToastMessage(t("一键委派已开始：任务将串行执行并逐项审核"));
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    }
+  }
+
+  async function handleCancelDelegation(delegationId: string): Promise<void> {
+    setContentErrorMessage(null);
+    try {
+      await workItemDelegations.cancel(delegationId);
+      setToastMessage(t("Agent 委派已取消"));
+    } catch (error: unknown) {
+      setContentErrorMessage(getErrorMessage(error));
+    }
+  }
+
   async function handleRecordManualDecision(draft: ManualDecisionDraft): Promise<boolean> {
     if (!activeTopicId) {
       return false;
@@ -629,8 +725,7 @@ export default function App() {
       const snapshot = await repository.recordManualDecision(input);
       setWorkspace(snapshot);
       setSelectedTopicId(activeTopicId);
-      setToastMessage(t("人工决策已记录，正在生成实施计划"));
-      void generateImplementationPlan(activeTopicId, snapshot);
+      setToastMessage(t("人工决策已记录；任务尚未分拆，请在任务页选择 Agent 后手动开始"));
       return true;
     } catch (error: unknown) {
       setContentErrorMessage(getErrorMessage(error));
@@ -836,6 +931,7 @@ export default function App() {
   const showsSingleColumn = activeView !== "topics" || !selectedTopic;
 
   return (
+    <ExecutionRepositoryContext.Provider value={orchestrationRepository}>
     <div className="app-shell">
       <HeaderBar
         project={workspace.project}
@@ -866,7 +962,11 @@ export default function App() {
           onSelectTopic={(topicId) => void handleOpenTopic(topicId)}
           onClose={() => setIsTopicsOpen(false)}
         />
-        {activeView === "architecture" ? (
+        {activeView === "attention" ? (
+          <WorkAttentionView key={workspace.project.id} topicId={workspace.topics[0]?.id}
+            revision={workspace} executionRevision={orchestration?.revision}
+            onOpenTopic={(topicId) => void handleOpenTopic(topicId)} />
+        ) : activeView === "architecture" ? (
           <ArchitectureView
             projectName={workspace.project.name}
             projectPath={desktopSettings?.currentProjectPath ?? undefined}
@@ -897,24 +997,29 @@ export default function App() {
               orchestration={orchestration}
               orchestrationBusyAction={orchestrationBusyAction}
               workItemBusyAction={workItemBusyAction}
-              planningAgentLabel={planningAgent?.label}
               onGenerateWorkItems={handleGenerateWorkItems}
               onAddWorkItem={handleAddWorkItem}
               onUpdateWorkItem={handleUpdateWorkItem}
               onClaimWorkItem={handleClaimWorkItem}
+              delegationAgents={orchestration?.capabilities?.adapters ?? []}
+              delegations={workItemDelegations.delegations}
+              delegationBusyAction={workItemDelegations.busyAction}
+              onDelegateWorkItem={handleDelegateWorkItem}
+              onDelegateWorkItems={handleDelegateWorkItems}
+              onCancelDelegation={handleCancelDelegation}
               isAccepting={isAccepting}
               onAccept={handleAccept}
               isRecordingManualDecision={isRecordingManualDecision}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}
+              isClosingTopic={isClosingTopic}
+              onCloseTopic={() => void handleCloseTopic()}
               decisionFocusNonce={topicDecisionFocusNonce}
             />
             <InspectorPanel
               topic={selectedTopic}
               participants={participants}
-              isAccepting={isAccepting}
               isRecordingManualDecision={isRecordingManualDecision}
               isOpen={isInspectorOpen}
-              onAccept={handleAccept}
               onRecordManualDecision={() => setIsManualDecisionOpen(true)}
               onOpenDecision={() =>
                 setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}
@@ -996,6 +1101,7 @@ export default function App() {
       {toastMessage ? <div className="toast" role="status">{toastMessage}</div> : null}
       <StatusBar />
     </div>
+    </ExecutionRepositoryContext.Provider>
   );
 }
 

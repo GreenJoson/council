@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 假实现与 Rust 同形领域响应
- * @output 导出：NativeCouncilRepository 加载、人工 Accepted、实施项桥接、项目切换与只读详情测试
+ * @output 导出：NativeCouncilRepository 加载、议题关闭、决策包接受桥接、人工 Accepted、实施项桥接、项目切换与只读详情测试
  * @pos    桌面内容闭环不依赖真实 Tauri 窗口的回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -75,6 +75,7 @@ function bridge(): DesktopBridge {
       hasMoreMessages: false,
     })),
     createTopic: vi.fn(async () => TOPIC),
+    closeTopic: vi.fn(async () => ({ ...TOPIC, status: "closed" })),
     postMessage: vi.fn(async () => ({
       id: "message_alpha",
       topicId: TOPIC.id,
@@ -97,6 +98,7 @@ function bridge(): DesktopBridge {
       createdAt: TOPIC.updatedAt,
       updatedAt: TOPIC.updatedAt,
     })),
+    acceptDecisions: vi.fn(async () => []),
     addWorkItems: vi.fn(async () => []),
     updateWorkItem: vi.fn(async () => ({
       id: "work_item_alpha",
@@ -135,6 +137,20 @@ describe("NativeCouncilRepository", () => {
     expect(snapshot.project.name).toBe("project-alpha");
     expect(snapshot.topics[0]?.title).toBe("桌面议题");
     expect(snapshot.sync.status).toBe("connected");
+  });
+
+  it("通过原生命令关闭议题", async () => {
+    const injected = bridge();
+    const repository = new NativeCouncilRepository({
+      bridge: injected,
+      topicPageSize: 100,
+      messagePageSize: 100,
+      recoveryDelayMs: 60_000,
+    });
+    await repository.getDesktopSettings();
+    await repository.loadWorkspace();
+    await repository.closeTopic(TOPIC.id);
+    expect(injected.closeTopic).toHaveBeenCalledWith({ topicId: TOPIC.id });
   });
 
   it("切换最近项目会清空旧快照并调用原生命令", async () => {
@@ -289,7 +305,7 @@ describe("NativeCouncilRepository", () => {
 
     const detail = await repository.loadTopicDetail(TOPIC.id);
     expect(detail.id).toBe(TOPIC.id);
-    expect(detail.decision).toMatchObject({
+    expect(detail.decisions[0]).toMatchObject({
       title: "结论",
       summary: "采用",
       status: "accepted",

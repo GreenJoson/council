@@ -4,6 +4,9 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `runtime-audit-store.ts` | 执行证据 | 持久化脱敏阶段/工具事件，提供不可覆盖的游标分页记录，不存私有草稿与未知用量 |
+| `work-attention-store.ts` | 聚合查询 | 按当前项目汇总待决策、待验收、阻断、失败与待回复，较新执行取代历史状态 |
+| `delegation-recovery.ts` | 恢复边界 | 分类失败，核验受管目录、Git 仓库、原提交及干净状态后恢复检查点 |
 | `agent-progress-hub.ts` | 兼容桥 | 把统一 RuntimeEvent 投影为现有 SSE 草稿、单调 sequence 和重连快照，不写 SQLite |
 | `claude-agent-adapter.ts` | 适配 | 只调用纯 ClaudeRuntime，首轮发送完整公开上下文、后续恢复 session 并发出统一文本事件，只公开脱敏诊断 |
 | `codex-agent-adapter.ts` | 适配 | 只调用纯 CodexRuntime，首轮发送完整公开上下文、后续 `exec resume` 并把公开 JSONL 消息转成统一文本事件 |
@@ -11,7 +14,9 @@
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
-| `work-item-planner.ts` | 结构化边界 | 把 Accepted 决策作为非可信上下文交给只读 Agent，严格解析 `council-work-plan` 并过滤重复任务 |
+| `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |
+| `work-item-delegation-store.ts` | 委派账本 | 持久化 supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
+| `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；只传当前议题/任务/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
 Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，
@@ -71,14 +76,16 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 编排器和适配器只发出统一 `RuntimeEvent`；`AgentProgressHub` 是面向旧 SSE 草稿协议的兼容
 投影，键由 `runId/topicId/adapterId` 组成，完成后立即清理。正式回复仍只能经
 `SQLiteCouncilStore.commitRound` 原子发布，因此浏览器断线、草稿丢失或进程退出不会制造
-半条正式消息。
+半条正式消息。`RuntimeAuditStore` 同时接收生命周期与工具事件并追加落库；文本草稿与上下文用量不写入审计。
 
 取消或失败清理会在同一状态迁移中清空 session 与游标；任何缺少 session 的绑定都强制使用
 完整公开上下文。进程重启只保留仍存在的可恢复 session。只有 open 议题可以创建运行或重开
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续通用 Run。
-唯一例外是一次性实施计划：它不恢复旧 session、不创建 RuntimeBinding/Run，也不给模型 Council
-写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。
+已决议题仍允许显式实施计划和委派。一次性实施计划不恢复旧 session、不创建 RuntimeBinding/Run，也不给模型 Council
+写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。显式委派使用独立账本与隔离工作区，完成条件和恢复规则见 [执行交付](../../../../docs/execution-delivery.md)。
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
 | `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
 | `service.ts` | 产品聚合 | Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单；自由 instruction 不能自行扩大授权 |
+
+委派从派发与认领时保存任务版本，成功/失败回写均不能覆盖后续人工作答；已提交检查点在后续模型调用之前保存。活动委派占用的 Agent/Provider 禁止修改配置，Node 与 Rust 同时禁止关闭仍有活动委派的议题。

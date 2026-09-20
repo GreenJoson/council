@@ -1,11 +1,13 @@
 /**
  * @input  依赖：界面语言上下文、自动轮次快照、当前议题开放状态和受控运行操作
- * @output 导出：AutoRoundsPanel 按需运行状态、单一当前调用卡、折叠历史与恢复控制
+ * @output 导出：AutoRoundsPanel 按需运行状态、单一当前调用卡、折叠历史、执行审计与恢复控制
  * @pos    Inspector 内仅在存在 Run/Binding 时出现的观察、批准、恢复和取消控制台；
  *         单次创建统一由 Composer @Agent 承担
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
 
 import {
   CheckCircle2,
@@ -314,6 +316,7 @@ function RunCard({ run, busyAction, onStart, onApprove, onCancel, onRecover }: R
           </RunButton>
         ) : null}
       </div>
+      <RuntimeAuditDetails topicId={run.topicId} sourceKind="run" sourceId={run.id} />
     </article>
   );
 }
@@ -344,6 +347,7 @@ function RunHistoryRow({ run, busyAction, onRecover }: RunHistoryRowProps) {
           {t("恢复")}
         </RunButton>
       ) : null}
+      <RuntimeAuditDetails topicId={run.topicId} sourceKind="run" sourceId={run.id} />
     </article>
   );
 }

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：schema-migrator 的逐版本权威重放与已发布版本指纹
- * @output 验证：已发布迁移文本不可改、新版本必须补指纹、v5 为纯数据迁移
+ * @output 验证：v2–v14 已发布迁移文本不可改、新版本必须补指纹、v5 为纯数据迁移
  * @pos    把「已落库的迁移 DDL 冻结」从口头规则变成会红的测试
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,10 @@ const FROZEN_SCHEMA_DIGESTS: ReadonlyMap<number, string> = new Map([
   [10, "0ce9899af697da39ef32f78d280b92587644044a1766b178770840b2a87d8f2d"],
   [11, "582ae481713139587c4529bcd7007f70fbf45f23c53a9c215fb708d369928ca4"],
   [12, "812e2610d61e967496da91d61d8d4b4395c8a8610fb9a629da492d95d8bab4b5"],
+  [13, "747b64f5b7e80a518ca0f8659f7f807f7702cc2ef9ffc2f1bd1ddc79495bc9e9"],
+  [14, "30f1c1f68e35b44dde8e024cb23ef6e75b707ff568a58d340165d26c0a4c8344"],
+  [15, "1fbf3f2581c99d683209af9265c99461e57a66f2b7ef094a56602d79e4c2a626"],
+  [16, "474fa8932290be23e938eb9d8165d964f57fd3d9a02003a483bb84d4009cd8d7"],
 ]);
 
 test("已发布迁移的 schema 文本被冻结", () => {

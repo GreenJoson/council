@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `package.json` | 工程 | 锁定 React、Vite、字体、图标与测试依赖 |
+| `package.json` | 工程 | 锁定 React、Vite、字体、图标与测试依赖，包含已修复安全问题的 Mermaid 和 Vitest 版本 |
 | `package-lock.json` | 锁定 | 固化前端依赖解析结果 |
 | `index.html` | 入口 | 提供浏览器根文档和无障碍跳转入口 |
 | `vite.config.ts` | 构建 | 配置 React 开发服务和生产构建 |
@@ -27,9 +27,11 @@ npm run dev
 
 `http` 模式通过 REST 创建议题、发帖和接受决策，并通过独立 orchestration API 创建、启动、批准、恢复和取消自动轮次。顶栏 Model Router 通过同一安全本地服务分层管理 Provider 连接、品牌和独立 Agent/Actor/`@alias`；API Key 不进入前端回读数据。普通内容写入不提交作者字段，由服务端固定 human；Agent 输出只走 orchestration。同一议题存在待启动或进行中的 Run 时不会重复新建，运行 policy 的人工恢复预算耗尽后也不会展示无效恢复操作。
 
-右侧 `ImplementationProgress` 把 Accepted 决策显示为实施计划：接受决策后自动选择可用 Agent，
-以只读调用把方案拆成结构化任务；服务端校验后按 Agent 身份写入执行账本。已有计划可再次让 AI
-补充遗漏，也可手动追加。完成度由 `completed / total` 自动计算，四态流转可同时记录完成证据或
-受阻原因；外部 MCP 写入会沿内容 revision 自动刷新到同一视图。
+`ImplementationProgress` 按 Accepted 决策展示实施计划：用户显式选择 Agent 后，
+以只读调用把方案拆成结构化任务；服务端校验后按 Agent 身份写入执行账本。接受决策不会自动调用模型。
+已有计划可再次让 AI 补充遗漏，也可手动追加。任务可单项或批量委派给独立执行 Agent，冻结验收条件，
+默认由用户验收；持久执行证据、当前项目待处理项和已提交进度恢复见 [执行交付](../../docs/execution-delivery.md)。
+完成度由 `completed / total` 自动计算，四态流转可同时记录完成证据或受阻原因；
+外部 MCP 写入会沿内容 revision 自动刷新到同一视图。
 
 内容和编排仓储各自订阅 `/api/v1/events` 的 `council.changed` 总 revision，再读取 `/api/v1/status`，分别按 `revisions.content` 与 `revisions.orchestration` 校准，互不触发对方的数据重载。EventSource 断线时保留最后快照，由浏览器负责原生重连；快速重试耗尽后以配置化低频定时器继续恢复。

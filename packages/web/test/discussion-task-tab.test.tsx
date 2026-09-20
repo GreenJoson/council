@@ -53,14 +53,16 @@ describe("议题任务 tab", () => {
       constraints: [],
       evidence: [],
       alternatives: [],
-      decision: {
+      decisions: [{
+        id: "decision_tasks",
         title: "开始实施",
         summary: "按任务执行。",
         rationale: "已经收敛。",
         status: "accepted",
         proposedBy: "human",
         proposedBySnapshot: ACTOR,
-      },
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }],
       workItems: [workItem("已完成任务", "completed"), workItem("待处理任务", "pending")],
     };
 
@@ -75,7 +77,6 @@ describe("议题任务 tab", () => {
         orchestration={null}
         orchestrationBusyAction={null}
         workItemBusyAction={null}
-        planningAgentLabel="Codex"
         onGenerateWorkItems={async () => undefined}
         onAddWorkItem={async () => true}
         onUpdateWorkItem={async () => undefined}
@@ -83,6 +84,8 @@ describe("议题任务 tab", () => {
         onAccept={() => undefined}
         isRecordingManualDecision={false}
         onRecordManualDecision={() => undefined}
+        isClosingTopic={false}
+        onCloseTopic={() => undefined}
       />,
     );
 

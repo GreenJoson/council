@@ -1,14 +1,15 @@
 /**
- * @input  依赖：界面语言上下文、当前项目名、含 owner/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
+ * @input  依赖：界面语言上下文、当前项目名、含 owner/完整决策包/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央工作区（讨论/决策/任务/元数据、人工签署、阶梯导航与引用回复）
+ * @output 导出：DiscussionPanel 中央工作区（讨论/完整决策包、单条/批量接受、任务/元数据、
+ *         议题关闭、人工签署、阶梯导航与引用回复）
  * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
+import { Archive, Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type {
   CouncilMessage,
@@ -19,7 +20,12 @@ import type {
   TopicDetail,
   WorkItemStatus,
 } from "../types/council";
-import type { OrchestrationSnapshot } from "../types/orchestration";
+import type {
+  OrchestrationAdapter,
+  OrchestrationSnapshot,
+  WorkItemDelegation,
+} from "../types/orchestration";
+import { pendingDecisions, summarizeDecisionPackage } from "../data/decision-package";
 import { summarizeWorkItemProgress } from "../data/work-item-tree";
 import { useI18n } from "../i18n/I18nProvider";
 import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "./presentation";
@@ -33,6 +39,7 @@ import { ImplementationProgress } from "./ImplementationProgress";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
+import type { BatchDelegationOptions } from "./BatchWorkItemDelegationPanel";
 
 export interface DiscussionPanelProps {
   projectName: string;
@@ -44,8 +51,7 @@ export interface DiscussionPanelProps {
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
   workItemBusyAction: string | null;
-  planningAgentLabel?: string;
-  onGenerateWorkItems: () => Promise<void>;
+  onGenerateWorkItems: (adapterId: string) => Promise<void>;
   onAddWorkItem: (title: string, details: string, parentId?: string) => Promise<boolean>;
   onUpdateWorkItem: (
     item: CouncilWorkItem,
@@ -53,10 +59,29 @@ export interface DiscussionPanelProps {
     statusNote: string,
   ) => Promise<void>;
   onClaimWorkItem: (item: CouncilWorkItem) => Promise<void>;
+  delegationAgents?: OrchestrationAdapter[];
+  delegations?: WorkItemDelegation[];
+  delegationBusyAction?: string | null;
+  onDelegateWorkItem?: (
+    item: CouncilWorkItem,
+    input: {
+      supervisorAgentId: string;
+      executorAgentId: string;
+      requestedPermission: "workspace_write" | "danger_full_access";
+      createInitialBaseline?: boolean;
+    },
+  ) => Promise<void>;
+  onDelegateWorkItems?: (
+    items: CouncilWorkItem[],
+    input: BatchDelegationOptions,
+  ) => Promise<void>;
+  onCancelDelegation?: (delegationId: string) => Promise<void>;
   isAccepting: boolean;
-  onAccept: () => Promise<void> | void;
+  onAccept: (decisionIds: string[]) => Promise<void> | void;
   isRecordingManualDecision: boolean;
   onRecordManualDecision: () => void;
+  isClosingTopic: boolean;
+  onCloseTopic: () => void;
   /** 右栏「查看全文」发来的切换请求；nonce 变化即一次新请求，同一议题重复点也生效 */
   decisionFocusNonce?: number;
 }
@@ -92,21 +117,29 @@ export function DiscussionPanel({
   orchestration,
   orchestrationBusyAction,
   workItemBusyAction,
-  planningAgentLabel,
   onGenerateWorkItems,
   onAddWorkItem,
   onUpdateWorkItem,
   onClaimWorkItem,
+  delegationAgents = [],
+  delegations = [],
+  delegationBusyAction = null,
+  onDelegateWorkItem = async () => undefined,
+  onDelegateWorkItems = async () => undefined,
+  onCancelDelegation = async () => undefined,
   isAccepting,
   onAccept,
   isRecordingManualDecision,
   onRecordManualDecision,
+  isClosingTopic,
+  onCloseTopic,
   decisionFocusNonce,
 }: DiscussionPanelProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
   const [quoteSeed, setQuoteSeed] = useState<QuoteSeed | null>(null);
   const [isIdCopied, setIsIdCopied] = useState(false);
+  const [selectedDecisionIds, setSelectedDecisionIds] = useState<Set<string>>(new Set());
   const [activeMessageId, setActiveMessageId] = useState(topic.messages[0]?.id);
   const timelineRef = useRef<HTMLElement>(null);
   const shouldFollowTimelineRef = useRef(true);
@@ -117,8 +150,24 @@ export function DiscussionPanel({
   useEffect(() => {
     setActiveTab("discussion");
     setActiveMessageId(topic.messages[0]?.id);
+    setSelectedDecisionIds(new Set());
     shouldFollowTimelineRef.current = false;
   }, [topic.id]);
+
+  // 接受完成或后台刷新后，及时剔除已不再是 proposed 的选中项。
+  useEffect(() => {
+    const pendingIds = new Set(
+      topic.decisions
+        .filter((decision) => decision.status === "proposed")
+        .map((decision) => decision.id),
+    );
+    setSelectedDecisionIds((current) => {
+      const next = new Set([...current].filter((id) => pendingIds.has(id)));
+      const unchanged = next.size === current.size
+        && [...next].every((id) => current.has(id));
+      return unchanged ? current : next;
+    });
+  }, [topic.decisions]);
 
   // 右栏「查看全文」：nonce 变化即切到决策 tab。初值 undefined 不触发，避免开局抢走讨论
   useEffect(() => {
@@ -230,12 +279,10 @@ export function DiscussionPanel({
     topic.ownerSnapshot,
     participants.get(topic.owner),
   );
-  const decisionProposer = topic.decision
-    ? participantFromActorSnapshot(
-      topic.decision.proposedBySnapshot,
-      participants.get(topic.decision.proposedBy),
-    )
-    : undefined;
+  const decisionSummary = summarizeDecisionPackage(topic.decisions);
+  const proposedDecisions = pendingDecisions(topic.decisions);
+  const allProposedSelected = proposedDecisions.length > 0
+    && proposedDecisions.every((decision) => selectedDecisionIds.has(decision.id));
   // 任务 tab 的计数必须和侧边栏、实施进度卡共用一套口径：都只数叶子。
   // 父任务的状态本来就是子任务算出来的，再进一次分母等于把同一件事记两次。
   const workItemProgress = topic.workItemProgress ?? summarizeWorkItemProgress(topic.workItems);
@@ -245,6 +292,26 @@ export function DiscussionPanel({
   function handleQuote(message: CouncilMessage): void {
     quoteNonceRef.current += 1;
     setQuoteSeed({ text: buildQuoteText(message, participants), nonce: quoteNonceRef.current });
+  }
+
+  function toggleDecisionSelection(decisionId: string): void {
+    setSelectedDecisionIds((current) => {
+      const next = new Set(current);
+      if (next.has(decisionId)) {
+        next.delete(decisionId);
+      } else {
+        next.add(decisionId);
+      }
+      return next;
+    });
+  }
+
+  function toggleAllProposedDecisions(): void {
+    setSelectedDecisionIds(
+      allProposedSelected
+        ? new Set()
+        : new Set(proposedDecisions.map((decision) => decision.id)),
+    );
   }
 
   function handleMessageJump(messageId: string): void {
@@ -288,15 +355,28 @@ export function DiscussionPanel({
               <span>{t("更新于 {time}", { time: topic.updatedLabel })}</span>
             </div>
           </div>
-          <div className="topic-participants" aria-label={t("议题参与者")}>
-            {topic.participants.map((agent) => (
-              <AgentAvatar
-                agent={agent}
-                participant={participants.get(agent)}
-                key={agent}
-                size="small"
-              />
-            ))}
+          <div className="topic-heading-actions">
+            {topic.status !== "closed" ? (
+              <button
+                className="topic-close-button"
+                type="button"
+                disabled={isClosingTopic}
+                onClick={onCloseTopic}
+              >
+                <Archive size={14} aria-hidden="true" />
+                {t(isClosingTopic ? "正在关闭" : "关闭议题")}
+              </button>
+            ) : null}
+            <div className="topic-participants" aria-label={t("议题参与者")}>
+              {topic.participants.map((agent) => (
+                <AgentAvatar
+                  agent={agent}
+                  participant={participants.get(agent)}
+                  key={agent}
+                  size="small"
+                />
+              ))}
+            </div>
           </div>
         </div>
         <div className="topic-question">
@@ -325,8 +405,9 @@ export function DiscussionPanel({
             onClick={() => setActiveTab("decision")}
           >
             {t("决策")}
-            {/* 只有 proposed 才亮点：已接受/已取代不是待办，不该一直催 */}
-            {topic.decision?.status === "proposed" ? (
+            <span className="count-pill">{decisionSummary.total}</span>
+            {/* 只要决策包里仍有 proposed 就亮点；部分接受不能把剩余待办藏掉。 */}
+            {decisionSummary.proposed > 0 ? (
               <span className="tab-dot" aria-label={t("有待审阅的拟议决策")} />
             ) : null}
           </button>
@@ -417,7 +498,7 @@ export function DiscussionPanel({
           <Composer
             currentProjectName={projectName}
             isPublishing={isPublishing}
-            allowAgentCalls={topic.status !== "decided"}
+            allowAgentCalls={topic.status !== "decided" && topic.status !== "closed"}
             sync={sync}
             onPublish={onPublish}
             quoteSeed={quoteSeed}
@@ -434,33 +515,20 @@ export function DiscussionPanel({
           aria-labelledby="decision-tab"
           aria-label={t("议题决策")}
         >
-          {topic.decision ? (
-            <DecisionCard decision={topic.decision}>
-              <div className="topic-decision-actions">
-                <span className="topic-decision-proposer">
-                  <AgentAvatar
-                    agent={topic.decision.proposedBy}
-                    participant={decisionProposer}
-                    size="small"
-                  />
-                  <span>{t("由 {name} 提出", { name: decisionProposer?.name ?? topic.decision.proposedBy })}</span>
-                </span>
-                <button
-                  className="accept-button"
-                  type="button"
-                  disabled={topic.decision.status !== "proposed" || isAccepting}
-                  onClick={() => void onAccept()}
-                >
-                  <CheckCircle2 size={17} />
-                  {topic.decision.status === "accepted"
-                    ? t("决策已接受")
-                    : topic.decision.status === "superseded"
-                      ? t("决策已被取代")
-                      : isAccepting
-                        ? t("记录中…")
-                        : t("标记为 Accepted")}
-                </button>
-                {topic.decision.status === "proposed" ? (
+          {topic.decisions.length > 0 ? (
+            <>
+              <header className="decision-package-header">
+                <div>
+                  <span className="dialog-kicker">{t("决策包")}</span>
+                  <h2>{t("共 {total} 条决策", { total: decisionSummary.total })}</h2>
+                  <p>
+                    {t("{proposed} 条待确认，{accepted} 条已接受", {
+                      proposed: decisionSummary.proposed,
+                      accepted: decisionSummary.accepted,
+                    })}
+                  </p>
+                </div>
+                {topic.status !== "decided" && topic.status !== "closed" ? (
                   <button
                     className="secondary-button manual-decision-entry"
                     type="button"
@@ -471,8 +539,84 @@ export function DiscussionPanel({
                     {t("记录独立人工决策")}
                   </button>
                 ) : null}
+              </header>
+
+              {proposedDecisions.length > 1 ? (
+                <div className="decision-batch-bar" aria-label={t("批量决策操作")}>
+                  <label className="decision-select-control">
+                    <input
+                      type="checkbox"
+                      checked={allProposedSelected}
+                      onChange={toggleAllProposedDecisions}
+                    />
+                    <span>{t("选择全部待确认决策")}</span>
+                  </label>
+                  <span className="decision-selection-count">
+                    {t("已选择 {count} 条", { count: selectedDecisionIds.size })}
+                  </span>
+                  <button
+                    className="accept-button"
+                    type="button"
+                    disabled={selectedDecisionIds.size === 0 || isAccepting}
+                    onClick={() => void onAccept([...selectedDecisionIds])}
+                  >
+                    <CheckCircle2 size={17} />
+                    {isAccepting
+                      ? t("记录中…")
+                      : t("接受选中的 {count} 条", { count: selectedDecisionIds.size })}
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="decision-package-list">
+                {topic.decisions.map((decision) => {
+                  const proposer = participantFromActorSnapshot(
+                    decision.proposedBySnapshot,
+                    participants.get(decision.proposedBy),
+                  );
+                  const isProposed = decision.status === "proposed";
+                  return (
+                    <div className="decision-package-item" key={decision.id}>
+                      {isProposed ? (
+                        <label className="decision-card-selector">
+                          <input
+                            type="checkbox"
+                            checked={selectedDecisionIds.has(decision.id)}
+                            onChange={() => toggleDecisionSelection(decision.id)}
+                          />
+                          <span>{t("选择决策：{title}", { title: decision.title })}</span>
+                        </label>
+                      ) : null}
+                      <DecisionCard decision={decision} collapsible={topic.decisions.length > 1}>
+                        <div className="topic-decision-actions">
+                          <span className="topic-decision-proposer">
+                            <AgentAvatar
+                              agent={decision.proposedBy}
+                              participant={proposer}
+                              size="small"
+                            />
+                            <span>{t("由 {name} 提出", {
+                              name: proposer?.name ?? decision.proposedBy,
+                            })}</span>
+                          </span>
+                          {isProposed ? (
+                            <button
+                              className="accept-button"
+                              type="button"
+                              disabled={isAccepting}
+                              onClick={() => void onAccept([decision.id])}
+                            >
+                              <CheckCircle2 size={17} />
+                              {isAccepting ? t("记录中…") : t("接受此决策")}
+                            </button>
+                          ) : null}
+                        </div>
+                      </DecisionCard>
+                    </div>
+                  );
+                })}
               </div>
-            </DecisionCard>
+            </>
           ) : (
             <div className="empty-discussion">
               <AgentAvatar agent="council" />
@@ -504,11 +648,16 @@ export function DiscussionPanel({
             topic={topic}
             participants={participants}
             busyAction={workItemBusyAction}
-            planningAgentLabel={planningAgentLabel}
             onGenerate={onGenerateWorkItems}
             onAdd={onAddWorkItem}
             onUpdate={onUpdateWorkItem}
             onClaim={onClaimWorkItem}
+            delegationAgents={delegationAgents}
+            delegations={delegations}
+            delegationBusyAction={delegationBusyAction}
+            onDelegate={onDelegateWorkItem}
+            onDelegateBatch={onDelegateWorkItems}
+            onCancelDelegation={onCancelDelegation}
           />
         </section>
       ) : (

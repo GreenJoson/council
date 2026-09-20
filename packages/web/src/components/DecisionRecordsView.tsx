@@ -1,8 +1,8 @@
 /**
- * @input  依赖：界面语言上下文、含 owner/决策/备选冻结快照的议题、参与者回退、详情懒加载回调，
+ * @input  依赖：界面语言上下文、含 owner/完整决策包/备选冻结快照的议题、参与者回退、详情懒加载回调，
  *         经共享的 useTopicDetails hook）、外部跳转定位请求（focusRequest）、打开讨论回调与 MarkdownContent
  * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）、
- *         DecisionRecordArticle 单条冻结身份档案
+ *         DecisionRecordArticle 多条冻结身份档案
  * @pos    Operator Console 决策记录视图：归档已接受/拟议中/已被取代的结构化决策
  *         （决策正文走共用的 DecisionCard，原始问题按 Markdown 渲染、不折叠，含 mermaid 围栏），
  *         详情经 useTopicDetails 按需懒加载并缓存；架构档案时间线点击某条 ADR 后
@@ -165,17 +165,10 @@ export function DecisionRecordArticle({
   onOpenTopic,
 }: DecisionRecordArticleProps) {
   const { t } = useI18n();
-  const decision = detail.decision;
   const owner = participantFromActorSnapshot(
     detail.ownerSnapshot,
     participants.get(detail.owner),
   );
-  const proposer = decision
-    ? participantFromActorSnapshot(
-      decision.proposedBySnapshot,
-      participants.get(decision.proposedBy),
-    )
-    : undefined;
 
   return (
     <article className="decision-record-article">
@@ -187,17 +180,33 @@ export function DecisionRecordArticle({
         <span className="decision-record-updated">{t("更新于 {time}", { time: detail.updatedLabel })}</span>
       </header>
 
-      {decision ? (
-        <DecisionCard decision={decision}>
-          <div className="decision-record-proposer">
-            <AgentAvatar
-              agent={decision.proposedBy}
-              participant={proposer}
-              size="small"
-            />
-            <span>{t("由 {name} 提出", { name: proposer?.name ?? decision.proposedBy })}</span>
-          </div>
-        </DecisionCard>
+      {detail.decisions.length > 0 ? (
+        <section className="decision-record-package" aria-label={t("完整决策包")}>
+          <header>
+            <h3>{t("完整决策包")}</h3>
+            <span className="count-pill">{detail.decisions.length}</span>
+          </header>
+          {detail.decisions.map((decision) => {
+            const proposer = participantFromActorSnapshot(
+              decision.proposedBySnapshot,
+              participants.get(decision.proposedBy),
+            );
+            return (
+              <DecisionCard decision={decision} collapsible={detail.decisions.length > 1} key={decision.id}>
+                <div className="decision-record-proposer">
+                  <AgentAvatar
+                    agent={decision.proposedBy}
+                    participant={proposer}
+                    size="small"
+                  />
+                  <span>{t("由 {name} 提出", {
+                    name: proposer?.name ?? decision.proposedBy,
+                  })}</span>
+                </div>
+              </DecisionCard>
+            );
+          })}
+        </section>
       ) : (
         <p className="decision-record-honest-notice">
           <TriangleAlert size={15} aria-hidden="true" />

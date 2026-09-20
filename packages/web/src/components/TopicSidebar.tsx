@@ -1,13 +1,14 @@
 /**
  * @input  依赖：界面语言上下文、议题列表（含实施完成度）、选中状态、状态筛选、工作区视图路由与关闭回调
  * @output 导出：WorkspaceView 视图路由类型与 TopicSidebar 项目和议题导航（时间与完成度左右分列）
- * @pos    Operator Console 左侧高密度导航区域，三个工作区视图共用
+ * @pos    Operator Console 左侧高密度导航区域，四个工作区视图共用
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import {
   Boxes,
+  Inbox,
   Check,
   FileCheck2,
   GitBranch,
@@ -20,8 +21,8 @@ import type { TopicSummary } from "../types/council";
 import { useI18n } from "../i18n/I18nProvider";
 import { StatusBadge } from "./presentation";
 
-/** Operator Console 三个工作区视图：议题讨论、架构总览看板、决策归档 */
-export type WorkspaceView = "topics" | "architecture" | "decisions";
+/** Operator Console 四个工作区视图：议题讨论、待处理、架构总览看板、决策归档 */
+export type WorkspaceView = "topics" | "architecture" | "decisions" | "attention";
 
 const statusFilterOptions: { id: TopicStatusFilter; label: string }[] = [
   { id: "all", label: "全部" },
@@ -31,6 +32,7 @@ const statusFilterOptions: { id: TopicStatusFilter; label: string }[] = [
 
 const workspaceViewOptions: { id: WorkspaceView; label: string; Icon: ComponentType<{ size?: number }> }[] = [
   { id: "topics", label: "议题", Icon: Boxes },
+  { id: "attention", label: "需要我处理", Icon: Inbox },
   { id: "architecture", label: "架构档案", Icon: GitBranch },
   { id: "decisions", label: "决策记录", Icon: FileCheck2 },
 ];

@@ -1,10 +1,13 @@
 /**
  * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 运行、AI 实施计划、持久会话与临时草稿仓储
+ * @output 导出：HttpOrchestrationRepository 运行、按 decisionId 生成 AI 实施计划、持久会话、委派恢复、审计/待处理与临时草稿仓储
  * @pos    revision 变化时校准运行/会话列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import { type WorkAttention, parseWorkAttention } from "./work-attention";
+import { type RuntimeAuditPage, type RuntimeAuditQuery, parseRuntimeAuditPage } from "./runtime-audit";
 
 import type {
   AnswerCycleQuestionInput,
@@ -20,6 +23,9 @@ import type {
   OrchestrationAgentOutput,
   RuntimeBinding,
   StartCycleInput,
+  StartWorkItemDelegationBatchInput,
+  StartWorkItemDelegationInput,
+  WorkItemDelegation,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -44,6 +50,8 @@ import {
   parseAgentOutputEvent,
   parseRuntimeBinding,
   parseRuntimeBindings,
+  parseWorkItemDelegation,
+  parseWorkItemDelegations,
 } from "./orchestration-api";
 import { parseApiWorkItems } from "./api-types";
 import {
@@ -251,7 +259,10 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items/actions/generate`,
       ),
       parseApiWorkItems,
-      jsonRequest({ adapterId: input.adapterId }),
+      jsonRequest({
+        adapterId: input.adapterId,
+        ...(input.decisionId ? { decisionId: input.decisionId } : {}),
+      }),
     );
     return { createdCount: workItems.length };
   }
@@ -459,6 +470,8 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         model: input.model,
         mentionAlias: input.mentionAlias,
         enabled: input.enabled,
+        permissionProfile: input.permissionProfile,
+        executionRole: input.executionRole,
       }),
     );
   }
@@ -476,6 +489,8 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         model: input.model,
         mentionAlias: input.mentionAlias,
         enabled: input.enabled,
+        permissionProfile: input.permissionProfile,
+        executionRole: input.executionRole,
       }, "PUT"),
     );
   }
@@ -500,6 +515,93 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         `/api/v1/settings/agents/${encodeURIComponent(agentId)}/actions/test`,
       ),
       parseAgentConnectionTest,
+      jsonRequest({}),
+    );
+  }
+
+  async resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+    return requestApiData(this.#fetcher, createApiUrl(this.#baseUrl,
+      `/api/v1/work-item-delegations/${encodeURIComponent(id)}/actions/resume`), parseWorkItemDelegation, jsonRequest({ expectedVersion }));
+  }
+
+  async listWorkAttention(topicId: string): Promise<WorkAttention[]> {
+    return requestApiData(this.#fetcher, createApiUrl(this.#baseUrl,
+      `/api/v1/topics/${encodeURIComponent(topicId)}/work-attention`), parseWorkAttention);
+  }
+
+  async listRuntimeAudit(input: RuntimeAuditQuery): Promise<RuntimeAuditPage> {
+    const query = new URLSearchParams({ sourceKind: input.sourceKind, sourceId: input.sourceId, after: String(input.after ?? 0) });
+    return requestApiData(this.#fetcher, createApiUrl(this.#baseUrl,
+      `/api/v1/topics/${encodeURIComponent(input.topicId)}/runtime-audit?${query}`), parseRuntimeAuditPage);
+  }
+
+  async listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/work-item-delegations`,
+      ),
+      parseWorkItemDelegations,
+    );
+  }
+
+  async startWorkItemDelegation(
+    input: StartWorkItemDelegationInput,
+  ): Promise<WorkItemDelegation> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-items/${encodeURIComponent(input.workItemId)}/delegations`,
+      ),
+      parseWorkItemDelegation,
+      jsonRequest({
+        expectedVersion: input.expectedVersion,
+        supervisorAgentId: input.supervisorAgentId,
+        executorAgentId: input.executorAgentId,
+        requestedPermission: input.requestedPermission,
+        completionPolicy: input.completionPolicy ?? "human",
+        ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+        ...(input.createInitialBaseline !== undefined
+          ? { createInitialBaseline: input.createInitialBaseline }
+          : {}),
+      }),
+    );
+  }
+
+  async startWorkItemDelegationBatch(
+    input: StartWorkItemDelegationBatchInput,
+  ): Promise<WorkItemDelegation[]> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(input.topicId)}/work-item-delegations/actions/start-batch`,
+      ),
+      parseWorkItemDelegations,
+      jsonRequest({
+        workItems: input.workItems,
+        supervisorAgentId: input.supervisorAgentId,
+        executorAgentId: input.executorAgentId,
+        requestedPermission: input.requestedPermission,
+        completionPolicy: input.completionPolicy ?? "human",
+        ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+        ...(input.createInitialBaseline !== undefined
+          ? { createInitialBaseline: input.createInitialBaseline }
+          : {}),
+      }),
+    );
+  }
+
+  async cancelWorkItemDelegation(delegationId: string): Promise<WorkItemDelegation> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/work-item-delegations/${encodeURIComponent(delegationId)}/actions/cancel`,
+      ),
+      parseWorkItemDelegation,
       jsonRequest({}),
     );
   }
@@ -919,6 +1021,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
   }
 
   #publishSnapshot(): OrchestrationSnapshot {
+    this.#snapshot = { ...this.#snapshot, revision: this.#appliedOrchestrationRevision };
     const snapshot = cloneSnapshot(this.#snapshot);
     for (const listener of this.#listeners) {
       listener(cloneSnapshot(snapshot));

@@ -6,6 +6,8 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import "./styles/execution-evidence.css";
+
 import "@fontsource-variable/ibm-plex-sans";
 import "@fontsource-variable/jetbrains-mono";
 import { StrictMode } from "react";

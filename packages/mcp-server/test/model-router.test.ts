@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 v5 SQLite、ModelRouterService/Store 与内存 SecretStore
- * @output 验证：Provider/Agent 分层、五类 ACP 模板、多 Agent、品牌不可伪装、Keychain 强补偿、
+ * @output 验证：Provider/Agent 分层、权限/职责、五类 ACP 模板、多 Agent、品牌、Keychain 强补偿、
  *               Provider 复活、alias/重启生命周期、系统身份保护与活动 Run fail-closed
  * @pos    动态模型路由控制面的核心安全回归测试
  *
@@ -74,6 +74,62 @@ class DeleteFalseSecretStore extends MemorySecretStore {
     return false;
   }
 }
+
+test("Agent 写入权限必须绑定执行职责且只开放给 Claude/Codex CLI", async () => {
+  const fixture = await createFixture();
+  try {
+    const snapshot = await fixture.service.snapshot();
+    const claude = snapshot.agents.find((agent) => agent.actorId === "claude");
+    assert(claude);
+    assert.equal(claude.permissionProfile, "read_only");
+    assert.equal(claude.executionRole, "hybrid");
+    const model = claude.model || "test-model";
+    const writable = fixture.service.updateAgent(claude.id, {
+      displayName: claude.displayName,
+      model,
+      mentionAlias: claude.mentionAlias,
+      enabled: claude.enabled,
+      permissionProfile: "workspace_write",
+      executionRole: "hybrid",
+    });
+    assert.equal(writable.permissionProfile, "workspace_write");
+    assert.equal(writable.executionRole, "hybrid");
+
+    assert.throws(
+      () => fixture.service.updateAgent(claude.id, {
+        displayName: claude.displayName,
+        model,
+        mentionAlias: claude.mentionAlias,
+        enabled: claude.enabled,
+        permissionProfile: "danger_full_access",
+        executionRole: "reviewer",
+      }),
+      /只有执行者或复合职责/u,
+    );
+
+    const provider = await fixture.service.createProvider({
+      templateId: "kimi-code",
+      slug: "kimi-code",
+      displayName: "Kimi Code",
+      active: true,
+    });
+    assert.throws(
+      () => fixture.service.createAgent({
+        providerId: provider.id,
+        slug: "kimi-executor",
+        displayName: "Kimi Executor",
+        model: "kimi-code/k3",
+        mentionAlias: "kimi-executor",
+        enabled: true,
+        permissionProfile: "workspace_write",
+        executionRole: "executor",
+      }),
+      /只有 Claude CLI 与 Codex CLI/u,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
 
 test("Provider 与 Agent 分层：同一 Kimi 连接可创建多个独立 Agent", async () => {
   const fixture = await createFixture();

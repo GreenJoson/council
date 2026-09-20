@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已构建的 Node schema migrator、目标 SQLite 路径与 fresh/v2/v3/v5 模式
- * @output 导出：由 Node canonical 迁移器真实创建的 v11 测试数据库
+ * @output 导出：由 Node canonical 迁移器真实创建的 v14 测试数据库
  * @pos    Rust 跨语言兼容测试的唯一数据库生成入口；禁止手抄 Node DDL
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -96,6 +96,9 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
+      DROP TABLE IF EXISTS runtime_audit_events;
+      DROP TABLE work_item_delegations;
       DROP TABLE work_items;
       DROP TRIGGER trg_decisions_cycle_close_update;
       DROP TRIGGER trg_decisions_cycle_close_insert;
@@ -120,6 +123,8 @@ if (mode === "fresh") {
       SET value = 2
       WHERE key = 'orchestration_schema_version';
       ALTER TABLE provider_profiles DROP COLUMN config_revision;
+      ALTER TABLE agent_definitions DROP COLUMN permission_profile;
+      ALTER TABLE agent_definitions DROP COLUMN execution_role;
       ALTER TABLE agent_definitions DROP COLUMN config_revision;
       DELETE FROM schema_migrations WHERE version >= 4;
       PRAGMA user_version = 3;
@@ -166,6 +171,9 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
+      DROP TABLE IF EXISTS runtime_audit_events;
+      DROP TABLE work_item_delegations;
       DROP TABLE work_items;
       DROP TRIGGER trg_decisions_cycle_close_update;
       DROP TRIGGER trg_decisions_cycle_close_insert;
@@ -178,6 +186,10 @@ if (mode === "fresh") {
       DROP TABLE runtime_bindings;
       DELETE FROM schema_migrations WHERE version >= 6;
       PRAGMA user_version = 5;
+    `);
+    database.exec(`
+      ALTER TABLE agent_definitions DROP COLUMN permission_profile;
+      ALTER TABLE agent_definitions DROP COLUMN execution_role;
     `);
     removeVersionTenProviderBinding(database);
   } finally {

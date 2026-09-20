@@ -1,9 +1,10 @@
-//! @input 依赖：已由 Node 迁移器准备的 v12 Actor/Model Router/RuntimeBinding/Cycle/实施项树 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v12 schema、内容与实施项查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v16 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v16 schema、议题关闭、内容与实施项查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -15,14 +16,16 @@ use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
 use crate::types::{
-    ActorSnapshot, ClaimWorkItemInput, CouncilMessage, CouncilRevisions, CreateTopicInput,
-    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput,
-    RecordDecisionInput, Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem,
-    WorkItemOrigin, WorkItemProgress, WorkItemSeverity, WorkItemStatus,
+    AcceptDecisionsInput, ActorSnapshot, ClaimWorkItemInput, CloseTopicInput, CouncilMessage,
+    CouncilRevisions, CreateTopicInput, CreateWorkItemsInput, Decision, DecisionStatus,
+    MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
+    TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemOrigin, WorkItemProgress, WorkItemSeverity,
+    WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 12;
+const SUPPORTED_SCHEMA_VERSION: i64 = 16;
 const REQUIRED_TABLES: &[&str] = &[
+    "runtime_audit_events",
     "topics",
     "messages",
     "decisions",
@@ -40,9 +43,11 @@ const REQUIRED_TABLES: &[&str] = &[
     "runtime_binding_requests",
     "discussion_cycles",
     "blocking_questions",
+    "work_item_delegations",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
+    "idx_runtime_audit_source",
     "idx_topics_project_updated",
     "idx_messages_topic_created",
     "idx_decisions_topic_created",
@@ -66,8 +71,14 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_blocking_questions_one_open_cycle",
     "idx_blocking_questions_cycle_created",
     "idx_blocking_questions_status_created",
+    "idx_work_item_delegations_topic_updated",
+    "idx_work_item_delegations_work_item",
+    "idx_work_item_delegations_one_active",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
+    "trg_runtime_audit_immutable",
+    "trg_runtime_audit_revision_insert",
+    "trg_work_items_delegation_acceptance",
     "trg_topics_revision_insert",
     "trg_topics_revision_update",
     "trg_topics_revision_delete",
@@ -93,6 +104,9 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_blocking_questions_revision_delete",
     "trg_decisions_cycle_close_insert",
     "trg_decisions_cycle_close_update",
+    "trg_work_item_delegations_revision_insert",
+    "trg_work_item_delegations_revision_update",
+    "trg_work_item_delegations_revision_delete",
 ];
 const TOPIC_COLUMNS: &[&str] = &[
     "id",
@@ -208,6 +222,8 @@ const AGENT_DEFINITION_COLUMNS: &[&str] = &[
     "created_at",
     "updated_at",
     "config_revision",
+    "permission_profile",
+    "execution_role",
 ];
 const RUNTIME_BINDING_COLUMNS: &[&str] = &[
     "id",
@@ -282,6 +298,33 @@ const BLOCKING_QUESTION_COLUMNS: &[&str] = &[
     "updated_at",
     "resolved_at",
 ];
+const WORK_ITEM_DELEGATION_COLUMNS: &[&str] = &[
+    "id",
+    "topic_id",
+    "work_item_id",
+    "supervisor_agent_id",
+    "executor_agent_id",
+    "permission_profile",
+    "status",
+    "attempt",
+    "max_attempts",
+    "base_commit",
+    "head_commit",
+    "branch_name",
+    "worktree_path",
+    "executor_session_id",
+    "supervisor_session_id",
+    "summary",
+    "review",
+    "error",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "completion_policy",
+    "acceptance_criteria",
+    "resumed_from_id",
+    "failure_code",
+];
 
 fn assert_schema_objects(
     connection: &Connection,
@@ -350,10 +393,28 @@ fn assert_foreign_key(
     target_table: &str,
     target_column: &str,
 ) -> CouncilResult<()> {
+    assert_foreign_key_action(
+        connection,
+        table,
+        from,
+        target_table,
+        target_column,
+        "CASCADE",
+    )
+}
+
+fn assert_foreign_key_action(
+    connection: &Connection,
+    table: &str,
+    from: &str,
+    target_table: &str,
+    target_column: &str,
+    on_delete: &str,
+) -> CouncilResult<()> {
     let count: i64 = connection.query_row(
         "SELECT COUNT(*) FROM pragma_foreign_key_list(?1)
-         WHERE \"from\" = ?2 AND \"table\" = ?3 AND \"to\" = ?4 AND on_delete = 'CASCADE'",
-        params![table, from, target_table, target_column],
+         WHERE \"from\" = ?2 AND \"table\" = ?3 AND \"to\" = ?4 AND on_delete = ?5",
+        params![table, from, target_table, target_column, on_delete],
         |row| row.get(0),
     )?;
     if count != 1 {
@@ -471,6 +532,25 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_table_columns(connection, "blocking_questions", BLOCKING_QUESTION_COLUMNS)?;
     assert_table_columns(
         connection,
+        "work_item_delegations",
+        WORK_ITEM_DELEGATION_COLUMNS,
+    )?;
+    assert_table_columns(
+        connection,
+        "runtime_audit_events",
+        &[
+            "id",
+            "topic_id",
+            "source_kind",
+            "source_id",
+            "attempt",
+            "kind",
+            "data_json",
+            "created_at",
+        ],
+    )?;
+    assert_table_columns(
+        connection,
         "actor_identities",
         &[
             "id",
@@ -499,6 +579,35 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     assert_foreign_key(connection, "work_items", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "decision_id", "decisions", "id")?;
     assert_foreign_key(connection, "work_items", "parent_id", "work_items", "id")?;
+    assert_foreign_key(
+        connection,
+        "runtime_audit_events",
+        "topic_id",
+        "topics",
+        "id",
+    )?;
+    assert_foreign_key_action(
+        connection,
+        "work_item_delegations",
+        "resumed_from_id",
+        "work_item_delegations",
+        "id",
+        "SET NULL",
+    )?;
+    assert_foreign_key(
+        connection,
+        "work_item_delegations",
+        "topic_id",
+        "topics",
+        "id",
+    )?;
+    assert_foreign_key(
+        connection,
+        "work_item_delegations",
+        "work_item_id",
+        "work_items",
+        "id",
+    )?;
     assert_foreign_key(connection, "runtime_bindings", "topic_id", "topics", "id")?;
     assert_foreign_key(
         connection,
@@ -588,6 +697,31 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
     )?;
     assert_index_columns(
         connection,
+        "idx_work_item_delegations_topic_updated",
+        &["topic_id", "updated_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_runtime_audit_source",
+        &["topic_id", "source_kind", "source_id", "id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_item_delegations_work_item",
+        &["work_item_id", "updated_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_item_delegations_one_active",
+        &["work_item_id"],
+    )?;
+    assert_index_sql_contains(
+        connection,
+        "idx_work_item_delegations_one_active",
+        "WHERE status IN ('queued', 'executing', 'reviewing', 'changes_requested')",
+    )?;
+    assert_index_columns(
+        connection,
         "idx_runtime_bindings_topic_status",
         &["topic_id", "status", "updated_at"],
     )?;
@@ -662,6 +796,20 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
             "enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))",
             "CHECK ( (deleted_at IS NULL) OR (enabled = 0) )",
             "config_revision INTEGER NOT NULL DEFAULT 1 CHECK (config_revision > 0)",
+            "permission_profile TEXT NOT NULL DEFAULT 'read_only' CHECK (permission_profile IN ('read_only', 'workspace_write', 'danger_full_access'))",
+            "execution_role TEXT NOT NULL DEFAULT 'advisor' CHECK (execution_role IN ('advisor', 'executor', 'reviewer', 'hybrid'))",
+        ],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "work_item_delegations",
+        &[
+            "supervisor_agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE RESTRICT",
+            "executor_agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE RESTRICT",
+            "permission_profile IN ('workspace_write', 'danger_full_access')",
+            "status IN ( 'queued', 'executing', 'reviewing', 'changes_requested', 'approved', 'failed', 'cancelled' )",
+            "CHECK (supervisor_agent_id <> executor_agent_id)",
+            "(status IN ('approved', 'failed', 'cancelled') AND completed_at IS NOT NULL)",
         ],
     )?;
     assert_table_sql_contains(
@@ -1026,6 +1174,51 @@ impl CouncilStore {
         self.require_topic(&id)
     }
 
+    /// 关闭是保留全部历史的归档动作。原生直连没有能力终止外部 Agent 进程，所以活动圆桌
+    /// 或持久会话存在时失败关闭，必须先交给编排服务正常停止。
+    pub fn close_topic(&mut self, input: CloseTopicInput) -> CouncilResult<Topic> {
+        self.resolve_active_actor(&input.actor_alias)?;
+        let current = self.require_topic(&input.topic_id)?;
+        if current.status == TopicStatus::Closed {
+            return Ok(current);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let active_bindings: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM runtime_bindings WHERE topic_id = ?1 AND status <> 'closed'",
+            params![input.topic_id],
+            |row| row.get(0),
+        )?;
+        let active_cycles: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM discussion_cycles WHERE topic_id = ?1 AND status = 'active'",
+            params![input.topic_id],
+            |row| row.get(0),
+        )?;
+        let active_delegations: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM work_item_delegations WHERE topic_id = ?1
+             AND status IN ('queued', 'executing', 'reviewing', 'changes_requested')",
+            params![input.topic_id],
+            |row| row.get(0),
+        )?;
+        if active_bindings > 0 || active_cycles > 0 || active_delegations > 0 {
+            return Err(CouncilError::Conflict(
+                "议题仍有活动圆桌、Agent 会话或任务委派，请先在桌面端停止运行再关闭。".into(),
+            ));
+        }
+        let now = now_iso();
+        transaction.execute(
+            "UPDATE agent_sessions SET is_current = 0, updated_at = ?1 WHERE topic_id = ?2 AND is_current = 1",
+            params![now, input.topic_id],
+        )?;
+        transaction.execute(
+            "UPDATE topics SET status = 'closed', updated_at = ?1 WHERE id = ?2",
+            params![now, input.topic_id],
+        )?;
+        transaction.commit()?;
+        self.require_topic(&input.topic_id)
+    }
+
     pub fn post_message(&mut self, input: PostMessageInput) -> CouncilResult<CouncilMessage> {
         self.require_topic(&input.topic_id)?;
         let actor = self.resolve_active_actor(&input.actor_alias)?;
@@ -1105,6 +1298,15 @@ impl CouncilStore {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // 人工直接记录 Accepted 是“用外部结论结束当前包”；普通提案接受必须走
+        // accept_decisions，确保稳定 decisionId 原地迁移而不是复制一条记录。
+        if input.status == DecisionStatus::Accepted {
+            transaction.execute(
+                "UPDATE decisions SET status = 'superseded', updated_at = ?1
+                 WHERE topic_id = ?2 AND status = 'proposed'",
+                params![now, input.topic_id],
+            )?;
+        }
         transaction.execute(
             "INSERT INTO decisions (id, topic_id, title, decision, rationale, alternatives_json, \
              status, created_by_actor_id, created_by_snapshot_json, created_by_legacy,
@@ -1142,6 +1344,91 @@ impl CouncilStore {
             created_at: now.clone(),
             updated_at: now,
         })
+    }
+
+    /// 原地接受决策包中的指定项。accepted 重放幂等，历史终态不能复活；只有最后一条
+    /// proposed 完成后议题才进入 decided，v13 触发器也只在这个边界关闭运行时。
+    pub fn accept_decisions(
+        &mut self,
+        input: AcceptDecisionsInput,
+    ) -> CouncilResult<Vec<Decision>> {
+        self.require_topic(&input.topic_id)?;
+        let actor = self.resolve_active_actor(&input.actor_alias)?;
+        if actor.id != "human" {
+            return Err(CouncilError::Conflict(
+                "Accepted 决策必须由用户确认。".into(),
+            ));
+        }
+        let unique_ids = input.decision_ids.iter().collect::<HashSet<&String>>();
+        if input.decision_ids.is_empty() || unique_ids.len() != input.decision_ids.len() {
+            return Err(CouncilError::Conflict(
+                "接受决策必须提供非空且不重复的 decisionIds。".into(),
+            ));
+        }
+
+        let now = now_iso();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        {
+            let mut statement = transaction
+                .prepare("SELECT status FROM decisions WHERE id = ?1 AND topic_id = ?2")?;
+            for decision_id in &input.decision_ids {
+                let status = statement
+                    .query_row(params![decision_id, input.topic_id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .optional()?;
+                let Some(status) = status else {
+                    return Err(CouncilError::NotFound(
+                        "部分决策不存在或不属于当前议题。".into(),
+                    ));
+                };
+                if status != "proposed" && status != "accepted" {
+                    return Err(CouncilError::Conflict(
+                        "已拒绝或已被取代的决策不能重新接受。".into(),
+                    ));
+                }
+            }
+        }
+        for decision_id in &input.decision_ids {
+            transaction.execute(
+                "UPDATE decisions SET status = 'accepted', updated_at = ?1
+                 WHERE id = ?2 AND topic_id = ?3 AND status = 'proposed'",
+                params![now, decision_id, input.topic_id],
+            )?;
+        }
+        let remaining: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM decisions WHERE topic_id = ?1 AND status = 'proposed'",
+            params![input.topic_id],
+            |row| row.get(0),
+        )?;
+        let topic_status = if remaining == 0 { "decided" } else { "open" };
+        transaction.execute(
+            "UPDATE topics SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![topic_status, now, input.topic_id],
+        )?;
+
+        let decisions = {
+            let mut statement = transaction.prepare(
+                "SELECT id, topic_id, title, decision, rationale, alternatives_json, status,
+                 created_by_actor_id, created_by_snapshot_json, created_at, updated_at
+                 FROM decisions WHERE id = ?1 AND topic_id = ?2",
+            )?;
+            input
+                .decision_ids
+                .iter()
+                .map(|decision_id| {
+                    let row = statement
+                        .query_row(params![decision_id, input.topic_id], read_decision_row)
+                        .optional()?
+                        .ok_or_else(|| CouncilError::NotFound("接受后的决策记录缺失。".into()))?;
+                    decision_from_row(row)
+                })
+                .collect::<CouncilResult<Vec<_>>>()?
+        };
+        transaction.commit()?;
+        Ok(decisions)
     }
 
     pub fn create_work_items(
@@ -1270,6 +1557,10 @@ impl CouncilStore {
             ));
         }
         let now = now_iso();
+        let acceptance_note_supplied = input
+            .status_note
+            .as_deref()
+            .is_some_and(|note| !note.trim().is_empty());
         let status_note = match input.status_note {
             Some(note) => {
                 let trimmed = note.trim();
@@ -1292,6 +1583,18 @@ impl CouncilStore {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let completion_policy: Option<String> = transaction.query_row(
+            "SELECT completion_policy FROM work_item_delegations WHERE work_item_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![input.work_item_id], |row| row.get(0),
+        ).optional()?;
+        if input.status == WorkItemStatus::Completed
+            && completion_policy.as_deref() == Some("human")
+            && (actor.id != "human" || !acceptance_note_supplied)
+        {
+            return Err(CouncilError::Conflict(
+                "实施项需要人工填写验收证据后才能完成。".into(),
+            ));
+        }
         let changed = transaction.execute(
             "UPDATE work_items SET status = ?1, status_note = ?2, fix_commit = ?3,
                version = version + 1,

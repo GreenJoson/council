@@ -2,7 +2,7 @@
  * @input  依赖：议题摘要/详情（可选 question 字段）、用户搜索文本与状态筛选
  * @output 导出：TopicStatusFilter、filterTopics（按标题或问题描述匹配）；
  *         extractMermaidBlocks（提取 Markdown 中的顶层 mermaid 围栏代码块）；
- *         computeAdrNumberAssignments、buildArchitectureTimeline、aggregateConstraints、
+ *         computeAdrNumberAssignments、buildArchitectureTimeline（按 decisionId 而非 topicId）、aggregateConstraints、
  *         collectArchitectureDiagrams（架构档案视图的聚合纯函数）
  * @pos    议题导航搜索与架构档案视图共用的可测试查询/聚合逻辑，不发起任何请求
  *
@@ -28,7 +28,7 @@ export function filterTopics<T extends TopicSummary & { question?: string }>(
     if (statusFilter === "decided" && topic.status !== "decided") {
       return false;
     }
-    if (statusFilter === "active" && topic.status === "decided") {
+    if (statusFilter === "active" && (topic.status === "decided" || topic.status === "closed")) {
       return false;
     }
     if (!normalizedQuery) {
@@ -102,6 +102,7 @@ export function extractMermaidBlocks(markdown: string): string[] {
 /** 架构档案时间线的一条条目：已决策的携带稳定 ADR 编号，仍在提案中的没有 */
 export interface ArchitectureTimelineEntry {
   topicId: string;
+  decisionId: string;
   topicTitle: string;
   decisionTitle: string;
   status: CouncilDecision["status"];
@@ -119,21 +120,45 @@ export interface ArchitectureTimelineEntry {
  */
 export function computeAdrNumberAssignments(topics: readonly TopicDetail[]): Map<string, string> {
   const decidedWithTime = topics
-    .filter((topic) => {
-      const decision = topic.decision;
-      return (
-        Boolean(decision?.decidedAt)
-        && (decision?.status === "accepted" || decision?.status === "superseded")
-      );
-    })
-    .map((topic) => ({ topic, decidedAtMs: new Date(topic.decision?.decidedAt ?? "").getTime() }))
-    .sort((a, b) => a.decidedAtMs - b.decidedAtMs);
+    .flatMap((topic) => topic.decisions.map((decision) => ({ topic, decision })))
+    .filter(({ decision }) => (
+      Boolean(decision.decidedAt)
+      && (decision.status === "accepted" || decision.status === "superseded")
+    ))
+    .map(({ topic, decision }) => ({
+      topic,
+      decision,
+      decidedAtMs: new Date(decision.decidedAt ?? "").getTime(),
+    }))
+    .filter(({ decidedAtMs }) => Number.isFinite(decidedAtMs))
+    .sort((a, b) => {
+      if (a.decidedAtMs !== b.decidedAtMs) {
+        return a.decidedAtMs - b.decidedAtMs;
+      }
+      const createdAtDifference = new Date(a.decision.createdAt).getTime()
+        - new Date(b.decision.createdAt).getTime();
+      if (Number.isFinite(createdAtDifference) && createdAtDifference !== 0) {
+        return createdAtDifference;
+      }
+      return a.decision.id.localeCompare(b.decision.id);
+    });
 
   const assignments = new Map<string, string>();
-  decidedWithTime.forEach(({ topic }, index) => {
-    assignments.set(topic.id, `ADR-${String(index + 1).padStart(3, "0")}`);
+  decidedWithTime.forEach(({ decision }, index) => {
+    assignments.set(decision.id, `ADR-${String(index + 1).padStart(3, "0")}`);
   });
   return assignments;
+}
+
+/** 议题级来源徽章只能显示一个编号时，取这个议题最近形成的 ADR。 */
+function latestTopicAdrNumber(
+  topic: TopicDetail,
+  adrNumbers: ReadonlyMap<string, string>,
+): string | undefined {
+  return [...topic.decisions]
+    .reverse()
+    .map((decision) => adrNumbers.get(decision.id))
+    .find((adrNumber) => adrNumber !== undefined);
 }
 
 /**
@@ -143,36 +168,39 @@ export function computeAdrNumberAssignments(topics: readonly TopicDetail[]): Map
 export function buildArchitectureTimeline(topics: readonly TopicDetail[]): ArchitectureTimelineEntry[] {
   const adrNumbers = computeAdrNumberAssignments(topics);
 
-  const withDecision = topics.filter((topic): topic is TopicDetail & { decision: CouncilDecision } =>
-    Boolean(topic.decision),
-  );
-  const decided = withDecision.filter((topic) => adrNumbers.has(topic.id));
+  const withDecision = topics.flatMap((topic) => (
+    topic.decisions.map((decision) => ({ topic, decision }))
+  ));
+  const decided = withDecision.filter(({ decision }) => adrNumbers.has(decision.id));
   decided.sort((a, b) => {
-    const left = new Date(a.decision.decidedAt ?? "").getTime();
-    const right = new Date(b.decision.decidedAt ?? "").getTime();
-    return left - right;
+    const left = adrNumbers.get(a.decision.id) ?? "";
+    const right = adrNumbers.get(b.decision.id) ?? "";
+    return left.localeCompare(right);
   });
-  const stillProposed = withDecision.filter((topic) => !adrNumbers.has(topic.id));
+  const withoutAdr = withDecision.filter(({ decision }) => !adrNumbers.has(decision.id));
 
-  function toEntry(topic: TopicDetail & { decision: CouncilDecision }): ArchitectureTimelineEntry {
-    const decision = topic.decision;
+  function toEntry({ topic, decision }: { topic: TopicDetail; decision: CouncilDecision }): ArchitectureTimelineEntry {
     const supersededByTopicId = decision.supersededByTopicId;
-    const supersededByAdrNumber = supersededByTopicId
-      ? adrNumbers.get(supersededByTopicId)
+    const supersedingTopic = supersededByTopicId
+      ? topics.find((candidate) => candidate.id === supersededByTopicId)
+      : undefined;
+    const supersededByAdrNumber = supersedingTopic
+      ? latestTopicAdrNumber(supersedingTopic, adrNumbers)
       : undefined;
     return {
       topicId: topic.id,
+      decisionId: decision.id,
       topicTitle: topic.title,
       decisionTitle: decision.title,
       status: decision.status,
       timeLabel: topic.updatedLabel,
-      ...(adrNumbers.has(topic.id) ? { adrNumber: adrNumbers.get(topic.id) } : {}),
+      ...(adrNumbers.has(decision.id) ? { adrNumber: adrNumbers.get(decision.id) } : {}),
       ...(supersededByTopicId ? { supersededByTopicId } : {}),
       ...(supersededByAdrNumber ? { supersededByAdrNumber } : {}),
     };
   }
 
-  return [...decided.map(toEntry), ...stillProposed.map(toEntry)];
+  return [...decided.map(toEntry), ...withoutAdr.map(toEntry)];
 }
 
 export interface AggregatedConstraintSource {
@@ -203,7 +231,9 @@ export function aggregateConstraints(topics: readonly TopicDetail[]): Aggregated
         topicId: topic.id,
         topicTitle: topic.title,
         timeLabel: topic.updatedLabel,
-        ...(adrNumbers.has(topic.id) ? { adrNumber: adrNumbers.get(topic.id) } : {}),
+        ...(latestTopicAdrNumber(topic, adrNumbers)
+          ? { adrNumber: latestTopicAdrNumber(topic, adrNumbers) }
+          : {}),
       };
       const existing = byLabel.get(constraint.label);
       if (!existing) {
@@ -244,9 +274,11 @@ export function collectArchitectureDiagrams(topics: readonly TopicDetail[]): Arc
   const diagrams: ArchitectureDiagramSource[] = [];
 
   for (const topic of topics) {
-    const decision = topic.decision;
-    if (decision && (decision.status === "accepted" || decision.status === "superseded")) {
-      const adrNumber = adrNumbers.get(topic.id);
+    for (const decision of topic.decisions) {
+      if (decision.status !== "accepted" && decision.status !== "superseded") {
+        continue;
+      }
+      const adrNumber = adrNumbers.get(decision.id);
       for (const text of [decision.summary, decision.rationale]) {
         for (const code of extractMermaidBlocks(text)) {
           diagrams.push({

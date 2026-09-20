@@ -229,6 +229,12 @@
   color: var(--color-positive);
 }
 
+.status-closed {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
 .empty-topics,
 .empty-discussion {
   display: flex;
@@ -1313,6 +1319,329 @@
   color: var(--color-focus);
 }
 
+.work-item-delegate-button {
+  margin: 9px 0 0 28px;
+  border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border));
+  color: var(--color-focus);
+}
+
+.work-item-delegation-form,
+.work-item-delegation-state {
+  display: grid;
+  gap: 9px;
+  margin: 11px 0 0 28px;
+  padding: 11px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-primary-soft) 35%, var(--color-canvas-deep));
+}
+
+.work-item-delegation-form {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 0.8fr);
+  align-items: end;
+}
+
+.work-item-delegation-form > header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.work-item-delegation-form > header > span,
+.work-item-delegation-state > span,
+.work-item-delegation-state > code,
+.work-item-delegation-state > p,
+.work-item-delegation-form > p {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.work-item-delegation-form > header button,
+.work-item-delegation-state > button {
+  padding: 4px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.work-item-delegation-form > label {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.work-item-delegation-form select {
+  min-width: 0;
+  height: 31px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.delegation-arrow {
+  align-self: center;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.work-item-delegation-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-positive);
+  font-size: 9px;
+}
+
+.work-item-delegation-form > p.delegation-danger {
+  color: var(--color-danger);
+}
+
+.work-item-delegation-form > .work-item-submit {
+  grid-column: 1 / -1;
+}
+
+.work-item-delegation-form > .delegation-baseline-option,
+.batch-delegation-form > .delegation-baseline-option {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.delegation-baseline-option input {
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.delegation-baseline-option span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.batch-delegation-panel {
+  margin: 14px 0 18px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 36%, var(--color-border));
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-primary-soft) 20%, var(--color-surface));
+}
+
+.batch-delegation-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+}
+
+.batch-delegation-summary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.batch-delegation-summary span,
+.batch-delegation-progress p,
+.batch-delegation-form > p {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.batch-delegation-summary span {
+  color: var(--color-focus);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.batch-delegation-summary strong {
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.batch-delegation-summary small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.batch-delegation-summary > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--color-primary);
+  border-radius: 5px;
+  background: var(--color-primary-soft);
+  color: var(--color-focus);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.batch-delegation-progress {
+  position: relative;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-canvas-deep);
+}
+
+.batch-delegation-progress > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--color-positive) 12%, transparent);
+  transition: width 180ms ease;
+}
+
+.batch-delegation-progress p {
+  position: relative;
+  margin: 0;
+  padding: 7px 14px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.batch-delegation-progress.is-failed p {
+  color: var(--color-danger);
+}
+
+.batch-delegation-form {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-canvas-deep);
+}
+
+.batch-delegation-form > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.batch-delegation-form > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.batch-delegation-form > header strong {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.batch-delegation-form > header small,
+.batch-delegation-form > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.batch-delegation-form > header button {
+  padding: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.batch-delegation-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.batch-delegation-fields label {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.batch-delegation-fields select {
+  min-width: 0;
+  height: 31px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 10px;
+}
+
+.batch-delegation-form > p:not(.delegation-danger) {
+  color: var(--color-positive);
+}
+
+.batch-delegation-form > p.delegation-danger {
+  color: var(--color-danger);
+}
+
+.batch-delegation-form > .work-item-submit {
+  margin-top: 0;
+}
+
+.work-item-delegation-state {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.work-item-delegation-state > span {
+  color: var(--color-focus);
+  font-size: 10px;
+}
+
+.work-item-delegation-state > small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-delegation-state > p,
+.work-item-delegation-state > code {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.work-item-delegation-state.is-approved {
+  border-color: var(--color-positive);
+  background: var(--color-positive-soft);
+}
+
+.work-item-delegation-state.is-approved > span,
+.work-item-delegation-state.is-approved > code {
+  color: var(--color-positive);
+}
+
+.work-item-delegation-state.is-failed,
+.work-item-delegation-state.is-cancelled {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+  background: var(--color-danger-soft);
+}
+
+.work-item-delegation-state.is-failed > span,
+.work-item-delegation-state.is-failed > p {
+  color: var(--color-danger);
+}
+
 .work-item-add,
 .work-item-submit,
 .work-item-generate {
@@ -1343,6 +1672,30 @@
 .work-item-plan-actions .work-item-add,
 .work-item-plan-actions .work-item-generate {
   margin-top: 0;
+}
+
+.work-item-planner-select {
+  display: grid;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.work-item-planner-select select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  padding: 0 9px;
+  font: inherit;
+}
+
+.work-item-planner-select select:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
 }
 
 .work-item-generate {
@@ -1463,6 +1816,31 @@
   padding: 12px;
 }
 
+.implementation-task-card .work-item-delegation-form,
+.implementation-task-card .work-item-delegation-state,
+.implementation-task-card .work-item-delegate-button {
+  margin-left: 40px;
+}
+
+@media (max-width: 760px) {
+  .work-item-delegation-form {
+    grid-template-columns: 1fr;
+  }
+
+  .delegation-arrow {
+    display: none;
+  }
+
+  .batch-delegation-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .batch-delegation-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .implementation-task-card .work-item-update-form select,
 .implementation-task-card .work-item-update-form textarea,
 .implementation-task-card .work-item-update-actions button,
@@ -1484,6 +1862,14 @@
 .implementation-task-card .work-item-submit {
   min-height: 38px;
   font-size: 11px;
+}
+
+.implementation-task-card .work-item-planner-select {
+  font-size: 10px;
+}
+
+.implementation-task-card .work-item-add {
+  grid-column: 1 / -1;
 }
 
 .auto-rounds-card {
@@ -1802,9 +2188,9 @@
 .decision-card {
   margin-top: 18px;
   padding: 14px;
-  border: 1px solid var(--color-positive);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-medium);
-  background: color-mix(in srgb, var(--color-positive-soft) 54%, var(--color-surface));
+  background: var(--color-surface-raised);
 }
 
 .decision-title-row {
@@ -1814,7 +2200,7 @@
 
 .decision-title-row > div {
   gap: 7px;
-  color: var(--color-positive);
+  color: var(--color-primary);
   font-size: 12px;
   font-weight: 600;
 }
@@ -1838,6 +2224,12 @@
 .decision-status-superseded {
   color: var(--color-text-muted);
   background: var(--color-surface-hover);
+}
+
+.decision-status-rejected {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
 }
 
 .decision-card h3 {
@@ -1865,13 +2257,37 @@
 }
 
 .decision-accepted {
+  border-color: var(--color-positive);
   background: color-mix(in srgb, var(--color-positive-soft) 76%, var(--color-surface));
+}
+
+.decision-accepted .decision-title-row > div {
+  color: var(--color-positive);
 }
 
 /* 被取代的决策：退出"当前定论"的正向配色，改为中性的历史记录观感 */
 .decision-superseded {
   border-color: var(--color-border-strong);
   background: var(--color-surface-hover);
+}
+
+.decision-rejected {
+  border-color: color-mix(in srgb, var(--color-danger) 25%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger-soft) 58%, var(--color-surface));
+}
+
+.decision-rejected .decision-title-row > div {
+  color: var(--color-danger);
+}
+
+.decision-body-disclosure > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 600;
 }
 
 .decision-superseded .decision-title-row > div {
@@ -2013,7 +2429,7 @@
   gap: 12px;
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid color-mix(in srgb, var(--color-positive) 30%, transparent);
+  border-top: 1px solid var(--color-divider);
 }
 
 .topic-decision-proposer {
@@ -2028,6 +2444,122 @@
 .topic-decision-actions .accept-button {
   width: auto;
   margin-top: 0;
+}
+
+.decision-package-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 2px 16px;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.decision-package-header h2 {
+  margin: 4px 0;
+  font-size: 18px;
+}
+
+.decision-package-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.decision-package-header .manual-decision-entry {
+  flex: none;
+  margin-top: 0;
+}
+
+.decision-batch-bar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  margin-top: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent);
+  box-shadow: var(--shadow-small);
+  backdrop-filter: blur(10px);
+}
+
+.decision-select-control,
+.decision-card-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.decision-select-control input,
+.decision-card-selector input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-positive);
+}
+
+.decision-selection-count {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.decision-batch-bar .accept-button {
+  width: auto;
+  min-width: 148px;
+  margin-top: 0;
+}
+
+.decision-package-list {
+  display: grid;
+  gap: 16px;
+  padding-top: 16px;
+}
+
+.decision-package-item {
+  min-width: 0;
+}
+
+.decision-package-item > .decision-card {
+  margin-top: 0;
+}
+
+.decision-card-selector {
+  width: fit-content;
+  margin-bottom: 4px;
+}
+
+.decision-package-summary-card {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.decision-package-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.decision-package-lead > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 右栏的决策入口：只引路，不承载正文 */
@@ -2354,9 +2886,46 @@
   gap: 8px;
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--color-positive) 30%, transparent);
+  border-top: 1px solid var(--color-divider);
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.decision-record-package {
+  display: grid;
+  gap: 14px;
+}
+
+.decision-record-package > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decision-record-package > header h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.decision-record-package > .decision-card {
+  margin-top: 0;
+}
+
+@media (max-width: 720px) {
+  .decision-package-header,
+  .decision-batch-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .decision-selection-count {
+    margin-left: 0;
+  }
+
+  .decision-batch-bar .accept-button,
+  .decision-package-header .manual-decision-entry {
+    width: 100%;
+  }
 }
 
 .decision-record-honest-notice {

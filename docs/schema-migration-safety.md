@@ -38,11 +38,14 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 
 ## 版本规则
 
-当前 schema 版本为 `10`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
+当前 schema 版本为 `16`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
 冻结历史身份并增加配置 revision；v6 增加 RuntimeBinding、双 lease 与请求账本；v7–v8
 增加可恢复的 DiscussionCycle、阻断提问与能力快照；v9 在不改变既有公开内容语义的前提下，
 扩展 Provider/Runtime 约束以接纳 Kimi ACP；v10 将供应商专用协议归一为通用 `acp`，
 并在 Provider 上持久化 `runtimeDefinitionId`。固定作者枚举的版本 1 只作为迁移输入保留。
+v11–v12 增加实施项审核账本和任务树约束，v13 支持多决策包，v14 增加 Agent 权限/职责及隔离委派。
+v15 冻结验收标准与完成策略，历史委派保留审核即完成；v16 增加追加运行审计、失败分类与恢复来源。
+v14→v16 的故障注入验证事务回滚后旧结构可继续迁移，Rust 同步验证 v16；旧二进制不得打开新版本库。
 详细字段、确定性映射与历史 `other` 的待审计语义见
 [Actor Identity v2 迁移](actor-identity-migration.md)。
 

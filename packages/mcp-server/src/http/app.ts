@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、AI 实施计划、实施项、模型路由、提案复用反馈、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、议题更正/关闭、决策包、AI 实施计划、跨 Agent 任务委派、模型路由、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -47,6 +47,7 @@ import type { CouncilHttpConfig } from "../types.js";
 import { HttpError, sendError, sendSuccess, validationIssues } from "./responses.js";
 import { RevisionEventStream } from "./revision-stream.js";
 import {
+  acceptDecisionsBodySchema,
   agentParamsSchema,
   answerCycleQuestionBodySchema,
   submitFixesBodySchema,
@@ -72,8 +73,14 @@ import {
   topicParamsSchema,
   updateAgentBodySchema,
   updateProviderBodySchema,
+  updateTopicBodySchema,
   updateWorkItemBodySchema,
   claimWorkItemBodySchema,
+  delegationParamsSchema,
+  runtimeAuditQuerySchema,
+  resumeDelegationBodySchema,
+  startWorkItemDelegationBodySchema,
+  startWorkItemDelegationBatchBodySchema,
   workItemParamsSchema,
 } from "./schemas.js";
 
@@ -421,6 +428,34 @@ export function createCouncilHttpApp(
     sendSuccess(response, topic, "议题已创建。", 201);
   });
 
+  app.put("/api/v1/topics/:topicId", (request, response) => {
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(updateTopicBodySchema, request.body);
+    const topic = database.updateTopicAsActor({
+      topicId: params.topicId,
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.question !== undefined ? { question: input.question } : {}),
+      ...(input.constraints !== undefined ? { constraints: input.constraints } : {}),
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      actorId: "human",
+    });
+    sendSuccess(response, topic, "议题已更新。");
+  });
+
+  app.post("/api/v1/topics/:topicId/actions/close", async (request, response) => {
+    const params = parse(topicParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    if (orchestration) {
+      orchestration.abandonCycle(params.topicId);
+      await orchestration.closeTopicRuntimeBindings(params.topicId, "topic-closed");
+    }
+    const topic = database.closeTopicAsActor({
+      topicId: params.topicId,
+      actorId: "human",
+    });
+    sendSuccess(response, topic, "议题已关闭，讨论历史仍被保留。");
+  });
+
   app.post("/api/v1/topics/:topicId/messages", (request, response) => {
     const params = parse(topicParamsSchema, request.params);
     const body: unknown = request.body;
@@ -454,6 +489,20 @@ export function createCouncilHttpApp(
     sendSuccess(response, decision, "决策已记录。", 201);
   });
 
+  app.post("/api/v1/topics/:topicId/decisions/accept", async (request, response) => {
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(acceptDecisionsBodySchema, request.body);
+    const decisions = database.acceptDecisionsAsActor({
+      topicId: params.topicId,
+      decisionIds: input.decisionIds,
+      actorId: "human",
+    });
+    if (database.getTopic(params.topicId).status === "decided" && orchestration) {
+      await orchestration.closeTopicRuntimeBindings(params.topicId);
+    }
+    sendSuccess(response, decisions, "决策已接受。");
+  });
+
   app.post("/api/v1/topics/:topicId/work-items", (request, response) => {
     const params = parse(topicParamsSchema, request.params);
     const input = parse(createWorkItemsBodySchema, request.body);
@@ -474,9 +523,14 @@ export function createCouncilHttpApp(
     const params = parse(topicParamsSchema, request.params);
     const input = parse(generateWorkItemsBodySchema, request.body);
     const detail = database.getTopicDetail(params.topicId, config.defaultMessageLimit);
-    const decision = [...detail.decisions]
-      .reverse()
-      .find((candidate) => candidate.status === "accepted");
+    const decision = input.decisionId
+      ? detail.decisions.find((candidate) => candidate.id === input.decisionId)
+      : [...detail.decisions]
+        .reverse()
+        .find((candidate) => candidate.status === "accepted");
+    if (decision && decision.status !== "accepted") {
+      throw new HttpError(409, "只有 Accepted 决策才能生成实施计划。");
+    }
     if (!decision) {
       throw new HttpError(409, "只有 Accepted 决策才能生成实施计划。");
     }
@@ -500,9 +554,9 @@ export function createCouncilHttpApp(
         params.topicId,
         config.defaultMessageLimit,
       );
-      const latestDecision = [...latestDetail.decisions]
-        .reverse()
-        .find((candidate) => candidate.status === "accepted");
+      const latestDecision = latestDetail.decisions.find(
+        (candidate) => candidate.id === decision.id,
+      );
       if (latestDecision?.id !== decision.id) {
         throw new HttpError(409, "AI 规划期间 Accepted 决策已变化，请重新生成。");
       }
@@ -560,6 +614,91 @@ export function createCouncilHttpApp(
       actorId: "human",
     });
     sendSuccess(response, workItem, "实施项已认领。");
+  });
+
+  app.get("/api/v1/topics/:topicId/work-attention", (request, response) => {
+    if (!orchestration) throw new HttpError(503, "待处理服务未启用。");
+    const { topicId } = parse(topicParamsSchema, request.params);
+    sendSuccess(response, orchestration.attention.list(database.getTopic(topicId).projectPath));
+  });
+
+  app.get("/api/v1/topics/:topicId/runtime-audit", (request, response) => {
+    if (!orchestration) throw new HttpError(503, "运行审计服务未启用。");
+    const { topicId } = parse(topicParamsSchema, request.params);
+    database.getTopic(topicId);
+    const query = parse(runtimeAuditQuerySchema, request.query);
+    sendSuccess(response, orchestration.audit.list(topicId, query.sourceKind, query.sourceId, query.after));
+  });
+
+  app.get("/api/v1/topics/:topicId/work-item-delegations", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "任务委派服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    sendSuccess(response, orchestration.listWorkItemDelegations(params.topicId));
+  });
+
+  app.post("/api/v1/topics/:topicId/work-items/:workItemId/delegations", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "任务委派服务未启用。");
+    }
+    const params = parse(workItemParamsSchema, request.params);
+    const input = parse(startWorkItemDelegationBodySchema, request.body);
+    const delegation = orchestration.startWorkItemDelegation({
+      topicId: params.topicId,
+      workItemId: params.workItemId,
+      expectedVersion: input.expectedVersion,
+      supervisorAgentId: input.supervisorAgentId,
+      executorAgentId: input.executorAgentId,
+      requestedPermission: input.requestedPermission,
+      ...(input.completionPolicy ? { completionPolicy: input.completionPolicy } : {}),
+      ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+      ...(input.createInitialBaseline !== undefined
+        ? { createInitialBaseline: input.createInitialBaseline }
+        : {}),
+    });
+    sendSuccess(response, delegation, "Agent 委派已进入后台执行。", 202);
+  });
+
+  app.post("/api/v1/topics/:topicId/work-item-delegations/actions/start-batch", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "任务委派服务未启用。");
+    }
+    const params = parse(topicParamsSchema, request.params);
+    const input = parse(startWorkItemDelegationBatchBodySchema, request.body);
+    const delegations = orchestration.startWorkItemDelegationBatch({
+      topicId: params.topicId,
+      workItems: input.workItems,
+      supervisorAgentId: input.supervisorAgentId,
+      executorAgentId: input.executorAgentId,
+      requestedPermission: input.requestedPermission,
+      ...(input.completionPolicy ? { completionPolicy: input.completionPolicy } : {}),
+      ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+      ...(input.createInitialBaseline !== undefined
+        ? { createInitialBaseline: input.createInitialBaseline }
+        : {}),
+    });
+    sendSuccess(response, delegations, "一键委派已进入串行执行队列。", 202);
+  });
+
+  app.post("/api/v1/work-item-delegations/:delegationId/actions/resume", async (request, response) => {
+    if (!orchestration) throw new HttpError(503, "任务委派服务未启用。");
+    const params = parse(delegationParamsSchema, request.params);
+    const input = parse(resumeDelegationBodySchema, request.body);
+    sendSuccess(response, await orchestration.resumeWorkItemDelegation(params.delegationId, input.expectedVersion), "已从提交进度恢复。", 202);
+  });
+
+  app.post("/api/v1/work-item-delegations/:delegationId/actions/cancel", (request, response) => {
+    if (!orchestration) {
+      throw new HttpError(503, "任务委派服务未启用。");
+    }
+    const params = parse(delegationParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    sendSuccess(
+      response,
+      orchestration.cancelWorkItemDelegation(params.delegationId),
+      "Agent 委派已取消。",
+    );
   });
 
   app.get("/api/v1/topics/:topicId/runtime-bindings", async (request, response) => {

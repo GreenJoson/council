@@ -282,6 +282,8 @@ function config(directory: string, command: string): CouncilConfig {
   return {
     dataDir: directory,
     databasePath: path.join(directory, "unused.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [],
     claudePermissionMode: "plan",

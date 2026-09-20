@@ -47,6 +47,8 @@ export const MAX_CONSTRAINT_CHARS = 1_000;
 export const MAX_ALTERNATIVE_COUNT = 30;
 export const MAX_LIST_LIMIT = 100;
 export const MAX_ORCHESTRATION_PLAN_ROUNDS = 50;
+/** 单次人工确认允许处理的决策项数量；批量入口必须有界。 */
+export const MAX_DECISION_BATCH = 100;
 export const MAX_WORK_ITEM_BATCH = 50;
 export const MAX_WORK_ITEM_DETAILS_CHARS = 8_000;
 export const MAX_WORK_ITEM_STATUS_NOTE_CHARS = 4_000;

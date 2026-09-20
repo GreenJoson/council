@@ -209,6 +209,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     throw new Error("COUNCIL_DATA_DIR 必须是绝对路径。");
   }
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const delegationWorktreeRoot = env.COUNCIL_DELEGATION_WORKTREE_ROOT?.trim()
+    || path.join(dataDir, "delegated-worktrees");
+  if (!path.isAbsolute(delegationWorktreeRoot)) {
+    throw new Error("COUNCIL_DELEGATION_WORKTREE_ROOT 必须是绝对路径。");
+  }
+  mkdirSync(delegationWorktreeRoot, { recursive: true, mode: 0o700 });
 
   const model = env.COUNCIL_CLAUDE_MODEL?.trim();
   const defaultMessageLimit = parsePositiveInteger("COUNCIL_DEFAULT_MESSAGE_LIMIT", env);
@@ -326,6 +332,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS,
     ),
+    delegationWorktreeRoot,
+    delegationRetryDelayMs: parseOptionalTimer("COUNCIL_DELEGATION_RETRY_DELAY_MS", env, 1500),
     ...(keychainCommand ? { keychainCommand } : {}),
     sqliteBusyTimeoutMs: parsePositiveInteger("COUNCIL_SQLITE_BUSY_TIMEOUT_MS", env),
     schemaMigrationMaxAttempts: parsePositiveInteger(

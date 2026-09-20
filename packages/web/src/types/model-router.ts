@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 模型路由 REST 协议
- * @output 导出：ProviderProfile、AgentDefinition、BrandAsset、catalog 与写入命令
+ * @output 导出：ProviderProfile、含执行权限/职责的 AgentDefinition、BrandAsset、catalog 与写入命令
  * @pos    ModelRouterDialog、capabilities 与 OrchestrationRepository 共享的领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,8 @@ export type ProviderProtocol =
   | "acp"
   | "openai-compatible";
 export type ProviderStatus = "active" | "inactive" | "deleted";
+export type AgentPermissionProfile = "read_only" | "workspace_write" | "danger_full_access";
+export type AgentExecutionRole = "advisor" | "executor" | "reviewer" | "hybrid";
 
 export interface BrandAsset {
   id: string;
@@ -50,6 +52,9 @@ export interface AgentDefinition {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile: AgentPermissionProfile;
+  executionRole: AgentExecutionRole;
+  configRevision?: number;
   deletedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +108,8 @@ export interface CreateAgentInput {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile: AgentPermissionProfile;
+  executionRole: AgentExecutionRole;
 }
 
 export interface UpdateAgentInput {
@@ -111,6 +118,8 @@ export interface UpdateAgentInput {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile: AgentPermissionProfile;
+  executionRole: AgentExecutionRole;
 }
 
 export interface AgentConnectionTest {

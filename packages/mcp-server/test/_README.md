@@ -4,7 +4,9 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v10：身份/运行数据无损、通用 ACP 协议迁移、Runtime 能力快照、漂移拒绝、备份、回滚与 WAL 阻塞 |
+| `execution-evidence.test.ts` | 跨层验收 | 验证审计脱敏/不可覆盖/分页、项目隔离、待办消退与 v14→v16 失败回滚 |
+| `work-item-delegation.test.ts` | 执行闭环 | 验证完成策略、人工验收、任务并发版本、提交检查点恢复及只读重试/写入不自动重放 |
+| `schema-migrator.test.ts` | 主安全验收 | 用完整历史 fixture 验证连续迁移到当前 v16：身份/运行数据无损、通用 ACP 协议迁移、Runtime 能力快照、漂移拒绝、备份、回滚与 WAL 阻塞 |
 | `schema-v7-migration.test.ts` | 安全验收 | 在当前迁移库上继续冻结 v7 收敛容器不变量，并验证 accepted 决策使用 canonical 停止原因终结 cycle |
 | `schema-v8-migration.test.ts` | 数据迁移 | 用最小现场 v7 cycle 直接验证需求/能力 backfill、旧停止原因规范化和 accepted trigger 修复 |
 | `cycle-repository.test.ts` | 安全验收 | 在真实迁移库上验证收敛仓储：开局唯一与已决议题拒绝开局、同意路径直达 synthesis、阻塞回环与预算用尽放弃、提问挂起/回答的重放幂等、过期版本 CAS 拒绝 |

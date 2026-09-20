@@ -1,6 +1,6 @@
 /**
  * @input  依赖：界面语言上下文、selectors.ts 的 ArchitectureTimelineEntry 列表、议题/决策记录跳转回调与折叠开关
- * @output 导出：ArchitectureTimeline 架构档案第二区块——按时间排列的决策演进时间线
+ * @output 导出：ArchitectureTimeline 架构档案第二区块——同一议题可含多条、按稳定 decisionId 排列的决策演进时间线
  * @pos    ArchitectureView 的第二区块；已接受/被取代条目带稳定 ADR 编号并可跳转决策记录，
  *         仍在提案中的条目跳转回讨论视图；不发起请求，纯展示 + 回调
  *
@@ -51,7 +51,7 @@ export function ArchitectureTimeline({
             const isPending = entry.status === "proposed";
             const openEntry = () => (isPending ? onOpenTopic(entry.topicId) : onOpenDecisionRecord(entry.topicId));
             return (
-              <li key={entry.topicId} className={`architecture-timeline-item status-${entry.status}`}>
+              <li key={entry.decisionId} className={`architecture-timeline-item status-${entry.status}`}>
                 {/* 整行可点击跳转；取代徽章是行内嵌套的独立按钮，用 div+role=button 而非
                     <button> 承载整行，避免把一个真正的 <button> 塞进另一个 <button> 里 */}
                 <div

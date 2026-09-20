@@ -1,7 +1,7 @@
 /**
- * @input  依赖：公开 prompt、Codex CLI JSONL 增量传输与可选 AbortSignal
- * @output 导出：纯 CodexRuntime、公开消息增量、结构化安全错误和可用性检查
- * @pos    分离公开消息/过程事件与最终正文上限、强制只读沙箱与空 MCP 配置的 Codex 运行边界
+ * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输与可选 AbortSignal
+ * @output 导出：按结构化权限运行的 CodexRuntime、公开消息增量、结构化安全错误和可用性检查
+ * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -22,6 +22,7 @@ import {
   type RuntimeTextListener,
 } from "./runtime-stream.js";
 import type { CodexResponse, CouncilConfig } from "./types.js";
+import type { AgentPermissionProfile } from "./agent-execution-policy.js";
 
 type CodexRuntimeConfig = Pick<
   CouncilConfig,
@@ -41,6 +42,8 @@ export interface CodexRuntimeInput {
   signal?: AbortSignal;
   onActivity?: () => void;
   onTextEvent?: RuntimeTextListener;
+  /** 仅显式任务委派传入；普通讨论省略后固定为 read_only。 */
+  permissionProfile?: AgentPermissionProfile;
 }
 
 export interface CodexAvailability {
@@ -64,8 +67,6 @@ export class CodexRuntimeError extends Error {
 }
 
 const ABORT_MESSAGE = "Codex 调用已取消。";
-// TOML 覆盖：把 MCP 服务器表整体置空，详见 generate() 中的说明。
-const MCP_ISOLATION_CONFIG = "mcp_servers={}";
 const STREAM_TOTAL_OUTPUT_MULTIPLIER = 128;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
@@ -305,6 +306,11 @@ export class CodexRuntime {
   async generate(input: CodexRuntimeInput): Promise<CodexResponse> {
     const model = normalizeModel(input.model);
     const sessionId = normalizeSessionId(input.sessionId);
+    const permissionProfile = input.permissionProfile ?? "read_only";
+    const sandboxMode = permissionProfile === "read_only" ? "read-only" : "workspace-write";
+    const dangerArgs = permissionProfile === "danger_full_access"
+      ? ["--dangerously-bypass-approvals-and-sandbox"]
+      : [];
     const scratchDir = await mkdtemp(path.join(tmpdir(), "council-codex-"));
     const lastMessageFile = path.join(scratchDir, "last-message.txt");
     try {
@@ -315,14 +321,23 @@ export class CodexRuntime {
             "exec",
             "resume",
             sessionId,
-            "--config",
-            `sandbox_mode="${this.config.codexSandboxMode}"`,
+            ...dangerArgs,
+            ...(permissionProfile === "danger_full_access"
+              ? []
+              : ["--config", `sandbox_mode="${sandboxMode}"`]),
           ]
-        : ["exec", "--sandbox", this.config.codexSandboxMode, "--cd", input.cwd];
-      // 只读沙箱管不到 MCP 工具的外部副作用。当前 Codex 侧没有配置 MCP，但用户级
-      // config.toml 随时可能新增——一旦其中出现 Council，被召唤 Agent 就能自行发帖、
-      // 建议题或递归召唤。在进程边界上清空，使该风险不依赖用户配置的当前状态。
-      args.push("--config", MCP_ISOLATION_CONFIG);
+        : [
+            "exec",
+            ...dangerArgs,
+            ...(permissionProfile === "danger_full_access" ? [] : ["--sandbox", sandboxMode]),
+            "--cd",
+            input.cwd,
+          ];
+      // 只读沙箱管不到 MCP 工具的外部副作用。`mcp_servers={}` 只是 TOML 深合并，
+      // 不会删除用户已有的 Council MCP；实测会让后台 Codex 自行发帖，随后编排器
+      // 再提交最终正文，形成同轮双写。Codex CLI 0.149.1 的此开关保留 CODEX_HOME
+      // 认证，但完全跳过用户 config.toml，新会话与 resume 都必须带上。
+      args.push("--ignore-user-config");
       args.push(
         "--skip-git-repo-check",
         "--json",

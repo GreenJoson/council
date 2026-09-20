@@ -1,6 +1,6 @@
 /**
- * @input  依赖：ModelRouterStore、系统 SecretStore、Provider catalog 与可注入连接测试器
- * @output 导出：公开模型路由快照、Provider/Agent 增删改、连接测试和安全凭据操作
+ * @input  依赖：ModelRouterStore、Agent 执行策略、系统 SecretStore、Provider catalog 与可注入连接测试器
+ * @output 导出：公开模型路由快照、含权限/职责的 Provider/Agent 增删改、连接测试和安全凭据操作
  * @pos    HTTP 设置 API、capabilities 与临时适配器工厂之间的模型路由应用服务
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -19,6 +19,13 @@ import {
   type ProviderCatalogEntry,
   type ProviderProtocol,
 } from "./provider-catalog.js";
+import {
+  AGENT_EXECUTION_ROLES,
+  AGENT_PERMISSION_PROFILES,
+  canExecute,
+  type AgentExecutionRole,
+  type AgentPermissionProfile,
+} from "./agent-execution-policy.js";
 
 const SLUG_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
 const MENTION_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
@@ -88,6 +95,8 @@ export interface CreateAgentInput {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile?: AgentPermissionProfile;
+  executionRole?: AgentExecutionRole;
 }
 
 export interface UpdateAgentDefinitionInput {
@@ -95,6 +104,8 @@ export interface UpdateAgentDefinitionInput {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile?: AgentPermissionProfile;
+  executionRole?: AgentExecutionRole;
 }
 
 export interface ModelRouterConnectionTest {
@@ -130,6 +141,29 @@ function normalizeMention(value: string): string {
     invalid("@alias 格式无效。");
   }
   return normalized;
+}
+
+function validateExecutionPolicy(
+  permissionProfile: AgentPermissionProfile,
+  executionRole: AgentExecutionRole,
+  providerProtocol?: ProviderProtocol,
+): void {
+  if (!AGENT_PERMISSION_PROFILES.includes(permissionProfile)) {
+    invalid("Agent 执行权限无效。");
+  }
+  if (!AGENT_EXECUTION_ROLES.includes(executionRole)) {
+    invalid("Agent 职责无效。");
+  }
+  if (permissionProfile !== "read_only" && !canExecute(executionRole)) {
+    invalid("只有执行者或复合职责 Agent 才能取得写入权限。");
+  }
+  if (
+    permissionProfile !== "read_only"
+    && providerProtocol !== "claude-cli"
+    && providerProtocol !== "codex-cli"
+  ) {
+    invalid("当前只有 Claude CLI 与 Codex CLI Agent 支持工作区执行。");
+  }
 }
 
 function normalizeModel(value: string, protocol: ProviderProtocol, enabled: boolean): string {
@@ -543,6 +577,9 @@ export class ModelRouterService {
     const mentionAlias = normalizeMention(input.mentionAlias);
     const displayName = normalizeName(input.displayName, "Agent 名称");
     const model = normalizeModel(input.model, provider.protocol, input.enabled);
+    const permissionProfile = input.permissionProfile ?? "read_only";
+    const executionRole = input.executionRole ?? "advisor";
+    validateExecutionPolicy(permissionProfile, executionRole, provider.protocol);
     const id = `agent-${randomUUID()}`;
     const actorId = `actor-${randomUUID()}`;
     try {
@@ -557,6 +594,8 @@ export class ModelRouterService {
         model,
         mentionAlias,
         enabled: input.enabled,
+        permissionProfile,
+        executionRole,
         now: new Date().toISOString(),
       });
     } catch (error) {
@@ -589,6 +628,9 @@ export class ModelRouterService {
     if (input.enabled && provider.status !== "active") {
       invalid("启用 Agent 前必须先启用 Provider。");
     }
+    const permissionProfile = input.permissionProfile ?? current.permissionProfile;
+    const executionRole = input.executionRole ?? current.executionRole;
+    validateExecutionPolicy(permissionProfile, executionRole, provider.protocol);
     try {
       return this.store.updateAgent({
         id,
@@ -597,6 +639,8 @@ export class ModelRouterService {
         model: normalizeModel(input.model, provider.protocol, input.enabled),
         mentionAlias: normalizeMention(input.mentionAlias),
         enabled: input.enabled,
+        permissionProfile,
+        executionRole,
         now: new Date().toISOString(),
       });
     } catch (error) {

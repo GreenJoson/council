@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含 actorId 的 Capabilities、Run、AI 实施计划、持久会话状态、Agent 临时草稿和独立快照类型
+ * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派、AI 计划、会话和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -51,6 +51,65 @@ export interface OrchestrationAdapter {
   available: boolean;
   limitation?: string;
   runtimeCapabilities: RuntimeCapabilityKey[];
+  permissionProfile?: "read_only" | "workspace_write" | "danger_full_access";
+  executionRole?: "advisor" | "executor" | "reviewer" | "hybrid";
+}
+
+export type WorkItemDelegationStatus =
+  | "queued"
+  | "executing"
+  | "reviewing"
+  | "changes_requested"
+  | "approved"
+  | "failed"
+  | "cancelled";
+
+export interface WorkItemDelegation {
+  resumedFromId?: string;
+  failureCode?: string;
+  completionPolicy?: "review" | "human";
+  acceptanceCriteria?: string;
+  id: string;
+  topicId: string;
+  workItemId: string;
+  supervisorAgentId: string;
+  executorAgentId: string;
+  permissionProfile: "workspace_write" | "danger_full_access";
+  status: WorkItemDelegationStatus;
+  attempt: number;
+  maxAttempts: number;
+  baseCommit?: string;
+  headCommit?: string;
+  branchName?: string;
+  summary?: string;
+  review?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface StartWorkItemDelegationInput {
+  topicId: string;
+  workItemId: string;
+  expectedVersion: number;
+  supervisorAgentId: string;
+  executorAgentId: string;
+  requestedPermission: "workspace_write" | "danger_full_access";
+  completionPolicy?: "review" | "human";
+  acceptanceCriteria?: string;
+  createInitialBaseline?: boolean;
+}
+
+export interface StartWorkItemDelegationBatchInput {
+  topicId: string;
+  workItems: Array<{ workItemId: string; expectedVersion: number }>;
+  supervisorAgentId: string;
+  executorAgentId: string;
+  requestedPermission: "workspace_write" | "danger_full_access";
+  completionPolicy?: "review" | "human";
+  acceptanceCriteria?: string;
+  createInitialBaseline?: boolean;
 }
 
 export interface OrchestrationDefaultPolicy {
@@ -158,6 +217,8 @@ export interface CreateOrchestrationRunInput {
 export interface GenerateWorkItemsInput {
   topicId: string;
   adapterId: string;
+  /** 多决策议题必须显式锚定；缺省仅用于旧调用的最近 Accepted 兼容路径。 */
+  decisionId?: string;
 }
 
 export interface GenerateWorkItemsResult {
@@ -316,6 +377,8 @@ export interface CycleMetrics {
 }
 
 export interface OrchestrationSnapshot {
+  /** 已应用的数据库编排版本；草稿文本更新不推进它。 */
+  revision?: number;
   capabilities?: OrchestrationCapabilities;
   activeTopicId?: string;
   runs: OrchestrationRun[];

@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `app-icon.png` | 源图 | imagegen 生成的多 Agent 圆桌主视觉 |
+| `app-icon.png` | 源图 | 橘白双 Agent 收敛决策主视觉 |
 | `icon.icns` | macOS | 写入应用包的图标资源 |
 | `icon.ico` | Windows | Windows 桌面图标资源 |
 | `icon.png` | 通用 | 512 像素 PNG 图标 |
@@ -12,3 +12,7 @@
 | `64x64.png` | 小图 | 中低分辨率桌面图标 |
 | `128x128.png` | 标准 | 标准桌面图标 |
 | `128x128@2x.png` | 高分屏 | 高分辨率桌面图标 |
+
+## 候选方案
+
+设计候选素材保留在本地 `concepts/`，不纳入仓库或桌面应用构建；正式版本以 `app-icon.png` 为准。

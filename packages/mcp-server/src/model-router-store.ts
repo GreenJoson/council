@@ -1,6 +1,6 @@
 /**
- * @input  依赖：已迁移 Council v4 SQLite 与 Provider/Agent/Brand 写入命令
- * @output 导出：ModelRouterStore、带单调 configRevision 的 Provider/Agent、BrandAsset 与原子 alias 生命周期
+ * @input  依赖：已迁移 Council v14 SQLite、Provider/Agent/Brand 写入命令与 Agent 执行策略
+ * @output 导出：ModelRouterStore、带权限/职责和单调 configRevision 的 Provider/Agent、BrandAsset 与原子 alias 生命周期
  * @pos    Provider 连接、Agent 身份、alias 激活/释放和受控品牌资产的唯一数据访问层；不拥有 DDL 或密钥
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,6 +11,10 @@ import type {
   BrandSourceKind,
   ProviderProtocol,
 } from "./provider-catalog.js";
+import type {
+  AgentExecutionRole,
+  AgentPermissionProfile,
+} from "./agent-execution-policy.js";
 
 const NON_TRANSFERABLE_CANONICAL_ACTOR_IDS = new Set([
   "human",
@@ -66,6 +70,8 @@ export interface AgentDefinition {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile: AgentPermissionProfile;
+  executionRole: AgentExecutionRole;
   configRevision: number;
   deletedAt?: string;
   createdAt: string;
@@ -110,6 +116,8 @@ interface AgentRow {
   model: string;
   mention_alias: string;
   enabled: number;
+  permission_profile: AgentPermissionProfile;
+  execution_role: AgentExecutionRole;
   config_revision: number;
   deleted_at: string | null;
   created_at: string;
@@ -161,6 +169,8 @@ function agentFromRow(row: AgentRow): AgentDefinition {
     model: row.model,
     mentionAlias: row.mention_alias,
     enabled: row.enabled === 1,
+    permissionProfile: row.permission_profile,
+    executionRole: row.execution_role,
     configRevision: row.config_revision,
     ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
     createdAt: row.created_at,
@@ -400,6 +410,8 @@ export class ModelRouterStore {
     model: string;
     mentionAlias: string;
     enabled: boolean;
+    permissionProfile: AgentPermissionProfile;
+    executionRole: AgentExecutionRole;
     now: string;
   }): AgentDefinition {
     this.#database.exec("BEGIN IMMEDIATE;");
@@ -432,8 +444,9 @@ export class ModelRouterStore {
       this.#database.prepare(`
         INSERT INTO agent_definitions (
           id, actor_id, provider_id, slug, display_name, model,
-          mention_alias, enabled, config_revision, deleted_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
+          mention_alias, enabled, config_revision, deleted_at, created_at, updated_at,
+          permission_profile, execution_role
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?)
       `).run(
         input.id,
         input.actorId,
@@ -445,6 +458,8 @@ export class ModelRouterStore {
         input.enabled ? 1 : 0,
         input.now,
         input.now,
+        input.permissionProfile,
+        input.executionRole,
       );
       this.#database.exec("COMMIT;");
     } catch (error) {
@@ -461,6 +476,8 @@ export class ModelRouterStore {
     model: string;
     mentionAlias: string;
     enabled: boolean;
+    permissionProfile: AgentPermissionProfile;
+    executionRole: AgentExecutionRole;
     now: string;
   }): AgentDefinition {
     const current = this.getAgent(input.id);
@@ -484,12 +501,14 @@ export class ModelRouterStore {
       if (lockedIdentity) {
         this.#database.prepare(`
           UPDATE agent_definitions
-          SET model = ?, enabled = ?,
+          SET model = ?, enabled = ?, permission_profile = ?, execution_role = ?,
               config_revision = config_revision + 1, updated_at = ?
           WHERE id = ? AND actor_id = ? AND deleted_at IS NULL
         `).run(
           input.model,
           input.enabled ? 1 : 0,
+          input.permissionProfile,
+          input.executionRole,
           input.now,
           input.id,
           current.actorId,
@@ -526,6 +545,7 @@ export class ModelRouterStore {
       this.#database.prepare(`
         UPDATE agent_definitions
         SET display_name = ?, model = ?, mention_alias = ?, enabled = ?,
+            permission_profile = ?, execution_role = ?,
             config_revision = config_revision + 1, updated_at = ?
         WHERE id = ? AND deleted_at IS NULL
       `).run(
@@ -533,6 +553,8 @@ export class ModelRouterStore {
         input.model,
         input.mentionAlias,
         input.enabled ? 1 : 0,
+        input.permissionProfile,
+        input.executionRole,
         input.now,
         input.id,
       );
@@ -587,6 +609,13 @@ export class ModelRouterStore {
   }
 
   hasActiveRunForAgent(agentId: string): boolean {
+    const delegation = this.#database.prepare(`
+      SELECT id FROM work_item_delegations
+      WHERE status IN ('queued', 'executing', 'reviewing', 'changes_requested')
+        AND (supervisor_agent_id = ? OR executor_agent_id = ?)
+      LIMIT 1
+    `).get(agentId, agentId);
+    if (delegation) return true;
     const row = this.#database.prepare(`
       SELECT runs.id
       FROM orchestration_runs AS runs,

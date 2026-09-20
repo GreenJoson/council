@@ -1,13 +1,14 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5/v10→v12、实施项树、RuntimeBinding/Runtime 协议/逻辑请求/能力快照 schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v16、议题关闭、Agent 委派/决策包/实施项树、RuntimeBinding schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
 
 use council_core::{
-    ClaimWorkItemInput, CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput,
-    CreateWorkItemEntry, CreateWorkItemsInput, DecisionStatus, MessageKind, PostMessageInput,
-    RecordDecisionInput, TopicStatus, UpdateWorkItemInput, WorkItemProgress, WorkItemStatus,
+    AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
+    CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, DecisionStatus,
+    MessageKind, PostMessageInput, RecordDecisionInput, TopicStatus, UpdateWorkItemInput,
+    WorkItemProgress, WorkItemStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -343,6 +344,106 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
     assert_eq!(page.count, 1);
     assert_eq!(page.topics[0].id, topic.id);
     assert!(!page.has_more);
+
+    let closed = store
+        .close_topic(CloseTopicInput {
+            topic_id: kimi_topic.id.clone(),
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("idle topic should close");
+    assert_eq!(closed.status, TopicStatus::Closed);
+    assert_eq!(
+        store
+            .get_topic(&kimi_topic.id, 20, 0)
+            .expect("closed topic remains readable")
+            .topic
+            .title,
+        "其他项目",
+    );
+}
+
+#[test]
+fn accepts_each_decision_in_place_and_only_closes_after_the_package_is_complete() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("decision-package.sqlite3");
+    prepare_node_schema(&database_path);
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("store should open");
+    let topic = store
+        .create_topic(topic_input(
+            "多决策包",
+            "/workspace/project-alpha",
+            HUMAN_ALIAS,
+        ))
+        .expect("topic should be created");
+    let first = store
+        .record_decision(RecordDecisionInput {
+            topic_id: topic.id.clone(),
+            title: "第一项".into(),
+            decision: "先稳定协议。".into(),
+            rationale: "降低耦合。".into(),
+            alternatives: Vec::new(),
+            status: DecisionStatus::Proposed,
+            created_by_alias: CLAUDE_ALIAS.into(),
+        })
+        .expect("first proposal");
+    let second = store
+        .record_decision(RecordDecisionInput {
+            topic_id: topic.id.clone(),
+            title: "第二项".into(),
+            decision: "再补齐观测。".into(),
+            rationale: "保留故障证据。".into(),
+            alternatives: Vec::new(),
+            status: DecisionStatus::Proposed,
+            created_by_alias: CODEX_ALIAS.into(),
+        })
+        .expect("second proposal");
+
+    let accepted_first = store
+        .accept_decisions(AcceptDecisionsInput {
+            topic_id: topic.id.clone(),
+            decision_ids: vec![first.id.clone()],
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("first proposal accepted");
+    assert_eq!(accepted_first[0].id, first.id);
+    assert_eq!(accepted_first[0].status, DecisionStatus::Accepted);
+    let partially_accepted = store.get_topic(&topic.id, 20, 0).expect("partial package");
+    assert_eq!(partially_accepted.topic.status, TopicStatus::Open);
+    assert_eq!(partially_accepted.decisions.len(), 2);
+    assert_eq!(
+        partially_accepted
+            .decisions
+            .iter()
+            .find(|decision| decision.id == second.id)
+            .expect("second decision")
+            .status,
+        DecisionStatus::Proposed,
+    );
+
+    store
+        .accept_decisions(AcceptDecisionsInput {
+            topic_id: topic.id.clone(),
+            decision_ids: vec![second.id.clone()],
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("second proposal accepted");
+    assert_eq!(
+        store
+            .get_topic(&topic.id, 20, 0)
+            .expect("complete package")
+            .topic
+            .status,
+        TopicStatus::Decided,
+    );
+
+    let replay = store
+        .accept_decisions(AcceptDecisionsInput {
+            topic_id: topic.id,
+            decision_ids: vec![first.id.clone()],
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("accepted replay should be idempotent");
+    assert_eq!(replay[0].id, first.id);
 }
 
 #[test]
@@ -374,9 +475,9 @@ fn opens_node_current_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 12);
+    assert_eq!(user_version, 16);
     assert_eq!(binding_tables, 3);
-    assert_eq!(binding_triggers, 5);
+    assert_eq!(binding_triggers, 7); // 含审计追加 revision 与禁止覆盖触发器。
     drop(raw);
 
     let mut store =
@@ -619,8 +720,8 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    // v7 为 cycle/question 各加 3 个，v11 为实施项增加 3 个 revision 触发器（v12 重建时原样重挂）。
-    assert_eq!(trigger_count, 24);
+    // v7 为 cycle/question 各加 3 个，v11 为实施项、v14 为 Agent 委派各增加 3 个 revision 触发器。
+    assert_eq!(trigger_count, 28);
 }
 
 #[test]
@@ -683,6 +784,105 @@ fn reads_v3_to_v11_dynamic_kimi_rebinding_created_by_node() {
 }
 
 #[test]
+fn requires_fresh_human_evidence_for_delegation_acceptance() {
+    let directory = tempdir().expect("temp directory");
+    let database_path = directory.path().join("acceptance.sqlite3");
+    prepare_node_schema(&database_path);
+    let mut store = CouncilStore::open(&database_path, 5_000).expect("store");
+    let topic = store
+        .create_topic(topic_input(
+            "人工验收",
+            "/workspace/acceptance",
+            HUMAN_ALIAS,
+        ))
+        .expect("topic");
+    store
+        .record_decision(RecordDecisionInput {
+            topic_id: topic.id.clone(),
+            title: "实施".into(),
+            decision: "按标准交付".into(),
+            rationale: "验证验收边界".into(),
+            alternatives: vec![],
+            status: DecisionStatus::Accepted,
+            created_by_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("decision");
+    let items = store
+        .create_work_items(CreateWorkItemsInput {
+            topic_id: topic.id.clone(),
+            decision_id: None,
+            parent_id: None,
+            items: vec![CreateWorkItemEntry {
+                title: "待验收任务".into(),
+                details: "检查交付".into(),
+            }],
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("work item");
+    let item = &items[0];
+    let raw = Connection::open(&database_path).expect("fixture connection");
+    raw.execute("INSERT INTO work_item_delegations (
+        id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id, permission_profile,
+        status, attempt, max_attempts, created_at, updated_at, completed_at, completion_policy, acceptance_criteria
+    ) VALUES ('delegation-acceptance', ?1, ?2,
+        (SELECT id FROM agent_definitions WHERE actor_id='claude'),
+        (SELECT id FROM agent_definitions WHERE actor_id='codex'),
+        'workspace_write', 'approved', 1, 2, '2026-01-01', '2026-01-01', '2026-01-01', 'human', '检查交付')",
+        params![topic.id, item.id]).expect("delegation");
+    raw.execute("UPDATE work_item_delegations SET status='queued', completed_at=NULL WHERE id='delegation-acceptance'", []).expect("active delegation");
+    assert!(matches!(
+        store.close_topic(CloseTopicInput {
+            topic_id: topic.id.clone(),
+            actor_alias: HUMAN_ALIAS.into(),
+        }),
+        Err(CouncilError::Conflict(_))
+    ));
+    raw.execute("UPDATE work_item_delegations SET status='approved', completed_at='2026-01-01' WHERE id='delegation-acceptance'", []).expect("reviewed delegation");
+    let updated = store
+        .update_work_item(UpdateWorkItemInput {
+            topic_id: topic.id.clone(),
+            work_item_id: item.id.clone(),
+            status: WorkItemStatus::InProgress,
+            status_note: Some("Agent 审核通过，等待验收".into()),
+            fix_commit: None,
+            expected_version: item.version,
+            actor_alias: CODEX_ALIAS.into(),
+        })
+        .expect("review summary");
+    for (actor, note) in [
+        (HUMAN_ALIAS, None),
+        (HUMAN_ALIAS, Some("  ")),
+        (CODEX_ALIAS, Some("自行验收")),
+    ] {
+        assert!(matches!(
+            store.update_work_item(UpdateWorkItemInput {
+                topic_id: topic.id.clone(),
+                work_item_id: item.id.clone(),
+                status: WorkItemStatus::Completed,
+                status_note: note.map(str::to_string),
+                fix_commit: None,
+                expected_version: updated.version,
+                actor_alias: actor.into(),
+            }),
+            Err(CouncilError::Conflict(_))
+        ));
+    }
+    let accepted = store
+        .update_work_item(UpdateWorkItemInput {
+            topic_id: topic.id,
+            work_item_id: item.id.clone(),
+            status: WorkItemStatus::Completed,
+            status_note: Some("人工检查交付符合标准".into()),
+            fix_commit: None,
+            expected_version: updated.version,
+            actor_alias: HUMAN_ALIAS.into(),
+        })
+        .expect("human acceptance");
+    assert_eq!(accepted.updated_by_actor_id, "human");
+    assert_eq!(accepted.version, updated.version + 1);
+}
+
+#[test]
 fn rejects_unmigrated_and_future_schema_versions() {
     let directory = tempdir().expect("temp directory");
     let unmigrated = directory.path().join("unmigrated.sqlite3");
@@ -701,8 +901,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (13, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 13;",
+             VALUES (17, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 17;",
         )
         .expect("future schema fixture");
     assert!(matches!(

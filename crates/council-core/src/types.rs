@@ -1,5 +1,5 @@
 //! @input 依赖：Council TypeScript 内容协议与 serde
-//! @output 导出：Topic、Message、Decision、实施项、分页、revision 和写入输入类型
+//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项、分页、revision 和写入输入类型
 //! @pos Rust 与现有 MCP/HTTP camelCase 领域模型的同构类型正本
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -286,6 +286,12 @@ pub struct CreateTopicInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseTopicInput {
+    pub topic_id: String,
+    pub actor_alias: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostMessageInput {
     pub topic_id: String,
     pub actor_alias: String,
@@ -303,6 +309,13 @@ pub struct RecordDecisionInput {
     pub alternatives: Vec<String>,
     pub status: DecisionStatus,
     pub created_by_alias: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcceptDecisionsInput {
+    pub topic_id: String,
+    pub decision_ids: Vec<String>,
+    pub actor_alias: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

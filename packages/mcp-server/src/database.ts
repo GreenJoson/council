@@ -1,7 +1,7 @@
 /**
  * @input  依赖：已由 Node 迁移器准备的 SQLite、领域类型与安全错误语义
- * @output 导出：动态 Actor alias/可信 actorId 写入、实施项树与派生父状态、议题完成度聚合、
- *         快照一致性、无损 Session 历史与 revision
+ * @output 导出：动态 Actor alias/可信 actorId 写入、议题更正/安全关闭、实施项树与派生父状态、
+ *         议题完成度聚合、决策包逐项接受、快照一致性、无损 Session 历史与 revision
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问层；身份漂移或停用时失败关闭
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -466,6 +466,100 @@ export class CouncilDatabase {
     });
   }
 
+  /**
+   * 更正仍在讨论中的议题框架。expectedUpdatedAt 是显式并发令牌：Agent 必须先读取最新
+   * 议题再修改，不能用旧上下文覆盖另一位参与者刚刚补过的标题、问题或约束。
+   */
+  updateTopicAsActor(input: {
+    topicId: string;
+    title?: string;
+    question?: string;
+    constraints?: string[];
+    expectedUpdatedAt: string;
+    actorId: string;
+  }): Topic {
+    return this.#transaction(() => {
+      this.#activeActorById(input.actorId);
+      const current = this.getTopic(input.topicId);
+      if (current.status !== "open") {
+        throw new CouncilConflictError("议题已结束，不能再修改议题框架。");
+      }
+      if (current.updatedAt !== input.expectedUpdatedAt) {
+        throw new CouncilConflictError("议题已被其他参与者更新，请重新读取后再修改。");
+      }
+      const title = input.title ?? current.title;
+      const question = input.question ?? current.question;
+      const constraints = input.constraints ?? current.constraints;
+      if (
+        title === current.title
+        && question === current.question
+        && JSON.stringify(constraints) === JSON.stringify(current.constraints)
+      ) {
+        return current;
+      }
+      const nowCandidate = new Date().toISOString();
+      const now = nowCandidate === current.updatedAt
+        ? new Date(Date.parse(current.updatedAt) + 1).toISOString()
+        : nowCandidate;
+      const result = this.#database.prepare(`
+        UPDATE topics
+        SET title = ?, question = ?, constraints_json = ?, updated_at = ?
+        WHERE id = ? AND status = 'open' AND updated_at = ?
+      `).run(
+        title,
+        question,
+        JSON.stringify(constraints),
+        now,
+        input.topicId,
+        input.expectedUpdatedAt,
+      );
+      if (result.changes !== 1) {
+        throw new CouncilConflictError("议题状态已变化，请重新读取后再修改。");
+      }
+      return this.getTopic(input.topicId);
+    });
+  }
+
+  /**
+   * 关闭是可审计的归档动作，不物理删除讨论历史。活动圆桌或持久会话必须先由编排服务
+   * 正常停止；MCP 直连只允许关闭已经静止的议题，避免留下仍在写入的孤儿进程。
+   */
+  closeTopicAsActor(input: { topicId: string; actorId: string }): Topic {
+    return this.#transaction(() => {
+      this.#activeActorById(input.actorId);
+      const current = this.getTopic(input.topicId);
+      if (current.status === "closed") {
+        return current;
+      }
+      const activeBindings = this.#database.prepare(`
+        SELECT COUNT(*) AS count FROM runtime_bindings
+        WHERE topic_id = ? AND status <> 'closed'
+      `).get(input.topicId) as unknown as CountRow;
+      const activeCycles = this.#database.prepare(`
+        SELECT COUNT(*) AS count FROM discussion_cycles
+        WHERE topic_id = ? AND status = 'active'
+      `).get(input.topicId) as unknown as CountRow;
+      const activeDelegations = this.#database.prepare(`
+        SELECT COUNT(*) AS count FROM work_item_delegations WHERE topic_id = ?
+          AND status IN ('queued', 'executing', 'reviewing', 'changes_requested')
+      `).get(input.topicId) as unknown as CountRow;
+      if (activeBindings.count > 0 || activeCycles.count > 0 || activeDelegations.count > 0) {
+        throw new CouncilConflictError(
+          "议题仍有活动圆桌、Agent 会话或任务委派，请先在桌面端停止运行再关闭。",
+        );
+      }
+      const now = new Date().toISOString();
+      this.#database.prepare(`
+        UPDATE agent_sessions SET is_current = 0, updated_at = ?
+        WHERE topic_id = ? AND is_current = 1
+      `).run(now, input.topicId);
+      this.#database.prepare(`
+        UPDATE topics SET status = 'closed', updated_at = ? WHERE id = ?
+      `).run(now, input.topicId);
+      return this.getTopic(input.topicId);
+    });
+  }
+
   getTopic(topicId: string): Topic {
     const row = this.#database
       .prepare("SELECT * FROM topics WHERE id = ?")
@@ -690,6 +784,15 @@ export class CouncilDatabase {
       if (input.status === "accepted" && actor.actorId !== "human") {
         throw new CouncilConflictError("Accepted 决策必须由用户确认。");
       }
+      // 人工直接记录 Accepted 表示用一条外部结论结束当前决策包；历史提案保留但退出待办。
+      // 普通“接受提案”必须走 acceptDecisionsAsActor，原地更新稳定 decisionId。
+      if (input.status === "accepted") {
+        this.#database.prepare(`
+          UPDATE decisions
+          SET status = 'superseded', updated_at = ?
+          WHERE topic_id = ? AND status = 'proposed'
+        `).run(now, input.topicId);
+      }
       this.#database
         .prepare(`
           INSERT INTO decisions (
@@ -719,6 +822,74 @@ export class CouncilDatabase {
         .prepare("SELECT * FROM decisions WHERE id = ?")
         .get(id) as unknown as DecisionRow;
       return decisionFromRow(row);
+    });
+  }
+
+  /**
+   * 原地接受一个或多个拟议决策。accepted 重放是幂等的；rejected/superseded 不允许复活。
+   * 只要仍有 proposed，议题保持 open；最后一条完成后才进入 decided，v13 触发器也在
+   * 同一个边界关闭 RuntimeBinding 与 DiscussionCycle。
+   */
+  acceptDecisionsAsActor(input: {
+    topicId: string;
+    decisionIds: string[];
+    actorId: string;
+  }): Decision[] {
+    const decisionIds = [...new Set(input.decisionIds)];
+    if (decisionIds.length === 0 || decisionIds.length !== input.decisionIds.length) {
+      throw new CouncilConflictError("接受决策必须提供非空且不重复的 decisionIds。");
+    }
+    return this.#transaction(() => {
+      this.getTopic(input.topicId);
+      const actor = this.#activeActorById(input.actorId);
+      if (actor.actorId !== "human") {
+        throw new CouncilConflictError("Accepted 决策必须由用户确认。");
+      }
+      const placeholders = decisionIds.map(() => "?").join(", ");
+      const rows = this.#database.prepare(`
+        SELECT * FROM decisions
+        WHERE topic_id = ? AND id IN (${placeholders})
+      `).all(input.topicId, ...decisionIds) as unknown as DecisionRow[];
+      if (rows.length !== decisionIds.length) {
+        throw new CouncilNotFoundError("部分决策不存在或不属于当前议题。");
+      }
+      const invalid = rows.find(
+        (row) => row.status !== "proposed" && row.status !== "accepted",
+      );
+      if (invalid) {
+        throw new CouncilConflictError("已拒绝或已被取代的决策不能重新接受。");
+      }
+
+      const now = new Date().toISOString();
+      const update = this.#database.prepare(`
+        UPDATE decisions
+        SET status = 'accepted', updated_at = ?
+        WHERE id = ? AND topic_id = ? AND status = 'proposed'
+      `);
+      for (const decisionId of decisionIds) {
+        update.run(now, decisionId, input.topicId);
+      }
+      const remaining = this.#database.prepare(`
+        SELECT COUNT(*) AS count
+        FROM decisions
+        WHERE topic_id = ? AND status = 'proposed'
+      `).get(input.topicId) as unknown as CountRow;
+      const topicStatus: TopicStatus = remaining.count === 0 ? "decided" : "open";
+      this.#database.prepare("UPDATE topics SET status = ?, updated_at = ? WHERE id = ?")
+        .run(topicStatus, now, input.topicId);
+
+      const updatedRows = this.#database.prepare(`
+        SELECT * FROM decisions
+        WHERE topic_id = ? AND id IN (${placeholders})
+      `).all(input.topicId, ...decisionIds) as unknown as DecisionRow[];
+      const byId = new Map(updatedRows.map((row) => [row.id, decisionFromRow(row)]));
+      return decisionIds.map((decisionId) => {
+        const decision = byId.get(decisionId);
+        if (!decision) {
+          throw new CouncilNotFoundError("接受后的决策记录缺失。");
+        }
+        return decision;
+      });
     });
   }
 
@@ -1045,6 +1216,14 @@ export class CouncilDatabase {
         );
       }
       const actor = this.#activeActorById(input.actorId);
+      const latestDelegation = this.#database.prepare(`
+        SELECT completion_policy FROM work_item_delegations WHERE work_item_id = ?
+        ORDER BY created_at DESC, rowid DESC LIMIT 1
+      `).get(input.workItemId) as { completion_policy: string } | undefined;
+      if (input.status === "completed" && latestDelegation?.completion_policy === "human"
+        && (actor.actorId !== "human" || !input.statusNote?.trim())) {
+        throw new CouncilConflictError("实施项需要人工填写验收证据后才能完成。");
+      }
       const actorSnapshotJson = serializeActorSnapshot(toActorSnapshot(actor));
       const statusNote = input.statusNote === undefined
         ? current.status_note

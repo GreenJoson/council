@@ -27,6 +27,7 @@ import type {
   RuntimeBindingStatus,
   RuntimeCapabilityKey,
   RuntimeTransportKind,
+  WorkItemDelegation,
 } from "../types/orchestration";
 
 export type AgentOutputOperation =
@@ -236,6 +237,8 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
   const mentionAlias = optionalString(record, "mentionAlias");
   const providerId = optionalString(record, "providerId");
   const providerName = optionalString(record, "providerName");
+  const permissionProfile = optionalString(record, "permissionProfile");
+  const executionRole = optionalString(record, "executionRole");
   const brandRecord = record.brand === undefined
     ? undefined
     : recordValue(record.brand, "adapter.brand");
@@ -246,6 +249,12 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
     ...(mentionAlias ? { mentionAlias } : {}),
     ...(providerId ? { providerId } : {}),
     ...(providerName ? { providerName } : {}),
+    ...(permissionProfile ? {
+      permissionProfile: permissionProfile as OrchestrationAdapter["permissionProfile"],
+    } : {}),
+    ...(executionRole ? {
+      executionRole: executionRole as OrchestrationAdapter["executionRole"],
+    } : {}),
     ...(brandRecord ? {
       brand: {
         glyphId: stringValue(brandRecord, "glyphId"),
@@ -257,6 +266,55 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
     runtimeCapabilities: parseCapabilityArray(record, "runtimeCapabilities"),
     ...(limitation ? { limitation } : {}),
   };
+}
+
+export function parseWorkItemDelegation(value: unknown): WorkItemDelegation {
+  const record = recordValue(value, "workItemDelegation");
+  const status = stringValue(record, "status") as WorkItemDelegation["status"];
+  const permissionProfile = stringValue(
+    record,
+    "permissionProfile",
+  ) as WorkItemDelegation["permissionProfile"];
+  if (![
+    "queued", "executing", "reviewing", "changes_requested", "approved", "failed", "cancelled",
+  ].includes(status)) {
+    throw new Error("workItemDelegation.status 无效");
+  }
+  if (permissionProfile !== "workspace_write" && permissionProfile !== "danger_full_access") {
+    throw new Error("workItemDelegation.permissionProfile 无效");
+  }
+  const policy = optionalString(record, "completionPolicy");
+  if (policy !== undefined && policy !== "review" && policy !== "human") throw new Error("完成条件无效");
+  const optional = (key: string): string | undefined => optionalString(record, key);
+  return {
+    id: stringValue(record, "id"),
+    topicId: stringValue(record, "topicId"),
+    workItemId: stringValue(record, "workItemId"),
+    supervisorAgentId: stringValue(record, "supervisorAgentId"),
+    executorAgentId: stringValue(record, "executorAgentId"),
+    permissionProfile,
+    ...(policy ? { completionPolicy: policy } : {}),
+    ...(optional("acceptanceCriteria") !== undefined ? { acceptanceCriteria: optional("acceptanceCriteria") } : {}),
+    status,
+    attempt: integerValue(record, "attempt"),
+    maxAttempts: integerValue(record, "maxAttempts", 1),
+    ...(optional("resumedFromId") ? { resumedFromId: optional("resumedFromId") } : {}),
+    ...(optional("failureCode") ? { failureCode: optional("failureCode") } : {}),
+    ...(optional("baseCommit") ? { baseCommit: optional("baseCommit") } : {}),
+    ...(optional("headCommit") ? { headCommit: optional("headCommit") } : {}),
+    ...(optional("branchName") ? { branchName: optional("branchName") } : {}),
+    ...(optional("summary") ? { summary: optional("summary") } : {}),
+    ...(optional("review") ? { review: optional("review") } : {}),
+    ...(optional("error") ? { error: optional("error") } : {}),
+    createdAt: stringValue(record, "createdAt"),
+    updatedAt: stringValue(record, "updatedAt"),
+    ...(optional("completedAt") ? { completedAt: optional("completedAt") } : {}),
+  };
+}
+
+export function parseWorkItemDelegations(value: unknown): WorkItemDelegation[] {
+  if (!Array.isArray(value)) throw new Error("workItemDelegations 必须是数组");
+  return value.map(parseWorkItemDelegation);
 }
 
 function parsePolicy(value: unknown): OrchestrationDefaultPolicy {

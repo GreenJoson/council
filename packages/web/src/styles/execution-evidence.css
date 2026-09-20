@@ -1,0 +1,21 @@
+/* 运行证据按需展开，复用项目语义色；摘要保持可滚动、可复制。 */
+.runtime-audit { width: 100%; margin-block: 8px; font-size: 11px; line-height: 1.6; }
+.runtime-audit summary { cursor: pointer; color: var(--color-text-muted); }
+.runtime-audit-body { padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; max-height: 480px; overflow: auto; }
+.runtime-audit-body ol { padding-left: 20px; }
+.runtime-audit-body li { margin-block: 12px; }
+.runtime-audit-body small { display: block; color: var(--color-text-muted); }
+.runtime-audit-body li > div > span { color: var(--color-text-muted); }
+.runtime-audit-body pre { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 4px; font: inherit; }
+.runtime-audit-body button, .work-attention-view header button { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.work-attention-view { min-width: 0; overflow: auto; padding: 28px; }
+.work-attention-view header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.work-attention-view h1 { font-size: 22px; }
+.work-attention-view ul { list-style: none; margin: 24px 0; padding: 0; }
+.work-attention-view li { border-bottom: 1px solid var(--color-border); }
+.work-attention-view li button { display: grid; gap: 8px; width: 100%; padding: 18px 4px; text-align: left; color: var(--color-text); background: transparent; border: 0; cursor: pointer; }
+.work-attention-view li span { color: var(--color-text-muted); }
+.work-item-delegation-form textarea { width: 100%; min-height: 72px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; padding: 8px; resize: vertical; }
+.work-item-delegation-form label { min-width: 0; }
+.work-item-delegation-form > .delegation-completion-policy,
+.work-item-delegation-form > .delegation-acceptance-criteria { grid-column: 1 / -1; }

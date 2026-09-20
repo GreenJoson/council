@@ -6,6 +6,9 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import type { WorkAttention } from "./work-attention";
+import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+
 import type {
   AnswerCycleQuestionInput,
   SubmitFixesInput,
@@ -17,6 +20,9 @@ import type {
   OrchestrationSnapshot,
   RuntimeBinding,
   StartCycleInput,
+  StartWorkItemDelegationInput,
+  StartWorkItemDelegationBatchInput,
+  WorkItemDelegation,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -32,6 +38,9 @@ import type {
 export type OrchestrationListener = (snapshot: OrchestrationSnapshot) => void;
 
 export interface OrchestrationRepository {
+  resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation>;
+  listWorkAttention(topicId: string): Promise<WorkAttention[]>;
+  listRuntimeAudit(input: RuntimeAuditQuery): Promise<RuntimeAuditPage>;
   loadCapabilities(): Promise<OrchestrationSnapshot>;
   selectTopic(topicId: string): Promise<OrchestrationSnapshot>;
   getRun(runId: string): Promise<OrchestrationRun>;
@@ -58,5 +67,9 @@ export interface OrchestrationRepository {
   updateAgent(input: UpdateAgentInput): Promise<AgentDefinition>;
   removeAgent(agentId: string): Promise<AgentDefinition>;
   testAgent(agentId: string): Promise<AgentConnectionTest>;
+  listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]>;
+  startWorkItemDelegation(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation>;
+  startWorkItemDelegationBatch(input: StartWorkItemDelegationBatchInput): Promise<WorkItemDelegation[]>;
+  cancelWorkItemDelegation(delegationId: string): Promise<WorkItemDelegation>;
   subscribe(listener: OrchestrationListener): () => void;
 }

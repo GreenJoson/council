@@ -115,6 +115,8 @@ function createConfig(
   return {
     dataDir: directory,
     databasePath: path.join(directory, "unused.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [],
     claudePermissionMode: "plan",
@@ -200,15 +202,44 @@ test("CodexRuntime 纯生成强制只读沙箱并提取 thread session", async (
   }
 });
 
-test("CodexRuntime 新会话与 resume 都清空 MCP 配置", async () => {
+test("CodexRuntime 只在显式委派时映射 workspace-write 或危险权限", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-permission-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  const argDumpFile = path.join(directory, "args.json");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "success", {
+      codexArgs: [fakeCodexPath, "--fake-mode", "success", "--arg-dump-file", argDumpFile],
+    }));
+    await runtime.generate({
+      prompt: "execute",
+      cwd: directory,
+      permissionProfile: "workspace_write",
+    });
+    let args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.equal(args[args.indexOf("--sandbox") + 1], "workspace-write");
+    assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), false);
+
+    await runtime.generate({
+      prompt: "execute dangerous",
+      cwd: directory,
+      permissionProfile: "danger_full_access",
+    });
+    args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.equal(args.includes("--dangerously-bypass-approvals-and-sandbox"), true);
+    assert.equal(args.includes("--sandbox"), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntime 新会话与 resume 都忽略用户配置以隔离 MCP", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-codex-mcp-"));
   const fakeCodexPath = path.join(directory, "fake-codex.mjs");
   const argDumpFile = path.join(directory, "args.json");
   writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
-  const readIsolationConfigs = (): string[] => {
-    const passed = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
-    return passed.filter((value, index) => passed[index - 1] === "--config");
-  };
+  const readPassedArgs = (): string[] =>
+    JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
   try {
     const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "success", {
       codexArgs: [fakeCodexPath, "--fake-mode", "success", "--arg-dump-file", argDumpFile],
@@ -216,8 +247,8 @@ test("CodexRuntime 新会话与 resume 都清空 MCP 配置", async () => {
 
     await runtime.generate({ prompt: "public prompt", cwd: directory });
     assert.ok(
-      readIsolationConfigs().includes("mcp_servers={}"),
-      "新会话必须清空 MCP 服务器表",
+      readPassedArgs().includes("--ignore-user-config"),
+      "新会话必须跳过包含 MCP 的用户配置",
     );
 
     await runtime.generate({
@@ -225,11 +256,17 @@ test("CodexRuntime 新会话与 resume 都清空 MCP 配置", async () => {
       cwd: directory,
       sessionId: "codex_session_previous",
     });
-    const resumeConfigs = readIsolationConfigs();
-    assert.ok(resumeConfigs.includes("mcp_servers={}"), "resume 必须同样清空 MCP 服务器表");
+    const resumeArgs = readPassedArgs();
+    assert.ok(
+      resumeArgs.includes("--ignore-user-config"),
+      "resume 必须同样跳过包含 MCP 的用户配置",
+    );
+    const resumeConfigs = resumeArgs.filter(
+      (value, index) => resumeArgs[index - 1] === "--config",
+    );
     assert.ok(
       resumeConfigs.includes('sandbox_mode="read-only"'),
-      "resume 的只读沙箱覆盖不得被 MCP 覆盖挤掉",
+      "resume 跳过用户配置后仍须强制只读沙箱",
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

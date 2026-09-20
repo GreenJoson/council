@@ -133,6 +133,7 @@ test("Claude 配置拒绝无效 JSON 和超过 Node 定时器上限的时长", (
     for (const name of [
       "COUNCIL_CLAUDE_TIMEOUT_MS",
       "COUNCIL_CLAUDE_KILL_GRACE_MS",
+      "COUNCIL_DELEGATION_RETRY_DELAY_MS",
     ] as const) {
       assert.throws(
         () => loadConfig({ ...createEnv(directory), [name]: "2147483648" }),

@@ -124,6 +124,7 @@ Node 与 React 构建产物位于各包的 `dist/`。Codex 和 Claude 的 MCP �
 自动调用后台本机 Agent 前，需要先完成对应 Claude Code CLI、Codex CLI 或 Kimi Code CLI 登录。手动双桌面接力不依赖 CLI 登录。Council 桌面应用的 `@codex` 会启动一个新的只读 Codex CLI 轮次并把回复自动写回当前议题；它不会控制或续接另一个已经打开的 Codex App 私有任务。Model Router 中的“`Kimi Code`”使用本机 ACP，可只读项目、读取受控已提交 diff 并持续复用议题会话；“`Kimi`”则使用兼容 API 和 Council 只读 ToolLoop。DeepSeek、Kimi API 等远程 Provider 只接收 Council 已公开上下文，并可通过 Council 明确授权的只读工具检查当前项目和已提交 diff；它们不能读取未提交工作区、运行 Shell、写文件、提交、推送或部署。
 
 完整步骤、提示词模板和故障排查见 [Council 使用指南](docs/usage.md)。
+显式委派的完成策略、执行记录、需要我处理与检查点恢复见 [执行交付](docs/execution-delivery.md)。
 SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全](docs/schema-migration-safety.md)。
 动态身份、旧作者映射和 v2 回滚边界见 [Actor Identity v2 迁移](docs/actor-identity-migration.md)。
 
@@ -135,11 +136,13 @@ SQLite 版本、备份、回滚和桌面启动门说明见 [Schema 迁移安全]
 
 决策接受后，右侧“实施进度”可以继续写入，不受讨论会话关闭影响。完成度只按已完成实施项数量自动计算，避免手填百分比与真实交付脱节；并发更新使用实施项版本号拒绝覆盖。
 
+新委派默认由人工验收后完成，也可明确选择 Agent 审核即完成；验收标准随委派冻结。运行卡与任务卡可查看持久执行记录，侧栏“需要我处理”汇总当前项目的决策、验收、阻断及失败。失败委派可从已验证提交创建新工作区恢复，先复审已有成果；未提交改动和写入失败不会自动重放。
+
 ## 后续演进
 
 优先顺序建议：
 
 1. 将最终决策导出为项目 ADR。
-2. 增加运行审计视图和跨项目筛选，不把协议绑定到单一模型。
+2. 将现有阶段审计扩展到更多 Runtime 工具证据和跨项目筛选，不把协议绑定到单一模型。
 3. 增加运行诊断日志入口和自定义 Provider 增删界面。
-4. 将 ToolLoop 的本轮证据凭据扩展为可跨运行查询的持久审计视图。
+4. 将 ToolLoop 的本轮证据凭据与持久事件关联，支持跨运行证据检索。

@@ -7,6 +7,7 @@
  */
 
 import {
+  AlertTriangle,
   AtSign,
   Bot,
   KeyRound,
@@ -19,7 +20,9 @@ import {
   X,
 } from "lucide-react";
 import type {
+  AgentExecutionRole,
   AgentDefinition,
+  AgentPermissionProfile,
   BrandAsset,
   ProviderCatalogEntry,
   ProviderProfile,
@@ -33,6 +36,8 @@ export interface AgentDefinitionDraft {
   model: string;
   mentionAlias: string;
   enabled: boolean;
+  permissionProfile: AgentPermissionProfile;
+  executionRole: AgentExecutionRole;
 }
 
 export interface ProviderProfileDraft {
@@ -172,6 +177,22 @@ export function AgentDefinitionEditor({
   const isBusy = busyAction !== null;
   const modelOptional = provider.protocol === "codex-cli";
   const modelListId = `agent-model-candidates-${provider.id}`;
+  const nativeExecution = provider.protocol === "claude-cli" || provider.protocol === "codex-cli";
+  const permissionOptions: ReadonlyArray<{
+    value: AgentPermissionProfile;
+    label: string;
+    detail: string;
+  }> = [
+    { value: "read_only", label: t("仅讨论"), detail: t("只能阅读、分析和审核，不修改项目") },
+    { value: "workspace_write", label: t("工作区执行"), detail: t("在隔离 worktree 中改代码、运行测试") },
+    { value: "danger_full_access", label: t("完全控制"), detail: t("跳过 CLI 权限确认与沙箱") },
+  ];
+  const roleOptions: ReadonlyArray<{ value: AgentExecutionRole; label: string }> = [
+    { value: "advisor", label: t("顾问") },
+    { value: "executor", label: t("执行者") },
+    { value: "reviewer", label: t("审核者") },
+    { value: "hybrid", label: t("执行 + 审核") },
+  ];
   return (
     <article className="model-router-editor">
       <EditorHeader
@@ -244,6 +265,67 @@ export function AgentDefinitionEditor({
             />
           </div>
         </label>
+        <fieldset className="agent-policy-fieldset">
+          <legend>{t("Agent 职责")}</legend>
+          <small>{t("决定它能在委派链中担任执行者、审核者，或两者兼任")}</small>
+          <div className="agent-role-options">
+            {roleOptions.map((option) => (
+              <label key={option.value} className={draft.executionRole === option.value ? "is-selected" : ""}>
+                <input
+                  type="radio"
+                  name={`agent-role-${agent?.id ?? provider.id}`}
+                  value={option.value}
+                  checked={draft.executionRole === option.value}
+                  onChange={() => onDraftChange({
+                    executionRole: option.value,
+                    ...(
+                      (option.value === "advisor" || option.value === "reviewer")
+                      && draft.permissionProfile !== "read_only"
+                        ? { permissionProfile: "read_only" as const }
+                        : {}
+                    ),
+                  })}
+                />
+                <span>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="agent-policy-fieldset">
+          <legend>{t("执行权限")}</legend>
+          <small>{t("普通 @ 对话始终只读；这里是显式委派任务的权限上限")}</small>
+          <div className="agent-permission-options">
+            {permissionOptions.map((option) => {
+              const roleCanExecute = draft.executionRole === "executor" || draft.executionRole === "hybrid";
+              const disabled = option.value !== "read_only" && (!nativeExecution || !roleCanExecute);
+              return (
+                <label
+                  key={option.value}
+                  className={[
+                    draft.permissionProfile === option.value ? "is-selected" : "",
+                    option.value === "danger_full_access" ? "is-danger" : "",
+                    disabled ? "is-disabled" : "",
+                  ].filter(Boolean).join(" ")}
+                >
+                  <input
+                    type="radio"
+                    name={`agent-permission-${agent?.id ?? provider.id}`}
+                    value={option.value}
+                    disabled={disabled}
+                    checked={draft.permissionProfile === option.value}
+                    onChange={() => onDraftChange({ permissionProfile: option.value })}
+                  />
+                  <span><strong>{option.label}</strong><small>{option.detail}</small></span>
+                </label>
+              );
+            })}
+          </div>
+          {!nativeExecution ? (
+            <p className="agent-policy-note"><AlertTriangle size={14} />{t("当前只有 Claude CLI 与 Codex CLI 支持代码执行。")}</p>
+          ) : draft.permissionProfile === "danger_full_access" ? (
+            <p className="agent-policy-note is-danger"><AlertTriangle size={14} />{t("完全控制可访问 worktree 之外的主机文件；只应给可信 Agent。")}</p>
+          ) : null}
+        </fieldset>
       </div>
       {removeConfirming ? (
         <RemoveConfirm

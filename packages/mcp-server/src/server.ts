@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、绑定调用者身份的 MCP 配置、ClaudeClient、MCP SDK 与 Zod
- * @output 导出：迁移完成后创建身份不可伪造的 server 工厂和全部 council_* 工具
+ * @output 导出：迁移完成后创建身份不可伪造、可更正/关闭议题的 server 工厂和全部 council_* 工具
  * @pos    本地架构委员会对 Codex App 与 Claude Desktop 的协议入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -305,7 +305,7 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
     {
       title: "创建架构议题",
       description:
-        "创建一个供 Claude、Codex 和用户共享的架构讨论议题。project_path 应传绝对本地项目目录；本工具只写本地 SQLite。",
+        "创建一个供 Claude、Codex 和用户共享的架构讨论议题。question 只写精炼的问题框架、预期与验收标准；分析、证据、日志和代码必须另用 council_post_message 发布，禁止整段塞进议题正文。project_path 应传绝对本地项目目录；本工具只写本地 SQLite。",
       inputSchema: {
         title: z.string().min(1).max(MAX_TITLE_CHARS).describe("清晰、单一的议题标题"),
         question: z
@@ -344,6 +344,74 @@ export async function createCouncilServer(config: McpCouncilConfig): Promise<Cou
           actorId: caller.actorId,
         });
         return success(formatTopic(topic), { topic });
+      }),
+  );
+
+  server.registerTool(
+    "council_update_topic",
+    {
+      title: "更正架构议题",
+      description:
+        "更正仍为 open 的议题标题、问题框架或约束。先调用 council_get_topic 取得最新 updatedAt，并原样传入 expected_updated_at；详细分析仍应发布为消息，不能借更新工具把议题正文变成长篇分析。",
+      inputSchema: {
+        topic_id: topicIdField,
+        title: z.string().trim().min(1).max(MAX_TITLE_CHARS).optional(),
+        question: z.string().trim().min(1).max(MAX_QUESTION_CHARS).optional(),
+        constraints: z
+          .array(z.string().trim().min(1).max(MAX_CONSTRAINT_CHARS))
+          .max(MAX_CONSTRAINT_COUNT)
+          .optional(),
+        expected_updated_at: z.iso.datetime().describe("最近一次读取到的 topic.updatedAt"),
+      },
+      outputSchema: { topic: topicOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id, title, question, constraints, expected_updated_at }) =>
+      await executeTool("council_update_topic", () => {
+        if (title === undefined && question === undefined && constraints === undefined) {
+          throw new CouncilValidationError(
+            "至少提供 title、question 或 constraints 中的一项。",
+          );
+        }
+        const topic = database.updateTopicAsActor({
+          topicId: topic_id,
+          ...(title !== undefined ? { title } : {}),
+          ...(question !== undefined ? { question } : {}),
+          ...(constraints !== undefined ? { constraints } : {}),
+          expectedUpdatedAt: expected_updated_at,
+          actorId: caller.actorId,
+        });
+        return success(formatTopic(topic), { topic });
+      }),
+  );
+
+  server.registerTool(
+    "council_close_topic",
+    {
+      title: "关闭架构议题",
+      description:
+        "关闭不再继续的议题并保留全部审计历史，不会物理删除。重复关闭是幂等的；若仍有活动圆桌或 Agent 会话，会拒绝并要求先在桌面端停止运行。",
+      inputSchema: { topic_id: topicIdField },
+      outputSchema: { topic: topicOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ topic_id }) =>
+      await executeTool("council_close_topic", () => {
+        const topic = database.closeTopicAsActor({
+          topicId: topic_id,
+          actorId: caller.actorId,
+        });
+        return success(`议题已关闭并保留历史。\n\n${formatTopic(topic)}`, { topic });
       }),
   );
 

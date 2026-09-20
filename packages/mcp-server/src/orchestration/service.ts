@@ -1,12 +1,14 @@
 /**
  * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
  *         增量草稿中心、统一日志与 ExecutionManager
- * @output 导出：带配置互斥的编排产品服务、安全 Model Router 入口、一次性任务规划及临时草稿流
- * @pos    REST/SSE 契约使用的编排与模型配置一致性聚合根、生产依赖工厂
+ * @output 导出：带配置互斥的编排服务、安全 Model Router、跨 Agent 任务委派/恢复、任务规划、持久审计、项目待处理及临时草稿流
+ * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { RuntimeAuditStore } from "./runtime-audit-store.js";
+import { WorkAttentionStore } from "./work-attention-store.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CouncilOrchestrator,
@@ -80,6 +82,12 @@ import { AgentProgressHub } from "./agent-progress-hub.js";
 import { AcpDelegatedAgentAdapter } from "./acp-delegated-agent-adapter.js";
 import { OpenAICompatibleAgentAdapter } from "./openai-compatible-agent-adapter.js";
 import { withTrustedGitCommitTargets } from "../trusted-git-targets.js";
+import {
+  WorkItemDelegationManager,
+  type StartWorkItemDelegationBatchInput,
+  type StartWorkItemDelegationInput,
+} from "./work-item-delegation-manager.js";
+import type { WorkItemDelegation } from "./work-item-delegation-store.js";
 
 export interface RegisteredAgentAdapter {
   adapter: AgentAdapter;
@@ -133,6 +141,8 @@ export interface PublicAgentCapability {
   mentionAlias?: string;
   providerId?: string;
   providerName?: string;
+  permissionProfile?: AgentDefinition["permissionProfile"];
+  executionRole?: AgentDefinition["executionRole"];
   brand?: {
     glyphId: string;
     colorToken: string;
@@ -147,7 +157,10 @@ function missingRun(error: unknown): boolean {
 /** 可用性检测缓存时长：CLI 登录状态变化最迟这么久反映到 capabilities，无需重启服务。 */
 export const AVAILABILITY_TTL_MS = 30_000;
 
+
 export class CouncilOrchestrationService {
+  readonly audit: RuntimeAuditStore;
+  readonly attention: WorkAttentionStore;
   readonly orchestrator: CouncilOrchestrator;
   readonly manager: RunExecutionManager;
   readonly #store: SQLiteCouncilStore;
@@ -178,6 +191,7 @@ export class CouncilOrchestrationService {
     readonly modelRouter?: ModelRouterService,
     readonly progressHub = new AgentProgressHub(MAX_MESSAGE_CHARS),
     private readonly ephemeralAgentFactory?: EphemeralAgentFactory,
+    readonly delegationManager?: WorkItemDelegationManager,
   ) {
     this.#store = new SQLiteCouncilStore(
       config.databasePath,
@@ -228,11 +242,13 @@ export class CouncilOrchestrationService {
         );
       }
     }
+    this.attention = new WorkAttentionStore(config.databasePath, config.sqliteBusyTimeoutMs);
+    this.audit = new RuntimeAuditStore(config.databasePath, config.sqliteBusyTimeoutMs);
     this.orchestrator = new CouncilOrchestrator(
       this.#store,
       registrations.map((registration) => registration.adapter),
       {
-        runtimeEvents: progressHub,
+        runtimeEvents: { emit: (event) => { progressHub.emit(event); this.audit.emit(event); } },
         // 未被适配器分类的异常此前会静默消失，运行里只剩一句无信息量的兜底文案。
         onUnclassifiedError: ({ runId, adapterId }, error) => {
           logger.error(
@@ -963,12 +979,48 @@ export class CouncilOrchestrationService {
   }
 
   async initialize(): Promise<void> {
+    this.delegationManager?.initialize();
     await this.#store.markRuntimeBindingsInterrupted(this.#processInstanceId);
     await this.#closeIdleRuntimeBindings();
     await this.#syncDynamicAgents();
     await this.#ensureFreshAvailability(true);
     await this.manager.recoverOnStartup();
     this.#startRuntimeBindingIdleSweep();
+  }
+
+  listWorkItemDelegations(topicId: string): WorkItemDelegation[] {
+    if (!this.delegationManager) {
+      throw new OrchestrationConfigError("任务委派服务未启用。");
+    }
+    return this.delegationManager.list(topicId);
+  }
+
+  startWorkItemDelegation(input: StartWorkItemDelegationInput): WorkItemDelegation {
+    if (!this.delegationManager) {
+      throw new OrchestrationConfigError("任务委派服务未启用。");
+    }
+    return this.delegationManager.start(input);
+  }
+
+  startWorkItemDelegationBatch(
+    input: StartWorkItemDelegationBatchInput,
+  ): WorkItemDelegation[] {
+    if (!this.delegationManager) {
+      throw new OrchestrationConfigError("任务委派服务未启用。");
+    }
+    return this.delegationManager.startBatch(input);
+  }
+
+  async resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+    if (!this.delegationManager) throw new OrchestrationConfigError("任务委派服务未启用。");
+    return this.delegationManager.resume(id, expectedVersion);
+  }
+
+  cancelWorkItemDelegation(id: string): WorkItemDelegation {
+    if (!this.delegationManager) {
+      throw new OrchestrationConfigError("任务委派服务未启用。");
+    }
+    return this.delegationManager.cancel(id);
   }
 
   #startRuntimeBindingIdleSweep(): void {
@@ -1064,6 +1116,8 @@ export class CouncilOrchestrationService {
           model: agent.model,
           mentionAlias: agent.mentionAlias,
           enabled: agent.enabled,
+          permissionProfile: agent.permissionProfile,
+          executionRole: agent.executionRole,
           configRevision: agent.configRevision,
         },
         provider: {
@@ -1107,6 +1161,8 @@ export class CouncilOrchestrationService {
         mentionAlias: agent.mentionAlias,
         providerId: provider.id,
         providerName: provider.displayName,
+        permissionProfile: agent.permissionProfile,
+        executionRole: agent.executionRole,
         runtimeCapabilities: grantRuntimeCapabilities(
           this.#runtimeCapabilityOverrides.get(agent.id)
             ?? declaredCapabilitiesForTransport(transportKindForProtocol(provider.protocol)),
@@ -1165,6 +1221,7 @@ export class CouncilOrchestrationService {
       this.#runtimeBindingIdleTimer = undefined;
     }
     await this.#runtimeBindingIdleSweep;
+    await this.delegationManager?.shutdown();
     await this.manager.shutdown();
     const bindings = await this.#store.listOpenRuntimeBindings();
     await Promise.allSettled(
@@ -1174,6 +1231,9 @@ export class CouncilOrchestrationService {
   }
 
   close(): void {
+    this.attention.close();
+    this.audit.close();
+    this.delegationManager?.close();
     this.#store.close();
     this.#fallbackRouterStore?.close();
     this.modelRouter?.close();
@@ -1350,11 +1410,19 @@ export function createProductionOrchestrationService(
     };
   };
 
+  const delegationManager = WorkItemDelegationManager.fromConfig(
+    httpConfig,
+    councilConfig,
+    modelRouter,
+    claudeRuntime,
+    codexRuntime,
+  );
   return new CouncilOrchestrationService(
     httpConfig,
     [],
     modelRouter,
     progressHub,
     factory,
+    delegationManager,
   );
 }

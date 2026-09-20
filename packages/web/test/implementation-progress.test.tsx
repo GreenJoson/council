@@ -20,6 +20,7 @@ import type {
   Participant,
   TopicDetail,
 } from "../src/types/council";
+import type { OrchestrationAdapter, WorkItemDelegation } from "../src/types/orchestration";
 
 function snapshot(actorId: string, displayName: string): ActorSnapshot {
   return {
@@ -68,14 +69,16 @@ function topicWith(workItems: CouncilWorkItem[]): TopicDetail {
     constraints: [],
     evidence: [],
     alternatives: [],
-    decision: {
+    decisions: [{
+      id: "decision_progress",
       title: "进入实施",
       summary: "按清单交付。",
       rationale: "可审计。",
       status: "accepted",
       proposedBy: "human",
       proposedBySnapshot: human,
-    },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    }],
     workItems,
   };
 }
@@ -85,17 +88,27 @@ const participants = new Map<string, Participant>([[
   { id: "codex", slug: "codex", name: "Codex Current", shortName: "CX", role: "实现者" },
 ]]);
 
+const planningAgent: OrchestrationAdapter = {
+  id: "codex-agent",
+  actorId: "codex",
+  label: "Codex",
+  available: true,
+  runtimeCapabilities: ["text", "repository_read"],
+  permissionProfile: "read_only",
+  executionRole: "advisor",
+};
+
 function tasks(topic: TopicDetail): JSX.Element {
   return (
     <ImplementationProgress
       topic={topic}
       participants={participants}
       busyAction={null}
-      planningAgentLabel="Codex"
       onGenerate={async () => undefined}
       onAdd={async () => true}
       onUpdate={async () => undefined}
       onClaim={async () => undefined}
+      delegationAgents={[planningAgent]}
     />
   );
 }
@@ -144,11 +157,11 @@ describe("ImplementationProgress", () => {
     expect(html).toContain("Codex");
     // 进度条只属于右栏摘要；主区任务卡再画一条等于同一个数字维护两处。
     expect(html).not.toContain("role=\"progressbar\"");
-    expect(html).toContain("AI 补充遗漏任务");
+    expect(html).toContain("让 Codex 补充遗漏任务");
     expect(html).toContain("任务拆分");
     expect(englishHtml).toContain("Task breakdown");
     expect(englishHtml).toContain("1 blocked; resolve dependencies first");
-    expect(englishHtml).toContain("AI find missing tasks");
+    expect(englishHtml).toContain("Ask Codex to find missing tasks");
   });
 
   it("分母只数叶子任务，父任务缩进渲染且状态按钮被禁用", () => {
@@ -233,11 +246,128 @@ describe("ImplementationProgress", () => {
     expect(renderEnglish(topic)).toContain("Claimed by Codex Current");
   });
 
-  it("Accepted 决策没有任务时优先提供 AI 拆分和手动补充入口", () => {
+  it("Accepted 决策没有任务时不自动分拆，并要求显式选择 Agent", () => {
     const html = render(topicWith([]));
 
-    expect(html).toContain("AI 拆分任务");
+    expect(html).toContain("任务不会自动生成");
+    expect(html).toContain("选择任务拆分 Agent");
+    expect(html).toContain("让 Codex 拆分任务");
     expect(html).toContain("手动添加任务");
     expect(html).toContain("尚无任务");
+  });
+
+  it("只有两个不同 Agent 分别具备执行与审核能力时才开放委派", () => {
+    const item = workItem({ id: "work_item_delegate", title: "执行委派任务" });
+    const executor: OrchestrationAdapter = {
+      id: "codex-agent",
+      actorId: "codex",
+      label: "Codex",
+      available: true,
+      runtimeCapabilities: ["text", "repository_write", "tests"],
+      permissionProfile: "workspace_write",
+      executionRole: "hybrid",
+    };
+    const reviewer: OrchestrationAdapter = {
+      id: "claude-agent",
+      actorId: "claude",
+      label: "Claude",
+      available: true,
+      runtimeCapabilities: ["text", "repository_read", "git_diff"],
+      permissionProfile: "read_only",
+      executionRole: "reviewer",
+    };
+    const renderWithAgents = (delegationAgents: OrchestrationAdapter[]) => renderToStaticMarkup(
+      <ImplementationProgress
+        topic={topicWith([item])}
+        participants={participants}
+        busyAction={null}
+        onGenerate={async () => undefined}
+        onAdd={async () => true}
+        onUpdate={async () => undefined}
+        onClaim={async () => undefined}
+        delegationAgents={delegationAgents}
+      />,
+    );
+
+    expect(renderWithAgents([executor]))
+      .toMatch(/work-item-delegate-button" type="button" disabled=""/u);
+    expect(renderWithAgents([executor, reviewer]))
+      .toMatch(/work-item-delegate-button" type="button"><svg/u);
+  });
+
+  it("顶部一键委派只统计剩余叶子，并回显同一批次的逐项审核进度", () => {
+    const parent = workItem({ id: "work_item_batch_parent", title: "批量父任务" });
+    const first = workItem({
+      id: "work_item_batch_first",
+      parentId: parent.id,
+      title: "第一项",
+    });
+    const second = workItem({
+      id: "work_item_batch_second",
+      parentId: parent.id,
+      title: "第二项",
+      sortOrder: 1,
+    });
+    const done = workItem({
+      id: "work_item_batch_done",
+      title: "已完成项",
+      status: "completed",
+      completedLabel: "13:00",
+      sortOrder: 2,
+    });
+    const executor: OrchestrationAdapter = {
+      id: "codex-agent",
+      actorId: "codex",
+      label: "Codex",
+      available: true,
+      runtimeCapabilities: ["text", "repository_write", "tests"],
+      permissionProfile: "workspace_write",
+      executionRole: "hybrid",
+    };
+    const reviewer: OrchestrationAdapter = {
+      id: "claude-agent",
+      actorId: "claude",
+      label: "Claude",
+      available: true,
+      runtimeCapabilities: ["text", "repository_read", "git_diff"],
+      permissionProfile: "read_only",
+      executionRole: "reviewer",
+    };
+    const now = "2026-01-01T00:00:00.000Z";
+    const delegation = (
+      item: CouncilWorkItem,
+      status: WorkItemDelegation["status"],
+    ): WorkItemDelegation => ({
+      id: `delegation-${item.id}`,
+      topicId: "topic-progress",
+      workItemId: item.id,
+      supervisorAgentId: reviewer.id,
+      executorAgentId: executor.id,
+      permissionProfile: "workspace_write",
+      status,
+      attempt: status === "approved" ? 1 : 0,
+      maxAttempts: 2,
+      branchName: "codex/council-batch-fixture",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const html = renderToStaticMarkup(
+      <ImplementationProgress
+        topic={topicWith([parent, first, second, done])}
+        participants={participants}
+        busyAction={null}
+        onGenerate={async () => undefined}
+        onAdd={async () => true}
+        onUpdate={async () => undefined}
+        onClaim={async () => undefined}
+        delegationAgents={[executor, reviewer]}
+        delegations={[delegation(first, "approved"), delegation(second, "queued")]}
+      />,
+    );
+
+    expect(html).toContain("一键委派全部剩余任务");
+    expect(html).toContain("2 项叶子任务");
+    expect(html).toContain("最近队列：1/2 项审核通过");
+    expect(html).toMatch(/<button type="button" disabled=""[^>]*><svg[^>]*>.*一键委派/u);
   });
 });

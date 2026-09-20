@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 SQLite 数据文件与 CouncilDatabase
- * @output 导出：共享存储、分页、决策实施项、乐观并发和会话状态测试
+ * @output 导出：共享存储、议题更正/关闭、分页、决策实施项、乐观并发和会话状态测试
  * @pos    数据一致性与双客户端并发基础的单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,58 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { SQLiteCouncilStore } from "council-orchestrator";
 import { CouncilDatabase } from "../src/database.js";
+
+test("议题只可在 open 状态乐观更正，关闭保留记录并停用会话", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-topic-lifecycle-"));
+  const database = await CouncilDatabase.open(
+    path.join(directory, "council.sqlite3"),
+    5_000,
+    { maxAttempts: 3 },
+  );
+  try {
+    const created = database.createTopic({
+      title: "待更正议题",
+      question: "错误正文",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const corrected = database.updateTopicAsActor({
+      topicId: created.id,
+      question: "精炼后的问题框架",
+      constraints: ["详细分析另发消息"],
+      expectedUpdatedAt: created.updatedAt,
+      actorId: "codex",
+    });
+    assert.equal(corrected.question, "精炼后的问题框架");
+    assert.deepEqual(corrected.constraints, ["详细分析另发消息"]);
+    assert.throws(
+      () => database.updateTopicAsActor({
+        topicId: created.id,
+        title: "过期覆盖",
+        expectedUpdatedAt: created.updatedAt,
+        actorId: "claude",
+      }),
+      /其他参与者更新/,
+    );
+    database.setAgentSession(created.id, "claude", "session-before-close");
+    const closed = database.closeTopicAsActor({ topicId: created.id, actorId: "human" });
+    assert.equal(closed.status, "closed");
+    assert.equal(database.getAgentSession(created.id, "claude"), undefined);
+    assert.equal(database.getTopicDetail(created.id, 20).topic.question, "精炼后的问题框架");
+    assert.throws(
+      () => database.updateTopicAsActor({
+        topicId: created.id,
+        question: "关闭后不可改写",
+        expectedUpdatedAt: closed.updatedAt,
+        actorId: "codex",
+      }),
+      /已结束/,
+    );
+  } finally {
+    database.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("CouncilDatabase 保存并分页读取共享讨论", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-db-test-"));

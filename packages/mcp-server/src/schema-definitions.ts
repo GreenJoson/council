@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v12 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v16 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,7 @@ export {
 } from "council-orchestrator";
 
 export const REQUIRED_TABLES = [
+  "runtime_audit_events",
   "topics",
   "messages",
   "decisions",
@@ -24,6 +25,7 @@ export const REQUIRED_TABLES = [
   "brand_assets",
   "provider_profiles",
   "agent_definitions",
+  "work_item_delegations",
   "runtime_bindings",
   "runtime_binding_leases",
   "runtime_binding_requests",
@@ -36,6 +38,7 @@ export const REQUIRED_TABLES = [
 ] as const;
 
 export const REQUIRED_INDEXES = [
+  "idx_runtime_audit_source",
   "idx_topics_project_updated",
   "idx_messages_topic_created",
   "idx_decisions_topic_created",
@@ -47,6 +50,9 @@ export const REQUIRED_INDEXES = [
   "idx_provider_profiles_status_slug",
   "idx_agent_definitions_provider",
   "idx_agent_definitions_enabled_alias",
+  "idx_work_item_delegations_topic_updated",
+  "idx_work_item_delegations_work_item",
+  "idx_work_item_delegations_one_active",
   "idx_agent_sessions_current",
   "idx_runtime_bindings_topic_status",
   "idx_runtime_bindings_idle",
@@ -122,6 +128,9 @@ export const FROZEN_LEGACY_V1_SCHEMA_SHA256 =
   "58ca9009ad42908be3d17391134f30650681d06d39b471a0921c08f57f409228";
 
 export const REQUIRED_REVISION_TRIGGERS = [
+  "trg_runtime_audit_revision_insert",
+  "trg_runtime_audit_immutable",
+  "trg_work_items_delegation_acceptance",
   "trg_topics_revision_insert",
   "trg_topics_revision_update",
   "trg_topics_revision_delete",
@@ -134,6 +143,9 @@ export const REQUIRED_REVISION_TRIGGERS = [
   "trg_work_items_revision_insert",
   "trg_work_items_revision_update",
   "trg_work_items_revision_delete",
+  "trg_work_item_delegations_revision_insert",
+  "trg_work_item_delegations_revision_update",
+  "trg_work_item_delegations_revision_delete",
   "trg_orchestration_runs_revision_insert",
   "trg_orchestration_runs_revision_update",
   "trg_orchestration_runs_revision_delete",

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：隔离 HTTP 服务、REST 客户端与 canonical 请求体
- * @output 导出：REST 成功、错误、CORS、安全头和限流集成测试
+ * @output 导出：REST 议题更正/关闭、决策包按 ID 接受、错误、CORS、安全头和限流集成测试
  * @pos    WebUI 本地 API 契约与安全基线的端到端验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -58,6 +58,28 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(created.data?.title, "会话同步");
     const topicId = created.data?.id;
     assert(topicId);
+
+    const updateResponse = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}`, {
+      method: "PUT",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        question: "如何让两个客户端可靠共享讨论？",
+        expectedUpdatedAt: created.data?.updatedAt,
+      }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const corrected = await readEnvelope<Topic>(updateResponse);
+    assert.equal(corrected.data?.question, "如何让两个客户端可靠共享讨论？");
+
+    const staleUpdateResponse = await fetch(`${harness.baseUrl}/api/v1/topics/${topicId}`, {
+      method: "PUT",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        question: "过期写入不得覆盖最新议题。",
+        expectedUpdatedAt: created.data?.updatedAt,
+      }),
+    });
+    assert.equal(staleUpdateResponse.status, 409);
 
     const listResponse = await fetch(
       `${harness.baseUrl}/api/v1/topics?limit=10&offset=0`,
@@ -144,6 +166,95 @@ test("REST API 完成议题、消息和决策 canonical 生命周期", async () 
     assert.equal(detail.data?.messages.length, 1);
     assert.equal(detail.data?.decisions.length, 1);
     assert.equal(detail.data?.workItems[0]?.status, "completed");
+
+    const closeResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topicId}/actions/close`,
+      { method: "POST", headers: JSON_HEADERS, body: "{}" },
+    );
+    assert.equal(closeResponse.status, 200);
+    const closed = await readEnvelope<Topic>(closeResponse);
+    assert.equal(closed.data?.status, "closed");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("REST API 按稳定 ID 接受多条决策且只在决策包完成后结束议题", async () => {
+  const harness = await startHttpHarness();
+  try {
+    const topic = harness.database.createTopic({
+      title: "多决策包",
+      question: "多个独立结论如何分别确认？",
+      constraints: [],
+      createdByAlias: "human",
+    });
+    const createProposal = async (title: string): Promise<Decision> => {
+      const response = await fetch(
+        `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions`,
+        {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            title,
+            decision: `${title}的正文`,
+            rationale: `${title}的理由`,
+            alternatives: [],
+            status: "proposed",
+          }),
+        },
+      );
+      assert.equal(response.status, 201);
+      const envelope = await readEnvelope<Decision>(response);
+      assert(envelope.data);
+      return envelope.data;
+    };
+    const first = await createProposal("协议边界");
+    const second = await createProposal("观测边界");
+
+    const acceptFirstResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions/accept`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ decisionIds: [first.id] }),
+      },
+    );
+    assert.equal(acceptFirstResponse.status, 200);
+    const acceptedFirst = await readEnvelope<Decision[]>(acceptFirstResponse);
+    assert.equal(acceptedFirst.data?.[0]?.id, first.id);
+    assert.equal(acceptedFirst.data?.[0]?.status, "accepted");
+
+    const partial = harness.database.getTopicDetail(topic.id, 20);
+    assert.equal(partial.topic.status, "open");
+    assert.equal(partial.decisions.length, 2);
+    assert.equal(
+      partial.decisions.find((decision) => decision.id === second.id)?.status,
+      "proposed",
+    );
+
+    const duplicateResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions/accept`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ decisionIds: [second.id, second.id] }),
+      },
+    );
+    assert.equal(duplicateResponse.status, 400);
+
+    const acceptSecondResponse = await fetch(
+      `${harness.baseUrl}/api/v1/topics/${topic.id}/decisions/accept`,
+      {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ decisionIds: [second.id] }),
+      },
+    );
+    assert.equal(acceptSecondResponse.status, 200);
+    const complete = harness.database.getTopicDetail(topic.id, 20);
+    assert.equal(complete.topic.status, "decided");
+    assert.equal(complete.decisions.length, 2);
+    assert.ok(complete.decisions.every((decision) => decision.status === "accepted"));
   } finally {
     await harness.close();
   }

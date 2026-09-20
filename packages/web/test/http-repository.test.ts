@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpCouncilRepository、HTTP 客户端和可控 Fetch/SSE 替身
- * @output 导出：HTTP 错误、人工 Accepted、内容/实施项写入、事件刷新与只读详情测试
+ * @output 导出：HTTP 错误、决策包按 ID 接受、人工 Accepted、内容/实施项写入、事件刷新与只读详情测试
  * @pos    Web 真实数据层的传输与实时同步回归验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -156,6 +156,21 @@ function createApiFixture(): ApiFixture {
       messages.push(message);
       return success(message);
     }
+    if (url.pathname.endsWith("/decisions/accept") && method === "POST") {
+      const body = JSON.parse(String(init?.body)) as { decisionIds: string[] };
+      const accepted = decisions
+        .filter((candidate): candidate is Record<string, unknown> => (
+          typeof candidate === "object"
+          && candidate !== null
+          && body.decisionIds.includes(String((candidate as { id?: unknown }).id))
+        ))
+        .map((candidate) => {
+          candidate.status = "accepted";
+          candidate.updatedAt = "2026-01-01T10:00:00.000Z";
+          return candidate;
+        });
+      return success(accepted);
+    }
     if (url.pathname.endsWith("/decisions") && method === "POST") {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const decision = {
@@ -169,6 +184,14 @@ function createApiFixture(): ApiFixture {
       };
       decisions.push(decision);
       return success(decision);
+    }
+    if (url.pathname.endsWith("/actions/close") && method === "POST") {
+      const topicId = url.pathname.split("/").at(-3);
+      const topic = topics.find((candidate) => candidate.id === topicId);
+      if (topic) {
+        topic.status = "closed";
+        return success(topic);
+      }
     }
     const topicId = url.pathname.split("/").at(-1);
     const topic = topics.find((candidate) => candidate.id === topicId);
@@ -272,7 +295,7 @@ describe("HttpCouncilRepository", () => {
 
     const detail = await repository.loadTopicDetail("topic-one");
     expect(detail.id).toBe("topic-one");
-    expect(detail.decision).toMatchObject({
+    expect(detail.decisions[0]).toMatchObject({
       title: "版本号校验",
       summary: "使用版本号拒绝旧写入。",
       status: "proposed",
@@ -318,8 +341,8 @@ describe("HttpCouncilRepository", () => {
     });
     expect(afterPost.topics[0]?.messages.at(-1)?.author).toBe("human");
 
-    const afterDecision = await repository.acceptDecision("topic-one");
-    expect(afterDecision.topics[0]?.decision?.status).toBe("accepted");
+    const afterDecision = await repository.acceptDecisions("topic-one", ["decision-one"]);
+    expect(afterDecision.topics[0]?.decisions[0]?.status).toBe("accepted");
 
     const afterCreate = await repository.createTopic({
       title: "新议题",
@@ -332,8 +355,7 @@ describe("HttpCouncilRepository", () => {
       .filter((request) => request.init?.method === "POST")
       .map((request) => JSON.parse(String(request.init?.body)) as Record<string, unknown>);
     expect(postBodies[0]).toEqual({ kind: "critique", content: "补充失败路径。" });
-    expect(postBodies[1]).not.toHaveProperty("createdBy");
-    expect(postBodies[1]).toMatchObject({ status: "accepted" });
+    expect(postBodies[1]).toEqual({ decisionIds: ["decision-one"] });
     expect(postBodies[2]).toEqual({
       title: "新议题",
       question: "如何验证？",
@@ -359,7 +381,7 @@ describe("HttpCouncilRepository", () => {
       rationale: "部署记录和回滚点已经核对。",
     });
 
-    expect(snapshot.topics[0]?.decision).toMatchObject({
+    expect(snapshot.topics[0]?.decisions.at(-1)).toMatchObject({
       title: "外部修复已上线",
       summary: "修复完成，线上验证通过。",
       status: "accepted",
@@ -376,6 +398,25 @@ describe("HttpCouncilRepository", () => {
       alternatives: [],
       status: "accepted",
     });
+  });
+
+  it("关闭议题后保留详情并映射为关闭态", async () => {
+    const fixture = createApiFixture();
+    const repository = new HttpCouncilRepository({
+      ...HTTP_OPTIONS,
+      baseUrl: "https://example.com",
+      fetcher: fixture.fetcher,
+      eventStreamFactory: () => new FakeEventStream(),
+    });
+    await repository.loadWorkspace();
+
+    const snapshot = await repository.closeTopic("topic-one");
+
+    expect(snapshot.topics.find((topic) => topic.id === "topic-one")?.status).toBe("closed");
+    const request = fixture.requests.find(
+      (candidate) => candidate.url.pathname.endsWith("/actions/close"),
+    );
+    expect(request?.init?.method).toBe("POST");
   });
 
   it("orchestration-only revision 不重读 Topic 内容", async () => {

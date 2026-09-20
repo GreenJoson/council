@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含 AI 实施计划与实施项）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、决策包接受、AI 实施计划与实施项）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -21,6 +21,7 @@ import {
   MAX_ALTERNATIVE_COUNT,
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
+  MAX_DECISION_BATCH,
   MAX_CYCLE_ROUND_BUDGET,
   MAX_ID_CHARS,
   MAX_INSTRUCTION_CHARS,
@@ -37,6 +38,10 @@ import {
   TOPIC_STATUSES,
   WORK_ITEM_STATUSES,
 } from "../constants.js";
+import {
+  AGENT_EXECUTION_ROLES,
+  AGENT_PERMISSION_PROFILES,
+} from "../agent-execution-policy.js";
 
 const nonBlankString = (maximum: number) =>
   z.string().min(1).max(maximum).refine((value) => value.trim().length > 0, {
@@ -58,6 +63,21 @@ export const workItemIdSchema = z
 export const workItemParamsSchema = z
   .object({ topicId: topicIdSchema, workItemId: workItemIdSchema })
   .strict();
+
+export const delegationIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "delegationId 过长")
+  .regex(/^delegation-[A-Za-z0-9-]+$/, "delegationId 格式无效");
+
+export const resumeDelegationBodySchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+
+export const runtimeAuditQuerySchema = z.object({
+  sourceKind: z.enum(["run", "delegation"]),
+  sourceId: z.string().trim().min(1).max(MAX_ID_CHARS),
+  after: z.coerce.number().int().nonnegative().default(0),
+}).strict();
+
+export const delegationParamsSchema = z.object({ delegationId: delegationIdSchema }).strict();
 
 export const runIdSchema = z
   .string()
@@ -126,6 +146,8 @@ export const createAgentBodySchema = z
     model: z.string().max(200),
     mentionAlias: routerSlugSchema,
     enabled: z.boolean(),
+    permissionProfile: z.enum(AGENT_PERMISSION_PROFILES).default("read_only"),
+    executionRole: z.enum(AGENT_EXECUTION_ROLES).default("advisor"),
   })
   .strict();
 
@@ -135,6 +157,8 @@ export const updateAgentBodySchema = z
     model: z.string().max(200),
     mentionAlias: routerSlugSchema,
     enabled: z.boolean(),
+    permissionProfile: z.enum(AGENT_PERMISSION_PROFILES).optional(),
+    executionRole: z.enum(AGENT_EXECUTION_ROLES).optional(),
   })
   .strict();
 
@@ -187,6 +211,24 @@ export const createTopicBodySchema = z
   })
   .strict();
 
+export const updateTopicBodySchema = z
+  .object({
+    title: nonBlankString(MAX_TITLE_CHARS).optional(),
+    question: nonBlankString(MAX_QUESTION_CHARS).optional(),
+    constraints: z
+      .array(nonBlankString(MAX_CONSTRAINT_CHARS))
+      .max(MAX_CONSTRAINT_COUNT)
+      .optional(),
+    expectedUpdatedAt: z.iso.datetime(),
+  })
+  .strict()
+  .refine(
+    (value) => value.title !== undefined
+      || value.question !== undefined
+      || value.constraints !== undefined,
+    { message: "至少提供 title、question 或 constraints 中的一项" },
+  );
+
 export const createMessageBodySchema = z
   .object({
     kind: z.enum(MESSAGE_KINDS),
@@ -212,13 +254,24 @@ export const createDecisionBodySchema = z
   })
   .strict();
 
+const decisionIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "decisionId 过长")
+  .regex(/^decision_[A-Za-z0-9-]+$/, "decisionId 格式无效");
+
+export const acceptDecisionsBodySchema = z
+  .object({
+    decisionIds: z.array(decisionIdSchema).min(1).max(MAX_DECISION_BATCH),
+  })
+  .strict()
+  .refine(
+    (value) => new Set(value.decisionIds).size === value.decisionIds.length,
+    "decisionIds 不能重复",
+  );
+
 export const createWorkItemsBodySchema = z
   .object({
-    decisionId: z
-      .string()
-      .max(MAX_ID_CHARS, "decisionId 过长")
-      .regex(/^decision_[A-Za-z0-9-]+$/, "decisionId 格式无效")
-      .optional(),
+    decisionId: decisionIdSchema.optional(),
     parentId: workItemIdSchema.optional(),
     items: z
       .array(
@@ -235,6 +288,7 @@ export const createWorkItemsBodySchema = z
 export const generateWorkItemsBodySchema = z
   .object({
     adapterId: routerIdSchema,
+    decisionId: decisionIdSchema.optional(),
   })
   .strict();
 
@@ -251,6 +305,33 @@ export const claimWorkItemBodySchema = z
   .object({
     expectedVersion: z.number().int().positive(),
     statusNote: z.string().max(MAX_WORK_ITEM_STATUS_NOTE_CHARS).optional(),
+  })
+  .strict();
+
+export const startWorkItemDelegationBodySchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    supervisorAgentId: routerIdSchema,
+    executorAgentId: routerIdSchema,
+    requestedPermission: z.enum(["workspace_write", "danger_full_access"]),
+    completionPolicy: z.enum(["review", "human"]).optional(),
+    acceptanceCriteria: nonBlankString(4_000).optional(),
+    createInitialBaseline: z.boolean().optional(),
+  })
+  .strict();
+
+export const startWorkItemDelegationBatchBodySchema = z
+  .object({
+    workItems: z.array(z.object({
+      workItemId: workItemIdSchema,
+      expectedVersion: z.number().int().positive(),
+    }).strict()).min(1).max(MAX_WORK_ITEM_BATCH),
+    supervisorAgentId: routerIdSchema,
+    executorAgentId: routerIdSchema,
+    requestedPermission: z.enum(["workspace_write", "danger_full_access"]),
+    completionPolicy: z.enum(["review", "human"]).optional(),
+    acceptanceCriteria: nonBlankString(4_000).optional(),
+    createInitialBaseline: z.boolean().optional(),
   })
   .strict();
 

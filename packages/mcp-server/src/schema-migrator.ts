@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v11、逐版本 schema 指纹、版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v16、逐版本 schema 指纹、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -83,6 +83,16 @@ import {
   migrateVersionTwelve,
 } from "./schema-v12-migration.js";
 import {
+  assertVersionTwelveMigrationSource,
+  migrateVersionThirteen,
+} from "./schema-v13-migration.js";
+import {
+  assertVersionThirteenMigrationSource,
+  migrateVersionFourteen,
+} from "./schema-v14-migration.js";
+import { migrateVersionFifteen } from "./schema-v15-migration.js";
+import { migrateVersionSixteen } from "./schema-v16-migration.js";
+import {
   assertCountsPreserved,
   assertDatabaseIntegrity,
   createVerifiedSchemaBackup,
@@ -94,7 +104,7 @@ import {
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 12;
+export const COUNCIL_SCHEMA_VERSION = 16;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -453,6 +463,10 @@ const CANONICAL_MIGRATION_STEPS: readonly Readonly<{
   { version: 10, apply: (database) => { migrateVersionTen(database, false); } },
   { version: 11, apply: (database) => { migrateVersionEleven(database, false); } },
   { version: 12, apply: (database) => { migrateVersionTwelve(database, false); } },
+  { version: 13, apply: (database) => { migrateVersionThirteen(database, false); } },
+  { version: 14, apply: (database) => { migrateVersionFourteen(database, false); } },
+  { version: 15, apply: (database) => { migrateVersionFifteen(database, false); } },
+  { version: 16, apply: (database) => { migrateVersionSixteen(database, false); } },
 ];
 
 /**
@@ -662,6 +676,10 @@ export function assertCouncilSchema(database: DatabaseSync): void {
     [10, "generic-acp-runtime"],
     [11, "decision-work-items"],
     [12, "work-item-tree-and-review-findings"],
+    [13, "decision-package-acceptance"],
+    [14, "agent-work-delegation"],
+    [15, "delegation-acceptance"],
+    [16, "runtime-audit-and-recovery"],
   ] as const;
   if (
     migrationRows.length !== expectedMigrations.length ||
@@ -669,7 +687,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
       migrationRows[index]?.version !== versionNumber ||
       migrationRows[index]?.name !== name)
   ) {
-    throw new Error("Council v12 迁移账本内容无效。");
+    throw new Error("Council v16 迁移账本内容无效。");
   }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
@@ -1275,6 +1293,28 @@ export async function migrateCouncilSchema(
         }
         migrateVersionTwelve(database);
         migratingVersion = 12;
+      }
+      if (migratingVersion === 12) {
+        if (initialVersion === 12) {
+          assertVersionTwelveMigrationSource(database);
+        }
+        migrateVersionThirteen(database);
+        migratingVersion = 13;
+      }
+      if (migratingVersion === 13) {
+        if (initialVersion === 13) {
+          assertVersionThirteenMigrationSource(database);
+        }
+        migrateVersionFourteen(database);
+        migratingVersion = 14;
+      }
+      if (migratingVersion === 14) {
+        migrateVersionFifteen(database);
+        migratingVersion = 15;
+      }
+      if (migratingVersion === 15) {
+        migrateVersionSixteen(database);
+        migratingVersion = 16;
       }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");

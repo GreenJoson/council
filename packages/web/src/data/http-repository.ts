@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council REST/SSE API、严格解析器与 Workspace 映射器
- * @output 导出：人工 Accepted、惰性详情、实施项写入、revision 解析与 HttpCouncilRepository
+ * @output 导出：议题关闭、决策包逐项/批量接受、人工 Accepted、惰性详情、实施项写入与 HTTP 仓储
  * @pos    Operator Console 的 HTTP 写入和 REST/SSE 串行校准协调器
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import {
   parseApiDecision,
+  parseApiDecisions,
   parseApiMessage,
   parseApiPaginatedTopics,
   parseApiTopic,
@@ -198,6 +199,18 @@ export class HttpCouncilRepository implements CouncilRepository {
     return this.#reloadAfterMutation(topic.id);
   }
 
+  async closeTopic(topicId: string): Promise<WorkspaceSnapshot> {
+    await this.#requestMutation(
+      createApiUrl(
+        this.#baseUrl,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/actions/close`,
+      ),
+      {},
+      parseApiTopic,
+    );
+    return this.#reloadAfterMutation(topicId);
+  }
+
   async publishMessage(input: PublishMessageInput): Promise<WorkspaceSnapshot> {
     await this.#requestMutation(
       createApiUrl(
@@ -213,31 +226,17 @@ export class HttpCouncilRepository implements CouncilRepository {
     return this.#reloadAfterMutation(input.topicId);
   }
 
-  async acceptDecision(topicId: string): Promise<WorkspaceSnapshot> {
-    const snapshot = this.#snapshot;
-    if (!snapshot) {
-      throw new Error("请先加载工作区，再接受决策");
-    }
-    const topic = snapshot.topics.find((candidate) => candidate.id === topicId);
-    if (!topic?.decision) {
-      throw new Error("当前议题没有可接受的拟议决策");
-    }
-    if (topic.decision.status === "accepted") {
-      return cloneSnapshot(snapshot);
+  async acceptDecisions(topicId: string, decisionIds: string[]): Promise<WorkspaceSnapshot> {
+    if (decisionIds.length === 0) {
+      throw new Error("请选择至少一条待确认决策");
     }
     await this.#requestMutation(
       createApiUrl(
         this.#baseUrl,
-        `/api/v1/topics/${encodeURIComponent(topicId)}/decisions`,
+        `/api/v1/topics/${encodeURIComponent(topicId)}/decisions/accept`,
       ),
-      {
-        title: topic.decision.title,
-        decision: topic.decision.summary,
-        rationale: topic.decision.rationale,
-        alternatives: topic.alternatives.map((alternative) => alternative.title),
-        status: "accepted",
-      },
-      parseApiDecision,
+      { decisionIds },
+      parseApiDecisions,
     );
     return this.#reloadAfterMutation(topicId);
   }

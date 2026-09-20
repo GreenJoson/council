@@ -120,6 +120,18 @@ export function parseProviderProfile(value: unknown): ProviderProfile {
 export function parseAgentDefinition(value: unknown): AgentDefinition {
   const record = asRecord(value, "agent");
   const deletedAt = optionalString(record, "deletedAt");
+  const permissionProfile = optionalString(record, "permissionProfile") ?? "read_only";
+  const executionRole = optionalString(record, "executionRole") ?? "advisor";
+  if (!(["read_only", "workspace_write", "danger_full_access"] as const).includes(
+    permissionProfile as "read_only",
+  )) {
+    throw new Error("permissionProfile 无效");
+  }
+  if (!(["advisor", "executor", "reviewer", "hybrid"] as const).includes(
+    executionRole as "advisor",
+  )) {
+    throw new Error("executionRole 无效");
+  }
   return {
     id: stringValue(record, "id"),
     actorId: stringValue(record, "actorId"),
@@ -129,6 +141,8 @@ export function parseAgentDefinition(value: unknown): AgentDefinition {
     model: stringValue(record, "model", true),
     mentionAlias: stringValue(record, "mentionAlias"),
     enabled: booleanValue(record, "enabled"),
+    permissionProfile: permissionProfile as AgentDefinition["permissionProfile"],
+    executionRole: executionRole as AgentDefinition["executionRole"],
     ...(deletedAt ? { deletedAt } : {}),
     createdAt: stringValue(record, "createdAt"),
     updatedAt: stringValue(record, "updatedAt"),

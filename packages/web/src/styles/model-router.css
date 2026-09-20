@@ -604,6 +604,122 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 18%, transparent);
 }
 
+.agent-policy-fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.agent-policy-fieldset > legend {
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.agent-policy-fieldset > small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+}
+
+.agent-role-options,
+.agent-permission-options {
+  display: grid;
+  gap: 7px;
+}
+
+.agent-role-options {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agent-role-options > label,
+.agent-permission-options > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-surface) 84%, transparent);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.agent-role-options > label.is-selected,
+.agent-permission-options > label.is-selected {
+  border-color: var(--color-focus);
+  background: color-mix(in srgb, var(--color-focus) 8%, var(--color-surface));
+  color: var(--color-text);
+}
+
+.agent-role-options input,
+.agent-permission-options input {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--color-focus);
+}
+
+.agent-role-options span {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-permission-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.agent-permission-options > label {
+  align-items: flex-start;
+  min-height: 61px;
+}
+
+.agent-permission-options > label > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agent-permission-options strong {
+  font-size: 10px;
+}
+
+.agent-permission-options small {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.agent-permission-options > label.is-danger.is-selected {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.agent-permission-options > label.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.agent-policy-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-warning);
+  font-size: 9px;
+}
+
+.agent-policy-note.is-danger {
+  color: var(--color-danger);
+}
+
 .secret-input-shell {
   display: grid;
   grid-column: 1 / -1;
@@ -814,6 +930,11 @@
   }
 
   .model-router-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-role-options,
+  .agent-permission-options {
     grid-template-columns: 1fr;
   }
 

@@ -1,8 +1,8 @@
 /**
- * @input  依赖：界面语言上下文、议题实施项树、AI 任务规划能力、动态 Actor、手动补充、认领与带证据的状态更新回调
- * @output 导出：右栏实施进度摘要，以及主区 AI 拆分、人工补充、父子两层的证据化任务清单
+ * @input  依赖：界面语言、议题/实施项树、AI 规划、动态 Actor、跨 Agent 委派、认领与证据化更新回调
+ * @output 导出：右栏进度摘要，以及主区显式选 Agent 拆分、人工补充、Agent 协作执行和任务清单
  * @pos    Accepted 架构决策与外部 Codex/Claude 实际交付之间的可审计执行账本；
- *         父任务状态只读派生，完成度只数叶子，审核发现在这里以子任务形式关闭
+ *         接受决策不会自动生成任务；父任务状态只读派生，完成度只数叶子，审核发现在这里以子任务形式关闭
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -30,7 +30,14 @@ import {
 } from "../data/work-item-tree";
 import { useI18n } from "../i18n/I18nProvider";
 import type { CouncilWorkItem, Participant, TopicDetail, WorkItemStatus } from "../types/council";
+import type { OrchestrationAdapter, WorkItemDelegation } from "../types/orchestration";
 import { participantFromActorSnapshot } from "./presentation";
+import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
+import { WorkItemDelegationPanel } from "./WorkItemDelegationPanel";
+import {
+  BatchWorkItemDelegationPanel,
+  type BatchDelegationOptions,
+} from "./BatchWorkItemDelegationPanel";
 
 const STATUS_LABELS: Record<WorkItemStatus, string> = {
   pending: "待处理",
@@ -46,8 +53,7 @@ export interface ImplementationProgressProps {
   topic: TopicDetail;
   participants: Map<string, Participant>;
   busyAction: string | null;
-  planningAgentLabel?: string;
-  onGenerate: () => Promise<void>;
+  onGenerate: (adapterId: string) => Promise<void>;
   onAdd: (title: string, details: string, parentId?: string) => Promise<boolean>;
   onUpdate: (
     item: CouncilWorkItem,
@@ -55,6 +61,25 @@ export interface ImplementationProgressProps {
     statusNote: string,
   ) => Promise<void>;
   onClaim: (item: CouncilWorkItem) => Promise<void>;
+  delegationAgents?: OrchestrationAdapter[];
+  delegations?: WorkItemDelegation[];
+  delegationBusyAction?: string | null;
+  onDelegate?: (
+    item: CouncilWorkItem,
+    input: {
+      supervisorAgentId: string;
+      executorAgentId: string;
+      requestedPermission: "workspace_write" | "danger_full_access";
+      completionPolicy?: "review" | "human";
+      acceptanceCriteria?: string;
+      createInitialBaseline?: boolean;
+    },
+  ) => Promise<void>;
+  onDelegateBatch?: (
+    items: CouncilWorkItem[],
+    input: BatchDelegationOptions,
+  ) => Promise<void>;
+  onCancelDelegation?: (delegationId: string) => Promise<void>;
 }
 
 export interface ImplementationSummaryProps {
@@ -119,11 +144,16 @@ export function ImplementationProgress({
   topic,
   participants,
   busyAction,
-  planningAgentLabel,
   onGenerate,
   onAdd,
   onUpdate,
   onClaim,
+  delegationAgents = [],
+  delegations = [],
+  delegationBusyAction = null,
+  onDelegate = async () => undefined,
+  onDelegateBatch = async () => undefined,
+  onCancelDelegation = async () => undefined,
 }: ImplementationProgressProps) {
   const { t } = useI18n();
   const [isAdding, setIsAdding] = useState(false);
@@ -133,10 +163,22 @@ export function ImplementationProgress({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [nextStatus, setNextStatus] = useState<WorkItemStatus>("pending");
   const [statusNote, setStatusNote] = useState("");
+  const [planningAgentId, setPlanningAgentId] = useState("");
 
   const nodes = flattenWorkItemTree(buildWorkItemTree(topic.workItems));
+  const planningAgents = delegationAgents.filter((adapter) => adapter.available);
+  const planningAgent = planningAgents.find((adapter) => adapter.id === planningAgentId)
+    ?? planningAgents[0];
+  const activeDelegationItems = new Set(delegations.filter((delegation) => (
+    ["queued", "executing", "reviewing", "changes_requested"].includes(delegation.status)
+  )).map((delegation) => delegation.workItemId));
+  const batchItems = nodes.filter(({ item, children }) => (
+    children.length === 0
+      && item.status !== "completed"
+      && !activeDelegationItems.has(item.id)
+  )).map(({ item }) => item);
   const { total, blocked, openFindings } = getImplementationStats(topic);
-  const canEdit = topic.decision?.status === "accepted";
+  const canEdit = topic.decisions.some((decision) => decision.status === "accepted");
   const isGenerating = busyAction === "generate";
   const parentTitle = parentId
     ? topic.workItems.find((item) => item.id === parentId)?.title
@@ -164,7 +206,9 @@ export function ImplementationProgress({
   function beginProgressUpdate(item: CouncilWorkItem): void {
     setEditingItemId(item.id);
     setNextStatus(item.status);
-    setStatusNote(item.statusNote ?? "");
+    const latest = delegations.find((entry) => entry.workItemId === item.id);
+    // 人工验收需要新填写的证据，不能把 Agent 摘要预填成用户已确认的结果。
+    setStatusNote(latest?.completionPolicy === "human" && item.status !== "completed" ? "" : item.statusNote ?? "");
   }
 
   async function submitProgress(item: CouncilWorkItem): Promise<void> {
@@ -199,6 +243,16 @@ export function ImplementationProgress({
 
       {blocked > 0 ? (
         <p className="implementation-alert"><AlertTriangle size={13} /> {t("{count} 项受阻，需先解除依赖", { count: blocked })}</p>
+      ) : null}
+
+      {nodes.length > 0 ? (
+        <BatchWorkItemDelegationPanel
+          items={batchItems}
+          adapters={delegationAgents}
+          delegations={delegations}
+          busyAction={delegationBusyAction}
+          onStart={(input) => onDelegateBatch(batchItems, input)}
+        />
       ) : null}
 
       {nodes.length > 0 ? (
@@ -323,6 +377,23 @@ export function ImplementationProgress({
                     </div>
                   </div>
                 ) : null}
+                {!isParent && (item.status !== "completed" || delegations.some((entry) => entry.workItemId === item.id)) ? (
+                  <div>
+                  <WorkItemDelegationPanel
+                    item={item}
+                    adapters={delegationAgents}
+                    delegation={delegations.find((candidate) => candidate.workItemId === item.id)}
+                    busyAction={delegationBusyAction}
+                    onStart={(input) => onDelegate(item, input)}
+                    onCancel={onCancelDelegation}
+                  />
+                  {delegations.filter((entry) => entry.workItemId === item.id).slice(1).map((entry) => (
+                    <div key={entry.id}><small>{t("历史委派")} · {entry.createdAt}</small>
+                      <RuntimeAuditDetails topicId={entry.topicId} sourceKind="delegation" sourceId={entry.id} />
+                    </div>
+                  ))}
+                  </div>
+                ) : null}
               </li>
             );
           })}
@@ -330,7 +401,7 @@ export function ImplementationProgress({
       ) : (
         <p className="implementation-empty">
           {canEdit
-            ? t("让 AI 先把架构决策拆成可验证任务，也可以直接手动添加。")
+            ? t("任务不会自动生成。请选择 Agent 手动分拆，也可以直接添加。")
             : t("接受架构决策后，即可生成和跟踪实施计划。")}
         </p>
       )}
@@ -365,13 +436,35 @@ export function ImplementationProgress({
         </div>
       ) : canEdit ? (
         <div className="work-item-plan-actions">
-          {planningAgentLabel ? (
-            <button className="work-item-generate" type="button" disabled={Boolean(busyAction)} onClick={() => void onGenerate()}>
-              {isGenerating ? <LoaderCircle className="spinning" size={14} /> : <Sparkles size={14} />}
-              {isGenerating
-                ? t("{agent} 正在拆分…", { agent: planningAgentLabel })
-                : total > 0 ? t("AI 补充遗漏任务") : t("AI 拆分任务")}
-            </button>
+          {planningAgent ? (
+            <>
+              <label className="work-item-planner-select">
+                <span>{t("选择任务拆分 Agent")}</span>
+                <select
+                  aria-label={t("选择任务拆分 Agent")}
+                  disabled={Boolean(busyAction)}
+                  value={planningAgent.id}
+                  onChange={(event) => setPlanningAgentId(event.target.value)}
+                >
+                  {planningAgents.map((adapter) => (
+                    <option key={adapter.id} value={adapter.id}>{adapter.label}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="work-item-generate"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => void onGenerate(planningAgent.id)}
+              >
+                {isGenerating ? <LoaderCircle className="spinning" size={14} /> : <Sparkles size={14} />}
+                {isGenerating
+                  ? t("{agent} 正在拆分…", { agent: planningAgent.label })
+                  : total > 0
+                    ? t("让 {agent} 补充遗漏任务", { agent: planningAgent.label })
+                    : t("让 {agent} 拆分任务", { agent: planningAgent.label })}
+              </button>
+            </>
           ) : (
             <small className="work-item-agent-hint">{t("没有可用的规划 Agent，可先手动添加。")}</small>
           )}

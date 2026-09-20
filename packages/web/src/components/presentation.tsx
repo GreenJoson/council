@@ -3,7 +3,7 @@
  * @output 导出：BrandLogo、AgentAvatar、StatusBadge、DecisionStatusBadge、messageKindLabels、
  *         participantFromActorSnapshot、topicStatusLabels 与 decisionStatusLabels 展示标签
  * @pos    Operator Console 跨区域复用的基础展示组件；DecisionStatusBadge 供检查器、
- *         决策记录与架构档案三处共用同一套 proposed/accepted/superseded 文案与配色
+ *         决策记录与架构档案三处共用同一套 proposed/accepted/rejected/superseded 文案与配色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -79,6 +79,7 @@ export const topicStatusLabels: Record<TopicStatus, string> = {
   discussing: "讨论中",
   synthesis: "综合中",
   decided: "已决策",
+  closed: "已关闭",
 };
 
 const agentNames: Readonly<Record<string, string>> = {
@@ -145,10 +146,11 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   );
 }
 
-/** 决策卡片标题行使用的中文文案（"拟议决策"/"已接受决策"/"已被取代"） */
+/** 决策卡片标题行使用的四态中文文案。 */
 export const decisionStatusLabels: Record<DecisionStatus, string> = {
   proposed: "拟议决策",
   accepted: "已接受决策",
+  rejected: "已拒绝决策",
   superseded: "已被取代",
 };
 
@@ -156,6 +158,7 @@ export const decisionStatusLabels: Record<DecisionStatus, string> = {
 export const decisionStatusBadgeLabels: Record<DecisionStatus, string> = {
   proposed: "Proposed",
   accepted: "Accepted",
+  rejected: "Rejected",
   superseded: "Superseded",
 };
 
@@ -163,7 +166,7 @@ export interface DecisionStatusBadgeProps {
   status: DecisionStatus;
 }
 
-/** 决策自身的 proposed/accepted/superseded 徽章；InspectorPanel、决策记录、架构档案共用 */
+/** 决策自身的四态徽章；InspectorPanel、决策记录、架构档案共用。 */
 export function DecisionStatusBadge({ status }: DecisionStatusBadgeProps) {
   return (
     <span className={`decision-status-badge decision-status-${status}`}>

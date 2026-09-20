@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界与 Claude 验收
+@output 导出：项目隔离、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界、Claude、持久审计、待处理消退和验收表单检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -108,12 +108,18 @@ def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1536, "height": 1024})
+    page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
     console_errors: list[str] = []
     page.on("console", lambda message: collect_console_error(message, console_errors))
+    page.on("pageerror", lambda error: console_errors.append(str(error)))
     # EventSource 会保持长连接，HTTP 模式不能使用永远不空闲的 networkidle。
     page.goto(WEB_URL, wait_until="domcontentloaded")
-    page.get_by_role("heading", name="这个工作区还没有议题", exact=True).wait_for()
+    try:
+        page.get_by_role("heading", name="这个工作区还没有议题", exact=True).wait_for()
+    except Exception:
+        print("首屏内容：", page.locator("body").inner_text())
+        print("页面错误：", console_errors)
+        raise
 
     topic = api_request(
         "POST",
@@ -452,9 +458,26 @@ with sync_playwright() as playwright:
     page.get_by_text(agent_message, exact=True).wait_for(timeout=15_000)
     page.get_by_role("heading", name="运行状态", exact=True).wait_for()
     page.get_by_text("等待确认", exact=True).wait_for()
+    # 新运行记录来自同一次真实子进程调用，展开后可读；待处理入口能跳回原议题。
+    page.locator(".run-card .runtime-audit summary").click()
+    page.locator(".run-card .runtime-audit-body").get_by_text("调用开始", exact=True).wait_for()
+    if SCREENSHOT_PATH:
+        screenshot = Path(SCREENSHOT_PATH)
+        screenshot.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(screenshot.with_name("audit-expanded.png")), full_page=True)
+    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_role("heading", name="需要我处理", exact=True).wait_for()
+    page.locator(".work-attention-view").get_by_text("等待回复或确认 1", exact=False).wait_for()
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("needs-attention.png")), full_page=True)
+    page.locator(".work-attention-view").get_by_role("button", name="真实同步验收", exact=False).click()
     page.get_by_role("button", name="确认并完成", exact=True).click()
     page.get_by_text("确认已提交，自动轮次继续", exact=True).wait_for()
     wait_for_run_status(claude_run["id"], "completed")
+    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_text("当前没有需要处理的事项。", exact=True).wait_for()
+    page.get_by_role("button", name="议题", exact=True).click()
+
 
     runs = api_request("GET", f"/api/v1/topics/{topic_id}/runs")
     assert runs["total"] >= 5
@@ -506,10 +529,47 @@ with sync_playwright() as playwright:
         },
     )
     page.get_by_text("采用 SQLite revision 与 SSE", exact=True).wait_for()
-    page.get_by_role("button", name="标记为 Accepted", exact=True).click()
-    page.get_by_text("决策已记录为 Accepted", exact=True).wait_for()
+    page.get_by_role("tab", name="决策", exact=False).click()
+    page.get_by_role("button", name="接受此决策", exact=True).click()
+    page.get_by_text("决策已接受；任务尚未分拆，请在任务页选择 Agent 后手动开始", exact=True).wait_for()
     accepted_detail = api_request("GET", f"/api/v1/topics/{topic_id}")
     assert any(decision["status"] == "accepted" for decision in accepted_detail["decisions"])
+
+    # 在隔离测试库配置两个可用的 CLI Agent，只验证委派表单，不启动写入调用。
+    settings = api_request("GET", "/api/v1/settings/model-router")
+    executor = next(agent for agent in settings["agents"] if agent["mentionAlias"] == "claude")
+    api_request("PUT", f"/api/v1/settings/agents/{executor['id']}", {
+        "displayName": executor["displayName"], "model": executor["model"],
+        "mentionAlias": executor["mentionAlias"], "enabled": True,
+        "permissionProfile": "workspace_write", "executionRole": "hybrid",
+    })
+    api_request("POST", "/api/v1/settings/agents", {
+        "providerId": executor["providerId"], "slug": "acceptance-reviewer",
+        "displayName": "Acceptance Reviewer", "model": executor["model"],
+        "mentionAlias": "acceptance-reviewer", "enabled": True,
+        "permissionProfile": "read_only", "executionRole": "reviewer",
+    })
+    api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "验证交付表单", "details": "检查提交与验收证据"}],
+    })
+    page.reload(wait_until="domcontentloaded")
+    page.get_by_role("tab", name="任务", exact=False).click()
+    page.get_by_role("button", name="委派", exact=True).click()
+    delegation_form = page.locator(".work-item-delegation-form")
+    delegation_form.wait_for()
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("delegation-form.png")), full_page=True)
+    assert delegation_form.get_by_label("完成条件", exact=True).input_value() == "human"
+    assert delegation_form.get_by_label("验收标准", exact=True).input_value() == "检查提交与验收证据"
+    delegation_form.get_by_label("验收标准", exact=True).fill("  ")
+    assert delegation_form.get_by_role("button", name="开始执行与审核", exact=True).is_disabled()
+    delegation_form.get_by_label("验收标准", exact=True).fill("人工检查提交与测试结果")
+    delegation_form.get_by_label("完成条件", exact=True).select_option("review")
+    assert delegation_form.get_by_role("button", name="开始执行与审核", exact=True).is_enabled()
+    delegation_form.get_by_label("完成条件", exact=True).select_option("human")
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("delegation-acceptance.png")), full_page=True)
+    delegation_form.get_by_role("button", name="关闭", exact=True).click()
 
     second_topic = api_request(
         "POST",

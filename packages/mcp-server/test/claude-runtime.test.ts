@@ -144,6 +144,8 @@ function createConfig(
   return {
     dataDir: directory,
     databasePath: path.join(directory, "unused.sqlite3"),
+    delegationWorktreeRoot: path.join(directory, "delegated-worktrees"),
+    delegationRetryDelayMs: 1,
     claudeCommand: process.execPath,
     claudeArgs: [fakeClaudePath, "--fake-mode", mode],
     claudePermissionMode: "plan",
@@ -255,6 +257,43 @@ test("ClaudeRuntime 纯生成并显式恢复 session 与模型", async () => {
       model: "configured-model",
     });
     assert.equal(resumed.content, "public rebuttal;session_previous;configured-model");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 只在显式委派时映射 acceptEdits 或危险权限", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-permission-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  const argDumpFile = path.join(directory, "args.json");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success", {
+      claudeArgs: [
+        fakeClaudePath,
+        "--fake-mode",
+        "success",
+        "--arg-dump-file",
+        argDumpFile,
+      ],
+    }));
+    await runtime.generate({
+      prompt: "execute",
+      cwd: directory,
+      permissionProfile: "workspace_write",
+    });
+    let args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
+    assert.equal(args.includes("--dangerously-skip-permissions"), false);
+
+    await runtime.generate({
+      prompt: "execute dangerous",
+      cwd: directory,
+      permissionProfile: "danger_full_access",
+    });
+    args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.equal(args.includes("--dangerously-skip-permissions"), true);
+    assert.equal(args.includes("--permission-mode"), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

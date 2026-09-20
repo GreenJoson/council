@@ -58,6 +58,8 @@ export interface CouncilConfig {
   gitDiffMaxLines: number;
   gitDiffMaxHunksPerFile: number;
   gitDiffMaxOutputChars: number;
+  delegationWorktreeRoot: string;
+  delegationRetryDelayMs: number;
   keychainCommand?: string;
   sqliteBusyTimeoutMs: number;
   schemaMigrationMaxAttempts: number;

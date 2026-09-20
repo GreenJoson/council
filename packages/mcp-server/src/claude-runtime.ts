@@ -1,7 +1,7 @@
 /**
  * @input  依赖：公开 prompt、Claude Code CLI stream-json、共享进程工具与可选 AbortSignal
- * @output 导出：纯 ClaudeRuntime 增量生成接口、可用性检查与脱敏失败分类
- * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界；
+ * @output 导出：按结构化权限运行的 ClaudeRuntime 增量生成接口、可用性检查与脱敏失败分类
+ * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界；讨论默认强制只读，
  *         生成时强制清空 MCP 配置，使被召唤 Agent 无法取得 Council 写工具或递归召唤自身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -20,6 +20,7 @@ import {
   type RuntimeTextListener,
 } from "./runtime-stream.js";
 import type { ClaudeResponse, CouncilConfig } from "./types.js";
+import type { AgentPermissionProfile } from "./agent-execution-policy.js";
 
 type ClaudeRuntimeConfig = Pick<
   CouncilConfig,
@@ -66,6 +67,8 @@ export interface ClaudeRuntimeInput {
   signal?: AbortSignal;
   onActivity?: () => void;
   onTextEvent?: RuntimeTextListener;
+  /** 仅显式任务委派传入；普通讨论省略后固定为 read_only。 */
+  permissionProfile?: AgentPermissionProfile;
 }
 
 export interface ClaudeAvailability {
@@ -337,6 +340,13 @@ export class ClaudeRuntime {
   async generate(input: ClaudeRuntimeInput): Promise<ClaudeResponse> {
     const model = normalizeModel(input.model);
     const sessionId = normalizeSessionId(input.sessionId);
+    const permissionProfile = input.permissionProfile ?? "read_only";
+    const permissionArgs = permissionProfile === "danger_full_access"
+      ? ["--dangerously-skip-permissions"]
+      : [
+          "--permission-mode",
+          permissionProfile === "workspace_write" ? "acceptEdits" : this.config.claudePermissionMode,
+        ];
     const args = [
       "--print",
       "--output-format",
@@ -345,8 +355,7 @@ export class ClaudeRuntime {
       // CLI 契约：--print 搭配 stream-json 必须带 --verbose，否则子进程直接退出 1
       // 且不产出任何 stream-json，调用方只能看到一个没有原因的失败。
       "--verbose",
-      "--permission-mode",
-      this.config.claudePermissionMode,
+      ...permissionArgs,
       ...MCP_ISOLATION_ARGS,
       "--max-turns",
       String(this.config.claudeMaxTurns),

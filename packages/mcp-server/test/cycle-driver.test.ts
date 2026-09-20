@@ -20,6 +20,7 @@ import {
 import { ACTOR_SNAPSHOT_SCHEMA_VERSION } from "../src/actor-identity.js";
 import { CycleDriver, type CycleRunner } from "../src/orchestration/cycle-driver.js";
 import { migrateCouncilSchema } from "../src/schema-migrator.js";
+import { WorkAttentionStore } from "../src/orchestration/work-attention-store.js";
 
 const TOPIC = "topic_driver";
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -66,6 +67,7 @@ interface Invocation {
 
 interface Harness {
   store: SQLiteCouncilStore;
+  attention: WorkAttentionStore;
   driver: CycleDriver;
   invocations: Invocation[];
   decisions: string[];
@@ -98,6 +100,7 @@ async function createHarness(): Promise<Harness> {
   `);
 
   const store = new SQLiteCouncilStore(databasePath, 5_000);
+  const attention = new WorkAttentionStore(databasePath, 5_000);
   const invocations: Invocation[] = [];
   const decisions: string[] = [];
   let nextStance = "agree";
@@ -200,6 +203,7 @@ async function createHarness(): Promise<Harness> {
     driver,
     invocations,
     decisions,
+    attention,
     replyWith: (stance, question = false) => {
       nextStance = stance;
       nextQuestion = question;
@@ -242,6 +246,7 @@ async function createHarness(): Promise<Harness> {
       `).run(question, actorId, actorId, TOPIC);
     },
     cleanup: () => {
+      attention.close();
       store.close();
       seed.close();
       rmSync(directory, { recursive: true, force: true });
@@ -470,6 +475,9 @@ test("预算用尽仍有阻塞时自动放弃，不产出没人认可的结论",
       harness.invocations.every((item) => item.messageKind !== "synthesis"),
       "放弃路径不得进入 synthesis",
     );
+    assert.equal(harness.attention.list(undefined)[0]?.blocked, 1);
+    await harness.driver.start(cycleStartInput(2));
+    assert.deepEqual(harness.attention.list(undefined), [], "新圆桌替代旧阻断终局，不重复提醒历史问题");
   } finally {
     harness.cleanup();
   }

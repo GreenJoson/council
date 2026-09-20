@@ -3,7 +3,8 @@
  * @output 导出：带行级 Actor 快照的脱敏示例工作区；含一组可验证的架构档案样例——
  *         一个被取代的旧决策（topic-transport-legacy，superseded）+ 取代它的新决策
  *         （topic-transport-grpc，accepted，rationale 内嵌 ```mermaid 架构图）+ 一条
- *         含 ```mermaid 架构图的 synthesis 消息（topic-sharding），让架构档案视图的
+ *         一个同时含两条 proposed 与一条 rejected 的决策包 + 一条含 ```mermaid 架构图的
+ *         synthesis 消息（topic-sharding），让决策批量交互与架构档案视图的
  *         时间线/不变量/图集三个区块都有真实内容可看
  * @pos    视觉验收阶段的唯一 mock 数据源
  *
@@ -46,12 +47,14 @@ export function mockActorSnapshot(actorId: AgentId): ActorSnapshot {
 }
 
 const defaultDecision: CouncilDecision = {
+  id: "decision-idempotency-primary",
   title: "组合式幂等处理",
   summary: "采用业务幂等键、结果缓存与状态机校验的组合方案。",
   rationale: "兼顾回调重试、并发写入和可观测性，同时保留清晰回滚路径。",
   status: "proposed",
   proposedBy: "claude",
   proposedBySnapshot: mockActorSnapshot("claude"),
+  createdAt: "2026-08-30T02:26:00.000Z",
 };
 
 function createMessage(
@@ -127,11 +130,12 @@ function createSecondaryTopic(
       { id: `${id}-a1`, title: "保持现状并补充监控", author: "codex", createdLabel: "10:20" },
     ],
     workItems: [],
-    decision: {
+    decisions: [{
       ...defaultDecision,
+      id: `${id}-decision`,
       title: "等待更多证据",
       summary: "先完成失败路径验证，再决定是否进入实现。",
-    },
+    }],
   };
 }
 
@@ -178,16 +182,18 @@ const transportLegacyTopic: TopicDetail = {
     { id: "transport-legacy-a1", title: "引入消息队列做事件驱动同步", author: "claude", createdLabel: "两周前" },
   ],
   workItems: [],
-  decision: {
+  decisions: [{
+    id: "decision-transport-legacy",
     title: "REST 回调 + 定时对账轮询",
     summary: "库存服务通过 REST 回调通知订单服务扣减结果，订单服务每 5 分钟轮询一次做兜底对账。",
     rationale: "短期内实现成本最低，不需要新增消息中间件；已知代价是回调丢失时依赖轮询兜底，时延可能达到分钟级。",
     status: "superseded",
     proposedBy: "codex",
     proposedBySnapshot: mockActorSnapshot("codex"),
+    createdAt: "2026-07-10T02:00:00.000Z",
     decidedAt: "2026-07-10T02:15:00.000Z",
     supersededByTopicId: "topic-transport-grpc",
-  },
+  }],
 };
 
 /**
@@ -241,7 +247,8 @@ const transportGrpcTopic: TopicDetail = {
     { id: "transport-grpc-a1", title: "继续沿用 REST 回调，缩短轮询周期", author: "codex", createdLabel: "3 天前" },
   ],
   workItems: [],
-  decision: {
+  decisions: [{
+    id: "decision-transport-grpc",
     title: "迁移到 gRPC 双向流同步",
     summary: "订单服务与库存服务之间改用 gRPC 双向流实时推送扣减结果，废弃轮询兜底。",
     rationale: `旧方案在大促期间轮询延迟已经达到分钟级，双向流把端到端时延压到亚秒级，同时用连接保活替代轮询开销。
@@ -260,8 +267,9 @@ graph LR
     status: "accepted",
     proposedBy: "claude",
     proposedBySnapshot: mockActorSnapshot("claude"),
+    createdAt: "2026-07-19T07:20:00.000Z",
     decidedAt: "2026-07-19T07:40:00.000Z",
-  },
+  }],
 };
 
 const primaryTopic: TopicDetail = {
@@ -345,7 +353,29 @@ function transition(current: State, next: State): State {
     { id: "alternative-lock", title: "使用短期分布式锁", author: "claude", createdLabel: "10:40" },
   ],
   workItems: [],
-  decision: defaultDecision,
+  decisions: [
+    defaultDecision,
+    {
+      id: "decision-idempotency-transactional-inbox",
+      title: "事务收件箱作为并发写入边界",
+      summary: "把原始回调先写入事务收件箱，再由单向状态迁移执行实际副作用。",
+      rationale: "该方案把接收、去重和执行业务副作用拆成可审计的两个阶段，故障恢复边界更清晰。",
+      status: "proposed",
+      proposedBy: "codex",
+      proposedBySnapshot: mockActorSnapshot("codex"),
+      createdAt: "2026-08-30T03:02:00.000Z",
+    },
+    {
+      id: "decision-idempotency-distributed-lock",
+      title: "仅依赖短期分布式锁",
+      summary: "用业务标识加短期锁串行化所有回调。",
+      rationale: "锁过期与业务事务无法原子提交，故障窗口内仍可能重复执行，因此不作为最终方案。",
+      status: "rejected",
+      proposedBy: "claude",
+      proposedBySnapshot: mockActorSnapshot("claude"),
+      createdAt: "2026-08-30T03:16:00.000Z",
+    },
+  ],
 };
 
 export function createMockWorkspace(): WorkspaceSnapshot {
@@ -390,15 +420,17 @@ flowchart TD
   );
   // 覆盖默认的 proposed 拟议决策：这是唯一未被架构演进样例覆盖的"普通已接受决策"，
   // 用于验证时间线里非取代关系的常规 ADR 条目也能正确编号。
-  eventBusTopic.decision = {
+  eventBusTopic.decisions = [{
+    id: "decision-event-bus-database-table",
     title: "继续使用数据库事件表，暂缓引入独立消息系统",
     summary: "当前吞吐量下数据库事件表配合轮询仍在延迟预算内，暂不引入 Kafka/RabbitMQ 等独立组件。",
     rationale: "引入独立消息系统会带来新的运维面（部署、监控、灾备），现阶段收益不足以覆盖成本；吞吐量翻倍时重新评估。",
     status: "accepted",
     proposedBy: "codex",
     proposedBySnapshot: mockActorSnapshot("codex"),
+    createdAt: "2026-07-14T02:45:00.000Z",
     decidedAt: "2026-07-14T03:03:00.000Z",
-  };
+  }];
 
   return {
     project: { id: "project-commerce-api", name: "Commerce API" },

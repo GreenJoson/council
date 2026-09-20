@@ -195,12 +195,32 @@ export function MarkdownContent({
   }), [t]);
 
   const collapseLabels = COLLAPSE_LABELS[collapseVariant];
+  const collapseToggle = collapsible && needsCollapse ? (
+    <button
+      className={`markdown-toggle ${isExpanded ? "is-expanded-toggle" : ""}`}
+      type="button"
+      aria-expanded={isExpanded}
+      onClick={() => setIsExpanded((current) => !current)}
+    >
+      {collapseVariant === "topic" ? (
+        isExpanded ? (
+          <ChevronUp size={14} aria-hidden="true" />
+        ) : (
+          <ChevronDown size={14} aria-hidden="true" />
+        )
+      ) : null}
+      {t(isExpanded ? collapseLabels.collapse : collapseLabels.expand)}
+    </button>
+  ) : null;
+  const showTopicCollapseBeforeContent = collapseVariant === "topic" && isExpanded;
 
   return (
     <div
       className={`markdown-collapsible-wrap markdown-collapse-${collapseVariant}`}
       ref={wrapRef}
     >
+      {/* 超长议题展开后，唯一的收起按钮若仍在正文末尾就等同于消失；移到顶部并交给 CSS 吸顶。 */}
+      {showTopicCollapseBeforeContent ? collapseToggle : null}
       <div className={`markdown-collapse-frame ${isClamped ? "is-clamped" : ""}`}>
         <div className="markdown-content" ref={measureRef}>
           <ReactMarkdown
@@ -214,23 +234,7 @@ export function MarkdownContent({
         </div>
         {isClamped ? <div className="markdown-fade" aria-hidden="true" /> : null}
       </div>
-      {collapsible && needsCollapse ? (
-        <button
-          className="markdown-toggle"
-          type="button"
-          aria-expanded={isExpanded}
-          onClick={() => setIsExpanded((current) => !current)}
-        >
-          {collapseVariant === "topic" ? (
-            isExpanded ? (
-              <ChevronUp size={14} aria-hidden="true" />
-            ) : (
-              <ChevronDown size={14} aria-hidden="true" />
-            )
-          ) : null}
-          {t(isExpanded ? collapseLabels.collapse : collapseLabels.expand)}
-        </button>
-      ) : null}
+      {showTopicCollapseBeforeContent ? null : collapseToggle}
 
       {lightboxContent ? (
         <Lightbox content={lightboxContent} onClose={() => setLightboxContent(null)} />

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge、API 严格解析器和 Workspace mapper
- * @output 导出：NativeCouncilRepository（含人工 Accepted、实施项写入/只读议题详情）与类型守卫
+ * @output 导出：NativeCouncilRepository（含议题关闭、决策包接受、人工 Accepted、实施项写入/详情）与类型守卫
  * @pos    Tauri 模式下绕过 HTTP、直接读写 Rust council-core 的内容仓储
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +9,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   parseApiDecision,
+  parseApiDecisions,
   parseApiMessage,
   parseApiPaginatedTopics,
   parseApiTopic,
@@ -151,6 +152,14 @@ export class NativeCouncilRepository implements CouncilRepository {
     return this.loadWorkspace();
   }
 
+  async closeTopic(topicId: string): Promise<WorkspaceSnapshot> {
+    const generation = this.#settingsGeneration;
+    parseApiTopic(await this.#bridge.closeTopic({ topicId }));
+    this.#assertGeneration(generation);
+    this.#activeTopicId = topicId;
+    return this.loadWorkspace();
+  }
+
   async publishMessage(input: PublishMessageInput): Promise<WorkspaceSnapshot> {
     const generation = this.#settingsGeneration;
     parseApiMessage(await this.#bridge.postMessage({
@@ -163,22 +172,14 @@ export class NativeCouncilRepository implements CouncilRepository {
     return this.loadWorkspace();
   }
 
-  async acceptDecision(topicId: string): Promise<WorkspaceSnapshot> {
-    const topic = this.#snapshot?.topics.find((candidate) => candidate.id === topicId);
-    if (!topic?.decision) {
-      throw new Error("当前议题没有可接受的拟议决策");
-    }
-    if (topic.decision.status === "accepted") {
-      return cloneSnapshot(this.#snapshot as WorkspaceSnapshot);
+  async acceptDecisions(topicId: string, decisionIds: string[]): Promise<WorkspaceSnapshot> {
+    if (decisionIds.length === 0) {
+      throw new Error("请选择至少一条待确认决策");
     }
     const generation = this.#settingsGeneration;
-    parseApiDecision(await this.#bridge.recordDecision({
+    parseApiDecisions(await this.#bridge.acceptDecisions({
       topicId,
-      title: topic.decision.title,
-      decision: topic.decision.summary,
-      rationale: topic.decision.rationale,
-      alternatives: topic.alternatives.map((alternative) => alternative.title),
-      status: "accepted",
+      decisionIds,
     }));
     this.#assertGeneration(generation);
     this.#activeTopicId = topicId;

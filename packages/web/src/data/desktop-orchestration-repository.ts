@@ -7,6 +7,9 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import type { WorkAttention } from "./work-attention";
+import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+
 import type {
   DesktopOrchestrationConfig,
   DesktopOrchestrationHealth,
@@ -22,6 +25,9 @@ import type {
   OrchestrationSnapshot,
   RuntimeBinding,
   StartCycleInput,
+  StartWorkItemDelegationBatchInput,
+  StartWorkItemDelegationInput,
+  WorkItemDelegation,
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
@@ -223,6 +229,38 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async testAgent(agentId: string): Promise<AgentConnectionTest> {
     return (await this.#requireLive()).testAgent(agentId);
+  }
+
+  async resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+    return (await this.#requireLive()).resumeWorkItemDelegation(id, expectedVersion);
+  }
+
+  async listWorkAttention(topicId: string): Promise<WorkAttention[]> {
+    return (await this.#requireLive()).listWorkAttention(topicId);
+  }
+
+  async listRuntimeAudit(input: RuntimeAuditQuery): Promise<RuntimeAuditPage> {
+    return (await this.#requireLive()).listRuntimeAudit(input);
+  }
+
+  async listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]> {
+    return (await this.#requireLive()).listWorkItemDelegations(topicId);
+  }
+
+  async startWorkItemDelegation(
+    input: StartWorkItemDelegationInput,
+  ): Promise<WorkItemDelegation> {
+    return (await this.#requireLive()).startWorkItemDelegation(input);
+  }
+
+  async startWorkItemDelegationBatch(
+    input: StartWorkItemDelegationBatchInput,
+  ): Promise<WorkItemDelegation[]> {
+    return (await this.#requireLive()).startWorkItemDelegationBatch(input);
+  }
+
+  async cancelWorkItemDelegation(delegationId: string): Promise<WorkItemDelegation> {
+    return (await this.#requireLive()).cancelWorkItemDelegation(delegationId);
   }
 
   subscribe(listener: OrchestrationListener): () => void {
