@@ -96,6 +96,8 @@ Edit these files before running `npm run dev`:
 | Setting | Meaning |
 |---|---|
 | `COUNCIL_DATA_DIR` | Absolute path to your data library, outside the repository. |
+| `COUNCIL_MAX_OUTPUT_CHARS` | Final reply / delivery summary limit; defaults to 30,000 characters in the desktop app. |
+| `COUNCIL_CLI_MAX_STREAM_CHARS` | Independent cumulative Claude/Codex CLI event-stream limit, including tool results; defaults to 32,000,000 characters. Increasing it does not increase the final reply limit. |
 | `VITE_COUNCIL_DATA_MODE` | Set to `http` for real data. |
 | `VITE_COUNCIL_API_URL` | The API's loopback origin; the example backend uses `http://127.0.0.1:4317`. |
 | `VITE_COUNCIL_PROJECT_PATH` | Absolute path to the project the agents may inspect. |

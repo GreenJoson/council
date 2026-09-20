@@ -121,6 +121,7 @@ test("ClaudeClient 调用并恢复后台顾问会话", async () => {
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
   const database = await CouncilDatabase.open(
@@ -209,6 +210,7 @@ test("ClaudeClient 取消生成时不写 session 或消息", async () => {
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
   const database = await CouncilDatabase.open(
@@ -287,6 +289,7 @@ test("ClaudeClient 拒绝数据库中绕过入口校验的相对项目路径", a
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
   const database = await CouncilDatabase.open(
@@ -359,6 +362,7 @@ test("ClaudeClient 可信议题超限时不调用 Runtime 且数据库零写入"
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 120,
     maxOutputChars: 40_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
   const database = await CouncilDatabase.open(
@@ -434,6 +438,7 @@ test("ClaudeClient 超长公开输出不推进 session 且不写消息", async (
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 40_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
   const database = await CouncilDatabase.open(

@@ -11,4 +11,4 @@
 
 桌面端使用 Tauri 2 承载 `packages/web` 的 React 构建产物。用户选择的日志库和项目目录只写入操作系统的应用配置目录，不进入源码、文档或 Git。桌面自动轮次不在 Rust 重写状态机，而是把现有 Node 编排服务编译成 Tauri `externalBin` sidecar（与桌面共享同一 SQLite 库文件）：打开 App 自动启动，日志库切换后自动重启，退出时回收整个进程组；Node sidecar 独占生产 schema 迁移，Rust 只有收到 `ready=true` 后才验证并打开 Store。Rust 内容命令按 active alias 解析动态 Actor 并返回冻结快照，同时提供 Accepted 决策实施项的新增与版本化状态更新；编排请求走 loopback HTTP/SSE，内容读写仍走 Tauri 原生命令。
 
-当前桌面发行版本为 `0.9.2`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本收口决策包、隔离 Agent 委派、完成条件、执行证据、待处理聚合和提交检查点恢复。人工验收、活动委派关闭保护在 Node 和 Rust 侧一致；详见 [执行交付](../../docs/execution-delivery.md)。
+当前桌面发行版本为 `0.9.3`；`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 与 `src-tauri/tauri.conf.json` 必须同步递增。本版本修复代码委派的累计事件流额度与最终回复长度耦合：单独配置 CLI 过程输出预算、按需开启逐字预览，并保留准确的超限分类与计数。人工验收、活动委派关闭保护在 Node 和 Rust 侧一致；详见 [执行交付](../../docs/execution-delivery.md)。

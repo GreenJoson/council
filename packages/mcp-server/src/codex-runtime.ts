@@ -1,6 +1,6 @@
 /**
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输与可选 AbortSignal
- * @output 导出：按结构化权限运行的 CodexRuntime、公开消息增量、结构化安全错误和可用性检查
+ * @output 导出：CodexRuntime、独立事件流/最终回复限额、公开消息增量和脱敏失败分类
  * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,6 +13,7 @@ import {
   assertRuntimeTimers,
   makeAbortError,
   normalizeCliOption,
+  ProcessOutputLimitError,
   runBoundedProcess,
   type BoundedProcessMessages,
   type ProcessResult,
@@ -32,6 +33,7 @@ type CodexRuntimeConfig = Pick<
   | "codexTimeoutMs"
   | "codexKillGraceMs"
   | "maxOutputChars"
+  | "cliMaxStreamChars"
 >;
 
 export interface CodexRuntimeInput {
@@ -67,7 +69,6 @@ export class CodexRuntimeError extends Error {
 }
 
 const ABORT_MESSAGE = "Codex 调用已取消。";
-const STREAM_TOTAL_OUTPUT_MULTIPLIER = 128;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
   aborted: ABORT_MESSAGE,
@@ -256,20 +257,31 @@ export class CodexRuntime {
     onStdoutChunk?: (chunk: string) => void,
     maxTotalOutputChars?: number,
   ): Promise<ProcessResult> {
-    return await runBoundedProcess({
-      command: this.config.codexCommand,
-      args: [...this.config.codexArgs, ...args],
-      input,
-      ...(cwd ? { cwd } : {}),
-      ...(signal ? { signal } : {}),
-      timeoutMs: this.config.codexTimeoutMs,
-      killGraceMs: this.config.codexKillGraceMs,
-      maxOutputChars: this.config.maxOutputChars,
-      stdoutOverflow: "truncate",
-      ...(onStdoutChunk ? { onStdoutChunk } : {}),
-      ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
-      messages: PROCESS_MESSAGES,
-    });
+    try {
+      return await runBoundedProcess({
+        command: this.config.codexCommand,
+        args: [...this.config.codexArgs, ...args],
+        input,
+        ...(cwd ? { cwd } : {}),
+        ...(signal ? { signal } : {}),
+        timeoutMs: this.config.codexTimeoutMs,
+        killGraceMs: this.config.codexKillGraceMs,
+        maxOutputChars: this.config.maxOutputChars,
+        stdoutOverflow: "truncate",
+        ...(onStdoutChunk ? { onStdoutChunk } : {}),
+        ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
+        messages: PROCESS_MESSAGES,
+      });
+    } catch (error) {
+      if (error instanceof ProcessOutputLimitError && maxTotalOutputChars !== undefined) {
+        throw new CodexRuntimeError(
+          `Codex 执行事件流超过配置上限（已接收 ${error.receivedChars} 字符，上限 ${error.limitChars}）。请调整 COUNCIL_CLI_MAX_STREAM_CHARS。`,
+          false,
+          "stream_output_limit",
+        );
+      }
+      throw error;
+    }
   }
 
   async checkAvailability(): Promise<CodexAvailability> {
@@ -360,7 +372,7 @@ export class CodexRuntime {
         input.cwd,
         input.signal,
         decoder ? (chunk) => decoder.push(chunk) : undefined,
-        this.config.maxOutputChars * STREAM_TOTAL_OUTPUT_MULTIPLIER,
+        this.config.cliMaxStreamChars,
       );
       decoder?.flush();
       if (input.signal?.aborted) {
@@ -382,7 +394,7 @@ export class CodexRuntime {
       }
       if (content.length > this.config.maxOutputChars) {
         throw new CodexRuntimeError(
-          PROCESS_MESSAGES.outputLimit,
+          `Codex 最终回复超过 ${this.config.maxOutputChars} 字符，请缩短交付摘要或调整 COUNCIL_MAX_OUTPUT_CHARS。`,
           false,
           "final_output_limit",
         );

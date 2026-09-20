@@ -1,6 +1,6 @@
 /**
  * @input  依赖：原委派检查点、当前项目与受控 Git 执行器
- * @output 导出：失败分类与恢复前工作区验证
+ * @output 导出：区分事件流/最终回复超限的失败分类与恢复前工作区验证
  * @pos    只恢复已记录提交；未提交改动留在原目录，不自动重放写操作
  */
 import path from "node:path";
@@ -13,6 +13,9 @@ import type { DelegationPrivateState } from "./work-item-delegation-store.js";
 export function delegationFailureCode(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   if (error instanceof ClaudeRuntimeError || error instanceof CodexRuntimeError) {
+    if (error.diagnosticCode === "stream_output_limit" || error.diagnosticCode === "final_output_limit") {
+      return error.diagnosticCode;
+    }
     if (error.diagnosticCode.startsWith("authentication")) return "authentication_failed";
     if (error.diagnosticCode.startsWith("quota")) return "quota_exhausted";
     if (error.diagnosticCode.startsWith("model_unavailable")) return "model_unavailable";

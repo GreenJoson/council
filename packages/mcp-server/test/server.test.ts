@@ -102,6 +102,7 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "codex",
   };
@@ -326,6 +327,7 @@ test("MCP 调用者冻结 actorId，运行中 alias 重绑或同名 alias 不能
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "caller-a",
   };
@@ -461,6 +463,7 @@ test("MCP 取消 council_ask_claude 会终止进程且不写共享数据库", as
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "codex",
   };

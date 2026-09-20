@@ -1,6 +1,6 @@
 /**
  * @input  依赖：公开 prompt、Claude Code CLI stream-json、共享进程工具与可选 AbortSignal
- * @output 导出：按结构化权限运行的 ClaudeRuntime 增量生成接口、可用性检查与脱敏失败分类
+ * @output 导出：ClaudeRuntime 增量生成、独立事件流/最终回复限额、可用性检查与脱敏失败分类
  * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界；讨论默认强制只读，
  *         生成时强制清空 MCP 配置，使被召唤 Agent 无法取得 Council 写工具或递归召唤自身
  *
@@ -11,6 +11,7 @@ import {
   assertRuntimeTimers,
   makeAbortError,
   normalizeCliOption,
+  ProcessOutputLimitError,
   runBoundedProcess,
   type BoundedProcessMessages,
   type ProcessResult,
@@ -31,6 +32,7 @@ type ClaudeRuntimeConfig = Pick<
   | "claudeKillGraceMs"
   | "claudeMaxTurns"
   | "maxOutputChars"
+  | "cliMaxStreamChars"
 >;
 
 // 只读沙箱只约束文件系统，约束不到 MCP 工具的外部副作用。被编排召唤的 headless Agent
@@ -107,7 +109,6 @@ interface ClaudeJsonResult {
 
 const ABORT_MESSAGE = "Claude Code 调用已取消。";
 const STREAM_RETAINED_OUTPUT_MULTIPLIER = 3;
-const STREAM_TOTAL_OUTPUT_MULTIPLIER = 64;
 
 const PROCESS_MESSAGES: BoundedProcessMessages = {
   aborted: ABORT_MESSAGE,
@@ -226,8 +227,8 @@ function classifyFailure(content: string): ClaudeRuntimeError {
   );
 }
 
-function parseClaudeOutput(stdout: string): ClaudeResponse {
-  const parsed = parseJsonObject(stdout);
+function parseClaudeOutput(stdout: string, finalResult?: ClaudeJsonResult): ClaudeResponse {
+  const parsed = finalResult ?? parseJsonObject(stdout);
   if (!parsed) {
     const content = stdout.trim();
     if (!content) {
@@ -292,20 +293,31 @@ export class ClaudeRuntime {
     maxTotalOutputChars?: number,
     retainedOutputChars = this.config.maxOutputChars,
   ): Promise<ProcessResult> {
-    return await runBoundedProcess({
-      command: this.config.claudeCommand,
-      args: [...this.config.claudeArgs, ...args],
-      input,
-      ...(cwd ? { cwd } : {}),
-      ...(signal ? { signal } : {}),
-      timeoutMs: this.config.claudeTimeoutMs,
-      killGraceMs: this.config.claudeKillGraceMs,
-      maxOutputChars: retainedOutputChars,
-      stdoutOverflow: onStdoutChunk ? "truncate" : "stop",
-      ...(onStdoutChunk ? { onStdoutChunk } : {}),
-      ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
-      messages: PROCESS_MESSAGES,
-    });
+    try {
+      return await runBoundedProcess({
+        command: this.config.claudeCommand,
+        args: [...this.config.claudeArgs, ...args],
+        input,
+        ...(cwd ? { cwd } : {}),
+        ...(signal ? { signal } : {}),
+        timeoutMs: this.config.claudeTimeoutMs,
+        killGraceMs: this.config.claudeKillGraceMs,
+        maxOutputChars: retainedOutputChars,
+        stdoutOverflow: onStdoutChunk ? "truncate" : "stop",
+        ...(onStdoutChunk ? { onStdoutChunk } : {}),
+        ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
+        messages: PROCESS_MESSAGES,
+      });
+    } catch (error) {
+      if (error instanceof ProcessOutputLimitError && maxTotalOutputChars !== undefined) {
+        throw new ClaudeRuntimeError(
+          `Claude Code 执行事件流超过配置上限（已接收 ${error.receivedChars} 字符，上限 ${error.limitChars}）。请调整 COUNCIL_CLI_MAX_STREAM_CHARS。`,
+          false,
+          "stream_output_limit",
+        );
+      }
+      throw error;
+    }
   }
 
   async checkAvailability(): Promise<ClaudeAvailability> {
@@ -351,7 +363,8 @@ export class ClaudeRuntime {
       "--print",
       "--output-format",
       "stream-json",
-      "--include-partial-messages",
+      // 没有预览/活动监听的代码委派只需完整事件，避免逐字分片重复放大传输量。
+      ...(input.onTextEvent || input.onActivity ? ["--include-partial-messages"] : []),
       // CLI 契约：--print 搭配 stream-json 必须带 --verbose，否则子进程直接退出 1
       // 且不产出任何 stream-json，调用方只能看到一个没有原因的失败。
       "--verbose",
@@ -362,29 +375,28 @@ export class ClaudeRuntime {
       ...(model ? ["--model", model] : []),
       ...(sessionId ? ["--resume", sessionId] : []),
     ];
-    const decoder = input.onTextEvent || input.onActivity
-      ? new JsonLineDecoder((value) => {
-          input.onActivity?.();
-          if (input.onTextEvent) {
-            observeClaudeStreamEvent(value, input.onTextEvent);
-          }
-        })
-      : undefined;
+    let finalResult: ClaudeJsonResult | undefined;
+    // 最终结果单独提取，不依赖可能截断 JSON 行的 stdout 首尾窗口。
+    const decoder = new JsonLineDecoder((value) => {
+      if (isRecord(value) && value.type === "result") finalResult = value;
+      input.onActivity?.();
+      if (input.onTextEvent) observeClaudeStreamEvent(value, input.onTextEvent);
+    });
     const result = await this.#run(
       args,
       input.prompt,
       input.cwd,
       input.signal,
-      decoder ? (chunk) => decoder.push(chunk) : () => undefined,
-      this.config.maxOutputChars * STREAM_TOTAL_OUTPUT_MULTIPLIER,
+      (chunk) => decoder.push(chunk),
+      this.config.cliMaxStreamChars,
       this.config.maxOutputChars * STREAM_RETAINED_OUTPUT_MULTIPLIER,
     );
-    decoder?.flush();
+    decoder.flush();
     if (input.signal?.aborted) {
       throw makeAbortError(ABORT_MESSAGE);
     }
     if (result.exitCode !== 0) {
-      const parsed = parseJsonObject(result.stdout);
+      const parsed = finalResult ?? parseJsonObject(result.stdout);
       const content = typeof parsed?.result === "string" ? parsed.result : "";
       if (parsed?.is_error === true) {
         throw classifyFailure(content);
@@ -399,10 +411,10 @@ export class ClaudeRuntime {
         firstStderrLine(result.stderr),
       );
     }
-    const response = parseClaudeOutput(result.stdout);
+    const response = parseClaudeOutput(result.stdout, finalResult);
     if (response.content.length > this.config.maxOutputChars) {
       throw new ClaudeRuntimeError(
-        PROCESS_MESSAGES.outputLimit,
+        `Claude Code 最终回复超过 ${this.config.maxOutputChars} 字符，请缩短交付摘要或调整 COUNCIL_MAX_OUTPUT_CHARS。`,
         false,
         "final_output_limit",
       );

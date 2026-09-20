@@ -1,6 +1,6 @@
 /**
  * @input  依赖：子进程命令、stdin、环境、定时、输出上限、stdout 观察器与溢出策略
- * @output 导出：有界运行、增量 stdout 观察、首尾截断、长驻进程树终止与 CLI 选项规范化工具
+ * @output 导出：有界运行、含计数的输出超限错误、首尾截断、进程树终止与 CLI 选项规范化工具
  * @pos    Claude、Codex 与 Kimi 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,15 @@ export interface ProcessResult {
 }
 
 export type StopReason = "aborted" | "output" | "timeout";
+
+/** 只携带计数，不携带可能含凭据、文件正文或私有工具参数的原始输出。 */
+export class ProcessOutputLimitError extends Error {
+  override readonly name = "ProcessOutputLimitError";
+
+  constructor(message: string, readonly receivedChars: number, readonly limitChars: number) {
+    super(message);
+  }
+}
 
 type ProcessOutcome =
   | { kind: "closed"; result: ProcessResult }
@@ -77,14 +86,19 @@ export function makeAbortError(message: string): Error {
   return error;
 }
 
-function stopError(reason: StopReason, messages: BoundedProcessMessages): Error {
+function stopError(
+  reason: StopReason,
+  messages: BoundedProcessMessages,
+  receivedChars: number,
+  limitChars: number,
+): Error {
   if (reason === "aborted") {
     return makeAbortError(messages.aborted);
   }
   if (reason === "timeout") {
     return new Error(messages.timeout);
   }
-  return new Error(messages.outputLimit);
+  return new ProcessOutputLimitError(messages.outputLimit, receivedChars, limitChars);
 }
 
 /** 校验运行时定时器配置；无效直接抛调用方文案，防止 setTimeout 溢出静默失效。 */
@@ -272,6 +286,7 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   });
   let stdout = "";
   let stdoutCharsReceived = 0;
+  let outputLimitExceeded = false;
   let stderr = "";
   let stop: ((reason: StopReason) => void) | undefined;
   const stopped = new Promise<ProcessOutcome>((resolve) => {
@@ -295,20 +310,22 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
+    if (outputLimitExceeded) return;
+    stdoutCharsReceived += chunk.length;
+    // 超限后仅排空管道；不再把后续洪流交给 JSON 解码器，也不持续扩大诊断计数。
+    if (options.stdoutOverflow === "truncate"
+      && options.maxTotalOutputChars !== undefined
+      && stdoutCharsReceived > options.maxTotalOutputChars) {
+      outputLimitExceeded = true;
+      stop?.("output");
+      return;
+    }
     try {
       options.onStdoutChunk?.(chunk);
     } catch {
       // 实时预览属于非关键旁路；解析或消费者异常不能杀死正在执行的 Agent。
     }
     if (options.stdoutOverflow === "truncate") {
-      stdoutCharsReceived += chunk.length;
-      if (
-        options.maxTotalOutputChars !== undefined
-        && stdoutCharsReceived > options.maxTotalOutputChars
-      ) {
-        stop?.("output");
-        return;
-      }
       stdout = appendTruncatedOutput(stdout, chunk, options.maxOutputChars);
       return;
     }
@@ -338,7 +355,14 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
       return outcome.result;
     }
     await terminateAndWait(child, completion, options.killGraceMs);
-    throw stopError(outcome.reason, messages);
+    throw stopError(
+      outcome.reason,
+      messages,
+      stdoutCharsReceived,
+      options.stdoutOverflow === "truncate"
+        ? options.maxTotalOutputChars ?? options.maxOutputChars
+        : options.maxOutputChars,
+    );
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abortListener);

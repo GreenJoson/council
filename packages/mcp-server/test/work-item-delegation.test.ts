@@ -1,6 +1,6 @@
 /**
  * @input  依赖：临时 Git 仓库、Claude/Codex 假 CLI、Model Router 与委派管理器
- * @output 验证：supervisor→executor→review 闭环、上下文隔离、Council 提交、人工验收、检查点恢复/中断审计与原 checkout 隔离
+ * @output 验证：委派闭环、Council 提交、人工验收、超限文件保留与分类审计、检查点恢复和 checkout 隔离
  * @pos    Agent 互相指挥并实际改代码的端到端安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -127,6 +127,7 @@ function createConfig(directory: string, databasePath: string, claudeScript: str
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 20_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 100,
   };
 }
@@ -154,6 +155,7 @@ async function createDelegationHarness(
   codexScript: string,
   claudeLog: string,
   codexLog: string,
+  cliMaxStreamChars = 32_000_000,
 ) {
   const config = createConfig(
     directory,
@@ -163,6 +165,7 @@ async function createDelegationHarness(
     claudeLog,
     codexLog,
   );
+  config.cliMaxStreamChars = cliMaxStreamChars;
   const store = new ModelRouterStore(databasePath, 5_000);
   const router = new ModelRouterService(store, new EmptySecretStore());
   const snapshot = await router.snapshot();
@@ -600,7 +603,7 @@ test("安全基线发现私密配置时拒绝提交且保留新项目文件", as
   }
 });
 
-async function recoveryFixture() {
+async function recoveryFixture(cliMaxStreamChars = 32_000_000) {
   const directory = mkdtempSync(path.join(tmpdir(), "council-recovery-"));
   const repositoryPath = path.join(directory, "repository");
   execFileSync("mkdir", ["-p", repositoryPath]);
@@ -622,13 +625,40 @@ async function recoveryFixture() {
   const codexLog = path.join(directory, "codex.log");
   writeFileSync(claudeScript, CLAUDE_SCRIPT);
   writeFileSync(codexScript, CODEX_SCRIPT);
-  const harness = await createDelegationHarness(directory, databasePath, claudeScript, codexScript, claudeLog, codexLog);
+  const harness = await createDelegationHarness(directory, databasePath, claudeScript, codexScript, claudeLog, codexLog, cliMaxStreamChars);
   return { ...harness, directory, repositoryPath, databasePath, database, topic, item, claudeScript, codexScript, claudeLog, codexLog,
     start: () => harness.manager.start({ topicId: topic.id, workItemId: item.id, expectedVersion: item.version,
       supervisorAgentId: harness.claude.id, executorAgentId: harness.codex.id, requestedPermission: "workspace_write" }),
     close: async () => { await harness.manager.shutdown(); harness.manager.close(); harness.router.close(); database.close(); rmSync(directory, { recursive: true, force: true }); },
   };
 }
+
+test("执行事件流超限保留未提交文件，记录具体分类且不自动重放写操作", async () => {
+  const h = await recoveryFixture(1_000);
+  const audit = new RuntimeAuditStore(h.databasePath, 5_000);
+  try {
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace("const events =", `
+process.stdout.write(JSON.stringify({ type: "item.completed", item: {
+  type: "command_execution", output: "private tool detail".repeat(200)
+} }) + "\\n");
+const events =`));
+    const started = h.start();
+    const failed = await waitForTerminal(h.manager, h.topic.id, started.id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.failureCode, "stream_output_limit");
+    assert.equal(failed.headCommit, undefined);
+    assert.match(failed.error ?? "", /上限 1000/);
+    assert.equal(readFileSync(h.codexLog, "utf8").split("---CALL---").length - 1, 1);
+    const worktree = path.join(h.directory, "delegated-worktrees", failed.id);
+    assert.equal(readFileSync(path.join(worktree, "implemented.txt"), "utf8"), "delegated by codex\n");
+    assert.match(git(worktree, ["status", "--porcelain=v1"]), /\?\? implemented\.txt/);
+    const events = audit.list(h.topic.id, "delegation", failed.id).events;
+    assert.equal(events.filter(event => event.kind === "execution.failed").length, 1);
+    assert.equal(events.some(event => event.kind === "review.started"), false);
+    assert.equal(events.find(event => event.kind === "delegation.failed")?.data.failureCode, "stream_output_limit");
+    assert.doesNotMatch(JSON.stringify(events), /private tool detail/);
+  } finally { audit.close(); await h.close(); }
+});
 
 test("重启仅将未结束委派标为中断并追加一次证据，不自动重放", async () => {
   const h = await recoveryFixture();

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：议题、消息、决策、实施项树/完成度与含 schema 迁移策略的配置类型
+ * @output 导出：领域模型与含迁移策略、独立 CLI 事件流预算的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -65,6 +65,7 @@ export interface CouncilConfig {
   schemaMigrationMaxAttempts: number;
   maxContextChars: number;
   maxOutputChars: number;
+  cliMaxStreamChars: number;
   defaultMessageLimit: number;
 }
 

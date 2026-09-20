@@ -24,6 +24,12 @@
 有界的子进程关闭与进程消失窗口；继承管道阻塞关闭时会主动销毁本端 stdio。
 `council_ask_claude` 会把 MCP 请求的取消信号传到这条链路。
 
+`COUNCIL_MAX_OUTPUT_CHARS` 只限制最终回复/交付摘要；Claude/Codex CLI 的读文件、工具结果等
+累计事件流由独立的 `COUNCIL_CLI_MAX_STREAM_CHARS` 限制，缺省为 32,000,000 字符。
+stdout 仅保留首尾窗口，Claude 的最终结果通过 JSONL 解码单独提取；没有预览/活动监听时
+不请求逐字分片。`stream_output_limit` 与 `final_output_limit` 分别记录到委派失败分类，
+事件流超限只公开累计计数与额度，不公开工具正文。超限的写任务不会自动重放，未提交文件仍保留在原工作区。
+
 POSIX 平台会建立并终止独立进程组，以清理 CLI 的同组派生进程；主动建立新 session
 并脱离该进程组的后代无法由普通 Node 父进程可靠回收，但不会再无限占住运行时管道。
 Windows 平台仅保证直接子进程完成终止，派生进程仍受系统进程模型限制。运行配置强制

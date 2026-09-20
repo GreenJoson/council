@@ -32,11 +32,11 @@
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
-| `process-utils.ts` | 安全基础 | 提供有界子进程运行、stdout 停止/首尾截断策略、长驻进程树终止与 CLI 选项规范化 |
+| `process-utils.ts` | 安全基础 | 提供有界子进程运行、含计数的输出超限错误、stdout 首尾截断与进程树终止；超限后停止解码后续洪流 |
 | `project-path-policy.ts` | 路径策略 | 为文件工具与 Git diff 提供同一敏感目录/文件判定，防止入口间规则漂移 |
 | `runtime-stream.ts` | 流式基础 | 定义公开文本增量事件并对任意 stdout 分片做 JSONL 解码 |
-| `claude-runtime.ts` | 核心 | 普通讨论固定 plan；仅显式委派按结构化权限映射 acceptEdits/危险模式，始终隔离 Council MCP 并转发公开 stream-json 文本 |
-| `codex-runtime.ts` | 核心 | 普通讨论固定 read-only；仅显式委派按结构化权限映射 workspace-write/危险模式；忽略用户配置以隔离 MCP，同时保留 CLI 认证并限制 JSONL/最终正文 |
+| `claude-runtime.ts` | 核心 | 隔离 MCP 并按委派权限执行；事件流与最终回复独立限额，单独提取最终结果，仅有监听时请求逐字预览 |
+| `codex-runtime.ts` | 核心 | 按结构化权限执行并隔离 MCP；保留 CLI 认证，独立限制 JSONL/最终正文并报告具体超限计数 |
 | `acp-runtime-registry.ts` | Runtime 注册 | 声明 Kimi、Gemini、Grok、Codex、Claude Agent 到 ACP 命令、模型选择协议、启动参数和 Runtime 能力的受控映射；实际授权再与独立 Council policy 取交集 |
 | `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、当前及已关联仓库的只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |

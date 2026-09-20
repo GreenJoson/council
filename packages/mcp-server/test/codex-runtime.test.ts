@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Codex CLI、AbortController 与纯 CodexRuntime
- * @output 导出：只读沙箱、JSONL 公开消息增量、截断、正文限长、取消、超时和错误分类测试
+ * @output 导出：只读沙箱、JSONL 增量、独立事件流/正文限额、超限计数、取消与错误分类测试
  * @pos    Codex 无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -84,7 +84,7 @@ if (mode === "hang") {
         type: "thread.started",
         thread_id: "codex_runtime_session",
       }) + "\\n");
-      const noisyEvents = Array.from({ length: 30 }, (_, index) => ({
+      const noisyEvents = Array.from({ length: 600 }, (_, index) => ({
         type: "item.completed",
         item: { id: "tool_" + String(index), type: "command_execution", output: "z".repeat(200) },
       }));
@@ -151,6 +151,7 @@ function createConfig(
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     ...overrides,
   };
@@ -385,7 +386,29 @@ test("CodexRuntime 仍拒绝超过配置上限的最终正文", async () => {
         error instanceof CodexRuntimeError &&
         !error.retryable &&
         error.diagnosticCode === "final_output_limit" &&
-        /Codex 输出超过配置上限/.test(error.message),
+        /Codex 最终回复超过 512 字符/.test(error.message),
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("CodexRuntime 事件流超限有独立诊断且不泄露工具正文", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-codex-stream-limit-"));
+  const fakeCodexPath = path.join(directory, "fake-codex.mjs");
+  writeFileSync(fakeCodexPath, FAKE_CODEX_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new CodexRuntime(createConfig(directory, fakeCodexPath, "verbose-json", {
+      cliMaxStreamChars: 1_000,
+    }));
+    await assert.rejects(
+      runtime.generate({ prompt: "private prompt", cwd: directory }),
+      (error: unknown) => error instanceof CodexRuntimeError
+        && !error.retryable
+        && error.diagnosticCode === "stream_output_limit"
+        && /已接收 \d+ 字符，上限 1000/.test(error.message)
+        && /COUNCIL_CLI_MAX_STREAM_CHARS/.test(error.message)
+        && !/private prompt|zzzz/.test(error.message),
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });

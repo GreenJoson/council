@@ -9,7 +9,7 @@
 | `tauri.conf.json` | 应用配置 | 窗口、CSP、React 构建、版本、图标与 macOS 本地 ad-hoc 整包签名设置 |
 | `Entitlements.plist` | macOS 权限 | 允许 Node/V8 sidecar 在 Hardened Runtime 下创建 JIT/可执行内存 |
 | `binaries/` | 构建产物边界 | 保存构建时生成、由 Tauri 打包且不进入 Git 的 Agent Service sidecar |
-| `resources/` | 运行配置 | 保存 sidecar 非敏感默认配置及构建时复制的 Node 许可证 |
+| `resources/` | 运行配置 | 保存 sidecar 非敏感默认配置（含独立 CLI 事件流预算）及构建时复制的 Node 许可证 |
 | `capabilities/default.json` | 权限边界 | 主窗口可使用的最小原生能力 |
 | `icons/` | 品牌资源 | 多 Agent 圆桌主题的 Council 图标源图与各平台打包尺寸 |
 | `src/lib.rs` | IPC 入口 | 注册桌面设置、ready + 数据库实例身份门后的持久 SQLite 连接、动态 Actor alias 内容命令与 revision 事件，以及本地 Agent 服务配置/健康/拉起命令和退出清理 |

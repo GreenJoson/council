@@ -318,6 +318,7 @@ function config(directory: string, command: string): CouncilConfig {
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
   };
 }

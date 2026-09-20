@@ -1,6 +1,6 @@
 /**
  * @input  依赖：假 Claude CLI、AbortController 与纯 ClaudeRuntime
- * @output 导出：stream-json 增量、生成、恢复、取消、抗并发调度超时、回合耗尽和安全错误边界测试
+ * @output 导出：stream-json 增量、编程过程/最终回复独立限额、恢复、取消和安全错误边界测试
  * @pos    无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -99,12 +99,20 @@ if (mode === "tree-hang") {
     }
     const resumeIndex = args.indexOf("--resume");
     const modelIndex = args.indexOf("--model");
-    const finalResult = [
+    if (mode === "long-execution") {
+      writeFileSync("implemented.txt", "code change preserved");
+      for (let index = 0; index < 600; index += 1) {
+        process.stdout.write(JSON.stringify({ type: "user", message: {
+          content: [{ type: "tool_result", content: "tool detail ".repeat(400) }]
+        } }) + "\\n");
+      }
+    }
+    const finalResult = mode === "oversized-final" ? "x".repeat(2_000) : [
       input,
       resumeIndex >= 0 ? args[resumeIndex + 1] : "none",
       modelIndex >= 0 ? args[modelIndex + 1] : "none"
     ].join(";");
-    if (args.includes("stream-json")) {
+    if (args.includes("--include-partial-messages")) {
       const streamEvents = [
         { type: "stream_event", event: { type: "message_start" } },
         {
@@ -129,8 +137,9 @@ if (mode === "tree-hang") {
       result: finalResult,
       session_id: "runtime_session",
       model: "runtime_model",
-      is_error: false
-    }));
+      is_error: false,
+      ...(mode === "large-result-envelope" ? { metadata: "x".repeat(20_000) } : {})
+    }) + "\\n");
   });
 }
 `;
@@ -180,6 +189,7 @@ function createConfig(
     schemaMigrationMaxAttempts: 3,
     maxContextChars: 20_000,
     maxOutputChars: 10_000,
+    cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     ...overrides,
   };
@@ -285,6 +295,7 @@ test("ClaudeRuntime 只在显式委派时映射 acceptEdits 或危险权限", as
     let args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
     assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
     assert.equal(args.includes("--dangerously-skip-permissions"), false);
+    assert.equal(args.includes("--include-partial-messages"), false);
 
     await runtime.generate({
       prompt: "execute dangerous",
@@ -329,7 +340,10 @@ test("ClaudeRuntime 只转发 stream-json 的公开 text_delta 并以最终结�
   try {
     const events: Array<{ operation: string; content?: string }> = [];
     let activityCount = 0;
-    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success"));
+    const argDumpFile = path.join(directory, "args.json");
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "success", {
+      claudeArgs: [fakeClaudePath, "--fake-mode", "success", "--arg-dump-file", argDumpFile],
+    }));
     const response = await runtime.generate({
       prompt: "public prompt",
       cwd: directory,
@@ -346,6 +360,67 @@ test("ClaudeRuntime 只转发 stream-json 的公开 text_delta 并以最终结�
       { operation: "replace", content: "public prompt;none;none" },
     ]);
     assert.equal(activityCount, 4, "每个合法 Claude stream-json 事件都应刷新活动时间");
+    const args = JSON.parse(readFileSync(argDumpFile, "utf8")) as string[];
+    assert.equal(args.includes("--include-partial-messages"), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 编程事件流超过旧额度仍完成写文件并返回短摘要", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-code-stream-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "long-execution", {
+      maxOutputChars: 30_000,
+      cliMaxStreamChars: 3_000_000,
+    }));
+    const response = await runtime.generate({
+      prompt: "implement one task",
+      cwd: directory,
+      permissionProfile: "workspace_write",
+    });
+    assert.equal(response.content, "implement one task;none;none");
+    assert.equal(response.sessionId, "runtime_session");
+    assert.equal(readFileSync(path.join(directory, "implemented.txt"), "utf8"), "code change preserved");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 从超过保留窗口的结果 JSON 提取短摘要", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-result-window-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "large-result-envelope", {
+      maxOutputChars: 100,
+    }));
+    const response = await runtime.generate({ prompt: "short", cwd: directory });
+    assert.equal(response.content, "short;none;none");
+    assert.equal(response.sessionId, "runtime_session");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ClaudeRuntime 提高事件流额度仍严格限制最终回复", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-final-limit-"));
+  const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
+  writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
+  try {
+    const runtime = new ClaudeRuntime(createConfig(directory, fakeClaudePath, "oversized-final", {
+      maxOutputChars: 100,
+    }));
+    await assert.rejects(
+      runtime.generate({ prompt: "short", cwd: directory }),
+      (error: unknown) => error instanceof ClaudeRuntimeError
+        && error.diagnosticCode === "final_output_limit"
+        && !error.retryable
+        && /最终回复超过 100 字符/.test(error.message)
+        && /COUNCIL_MAX_OUTPUT_CHARS/.test(error.message),
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -454,17 +529,21 @@ test("ClaudeRuntime 超时后结束子进程", async () => {
   }
 });
 
-test("ClaudeRuntime 拒绝超过输出上限的响应", async () => {
+test("ClaudeRuntime 拒绝超过独立事件流额度的输出并保留计数诊断", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "council-runtime-output-"));
   const fakeClaudePath = path.join(directory, "fake-runtime.mjs");
   writeFileSync(fakeClaudePath, FAKE_RUNTIME_SOURCE, { mode: 0o700 });
   try {
     const runtime = new ClaudeRuntime(
-      createConfig(directory, fakeClaudePath, "oversize", { maxOutputChars: 100 }),
+      createConfig(directory, fakeClaudePath, "oversize", { maxOutputChars: 100, cliMaxStreamChars: 6_400 }),
     );
     await assert.rejects(
       runtime.generate({ prompt: "public prompt", cwd: directory }),
-      /Claude Code 输出超过配置上限/,
+      (error: unknown) => error instanceof ClaudeRuntimeError
+        && error.diagnosticCode === "stream_output_limit"
+        && !error.retryable
+        && /已接收 \d+ 字符，上限 6400/.test(error.message)
+        && /COUNCIL_CLI_MAX_STREAM_CHARS/.test(error.message),
     );
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -479,11 +558,12 @@ test("ClaudeRuntime 持续输出且忽略 SIGTERM 时保持有界并结束进程
   try {
     const config = createConfig(directory, fakeClaudePath, "flood", {
       maxOutputChars: 100,
+      cliMaxStreamChars: 6_400,
     });
     config.claudeArgs.push("--pid-file", pidFile);
     const runtime = new ClaudeRuntime(config);
     const generation = runtime.generate({ prompt: "public prompt", cwd: directory });
-    const rejection = assert.rejects(generation, /Claude Code 输出超过配置上限/);
+    const rejection = assert.rejects(generation, /Claude Code 执行事件流超过配置上限/);
     const pid = await waitForPid(pidFile);
     await rejection;
     await waitForProcessGone(pid);
