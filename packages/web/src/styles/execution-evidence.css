@@ -1,5 +1,5 @@
-/* 运行证据按需展开，接续权限选择复用表单 token，复用项目语义色；摘要保持可滚动、可复制。 */
-.runtime-audit { width: 100%; margin-block: 8px; font-size: 11px; line-height: 1.6; }
+/* 运行证据按需展开；历史对齐任务正文，长字段换行，接续权限沿用主题 token。 */
+.runtime-audit { width: 100%; min-width: 0; margin-block: 8px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .runtime-audit summary { cursor: pointer; color: var(--color-text-muted); }
 .runtime-audit-body { padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; max-height: 480px; overflow: auto; }
 .runtime-audit-body ol { padding-left: 20px; }
@@ -34,3 +34,8 @@
 .delegation-resume-permission { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; }
 .delegation-resume-permission select { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-small); padding: 5px 8px; }
 .delegation-resume-permission small { flex-basis: 100%; color: var(--color-text-muted); }
+
+/* 与任务标记后的正文起点一致；主任务视图的偏移由 components.css 同步覆盖。 */
+.work-item-delegation-history { min-width: 0; margin: 12px 0 0 28px; color: var(--color-text-muted); }
+.work-item-delegation-history > small { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 9px; line-height: 1.6; }
+.work-item-delegation-history time, .delegation-checkpoint > span { min-width: 0; overflow-wrap: anywhere; }

@@ -36,3 +36,5 @@
 | `architecture/` | 视图 | ArchitectureView 的四个内容区块子组件，见 `architecture/_README.md` |
 
 委派卡区分实际执行权限和 Agent 上限；接续入口允许在上限内显式选择新运行权限。
+
+`ImplementationProgress.tsx` 为历史委派提供独立布局类，时间和证据与任务正文对齐，避开层级竖线。

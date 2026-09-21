@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：议题、流体消息列、圆桌上下行模式项、实施进度、检查器、对话框与决策归档样式
+ * @output 导出：议题、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1595,8 +1595,22 @@
 }
 
 .work-item-delegation-state {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   align-items: center;
+}
+
+/* 详情占满卡片正文宽度，避免被隐式放进标题/按钮列。 */
+.work-item-delegation-state > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.work-item-delegation-state > .runtime-audit {
+  grid-column: 1 / -1;
+}
+
+.work-item-delegation-state > button {
+  justify-self: start;
 }
 
 .work-item-delegation-state > span {
@@ -1818,6 +1832,7 @@
 
 .implementation-task-card .work-item-delegation-form,
 .implementation-task-card .work-item-delegation-state,
+.implementation-task-card .work-item-delegation-history,
 .implementation-task-card .work-item-delegate-button {
   margin-left: 40px;
 }

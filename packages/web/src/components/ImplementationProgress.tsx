@@ -1,6 +1,6 @@
 /**
  * @input  依赖：界面语言、议题/实施项树、AI 规划、动态 Actor、跨 Agent 委派、认领与证据化更新回调
- * @output 导出：右栏进度摘要，以及主区显式选 Agent 拆分、人工补充、Agent 协作执行和任务清单
+ * @output 导出：右栏进度摘要，以及主区显式选 Agent 拆分、人工补充、Agent 协作执行和对齐正文的委派历史
  * @pos    Accepted 架构决策与外部 Codex/Claude 实际交付之间的可审计执行账本；
  *         接受决策不会自动生成任务；父任务状态只读派生，完成度只数叶子，审核发现在这里以子任务形式关闭
  *
@@ -388,7 +388,8 @@ export function ImplementationProgress({
                     onCancel={onCancelDelegation}
                   />
                   {delegations.filter((entry) => entry.workItemId === item.id).slice(1).map((entry) => (
-                    <div key={entry.id}><small>{t("历史委派")} · {entry.createdAt}</small>
+                    <div className="work-item-delegation-history" key={entry.id}>
+                      <small><span>{t("历史委派")}</span><time dateTime={entry.createdAt}>{entry.createdAt}</time></small>
                       <RuntimeAuditDetails topicId={entry.topicId} sourceKind="delegation" sourceId={entry.id} />
                     </div>
                   ))}
