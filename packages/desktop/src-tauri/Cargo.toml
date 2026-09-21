@@ -1,6 +1,6 @@
 [package]
 name = "council-desktop"
-version = "0.9.5"
+version = "0.9.6"
 description = "Council local multi-agent desktop workspace"
 edition = "2024"
 rust-version = "1.85"

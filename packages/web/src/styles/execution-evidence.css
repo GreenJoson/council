@@ -1,4 +1,4 @@
-/* 运行证据按需展开，复用项目语义色；摘要保持可滚动、可复制。 */
+/* 运行证据按需展开，接续权限选择复用表单 token，复用项目语义色；摘要保持可滚动、可复制。 */
 .runtime-audit { width: 100%; margin-block: 8px; font-size: 11px; line-height: 1.6; }
 .runtime-audit summary { cursor: pointer; color: var(--color-text-muted); }
 .runtime-audit-body { padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; max-height: 480px; overflow: auto; }
@@ -30,3 +30,7 @@
 .delegation-recovery button { padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
 .work-item-delegation-state.is-paused { border-color: var(--color-warning); background: var(--color-warning-soft); }
 .work-item-delegation-state.is-paused > span { color: var(--color-warning); }
+
+.delegation-resume-permission { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; }
+.delegation-resume-permission select { color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-small); padding: 5px 8px; }
+.delegation-resume-permission small { flex-basis: 100%; color: var(--color-text-muted); }

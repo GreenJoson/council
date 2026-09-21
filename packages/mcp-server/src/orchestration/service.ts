@@ -1,7 +1,7 @@
 /**
  * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
  *         增量草稿中心、统一日志与 ExecutionManager
- * @output 导出：带配置互斥的编排服务、安全 Model Router、跨 Agent 任务委派/恢复、任务规划、持久审计、项目待处理及临时草稿流
+ * @output 导出：带配置互斥的编排服务、安全 Model Router、跨 Agent 任务委派/显式权限恢复、任务规划、持久审计、项目待处理及临时草稿流
  * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1011,9 +1011,9 @@ export class CouncilOrchestrationService {
     return this.delegationManager.startBatch(input);
   }
 
-  async resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+  async resumeWorkItemDelegation(id: string, expectedVersion: number, requestedPermission?: WorkItemDelegation["permissionProfile"]): Promise<WorkItemDelegation> {
     if (!this.delegationManager) throw new OrchestrationConfigError("任务委派服务未启用。");
-    return this.delegationManager.resume(id, expectedVersion);
+    return this.delegationManager.resume(id, expectedVersion, requestedPermission);
   }
 
   cancelWorkItemDelegation(id: string): WorkItemDelegation {

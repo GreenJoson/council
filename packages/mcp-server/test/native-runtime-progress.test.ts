@@ -1,4 +1,4 @@
-/** @input CLI 结构化失败和活动事件；@output 分类、去重和白名单隐私回归；@pos 不凭错误正文猜测模型权限。 */
+/** @input CLI 结构化失败和活动事件；@output 终止原因优先级、分类、去重和白名单隐私回归；@pos 不凭错误正文猜测模型权限。 */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyClaudeFailure, NativeRuntimeProgressTracker, type NativeRuntimeProgress } from "../src/native-runtime-progress.js";
@@ -45,4 +45,17 @@ test("Codex 工具起止去重，不伪造不可观测的回合预算", () => {
   for (const type of ["item.started", "item.completed"]) tracker.observe({ type, item: { id: "item-1", type: "command_execution", command: "private command" } });
   tracker.observe({ type: "turn.completed" });
   assert.deepEqual(tracker.snapshot, { sessionId: "test-thread", toolCalls: 1, lastTool: "command_execution", stopReason: "success" });
+});
+
+
+test("历史工具拒绝不能掩盖最终 OAuth 失效或其他服务错误", () => {
+  const permission_denials = [{ tool_name: "Bash", tool_input: "private command" }];
+  for (const field of ["result", "errors"]) {
+    const message = "Failed to authenticate: OAuth session expired and could not be refreshed";
+    const error = classifyClaudeFailure({ subtype: "error_during_execution", permission_denials, [field]: field === "errors" ? [message] : message });
+    assert.equal(error.diagnosticCode, "authentication_failed"); assert.equal(error.retryable, false);
+    assert.doesNotMatch(error.message, /private/);
+  }
+  assert.equal(classifyClaudeFailure({ result: "service unavailable", permission_denials }).diagnosticCode, "transient_failure");
+  assert.equal(classifyClaudeFailure({ result: "Unexpected upstream response", permission_denials }).diagnosticCode, "request_failed");
 });

@@ -4,7 +4,7 @@
  * @pos    Agent 互相指挥并实际改代码的端到端安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
- * 覆盖回合暂停、会话隐私、指令复用/失效和接续后人工验收
+ * 覆盖回合暂停、会话隐私、指令复用/失效、接续权限上限和接续后人工验收
  */
 
 import { RuntimeAuditStore } from "../src/orchestration/runtime-audit-store.js";
@@ -908,6 +908,38 @@ const content =`));
       assert.equal(events.some(event => event.kind === "brief.started"), changeAgent);
       assert(events.some(event => event.kind === "review.completed"));
       assert.doesNotMatch(JSON.stringify(events), /private-executor-session|private payload|private diagnostic/);
+    } finally { audit.close(); }
+  } finally { await h.close(); }
+});
+
+
+test("接续默认保留旧权限，显式提升受 Agent 上限约束且不改历史", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace("const content =", 'process.exit(1);\nconst content ='));
+    const first = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    const version = () => h.database.listWorkItems({ topicId: h.topic.id })[0]!.version;
+    await assert.rejects(h.manager.resume(first.id, version(), "danger_full_access"), /超过 Agent 当前上限/);
+    assert.equal(h.manager.list(h.topic.id).length, 1);
+    h.router.updateAgent(h.codex.id, { displayName: h.codex.displayName, model: h.codex.model || "test-model", mentionAlias: h.codex.mentionAlias,
+      enabled: true, permissionProfile: "danger_full_access", executionRole: "hybrid" });
+    const oldPermissionResume = await h.manager.resume(first.id, version());
+    const second = await waitForTerminal(h.manager, h.topic.id, oldPermissionResume.id);
+    assert.equal(second.permissionProfile, "workspace_write", "Agent 上限变高不能静默提升旧运行");
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace("const content =", `
+if (prompt.includes("你是本次任务的 executor") && !process.argv.includes("--dangerously-bypass-approvals-and-sandbox")) process.exit(9);
+const content =`));
+    const explicit = await h.manager.resume(second.id, version(), "danger_full_access");
+    const approved = await waitForTerminal(h.manager, h.topic.id, explicit.id);
+    assert.equal(approved.status, "approved", approved.error ?? "");
+    assert.equal(approved.permissionProfile, "danger_full_access");
+    assert.equal(h.manager.list(h.topic.id).find(row => row.id === second.id)?.permissionProfile, "workspace_write");
+    assert.equal(h.manager.list(h.topic.id).find(row => row.id === first.id)?.status, "failed");
+    const audit = new RuntimeAuditStore(h.databasePath, 5000);
+    try {
+      const event = audit.list(h.topic.id, "delegation", explicit.id).events.find(e => e.kind === "delegation.resumed");
+      assert.equal(event?.data.previousPermission, "workspace_write"); assert.equal(event?.data.permission, "danger_full_access");
+      assert(audit.list(h.topic.id, "delegation", explicit.id).events.some(e => e.kind === "brief.started"), "权限变化后重新验证指令");
     } finally { audit.close(); }
   } finally { await h.close(); }
 });

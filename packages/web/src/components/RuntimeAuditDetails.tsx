@@ -1,6 +1,6 @@
 /**
  * @input  依赖：运行来源、显式注入的编排仓储
- * @output 导出：按需加载、游标分页的公开运行证据
+ * @output 导出：按需加载、游标分页的公开运行证据和接续前后权限
  * @pos    讨论调用和实施委派共用的详情视图；旧记录缺失时明确说明
  */
 import { useEffect, useState } from "react";
@@ -21,6 +21,7 @@ const LABELS: Record<string, string> = {
 };
 
 const FIELD_LABELS: Record<string, string> = {
+  previousPermission: "原执行权限",
   stage: "阶段", turnsUsed: "模型回合", turnLimit: "回合上限", toolCalls: "工具调用数", sessionSaved: "会话已保存",
   recoveryMode: "接续方式", restoredFiles: "接续文件数",
   agentId: "Agent", bindingId: "会话绑定", toolName: "工具", callId: "工具调用", owner: "工具执行方",

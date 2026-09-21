@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、决策包接受、AI 实施计划与实施项）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划与实施项）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -69,7 +69,10 @@ export const delegationIdSchema = z
   .max(MAX_ID_CHARS, "delegationId 过长")
   .regex(/^delegation-[A-Za-z0-9-]+$/, "delegationId 格式无效");
 
-export const resumeDelegationBodySchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+export const resumeDelegationBodySchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  requestedPermission: z.enum(["workspace_write", "danger_full_access"]).optional(),
+}).strict();
 
 export const runtimeAuditQuerySchema = z.object({
   sourceKind: z.enum(["run", "delegation"]),

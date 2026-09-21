@@ -1,4 +1,4 @@
-/** @input 原生 CLI 的结构化事件；@output 不含正文/参数的执行进度；@pos 会话、回合和工具活动的白名单协议。 */
+/** @input 原生 CLI 的结构化事件；@output 不含正文/参数的执行进度；@pos 会话、回合和工具活动的白名单协议；终止原因优先于历史权限拒绝。 */
 export interface NativeRuntimeProgress {
   sessionId?: string;
   turnsUsed?: number;
@@ -67,15 +67,17 @@ export function classifyClaudeFailure(value: unknown): NativeRuntimeFailure {
     return failure("budget_exhausted", "Claude 调用预算已用尽，执行已暂停；请调整预算后接续。");
   if (/out of usage credits|usage limit|quota|insufficient credit|hit your (?:session|weekly|monthly|daily) limit|extra usage/iu.test(text))
     return failure("quota_exhausted", "Claude 账号额度已用尽，执行已暂停；请等待额度恢复或调整账号后接续。");
-  if (/not logged in|authentication|unauthorized/iu.test(text))
+  if (/not logged in|authenticat(?:ion|e)|unauthorized|oauth[^\n]*(?:expired|refresh)|\b401\b/iu.test(text))
     return failure("authentication_failed", "Claude Code CLI 未登录。请先完成一次 claude auth login；Claude Desktop 手动接力模式不受影响。");
   if (/model.*(?:not found|unavailable|not supported|access)|invalid model/iu.test(text))
     return failure("model_unavailable", "Claude 模型不可用，请在 Council 设置中选择当前账号可用的模型。");
   if (result.subtype === "error_max_structured_output_retries")
     return failure("invalid_result", "Claude 未能生成约定格式的结果，请检查输出要求后接续。");
-  if (Array.isArray(result.permission_denials) && result.permission_denials.length)
-    return failure("permission_denied", "Claude 工具操作被权限策略拒绝，已保留进度；请检查所需权限与任务范围。");
   if (/overloaded|rate limit|temporar|try again|service unavailable/iu.test(text))
     return failure("transient_failure", "Claude 服务暂时不可用，已保留进度，请稍后接续。", true);
+  // permission_denials 可能包含早先的拒绝，不能覆盖最终的认证/服务错误。
+  if ((/permission|approval|denied/iu.test(text) || !text.trim())
+    && Array.isArray(result.permission_denials) && result.permission_denials.length)
+    return failure("permission_denied", "Claude 工具操作被权限策略拒绝，已保留进度；请检查所需权限与任务范围。");
   return failure("request_failed", "Claude Code 执行未成功，已保留进度；请查看失败阶段与执行记录。");
 }

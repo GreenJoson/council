@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次领域类型
- * @output 导出：OrchestrationRepository 运行、AI 实施计划与持久会话数据访问契约
+ * @output 导出：OrchestrationRepository 运行、AI 实施计划、可选接续权限与持久会话数据访问契约
  * @pos    将运行状态与 TopicDetail 解耦的前端持久化边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -38,7 +38,7 @@ import type {
 export type OrchestrationListener = (snapshot: OrchestrationSnapshot) => void;
 
 export interface OrchestrationRepository {
-  resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation>;
+  resumeWorkItemDelegation(id: string, expectedVersion: number, requestedPermission?: WorkItemDelegation["permissionProfile"]): Promise<WorkItemDelegation>;
   listWorkAttention(topicId: string): Promise<WorkAttention[]>;
   listRuntimeAudit(input: RuntimeAuditQuery): Promise<RuntimeAuditPage>;
   loadCapabilities(): Promise<OrchestrationSnapshot>;

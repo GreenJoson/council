@@ -4,10 +4,16 @@
  * @pos    中英双语的英文单一真源，用户内容不经过本词典
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
- * 覆盖阶段进度、暂停分类与检查点接续指引
+ * 覆盖阶段进度、暂停分类、检查点接续指引与显式权限选择
  */
 
 export const englishCatalog: Readonly<Record<string, string>> = {
+  "接续执行权限": "Continuation permissions",
+  "工作区写入": "Workspace write",
+  "本次选择仅用于新的接续运行；仍须遵守任务范围与验收标准。": "This selection applies to the new continuation only. Task scope and acceptance criteria still apply.",
+  "本次执行权限：{permission}": "Execution permissions: {permission}",
+  "原执行权限": "Previous execution permissions",
+  "所选接续权限超过 Agent 当前上限，请检查设置。": "Selected continuation permissions exceed the agent limit. Check its settings.",
   "生成实施指令": "Preparing instructions",
   "执行与验证": "Implementing and validating",
   "检查并提交": "Checking and committing",

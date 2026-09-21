@@ -33,3 +33,5 @@
 | `error-message.test.ts` | 单元测试 | 验证启动失败路径的文案归一化：Tauri 字符串 reject 与对象 message 必须保留，只有空白值才回落到通用文案 |
 
 HTTP/SSE 浏览器验收覆盖运行审计展开、待处理导航及确认后的自动消退；HTTP 和 Mock 浏览器显式设置 zh-CN，嵌套审计折叠区使用精确父级定位。
+
+接续权限覆盖界面默认值、Agent 上限选项和 HTTP 显式权限传递。

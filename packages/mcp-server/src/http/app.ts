@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、议题更正/关闭、决策包、AI 实施计划、跨 Agent 任务委派与接续、模型路由、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、议题更正/关闭、决策包、AI 实施计划、跨 Agent 任务委派与可选权限接续、模型路由、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -685,7 +685,7 @@ export function createCouncilHttpApp(
     if (!orchestration) throw new HttpError(503, "任务委派服务未启用。");
     const params = parse(delegationParamsSchema, request.params);
     const input = parse(resumeDelegationBodySchema, request.body);
-    sendSuccess(response, await orchestration.resumeWorkItemDelegation(params.delegationId, input.expectedVersion), "已创建接续任务。", 202);
+    sendSuccess(response, await orchestration.resumeWorkItemDelegation(params.delegationId, input.expectedVersion, input.requestedPermission), "已创建接续任务。", 202);
   });
 
   app.post("/api/v1/work-item-delegations/:delegationId/actions/cancel", (request, response) => {

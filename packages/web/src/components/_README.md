@@ -34,3 +34,5 @@
 | `presentation.tsx` | 基础 | 统一品牌 logo、冻结 Actor 快照到 Participant 的转换、动态头像回退、议题状态与决策状态标签/徽章 |
 | `StatusBar.tsx` | 基础 | 底部状态条：右下角显示构建身份（版本 · commit · 构建时间），由 vite.config 在构建期注入；semver 不随重建变化，靠 commit 与时间区分手上跑的是哪个包 |
 | `architecture/` | 视图 | ArchitectureView 的四个内容区块子组件，见 `architecture/_README.md` |
+
+委派卡区分实际执行权限和 Agent 上限；接续入口允许在上限内显式选择新运行权限。

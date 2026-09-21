@@ -1,4 +1,4 @@
-/** @input 旧失败委派与仓储上下文；@output 中英恢复入口和运行状态限制；@pos 防止未提交工作被误导为只能从头委派。 */
+/** @input 旧失败委派与仓储上下文；@output 中英恢复入口、接续权限选项和运行状态限制；@pos 防止未提交工作被误导为只能从头委派。 */
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DelegationRecoveryActions } from "../src/components/DelegationRecoveryActions";
@@ -14,9 +14,9 @@ const draft: WorkItemDelegation = {
   createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
 };
 const repository = { resumeWorkItemDelegation: async () => { throw new Error("render must not execute"); } } as unknown as OrchestrationRepository;
-const render = (changes: Partial<WorkItemDelegation> = {}, locale: "zh-CN" | "en" = "zh-CN") => renderToStaticMarkup(
+const render = (changes: Partial<WorkItemDelegation> = {}, locale: "zh-CN" | "en" = "zh-CN", allowFullControl = false) => renderToStaticMarkup(
   <I18nProvider initialLocale={locale}><ExecutionRepositoryContext.Provider value={repository}>
-    <DelegationRecoveryActions delegation={{ ...draft, ...changes }} expectedVersion={3} />
+    <DelegationRecoveryActions delegation={{ ...draft, ...changes }} expectedVersion={3} allowFullControl={allowFullControl} />
   </ExecutionRepositoryContext.Provider></I18nProvider>,
 );
 
@@ -38,4 +38,13 @@ describe("失败任务接续", () => {
     expect(render({ status: "approved" })).toBe("");
     expect(render({ status: "cancelled" })).toContain("接续未完成工作");
   });
+});
+
+it("接续仅在 Agent 允许时展示完全控制选项，默认仍选择原权限", () => {
+  expect(render()).not.toContain("<select");
+  const html = render({}, "en", true);
+  expect(html).toContain('value="workspace_write" selected=""');
+  expect(html).toContain('value="danger_full_access"');
+  expect(html).toContain("Continuation permissions");
+  expect(html).not.toMatch(/[\u4e00-\u9fff]/u);
 });

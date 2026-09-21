@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpOrchestrationRepository 与可控 Fetch/SSE 替身
- * @output 导出：自动轮次、持久会话协议、安全请求体和 revision 分流回归测试
+ * @output 导出：自动轮次、持久会话协议、显式接续权限、安全请求体和 revision 分流回归测试
  * @pos    Web 自动轮次仓储的传输与实时校准验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,7 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
+  WorkItemDelegation,
 } from "../src/types/orchestration";
 
 function success(data: unknown): Response {
@@ -254,6 +255,24 @@ const OPTIONS = {
 } as const;
 
 describe("HttpOrchestrationRepository", () => {
+  it("接续请求默认不提升权限，只发送显式选择的新权限", async () => {
+    const bodies: unknown[] = [];
+    const delegation: WorkItemDelegation = {
+      id: "delegation-new", topicId: "topic-test", workItemId: "item-test",
+      supervisorAgentId: "reviewer", executorAgentId: "executor", permissionProfile: "workspace_write",
+      status: "queued", attempt: 0, maxAttempts: 2,
+      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const repository = new HttpOrchestrationRepository({ ...OPTIONS, fetcher: async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe("/api/v1/work-item-delegations/delegation-old/actions/resume");
+      expect(init?.method).toBe("POST");
+      bodies.push(JSON.parse(String(init?.body)));
+      return success(delegation);
+    } });
+    await repository.resumeWorkItemDelegation("delegation-old", 3);
+    await repository.resumeWorkItemDelegation("delegation-old", 3, "danger_full_access");
+    expect(bodies).toEqual([{ expectedVersion: 3 }, { expectedVersion: 3, requestedPermission: "danger_full_access" }]);
+  });
   it("直接合并当前议题的 agent.output，忽略乱序分片并在正式状态校准前保留完成草稿", async () => {
     const fixture = createOrchestrationFixture();
     const stream = new FakeEventStream();

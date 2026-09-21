@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 运行、按 decisionId 生成 AI 实施计划、持久会话、委派恢复、审计/待处理与临时草稿仓储
+ * @output 导出：HttpOrchestrationRepository 运行、按 decisionId 生成 AI 实施计划、持久会话、显式权限委派恢复、审计/待处理与临时草稿仓储
  * @pos    revision 变化时校准运行/会话列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -519,9 +519,9 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     );
   }
 
-  async resumeWorkItemDelegation(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+  async resumeWorkItemDelegation(id: string, expectedVersion: number, requestedPermission?: WorkItemDelegation["permissionProfile"]): Promise<WorkItemDelegation> {
     return requestApiData(this.#fetcher, createApiUrl(this.#baseUrl,
-      `/api/v1/work-item-delegations/${encodeURIComponent(id)}/actions/resume`), parseWorkItemDelegation, jsonRequest({ expectedVersion }));
+      `/api/v1/work-item-delegations/${encodeURIComponent(id)}/actions/resume`), parseWorkItemDelegation, jsonRequest({ expectedVersion, ...(requestedPermission ? { requestedPermission } : {}) }));
   }
 
   async listWorkAttention(topicId: string): Promise<WorkAttention[]> {

@@ -1,4 +1,4 @@
-/** @input 失败委派与实施项版本；@output 提交恢复/未提交工作接续；@pos 保留历史并发起新隔离运行。 */
+/** @input 失败委派、实施项版本与 Agent 权限上限；@output 提交恢复/未提交工作接续；@pos 保留历史并发起新隔离运行。 */
 import { useState } from "react";
 import { useExecutionRepository } from "../hooks/useExecutionRepository";
 import { useI18n } from "../i18n/I18nProvider";
@@ -15,21 +15,31 @@ const HINTS: Record<string, string> = {
   interrupted: "服务曾中断；可恢复提交或检查并接续未完成工作。",
 };
 
-export function DelegationRecoveryActions({ delegation, expectedVersion }: {
+export function DelegationRecoveryActions({ delegation, expectedVersion, allowFullControl = false }: {
   delegation: WorkItemDelegation;
   expectedVersion: number;
+  allowFullControl?: boolean;
 }) {
   const { t } = useI18n();
   const repository = useExecutionRepository();
   const [busy, setBusy] = useState(false);
+  const [permission, setPermission] = useState(delegation.permissionProfile);
   const [message, setMessage] = useState<string | null>(null);
   if (!repository || !["failed", "cancelled"].includes(delegation.status)) return null;
   return <div className="delegation-recovery">
     {delegation.failureCode && HINTS[delegation.failureCode] ? <p>{t(HINTS[delegation.failureCode]!)}</p> : null}
     {!delegation.headCommit && delegation.baseCommit ? <p>{t("尚未生成交付提交；可以检查并接续原工作区中的代码，旧文件与失败记录会保留。")}</p> : null}
+    {delegation.baseCommit && allowFullControl ? <label className="delegation-resume-permission">
+      {t("接续执行权限")}
+      <select aria-label={t("接续执行权限")} value={permission} disabled={busy} onChange={event => setPermission(event.target.value as WorkItemDelegation["permissionProfile"])}>
+        <option value="workspace_write">{t("工作区写入")}</option>
+        <option value="danger_full_access">{t("完全控制")}</option>
+      </select>
+      <small>{t("本次选择仅用于新的接续运行；仍须遵守任务范围与验收标准。")}</small>
+    </label> : null}
     {delegation.baseCommit ? <button type="button" disabled={busy} onClick={() => {
       setBusy(true); setMessage(null);
-      void repository.resumeWorkItemDelegation(delegation.id, expectedVersion)
+      void repository.resumeWorkItemDelegation(delegation.id, expectedVersion, permission === delegation.permissionProfile ? undefined : permission)
         .then(() => setMessage(delegation.headCommit
           ? "已从提交进度恢复，正在重新审核。"
           : "已接续未完成工作，将继续执行并审核。"))

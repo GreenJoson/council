@@ -56,3 +56,5 @@ recovery 配置持续校准；EventSource 再次 open 也会立即重试失败�
 桌面自动轮次不再是显式 stub：`DesktopOrchestrationRepository` 通过 `get_orchestration_config` 从 Rust 设置层拿到本地 Agent 服务地址（默认集中在 Rust `settings.rs` 一处，前端不硬编码），用 `check_orchestration_service` 做 Rust 侧健康探测（不受 CORS 影响），可达时创建 `HttpOrchestrationRepository` 直连编排 REST/SSE；不可达时返回带诊断指引的离线快照（含服务地址），按 `VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS` 周期重试。Rust 桌面层在 App 打开或日志库切换后自动托管内置 sidecar，前端的单次 autostart 调用只负责恢复竞态或异常退出。服务就绪后自动转 LIVE：重新加载能力、回放当前议题选择并停止健康轮询，无需重启应用。写操作在离线态直接抛出与面板一致的诚实指引。
 
 委派协议解析包含持久阶段、实际回合/工具计数；拒绝非法阶段与负数，并忽略私有检查点。
+
+HTTP 和桌面仓储透传可选接续权限；未选择时不发送覆盖值。

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：真实 Express App、SQLite Store、Fake Agent 与后台执行管理器
- * @output 导出：编排、AI 实施计划与持久会话 REST、多决策包完成边界、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、恢复和 sweeper 集成测试
+ * @output 导出：编排、AI 实施计划与持久会话 REST、多决策包完成边界、双 lease 长调用、session 隔离/碰撞、已决禁用、取消、接续权限协议和 sweeper 集成测试
  * @pos    Web 已冻结协议和跨进程自动执行语义的主验收套件
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -32,6 +32,36 @@ import type { Decision } from "../src/types.js";
 import { readEnvelope, startHttpHarness } from "./http-harness.js";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+
+test("接续 HTTP 严格校验可选权限，旧请求保持原协议", async () => {
+  const harness = await startHttpHarness({}, []);
+  const calls: unknown[] = [];
+  harness.orchestration!.resumeWorkItemDelegation = async (id, expectedVersion, requestedPermission) => {
+    calls.push({ id, expectedVersion, requestedPermission });
+    return { id: "delegation-new", topicId: "topic-test", workItemId: "item-test",
+      supervisorAgentId: "reviewer", executorAgentId: "executor", permissionProfile: requestedPermission ?? "workspace_write",
+      status: "queued", attempt: 0, maxAttempts: 2,
+      completionPolicy: "human", acceptanceCriteria: "通过测试并等待人工验收",
+      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+  };
+  try {
+    const url = `${harness.baseUrl}/api/v1/work-item-delegations/delegation-old/actions/resume`;
+    for (const requestedPermission of [undefined, "danger_full_access"]) {
+      const response = await fetch(url, { method: "POST", headers: JSON_HEADERS,
+        body: JSON.stringify({ expectedVersion: 3, requestedPermission }) });
+      assert.equal(response.status, 202);
+    }
+    for (const extra of [{ requestedPermission: "read_only" }, { requestedPermission: "admin" }, { unsafe: true }]) {
+      const response = await fetch(url, { method: "POST", headers: JSON_HEADERS,
+        body: JSON.stringify({ expectedVersion: 3, ...extra }) });
+      assert.equal(response.status, 400);
+    }
+    assert.deepEqual(calls, [
+      { id: "delegation-old", expectedVersion: 3, requestedPermission: undefined },
+      { id: "delegation-old", expectedVersion: 3, requestedPermission: "danger_full_access" },
+    ]);
+  } finally { await harness.close(); }
+});
 
 interface Deferred<T> {
   promise: Promise<T>;

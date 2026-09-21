@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿及指令检查点恢复、分阶段运行与优雅关闭
+ * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿及指令检查点恢复、显式接续权限、分阶段运行与优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -367,7 +367,7 @@ export class WorkItemDelegationManager {
     return delegations;
   }
 
-  async resume(id: string, expectedVersion: number): Promise<WorkItemDelegation> {
+  async resume(id: string, expectedVersion: number, requestedPermission?: WorkItemDelegation["permissionProfile"]): Promise<WorkItemDelegation> {
     const previous = this.#store.getPrivate(id);
     if (!previous) throw new CouncilNotFoundError("任务委派不存在。");
     if (!["failed", "cancelled"].includes(previous.status) || this.#controllers.has(id)) {
@@ -377,8 +377,10 @@ export class WorkItemDelegationManager {
     if (task.item.version !== expectedVersion || task.item.status === "completed") {
       throw new CouncilConflictError("实施项已更新或完成，请刷新后检查。");
     }
-    const assignment = this.#resolveAssignment({ ...previous, requestedPermission: previous.permissionProfile });
-    if (assignment.permission !== previous.permissionProfile) throw new CouncilConflictError("Agent 权限已变化，请重新配置委派。");
+    // 旧请求默认沿用原权限；只有显式选择才改变新运行，不改历史授权。
+    const desiredPermission = requestedPermission ?? previous.permissionProfile;
+    const assignment = this.#resolveAssignment({ ...previous, requestedPermission: desiredPermission });
+    if (assignment.permission !== desiredPermission) throw new CouncilConflictError("所选接续权限超过 Agent 当前上限，请检查设置。");
     const signal = new AbortController().signal;
     const checkpoint = await validateRecoveryCheckpoint({ previous, projectPath: task.projectPath,
       worktreeRoot: this.config.worktreeRoot,
@@ -394,6 +396,10 @@ export class WorkItemDelegationManager {
     }
     const latest = this.#store.list(previous.topicId).find((entry) => entry.workItemId === previous.workItemId);
     if (latest?.id !== id) throw new CouncilConflictError("已有更新的委派，请从最新记录继续。");
+    // 工作区检查会让出执行权，创建运行前重新核对当前权限上限。
+    if (this.#resolveAssignment({ ...previous, requestedPermission: desiredPermission }).permission !== desiredPermission) {
+      throw new CouncilConflictError("所选接续权限超过 Agent 当前上限，请检查设置。");
+    }
     let created: WorkItemDelegation;
     try {
       created = this.#store.create({
@@ -420,7 +426,8 @@ export class WorkItemDelegationManager {
         await this.#git(root, ["read-tree", "--reset", "-u", snapshot.tree], controller.signal);
       }
       this.#recordAudit(created.id, "delegation.resumed", { previousId: id, headCommit: checkpoint.headCommit,
-        recoveryMode: checkpoint.mode, restoredFiles: snapshot?.fileCount ?? 0, criteria: created.acceptanceCriteria });
+        recoveryMode: checkpoint.mode, restoredFiles: snapshot?.fileCount ?? 0, criteria: created.acceptanceCriteria,
+        previousPermission: previous.permissionProfile, permission: created.permissionProfile });
       await this.#executeInWorkspace(created.id, {
         root, cwd: path.join(root, checkpoint.relativeProjectPath), baseCommit: checkpoint.baseCommit, branchName,
         ...(snapshot ? { restoredWork: true } : {}),
@@ -845,6 +852,7 @@ export class WorkItemDelegationManager {
       });
       const fingerprint = createHash("sha256").update(JSON.stringify({
         criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
+        permission: delegation.permissionProfile,
         supervisor: [supervisor.id, supervisor.configRevision, this.#requireNativeProvider(supervisor).configRevision],
         executor: [executor.id, executor.configRevision, this.#requireNativeProvider(executor).configRevision],
       })).digest("hex");
