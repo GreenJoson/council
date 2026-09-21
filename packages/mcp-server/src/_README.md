@@ -4,6 +4,8 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `native-runtime-progress.ts` | 协议边界 | 原生 CLI 会话、回合、工具计数白名单与结构化失败分类 |
+| `schema-v17-migration.ts` | 迁移步骤 | 追加私有委派检查点，保留旧记录 |
 | `schema-v15-migration.ts` | 迁移步骤 | 冻结完成策略与验收标准，约束人工验收；历史记录保留审核即完成语义 |
 | `schema-v16-migration.ts` | 迁移步骤 | 增加追加审计、失败分类、恢复来源及审计 revision |
 | `index.ts` | 入口 | 加载配置，等待 schema 迁移完成后连接 stdio MCP |
@@ -11,7 +13,7 @@
 | `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题创建/更正/关闭、消息、proposed 决策和可传递请求取消的 Claude 工具 |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
-| `schema-definitions.ts` | Schema 正本 | 保存 v1–v16 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1–v17 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
 | `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移、备份与失败关闭 |
 | `schema-migration-values.ts` | 迁移值边界 | 严格读取历史行字段并映射旧作者/Agent 身份，不接触迁移事务 |
 | `schema-storage.ts` | 存储边界 | 提供迁移共用的 pragma/完整性/行数校验、schema 快照、在线备份验证和文件保护 |

@@ -1,11 +1,12 @@
 /**
- * @input  依赖：canonical v14 work_item_delegations 表与 SQLite busy timeout
- * @output 导出：WorkItemDelegationStore、公开委派快照与原子状态更新
+ * @input  依赖：canonical v17 work_item_delegations 表与 SQLite busy timeout
+ * @output 导出：WorkItemDelegationStore、公开阶段快照、私有检查点与原子状态更新
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { publicExecutionProgress, type DelegationCheckpoint, type DelegationExecutionProgress } from "./delegation-checkpoint.js";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentPermissionProfile } from "../agent-execution-policy.js";
 
@@ -23,6 +24,7 @@ export type WorkItemDelegationStatus = (typeof WORK_ITEM_DELEGATION_STATUSES)[nu
 export type DelegationExecutionPermission = Exclude<AgentPermissionProfile, "read_only">;
 
 export interface WorkItemDelegation {
+  execution?: DelegationExecutionProgress;
   id: string;
   topicId: string;
   workItemId: string;
@@ -39,8 +41,6 @@ export interface WorkItemDelegation {
   baseCommit?: string;
   headCommit?: string;
   branchName?: string;
-  executorSessionId?: string;
-  supervisorSessionId?: string;
   summary?: string;
   review?: string;
   error?: string;
@@ -50,6 +50,7 @@ export interface WorkItemDelegation {
 }
 
 interface DelegationRow {
+  execution_state_json: string | null;
   id: string;
   topic_id: string;
   work_item_id: string;
@@ -78,7 +79,10 @@ interface DelegationRow {
 }
 
 function publicDelegation(row: DelegationRow): WorkItemDelegation {
+  const checkpoint = row.execution_state_json ? JSON.parse(row.execution_state_json) as DelegationCheckpoint : undefined;
+  const execution = publicExecutionProgress(checkpoint);
   return {
+    ...(execution ? { execution } : {}),
     id: row.id,
     topicId: row.topic_id,
     workItemId: row.work_item_id,
@@ -95,8 +99,6 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
     ...(row.base_commit ? { baseCommit: row.base_commit } : {}),
     ...(row.head_commit ? { headCommit: row.head_commit } : {}),
     ...(row.branch_name ? { branchName: row.branch_name } : {}),
-    ...(row.executor_session_id ? { executorSessionId: row.executor_session_id } : {}),
-    ...(row.supervisor_session_id ? { supervisorSessionId: row.supervisor_session_id } : {}),
     ...(row.summary ? { summary: row.summary } : {}),
     ...(row.review ? { review: row.review } : {}),
     ...(row.error ? { error: row.error } : {}),
@@ -108,6 +110,9 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
 
 export interface DelegationPrivateState extends WorkItemDelegation {
   worktreePath?: string;
+  checkpoint?: DelegationCheckpoint;
+  executorSessionId?: string;
+  supervisorSessionId?: string;
 }
 
 export interface CreateWorkItemDelegationInput {
@@ -129,6 +134,9 @@ export interface CreateWorkItemDelegationInput {
 function privateDelegation(row: DelegationRow): DelegationPrivateState {
   return {
     ...publicDelegation(row),
+    ...(row.executor_session_id ? { executorSessionId: row.executor_session_id } : {}),
+    ...(row.supervisor_session_id ? { supervisorSessionId: row.supervisor_session_id } : {}),
+    ...(row.execution_state_json ? { checkpoint: JSON.parse(row.execution_state_json) as DelegationCheckpoint } : {}),
     ...(row.worktree_path ? { worktreePath: row.worktree_path } : {}),
   };
 }
@@ -209,6 +217,7 @@ export class WorkItemDelegationStore {
   }
 
   update(id: string, patch: {
+    checkpoint?: DelegationCheckpoint;
     status?: WorkItemDelegationStatus;
     attempt?: number;
     baseCommit?: string;
@@ -235,7 +244,7 @@ export class WorkItemDelegationStore {
       UPDATE work_item_delegations
       SET status = ?, attempt = ?, base_commit = ?, head_commit = ?, branch_name = ?,
           worktree_path = ?, executor_session_id = ?, supervisor_session_id = ?,
-          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?
+          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?, execution_state_json = ?
       WHERE id = ?
     `).run(
       status,
@@ -252,6 +261,7 @@ export class WorkItemDelegationStore {
       patch.now,
       completedAt,
       patch.failureCode ?? current.failureCode ?? null,
+      patch.checkpoint ? JSON.stringify(patch.checkpoint) : current.checkpoint ? JSON.stringify(current.checkpoint) : null,
       id,
     );
     if (result.changes !== 1) {

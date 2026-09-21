@@ -475,7 +475,7 @@ fn opens_node_current_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 16);
+    assert_eq!(user_version, 17);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 7); // 含审计追加 revision 与禁止覆盖触发器。
     drop(raw);
@@ -901,8 +901,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (17, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 17;",
+             VALUES (18, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 18;",
         )
         .expect("future schema fixture");
     assert!(matches!(

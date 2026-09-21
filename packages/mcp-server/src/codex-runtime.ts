@@ -1,11 +1,13 @@
 /**
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输与可选 AbortSignal
- * @output 导出：CodexRuntime、独立事件流/最终回复限额、公开消息增量和脱敏失败分类
+ * @output 导出：CodexRuntime、独立事件流/最终回复限额、公开消息增量、会话/工具进度和脱敏失败分类
  * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 早期会话和去重工具进度回调，不依赖保留输出窗口
  */
 
+import { NativeRuntimeProgressTracker, type NativeRuntimeProgressListener } from "./native-runtime-progress.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +45,7 @@ export interface CodexRuntimeInput {
   model?: string;
   signal?: AbortSignal;
   onActivity?: () => void;
+  onProgress?: NativeRuntimeProgressListener;
   onTextEvent?: RuntimeTextListener;
   /** 仅显式任务委派传入；普通讨论省略后固定为 read_only。 */
   permissionProfile?: AgentPermissionProfile;
@@ -358,14 +361,12 @@ export class CodexRuntime {
         ...(model ? ["--model", model] : []),
         "-",
       );
-      const decoder = input.onTextEvent || input.onActivity
-        ? new JsonLineDecoder((value) => {
-            input.onActivity?.();
-            if (input.onTextEvent) {
-              observeCodexEvent(value, input.onTextEvent);
-            }
-          })
-        : undefined;
+      const progress = new NativeRuntimeProgressTracker("codex", input.onProgress);
+      const decoder = new JsonLineDecoder((value) => {
+        progress.observe(value);
+        input.onActivity?.();
+        if (input.onTextEvent) observeCodexEvent(value, input.onTextEvent);
+      });
       const result = await this.#run(
         args,
         input.prompt,
@@ -399,7 +400,7 @@ export class CodexRuntime {
           "final_output_limit",
         );
       }
-      const threadId = extractSessionId(events);
+      const threadId = progress.snapshot.sessionId ?? extractSessionId(events);
       return {
         content,
         ...(threadId ? { sessionId: threadId } : {}),

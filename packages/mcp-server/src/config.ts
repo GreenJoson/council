@@ -4,6 +4,7 @@
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 集中加载并校验 Claude 实施和审核的独立回合预算
  */
 
 import { mkdirSync } from "node:fs";
@@ -334,6 +335,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS,
     ),
+    claudeExecutionMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_EXECUTION_MAX_TURNS", env, 120),
+    claudeReviewMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_REVIEW_MAX_TURNS", env, 48),
     delegationWorktreeRoot,
     delegationGitMaxOutputChars: parseOptionalPositiveInteger(
       "COUNCIL_DELEGATION_GIT_MAX_OUTPUT_CHARS", env, DEFAULT_DELEGATION_GIT_MAX_OUTPUT_CHARS,

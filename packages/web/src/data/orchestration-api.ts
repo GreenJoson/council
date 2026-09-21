@@ -4,6 +4,7 @@
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 解析可选的持久阶段与实际指标，过滤私有执行信息
  */
 
 import type {
@@ -268,6 +269,19 @@ function parseAdapter(value: unknown): OrchestrationAdapter {
   };
 }
 
+function parseDelegationExecution(value: unknown): NonNullable<WorkItemDelegation["execution"]> {
+  const record = recordValue(value, "workItemDelegation.execution");
+  const phase = stringValue(record, "phase");
+  if (phase !== "brief" && phase !== "execution" && phase !== "commit" && phase !== "review") throw new Error("执行阶段无效");
+  return { phase, phaseStartedAt: stringValue(record, "phaseStartedAt"), lastActivityAt: stringValue(record, "lastActivityAt"),
+    ...(record.turnsUsed !== undefined ? { turnsUsed: integerValue(record, "turnsUsed", 0) } : {}),
+    ...(record.turnLimit !== undefined ? { turnLimit: integerValue(record, "turnLimit", 1) } : {}),
+    ...(record.toolCalls !== undefined ? { toolCalls: integerValue(record, "toolCalls", 0) } : {}),
+    ...(optionalString(record, "lastTool") ? { lastTool: optionalString(record, "lastTool") } : {}),
+    ...(optionalString(record, "stopReason") ? { stopReason: optionalString(record, "stopReason") } : {}),
+    checkpointAvailable: record.checkpointAvailable === true };
+}
+
 export function parseWorkItemDelegation(value: unknown): WorkItemDelegation {
   const record = recordValue(value, "workItemDelegation");
   const status = stringValue(record, "status") as WorkItemDelegation["status"];
@@ -287,6 +301,7 @@ export function parseWorkItemDelegation(value: unknown): WorkItemDelegation {
   if (policy !== undefined && policy !== "review" && policy !== "human") throw new Error("完成条件无效");
   const optional = (key: string): string | undefined => optionalString(record, key);
   return {
+    ...(record.execution !== undefined ? { execution: parseDelegationExecution(record.execution) } : {}),
     id: stringValue(record, "id"),
     topicId: stringValue(record, "topicId"),
     workItemId: stringValue(record, "workItemId"),

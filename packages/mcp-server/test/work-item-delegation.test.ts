@@ -4,6 +4,7 @@
  * @pos    Agent 互相指挥并实际改代码的端到端安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 覆盖回合暂停、会话隐私、指令复用/失效和接续后人工验收
  */
 
 import { RuntimeAuditStore } from "../src/orchestration/runtime-audit-store.js";
@@ -98,6 +99,8 @@ function createConfig(directory: string, databasePath: string, claudeScript: str
     claudePermissionMode: "plan",
     claudeTimeoutMs: 5_000,
     claudeKillGraceMs: 50,
+    claudeExecutionMaxTurns: 120,
+    claudeReviewMaxTurns: 48,
     claudeMaxTurns: 3,
     codexCommand: process.execPath,
     codexArgs: [codexScript, codexLog],
@@ -676,7 +679,7 @@ test("未提交草稿显式接续到新工作区，保留历史并重新执行�
     const oldIndex = readFileSync(path.resolve(oldRoot, git(oldRoot, ["rev-parse", "--git-path", "index"])));
     const oldStatus = git(oldRoot, ["status", "--porcelain=v1"]);
     const item = h.database.listWorkItems({ topicId: h.topic.id })[0]!;
-    // 恢复后即使首次只读说明失败，草稿仍进入新工作区，可以再次显式接续。
+    // 恢复后执行再次失败，草稿仍进入新工作区，可以再次显式接续。
     writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace("const content =", 'process.stdout.write(JSON.stringify({type:"result",result:"unauthorized",is_error:true})); process.exit(1);\nconst content ='));
     const firstResume = await h.manager.resume(failed.id, item.version);
     const interrupted = await waitForTerminal(h.manager, h.topic.id, firstResume.id);
@@ -758,7 +761,7 @@ const content =`));
     await assert.rejects(h.manager.resume(failed.id, changed.version), /未提交改动/u);
     assert.equal(readFileSync(uncommitted, "utf8"), "preserve me");
     rmSync(uncommitted);
-    // 恢复的第一次只读说明再次失败，最新委派仍应保留原提交，允许继续恢复。
+    // 接续后的审核再次失败，最新委派仍应保留原提交，允许继续恢复。
     writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace('const content =', 'process.stdout.write(JSON.stringify({type:"result",result:"unauthorized",is_error:true})); process.exit(1);\nconst content ='));
     const interruptedResume = await h.manager.resume(failed.id, changed.version);
     const failedAgain = await waitForTerminal(h.manager, h.topic.id, interruptedResume.id);
@@ -851,5 +854,60 @@ const content =`));
     assert.equal(failed.status, "failed");
     assert.equal(failed.failureCode, "transient_failure");
     assert.equal(readFileSync(h.codexLog, "utf8").split("---CALL---").length - 1, 2);
+  } finally { await h.close(); }
+});
+
+for (const changeAgent of [false, true]) test(`Claude 回合暂停保留检查点并显式接续，指令${changeAgent ? "配置改变后重建" : "相同时复用"}`, async () => {
+  const h = await recoveryFixture();
+  try {
+    const agent = h.router.updateAgent(h.claude.id, {
+      displayName: h.claude.displayName, model: "test-model", mentionAlias: h.claude.mentionAlias,
+      enabled: true, permissionProfile: "workspace_write", executionRole: "hybrid",
+    });
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace("const content =", `
+process.stdout.write(JSON.stringify({ type: "system", session_id: "private-executor-session" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "assistant", message: { id: "msg-1", content: [{ type: "tool_use", id: "tool-1", name: "Write", input: "private payload" }] } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 121, errors: ["private diagnostic"] }) + "\\n");
+process.exit(1);
+const content =`));
+    const started = h.manager.start({ topicId: h.topic.id, workItemId: h.item.id, expectedVersion: h.item.version,
+      supervisorAgentId: h.codex.id, executorAgentId: h.claude.id, requestedPermission: "workspace_write", completionPolicy: "human" });
+    const failed = await waitForTerminal(h.manager, h.topic.id, started.id);
+    assert.equal(failed.failureCode, "max_turns_exhausted");
+    assert.equal(failed.execution?.phase, "execution");
+    assert.equal(failed.execution?.turnsUsed, 121); assert.equal(failed.execution?.turnLimit, 120);
+    assert.equal(failed.execution?.toolCalls, 1); assert.equal(failed.execution?.checkpointAvailable, true);
+    assert.equal(failed.headCommit, undefined);
+    assert.equal(readFileSync(h.claudeLog, "utf8").split("---CALL---").length - 1, 1, "写操作不自动重放");
+    const originalPath = path.join(h.directory, "delegated-worktrees", failed.id, "implemented.txt");
+    const original = readFileSync(originalPath, "utf8");
+    const reopened = new WorkItemDelegationStore(h.databasePath, 5000);
+    try {
+      assert.equal(reopened.getPrivate(failed.id)?.executorSessionId, "private-executor-session");
+      assert(reopened.getPrivate(failed.id)?.checkpoint?.brief?.fingerprint);
+      assert.doesNotMatch(JSON.stringify(reopened.get(failed.id)), /private-executor-session|private payload|fingerprint|executorSessionId|supervisorSessionId/);
+    } finally { reopened.close(); }
+    if (changeAgent) h.router.updateAgent(agent.id, { displayName: agent.displayName, model: "another-model", mentionAlias: agent.mentionAlias,
+      enabled: true, permissionProfile: "workspace_write", executionRole: "hybrid" });
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace("const content =", `
+if (process.argv.includes("--resume")) process.exit(9);
+const content =`));
+    const item = h.database.listWorkItems({ topicId: h.topic.id })[0]!;
+    const resumed = await h.manager.resume(failed.id, item.version);
+    const approved = await waitForTerminal(h.manager, h.topic.id, resumed.id);
+    assert.equal(approved.status, "approved", approved.error ?? "");
+    assert(approved.headCommit);
+    assert.equal(h.database.listWorkItems({ topicId: h.topic.id })[0]!.status, "in_progress", "审核通过仍等人工验收");
+    assert.equal(readFileSync(originalPath, "utf8"), original);
+    assert.equal(h.manager.list(h.topic.id).find(run => run.id === failed.id)?.status, "failed");
+    assert.equal(git(h.repositoryPath, ["status", "--porcelain=v1"]), "");
+    const audit = new RuntimeAuditStore(h.databasePath, 5000);
+    try {
+      const events = audit.list(h.topic.id, "delegation", resumed.id).events;
+      assert.equal(events.some(event => event.kind === "brief.reused"), !changeAgent);
+      assert.equal(events.some(event => event.kind === "brief.started"), changeAgent);
+      assert(events.some(event => event.kind === "review.completed"));
+      assert.doesNotMatch(JSON.stringify(events), /private-executor-session|private payload|private diagnostic/);
+    } finally { audit.close(); }
   } finally { await h.close(); }
 });

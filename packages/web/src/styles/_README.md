@@ -17,3 +17,5 @@
 | `model-router.css` | 设置 | 独立定义固定高度 Provider/Agent 路由台、紧凑目录、单项编辑工作台和移动视觉 |
 | `manual-decision.css` | 人工决策 | 定义零 Agent 调用提示、人工结束入口与紧凑确认表单的增量视觉 |
 | `responsive.css` | 适配 | 定义桌面设置卡、平板/手机讨论列回退、离线入口和低动态偏好规则 |
+
+委派暂停使用 warning token；进度按行排布，验收条件默认折叠，恢复操作占完整行。

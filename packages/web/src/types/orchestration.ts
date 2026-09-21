@@ -4,6 +4,7 @@
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 委派公开阶段进度和可选预算指标
  */
 
 export type OrchestrationStatus =
@@ -65,6 +66,17 @@ export type WorkItemDelegationStatus =
   | "cancelled";
 
 export interface WorkItemDelegation {
+  execution?: {
+    phase: "brief" | "execution" | "commit" | "review";
+    phaseStartedAt: string;
+    lastActivityAt: string;
+    turnsUsed?: number;
+    turnLimit?: number;
+    toolCalls?: number;
+    lastTool?: string;
+    stopReason?: string;
+    checkpointAvailable?: boolean;
+  };
   resumedFromId?: string;
   failureCode?: string;
   completionPolicy?: "review" | "human";

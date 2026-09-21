@@ -4,6 +4,7 @@
  * @pos    后台运行时启动前的配置边界单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 覆盖实施/审核独立回合预算的默认值、覆盖和校验
  */
 
 import assert from "node:assert/strict";
@@ -175,4 +176,21 @@ test("Claude 配置拒绝无效 JSON 和超过 Node 定时器上限的时长", (
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test("Claude 实施和审核预算独立于讨论，旧配置仍有明确默认值", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-stage-config-"));
+  try {
+    const env = createEnv(directory);
+    const config = loadConfig(env);
+    assert.equal(config.claudeMaxTurns, 3);
+    assert.equal(config.claudeExecutionMaxTurns, 120);
+    assert.equal(config.claudeReviewMaxTurns, 48);
+    const custom = loadConfig({ ...env, COUNCIL_CLAUDE_EXECUTION_MAX_TURNS: "80", COUNCIL_CLAUDE_REVIEW_MAX_TURNS: "30" });
+    assert.equal(custom.claudeExecutionMaxTurns, 80); assert.equal(custom.claudeReviewMaxTurns, 30);
+    for (const key of ["COUNCIL_CLAUDE_EXECUTION_MAX_TURNS", "COUNCIL_CLAUDE_REVIEW_MAX_TURNS"]) {
+      for (const value of ["0", "-1", "1.5", "Infinity"]) assert.throws(() => loadConfig({ ...env, [key]: value }), /正整数/);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

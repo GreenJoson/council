@@ -2,6 +2,7 @@
  * @input  依赖：隔离 SQLite、真实 HTTP 服务与运行记录存储
  * @output 验证：审计不可覆盖/分页/脱敏、项目隔离、待办消退和迁移回滚
  * @pos    交付状态与可追溯证据的跨层回归
+ * 包含 v16 到 v17 失败回滚与历史逐字段保留
  */
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -87,6 +88,7 @@ test("v14 升级新增验收与审计失败时完整回滚，再次迁移成功"
     raw.exec(`
       DROP TABLE runtime_audit_events;
       DROP TRIGGER trg_work_items_delegation_acceptance;
+      ALTER TABLE work_item_delegations DROP COLUMN execution_state_json;
       ALTER TABLE work_item_delegations DROP COLUMN failure_code;
       ALTER TABLE work_item_delegations DROP COLUMN resumed_from_id;
       ALTER TABLE work_item_delegations DROP COLUMN acceptance_criteria;
@@ -103,4 +105,43 @@ test("v14 升级新增验收与审计失败时完整回滚，再次迁移成功"
     await migrateCouncilSchema(h.databasePath, 5000, { maxAttempts: 1 });
     assert.equal((await migrateCouncilSchema(h.databasePath, 5000, { maxAttempts: 1 })).migrated, false);
   } finally { await h.close(); }
+});
+
+test("v16 检查点迁移失败可回滚，升级后旧委派与审计逐字段保留", async () => {
+  const h = await startHttpHarness({}, []);
+  const store = new WorkItemDelegationStore(h.databasePath, 5000);
+  const router = new ModelRouterStore(h.databasePath, 5000);
+  try {
+    const topic = h.database.createTopic({ title: "旧任务", question: "保留历史", constraints: [], createdByAlias: "human" });
+    const decision = h.database.createDecision({ topicId: topic.id, title: "执行", decision: "实现", rationale: "检查", alternatives: [], status: "accepted", createdByAlias: "human" });
+    const [item] = h.database.createWorkItems({ topicId: topic.id, decisionId: decision.id, items: [{ title: "任务", details: "保留文件" }], createdByAlias: "human" });
+    assert(item);
+    const agents = router.listAgents();
+    store.create({ id: "old-run", topicId: topic.id, workItemId: item.id,
+      supervisorAgentId: agents.find(a => a.actorId === "claude")!.id, executorAgentId: agents.find(a => a.actorId === "codex")!.id,
+      permissionProfile: "workspace_write", completionPolicy: "human", acceptanceCriteria: "原始标准", maxAttempts: 2, now: new Date().toISOString() });
+    store.update("old-run", { status: "failed", failureCode: "execution_failed", executorSessionId: "old-private-session", now: new Date().toISOString() });
+    h.orchestration!.audit.append({ topicId: topic.id, sourceKind: "delegation", sourceId: "old-run", attempt: 1, kind: "execution.failed", data: { failureCode: "execution_failed" } });
+    const raw = new DatabaseSync(h.databasePath);
+    raw.exec("ALTER TABLE work_item_delegations DROP COLUMN execution_state_json; DELETE FROM schema_migrations WHERE version=17; PRAGMA user_version=16;");
+    const before = raw.prepare("SELECT * FROM work_item_delegations").all();
+    const events = raw.prepare("SELECT * FROM runtime_audit_events").all();
+    raw.close();
+    await assert.rejects(migrateCouncilSchema(h.databasePath, 5000, { maxAttempts: 1, faultPoint: "before-commit" }), /故障注入/);
+    const rollback = new DatabaseSync(h.databasePath);
+    assert.deepEqual(rollback.prepare("SELECT * FROM work_item_delegations").all(), before);
+    assert.equal((rollback.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 16);
+    rollback.close();
+    await migrateCouncilSchema(h.databasePath, 5000, { maxAttempts: 1 });
+    const after = new DatabaseSync(h.databasePath);
+    try {
+      const oldColumns = Object.keys(before[0]!).map(key => `"${key}"`).join(",");
+      assert.deepEqual(after.prepare(`SELECT ${oldColumns} FROM work_item_delegations`).all(), before);
+      assert.deepEqual(after.prepare("SELECT * FROM runtime_audit_events").all(), events);
+      assert.equal((after.prepare("SELECT execution_state_json FROM work_item_delegations").get() as { execution_state_json: unknown }).execution_state_json, null);
+      assert.throws(() => after.exec("UPDATE work_item_delegations SET execution_state_json='[]'"));
+    } finally { after.close(); }
+    assert.equal(store.get("old-run")?.execution, undefined, "不为历史任务补造进度");
+    assert.equal(store.getPrivate("old-run")?.executorSessionId, "old-private-session");
+  } finally { store.close(); router.close(); await h.close(); }
 });

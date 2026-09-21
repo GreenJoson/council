@@ -4,6 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `DelegationExecutionProgress.tsx` | 委派进度 | 真实执行阶段、预算暂停和可观测指标，未知数据不补造 |
 | `RuntimeAuditDetails.tsx` | 执行记录 | 按来源分页加载阶段/工具/提交证据，保留空态、错误和刷新反馈 |
 | `WorkAttentionView.tsx` | 待处理 | 聚合当前项目真实待处理状态，点击回到原议题 |
 | `DelegationRecoveryActions.tsx` | 恢复 | 展示失败分类指引，显式恢复已提交进度或接续未提交代码，保留原记录并反馈冲突 |

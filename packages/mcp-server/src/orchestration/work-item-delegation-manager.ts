@@ -1,16 +1,17 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿恢复、只读重试与优雅关闭
+ * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿及指令检查点恢复、分阶段运行与优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 阶段执行交由专用模块；私有指令指纹验证后复用，跨工作区不复用模型会话
  */
 
 import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-recovery.js";
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
-import { setTimeout as retryDelay } from "node:timers/promises";
-import { randomUUID } from "node:crypto";
+import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -403,6 +404,9 @@ export class WorkItemDelegationManager {
         resumedFromId: id, now: new Date().toISOString(),
       });
     } catch { throw new CouncilConflictError("这条实施项已有进行中的 Agent 委派。"); }
+    if (previous.checkpoint?.brief) {
+      this.#store.update(created.id, { checkpoint: { version: 1, brief: previous.checkpoint.brief }, now: new Date().toISOString() });
+    }
     const controller = new AbortController();
     this.#controllers.set(created.id, controller);
     this.#workItemVersions.set(created.id, expectedVersion);
@@ -518,55 +522,11 @@ export class WorkItemDelegationManager {
     return { supervisor, executor, permission };
   }
 
-  async #runtimeGenerate(input: {
-    delegationId: string;
-    stage: "brief" | "execution" | "review";
-    transportAttempt?: number;
-    agent: AgentDefinition;
-    prompt: string;
-    cwd: string;
-    sessionId?: string;
-    permissionProfile: AgentPermissionProfile;
-    signal: AbortSignal;
-  }): Promise<RuntimeResult> {
-    const provider = this.#requireNativeProvider(input.agent);
-    const common = {
-      prompt: input.prompt,
-      cwd: input.cwd,
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-      ...(input.agent.model ? { model: input.agent.model } : {}),
-      permissionProfile: input.permissionProfile,
-      signal: input.signal,
-    };
-    const startedAt = Date.now();
-    this.#recordAudit(input.delegationId, `${input.stage}.started`, {
-      agentId: input.agent.id, model: input.agent.model,
-      agentRevision: input.agent.configRevision, providerRevision: provider.configRevision,
-      permission: input.permissionProfile,
-      transportAttempt: input.transportAttempt ?? 1,
-    });
-    try {
-      const result = provider.protocol === "claude-cli"
-        ? await this.claudeRuntime.generate(common)
-        : await this.codexRuntime.generate(common);
-      this.#recordAudit(input.delegationId, `${input.stage}.completed`, {
-        summary: result.content, elapsedMs: Date.now() - startedAt,
-      });
-      return result;
-    } catch (error) {
-      this.#recordAudit(input.delegationId, `${input.stage}.failed`, {
-        summary: publicFailure(error), elapsedMs: Date.now() - startedAt,
-      });
-      const transportAttempt = input.transportAttempt ?? 1;
-      if (input.permissionProfile === "read_only" && delegationFailureCode(error) === "transient_failure"
-        && transportAttempt < this.config.maxAttempts && !input.signal.aborted) {
-        await retryDelay(this.config.retryDelayMs, undefined, { signal: input.signal });
-        // 失败的只读会话不续接，避免重复上下文或污染后的 session 被继续使用。
-        const { sessionId: _sessionId, ...fresh } = input;
-        return this.#runtimeGenerate({ ...fresh, transportAttempt: transportAttempt + 1 });
-      }
-      throw error;
-    }
+  async #runtimeGenerate(input: DelegationRuntimeInput): Promise<RuntimeResult> {
+    return runDelegationRuntimeStage(input, { claude: this.claudeRuntime, codex: this.codexRuntime,
+      store: this.#store, provider: this.#requireNativeProvider(input.agent), maxAttempts: this.config.maxAttempts,
+      retryDelayMs: this.config.retryDelayMs, record: (id, kind, data) => this.#recordAudit(id, kind, data),
+      failureMessage: publicFailure });
   }
 
   async #git(
@@ -712,7 +672,7 @@ export class WorkItemDelegationManager {
     };
   }
 
-  #taskContext(topicId: string, workItemId: string): { item: WorkItem; context: string; projectPath: string } {
+  #taskContext(topicId: string, workItemId: string): { item: WorkItem; context: string; contextFingerprint: string; projectPath: string } {
     const detail = this.#database.getTopicDetail(
       topicId,
       this.config.defaultMessageLimit,
@@ -741,6 +701,7 @@ export class WorkItemDelegationManager {
     return {
       item,
       context: compact(context, this.config.maxContextChars),
+      contextFingerprint: createHash("sha256").update(context).digest("hex"),
       projectPath: detail.topic.projectPath,
     };
   }
@@ -882,7 +843,14 @@ export class WorkItemDelegationManager {
         status: "executing",
         now: new Date().toISOString(),
       });
-      const briefResponse = await this.#runtimeGenerate({
+      const fingerprint = createHash("sha256").update(JSON.stringify({
+        criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
+        supervisor: [supervisor.id, supervisor.configRevision, this.#requireNativeProvider(supervisor).configRevision],
+        executor: [executor.id, executor.configRevision, this.#requireNativeProvider(executor).configRevision],
+      })).digest("hex");
+      const savedBrief = this.#store.getPrivate(id)?.checkpoint?.brief;
+      const reuseBrief = savedBrief?.fingerprint === fingerprint;
+      const briefResponse: RuntimeResult = reuseBrief ? { content: savedBrief.content } : await this.#runtimeGenerate({
         delegationId: id, stage: "brief",
         agent: supervisor,
         cwd: workspace.cwd,
@@ -898,6 +866,10 @@ export class WorkItemDelegationManager {
           task.context,
         ].join("\n"),
       });
+      const currentCheckpoint = this.#store.getPrivate(id)?.checkpoint;
+      this.#store.update(id, { checkpoint: { ...currentCheckpoint, version: 1,
+        brief: { content: briefResponse.content, fingerprint } }, now: new Date().toISOString() });
+      if (reuseBrief) this.#recordAudit(id, "brief.reused", { summary: "任务范围与 Agent 配置未变，沿用已保存的实施指令。" });
       let supervisorSessionId = briefResponse.sessionId;
       let executorSessionId: string | undefined;
       let review: ReviewVerdict | undefined;
@@ -926,7 +898,7 @@ export class WorkItemDelegationManager {
             "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
             "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
             "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
-            ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。"] : []),
+            ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。旧指令如含旧工作区路径，以当前隔离工作区为准。"] : []),
             "",
             "Supervisor 指令：",
             briefResponse.content,
@@ -939,6 +911,10 @@ export class WorkItemDelegationManager {
         });
         executorSessionId = executorResponse.sessionId ?? executorSessionId;
         executorSummary = compact(executorResponse.content, 8_000);
+        const beforeCommit = this.#store.getPrivate(id)?.checkpoint;
+        const commitTime = new Date().toISOString();
+        this.#store.update(id, { checkpoint: { ...beforeCommit, version: 1,
+          progress: { phase: "commit", phaseStartedAt: commitTime, lastActivityAt: commitTime } }, now: commitTime });
         headCommit = await this.#commitChanges(
           workspace.root,
           delegation.workItemId,

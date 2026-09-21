@@ -13,3 +13,5 @@
 | `actor-identity-migration.md` | 身份与迁移 | 说明 schema v2 动态 Actor、别名、冻结快照、旧作者映射、M3 RuntimeBinding/session 生命周期和回滚边界 |
 | `review-fix-loop.md` | 设计正本 | 说明审核→修复→复审闭环、work item 树与 schema v12 数据模型、尾块协议、审核状态机与落地顺序 |
 | `designs/` | 设计探索 | 保存 WebUI 视觉方案和信息架构取舍 |
+
+执行交付文档包含分阶段预算、私有检查点、指令复用、schema v17 兼容性和桌面 sidecar 生命周期边界。

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v16 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v17 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释

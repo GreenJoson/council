@@ -19,3 +19,14 @@
 .work-item-delegation-form label { min-width: 0; }
 .work-item-delegation-form > .delegation-completion-policy,
 .work-item-delegation-form > .delegation-acceptance-criteria { grid-column: 1 / -1; }
+
+/* 阶段和恢复占整行，长验收条件由用户展开。 */
+.delegation-checkpoint, .delegation-criteria, .delegation-recovery { grid-column: 1 / -1; }
+.delegation-checkpoint { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--color-text-muted); font-size: 11px; }
+.delegation-criteria { color: var(--color-text-muted); font-size: 11px; }
+.delegation-criteria summary { cursor: pointer; }
+.delegation-criteria p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
+.delegation-recovery p { margin: 4px 0 8px; font-size: 11px; }
+.delegation-recovery button { padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+.work-item-delegation-state.is-paused { border-color: var(--color-warning); background: var(--color-warning-soft); }
+.work-item-delegation-state.is-paused > span { color: var(--color-warning); }

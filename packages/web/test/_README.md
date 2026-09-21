@@ -4,6 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `delegation-progress.test.tsx` | 执行进度 | 阶段/预算暂停、中英呈现、未知指标隐藏和协议隐私边界 |
 | `mock-repository.test.ts` | 数据测试 | 验证议题创建、公开发帖、订阅、决策状态转换和只读议题详情加载 |
 | `api-mapping.test.ts` | 协议测试 | 验证未知 JSON 解析、动态 Actor/冻结快照映射和不伪造证据 |
 | `http-repository.test.ts` | 集成测试 | 验证惰性详情、写后校准、revision 重置/恢复、旧请求竞态、timer 生命周期和只读议题详情加载 |

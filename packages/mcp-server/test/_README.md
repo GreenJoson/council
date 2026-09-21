@@ -4,6 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `native-runtime-progress.test.ts` | CLI 协议 | 结构化失败、事件去重、早期会话与工具参数隐私 |
 | `execution-evidence.test.ts` | 跨层验收 | 验证审计脱敏/不可覆盖/分页、项目隔离、待办消退与 v14→v16 失败回滚 |
 | `delegation-workspace-snapshot.test.ts` | 草稿边界 | 验证增删改、换行文件名、原索引不变和运行数据/凭据/符号链接拒绝 |
 | `work-item-delegation.test.ts` | 执行闭环 | 验证完成策略、人工验收、并发版本、超限分类/文件保留、提交/草稿恢复、反复中断与并发接续及只读重试/写入不自动重放 |

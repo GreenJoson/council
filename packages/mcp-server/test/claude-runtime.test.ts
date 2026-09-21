@@ -4,6 +4,7 @@
  * @pos    无数据库副作用运行时的进程生命周期单元验证
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 覆盖结构化终止、分阶段预算和早期会话保留
  */
 
 import assert from "node:assert/strict";
@@ -92,6 +93,13 @@ if (mode === "tree-hang") {
       process.exitCode = 1;
       return;
     }
+    if (mode === "structured-turn-limit") {
+      process.stdout.write(JSON.stringify({ type: "system", session_id: "early-session" }) + "\\n");
+      process.stdout.write(JSON.stringify({ type: "assistant", message: { id: "msg-1", content: [{ type: "tool_use", id: "tool-1", name: "Read", input: "private args" }] } }) + "\\n");
+      process.stdout.write(JSON.stringify({ type: "result", subtype: "error_max_turns", num_turns: 121, errors: ["private detail"], is_error: true }) + "\\n");
+      process.exitCode = 1;
+      return;
+    }
     if (mode === "max-turns-error") {
       process.stdout.write(JSON.stringify({ result: "Reached max turns (8). private detail", is_error: true }));
       process.exitCode = 1;
@@ -160,6 +168,8 @@ function createConfig(
     claudePermissionMode: "plan",
     claudeTimeoutMs: 5_000,
     claudeKillGraceMs: 50,
+    claudeExecutionMaxTurns: 120,
+    claudeReviewMaxTurns: 48,
     claudeMaxTurns: 3,
     codexCommand: process.execPath,
     codexArgs: [],
@@ -799,7 +809,7 @@ test("ClaudeRuntime 将工具回合耗尽分类为不可重试且给出安全指
         assert.ok(error instanceof ClaudeRuntimeError);
         assert.equal(error.diagnosticCode, "max_turns_exhausted");
         assert.equal(error.retryable, false);
-        assert.match(error.message, /工具回合上限/);
+        assert.match(error.message, /回合预算已用尽/);
         assert.doesNotMatch(error.message, /private detail|Reached max turns/);
         return true;
       },
@@ -807,4 +817,34 @@ test("ClaudeRuntime 将工具回合耗尽分类为不可重试且给出安全指
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test("ClaudeRuntime 分阶段预算且失败保存早期会话，不启用逐字流或提升权限", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "council-stage-budget-"));
+  const script = path.join(directory, "runtime.mjs");
+  const dump = path.join(directory, "args.json");
+  writeFileSync(script, FAKE_RUNTIME_SOURCE);
+  try {
+    for (const [purpose, expected] of [["brief", 3], ["execution", 120], ["review", 48]] as const) {
+      const runtime = new ClaudeRuntime(createConfig(directory, script, "structured-turn-limit", {
+        claudeArgs: [script, "--fake-mode", "structured-turn-limit", "--arg-dump-file", dump],
+      }));
+      const progress: unknown[] = [];
+      await assert.rejects(runtime.generate({ prompt: "task", cwd: directory, purpose, onProgress: p => progress.push(p) }), (error: unknown) => {
+        assert(error instanceof ClaudeRuntimeError);
+        assert.equal(error.diagnosticCode, "max_turns_exhausted");
+        assert.equal(error.progress?.sessionId, "early-session");
+        assert.equal(error.progress?.turnsUsed, 121);
+        assert.equal(error.progress?.turnLimit, expected);
+        assert.equal(error.progress?.toolCalls, 1);
+        return true;
+      });
+      const args = JSON.parse(readFileSync(dump, "utf8")) as string[];
+      assert.equal(args[args.indexOf("--max-turns") + 1], String(expected));
+      assert.equal(args[args.indexOf("--permission-mode") + 1], "plan");
+      assert.equal(args.includes("--include-partial-messages"), false);
+      assert.doesNotMatch(JSON.stringify(progress), /private args|private detail/);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

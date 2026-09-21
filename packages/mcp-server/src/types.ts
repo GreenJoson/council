@@ -4,6 +4,7 @@
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
+ * 包含分阶段 Claude 预算的配置类型
  */
 
 import type {
@@ -33,6 +34,8 @@ export interface CouncilConfig {
   claudeTimeoutMs: number;
   claudeKillGraceMs: number;
   claudeMaxTurns: number;
+  claudeExecutionMaxTurns: number;
+  claudeReviewMaxTurns: number;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;

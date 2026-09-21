@@ -21,3 +21,5 @@
 本目录不保存用户选择的路径。运行时设置由 `SettingsStore` 写入操作系统分配的应用配置目录。SQLite 生产迁移只由 Node sidecar 在启动时执行；首次打开和切换日志库时，Rust 必须等待 sidecar 报告 ready 后再验证并复用同一受锁保护的连接。
 
 本地 Agent 服务接入：`get_orchestration_config` 返回设置里的 loopback 服务地址（默认值集中在 `settings.rs` 的 `DEFAULT_ORCHESTRATION_BASE_URL`，其他代码一律从设置读取）；`check_orchestration_service` 在 `spawn_blocking` 中用 std TcpStream 做有界 ready 探测，不持有状态锁、不带 Origin 头、不引入 tokio/reqwest，普通 HTTP 响应或 `ready=false` 均不算可用。完成日志库配置后，Rust 自动解析与主程序同目录的 `externalBin`，用 `resources/agent-service-defaults.json` 构造非敏感环境，并从登录 shell 补全 Finder 缺失的 CLI PATH；sidecar 标准输出和错误写入操作系统应用日志目录。应用退出时对整个进程组先 SIGTERM、有界等待后 SIGKILL，避免留下孤儿进程。CSP 的 `connect-src` 放行 loopback 以允许编排 fetch 与 SSE。完整说明见 `../local-agent-service.md`。
+
+0.9.5 使用 Node/Rust 一致的 schema v17；桌面默认注入分阶段 Claude 预算，升级保留原委派与私有检查点。

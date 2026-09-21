@@ -5,8 +5,11 @@ import { useI18n } from "../i18n/I18nProvider";
 import type { WorkItemDelegation } from "../types/orchestration";
 
 const HINTS: Record<string, string> = {
+  max_turns_exhausted: "本阶段回合预算已用尽；原代码与实施指令已保留，接续前可检查进度。",
+  budget_exhausted: "先调整调用预算，再接续已保存的工作。",
+  permission_denied: "先检查被拒绝操作的权限与任务范围，再接续。",
   authentication_failed: "先完成 CLI 登录，再恢复。",
-  quota_exhausted: "先补充额度或调整账号，再恢复。",
+  quota_exhausted: "先等待额度恢复或调整账号，再接续；重复点击不会恢复额度。",
   model_unavailable: "先选择可用模型，再恢复。",
   transient_failure: "服务暂时不可用；恢复前会检查原提交。",
   interrupted: "服务曾中断；可恢复提交或检查并接续未完成工作。",
@@ -21,7 +24,7 @@ export function DelegationRecoveryActions({ delegation, expectedVersion }: {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   if (!repository || !["failed", "cancelled"].includes(delegation.status)) return null;
-  return <div>
+  return <div className="delegation-recovery">
     {delegation.failureCode && HINTS[delegation.failureCode] ? <p>{t(HINTS[delegation.failureCode]!)}</p> : null}
     {!delegation.headCommit && delegation.baseCommit ? <p>{t("尚未生成交付提交；可以检查并接续原工作区中的代码，旧文件与失败记录会保留。")}</p> : null}
     {delegation.baseCommit ? <button type="button" disabled={busy} onClick={() => {

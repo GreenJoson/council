@@ -13,7 +13,8 @@ import type { DelegationPrivateState } from "./work-item-delegation-store.js";
 export function delegationFailureCode(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   if (error instanceof ClaudeRuntimeError || error instanceof CodexRuntimeError) {
-    if (error.diagnosticCode === "stream_output_limit" || error.diagnosticCode === "final_output_limit") {
+    if (error.diagnosticCode === "stream_output_limit" || error.diagnosticCode === "final_output_limit"
+      || ["max_turns_exhausted", "budget_exhausted", "permission_denied", "invalid_result"].includes(error.diagnosticCode)) {
       return error.diagnosticCode;
     }
     if (error.diagnosticCode.startsWith("authentication")) return "authentication_failed";

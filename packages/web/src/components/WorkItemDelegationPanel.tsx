@@ -1,11 +1,12 @@
 /**
  * @input  依赖：当前实施项、可用 Agent 权限/职责、最新委派记录与启动/取消回调
- * @output 导出：WorkItemDelegationPanel、冻结验收条件、待验收反馈、执行证据与恢复入口
+ * @output 导出：WorkItemDelegationPanel、折叠验收条件、持久执行阶段/预算、暂停原因和恢复入口
  * @pos    任务卡内的显式 supervisor→executor 委派入口与可审计进度摘要
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { DelegationExecutionProgress, delegationStatusLabel, isDelegationPaused } from "./DelegationExecutionProgress";
 import { DelegationRecoveryActions } from "./DelegationRecoveryActions";
 import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
 
@@ -20,15 +21,6 @@ import type {
 
 const ACTIVE = new Set(["queued", "executing", "reviewing", "changes_requested"]);
 
-const STATUS_LABEL: Record<WorkItemDelegation["status"], string> = {
-  queued: "等待执行",
-  executing: "正在改代码",
-  reviewing: "正在审核",
-  changes_requested: "审核退回",
-  approved: "审核通过",
-  failed: "执行失败",
-  cancelled: "已取消",
-};
 
 export function WorkItemDelegationPanel({
   item,
@@ -103,8 +95,8 @@ export function WorkItemDelegationPanel({
     const supervisor = adapters.find((agent) => agent.id === delegation.supervisorAgentId);
     const executing = adapters.find((agent) => agent.id === delegation.executorAgentId);
     return (
-      <div className={`work-item-delegation-state is-${delegation.status}`}>
-        <span><Bot size={13} /><strong>{t(STATUS_LABEL[delegation.status])}</strong></span>
+      <div className={`work-item-delegation-state is-${isDelegationPaused(delegation) ? "paused" : delegation.status}`}>
+        <span><Bot size={13} /><strong>{t(delegationStatusLabel(delegation))}</strong></span>
         <small>
           {executing?.label ?? delegation.executorAgentId}
           {" → "}
@@ -113,8 +105,9 @@ export function WorkItemDelegationPanel({
         </small>
         {delegation.completionPolicy === "human" && delegation.status === "approved" && item.status !== "completed"
           ? <p>{t("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。")}</p> : null}
-        {delegation.acceptanceCriteria ? <p>{t("验收标准")}：{delegation.acceptanceCriteria}</p> : null}
-        {delegation.error ? <p><AlertTriangle size={12} />{delegation.error}</p> : null}
+        <DelegationExecutionProgress delegation={delegation} />
+        {delegation.acceptanceCriteria ? <details className="delegation-criteria"><summary>{t("查看验收标准")}</summary><p>{delegation.acceptanceCriteria}</p></details> : null}
+        {delegation.error ? <p><AlertTriangle size={12} />{t(delegation.error)}</p> : null}
         {delegation.status === "approved" && delegation.headCommit ? (
           <code><GitBranch size={12} />{delegation.branchName} · {delegation.headCommit.slice(0, 12)}</code>
         ) : null}

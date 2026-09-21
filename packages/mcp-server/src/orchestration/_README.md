@@ -4,6 +4,8 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `delegation-checkpoint.ts` | 检查点协议 | 私有指令与进度、公开白名单投影 |
+| `delegation-runtime-stage.ts` | 阶段执行 | 独立预算、早期会话与进度持久化，仅只读瞬态故障有界重试 |
 | `runtime-audit-store.ts` | 执行证据 | 持久化脱敏阶段/工具事件，提供不可覆盖的游标分页记录，不存私有草稿与未知用量 |
 | `work-attention-store.ts` | 聚合查询 | 按当前项目汇总待决策、待验收、阻断、失败与待回复，较新执行取代历史状态 |
 | `delegation-workspace-snapshot.ts` | 草稿快照 | 临时索引保留原 HEAD/索引/文件；拒绝配置、运行数据、二进制、符号链接和疑似凭据后接续未提交代码 |

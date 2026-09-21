@@ -9,7 +9,8 @@ import { useI18n } from "../i18n/I18nProvider";
 import type { RuntimeAuditPage, RuntimeAuditQuery } from "../data/runtime-audit";
 
 const LABELS: Record<string, string> = {
-  "delegation.created": "派发与完成条件", "delegation.resumed": "恢复已提交进度",
+  "delegation.created": "派发与完成条件", "delegation.resumed": "接续保留进度",
+  "brief.reused": "沿用实施指令", "session.checkpoint": "已保存会话检查点",
   "brief.started": "开始制定实施指令", "brief.completed": "实施指令", "brief.failed": "实施指令失败",
   "execution.started": "开始执行", "execution.completed": "执行结果", "execution.failed": "执行失败",
   "review.started": "开始审核", "review.completed": "审核结果", "review.failed": "审核失败",
@@ -20,6 +21,8 @@ const LABELS: Record<string, string> = {
 };
 
 const FIELD_LABELS: Record<string, string> = {
+  stage: "阶段", turnsUsed: "模型回合", turnLimit: "回合上限", toolCalls: "工具调用数", sessionSaved: "会话已保存",
+  recoveryMode: "接续方式", restoredFiles: "接续文件数",
   agentId: "Agent", bindingId: "会话绑定", toolName: "工具", callId: "工具调用", owner: "工具执行方",
   model: "模型", agentRevision: "Agent 配置版本", providerRevision: "Provider 配置版本", permission: "权限",
   summary: "摘要", elapsedMs: "耗时（毫秒）", baseCommit: "基线提交", headCommit: "结果提交",

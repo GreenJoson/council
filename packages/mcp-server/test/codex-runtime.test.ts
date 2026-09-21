@@ -122,6 +122,8 @@ function createConfig(
     claudePermissionMode: "plan",
     claudeTimeoutMs: 5_000,
     claudeKillGraceMs: 50,
+    claudeExecutionMaxTurns: 120,
+    claudeReviewMaxTurns: 48,
     claudeMaxTurns: 3,
     codexCommand: process.execPath,
     codexArgs: [fakeCodexPath, "--fake-mode", mode],

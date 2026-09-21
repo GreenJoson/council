@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v16 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v16 schema、议题关闭、内容与实施项查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v17 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v17 schema、议题关闭、内容与实施项查询写入和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,7 +23,7 @@ use crate::types::{
     WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 16;
+const SUPPORTED_SCHEMA_VERSION: i64 = 17;
 const REQUIRED_TABLES: &[&str] = &[
     "runtime_audit_events",
     "topics",
@@ -324,6 +324,7 @@ const WORK_ITEM_DELEGATION_COLUMNS: &[&str] = &[
     "acceptance_criteria",
     "resumed_from_id",
     "failure_code",
+    "execution_state_json",
 ];
 
 fn assert_schema_objects(

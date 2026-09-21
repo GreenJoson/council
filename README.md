@@ -155,6 +155,8 @@ flowchart TB
 
 **Recovery and evidence.** Runtime events are stored after redaction. Recovery verifies the repository, managed directory, recorded HEAD, permissions, and task version before creating a new run. A clean delivery commit goes back to review. If execution failed before committing, “Continue unfinished work” copies checked source changes into a new isolated workspace for implementation and review, preserving the original files and history. Missing tool detail is shown as unavailable; context usage is not presented as billing tokens or a calculated cost.
 
+**Long-running tasks.** Delegation shows persisted instruction, implementation, commit, and review stages. Claude has separate configurable turn budgets: 24 for discussion/instructions on desktop, 120 for implementation (`COUNCIL_CLAUDE_EXECUTION_MAX_TURNS`), and 48 for review (`COUNCIL_CLAUDE_REVIEW_MAX_TURNS`). Turn or quota exhaustion pauses for explicit continuation. Valid instructions and source changes survive failure; a new workspace uses a fresh model session. Actual tool counts and available turn counts come from structured events, without publishing tool inputs or private session IDs.
+
 ## Security and current limits
 
 - Supply your own provider credentials. macOS Keychain stores remote API keys; SQLite stores credential references and public settings. No usable API key is included.
@@ -162,7 +164,8 @@ flowchart TB
 - The HTTP control plane is **loopback-only and intended for one local user**. It has no per-instance authentication token. Do not expose it through a tunnel, reverse proxy, or public listener.
 - Only deliberately published topic content is shared between agent clients. Model calls and authorized code reads still leave the machine through the selected provider; local storage does not mean offline inference.
 - New delegations default to human acceptance. Write failures and uncommitted changes are not automatically replayed. Explicit continuation can retain uncommitted source files in a verified workspace; private configuration, runtime data, binary files, symlinks, and suspected secrets are rejected.
-- SQLite audit records are local evidence, not an independently tamper-proof audit service. Native CLI delegations currently provide stage/commit evidence rather than complete tool transcripts.
+- SQLite audit records are local evidence, not an independently tamper-proof audit service. Native CLI delegations provide stage/commit evidence and observed activity counts; complete tool transcripts are not exposed.
+- Execution is still hosted by the desktop sidecar. Closing the application stops it; after restart, interrupted delegations require explicit continuation. An independent background worker is not yet implemented.
 - This is a macOS-first, single-user workspace. Multi-user hosting, Windows/Linux desktop releases, cost accounting, automatic ADR export, and automatic merging/deployment are not current release promises.
 
 See [Security / 安全说明](SECURITY.md), [execution and recovery](docs/execution-delivery.md) (Chinese), and [schema migration safety](docs/schema-migration-safety.md) (Chinese).
