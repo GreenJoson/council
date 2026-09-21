@@ -94,3 +94,5 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 委派从派发与认领时保存任务版本，成功/失败回写均不能覆盖后续人工作答；已提交检查点在后续模型调用之前保存。活动委派占用的 Agent/Provider 禁止修改配置，Node 与 Rust 同时禁止关闭仍有活动委派的议题。
 
 接续只为新运行选择权限；创建前复核 Agent 上限，权限变化使指令检查点失效，审计保留前后权限。
+
+交付可靠性模块：`delegation-review.ts` 管理逐文件材料和审核覆盖，`delegation-git-delivery.ts` 通过安全快照追加提交，`delegation-execution-result.ts` 接收主动阶段交接，`delegation-handoff.ts` 将旧摘要与审核意见传给新运行。修正阶段中断可接回上一提交后的草稿；材料不足独立于实现缺陷处理。

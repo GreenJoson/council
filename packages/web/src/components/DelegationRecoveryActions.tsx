@@ -1,10 +1,13 @@
-/** @input 失败委派、实施项版本与 Agent 权限上限；@output 提交恢复/未提交工作接续；@pos 保留历史并发起新隔离运行。 */
+/** @input 失败委派、停止阶段、任务版本与权限上限；@output 提交或修正草稿接续；@pos 提交存在也不能忽略后续草稿。 */
 import { useState } from "react";
 import { useExecutionRepository } from "../hooks/useExecutionRepository";
 import { useI18n } from "../i18n/I18nProvider";
 import type { WorkItemDelegation } from "../types/orchestration";
 
 const HINTS: Record<string, string> = {
+  execution_checkpoint: "阶段交接已保存；尚未完成，接续将继续剩余工作并独立审核。",
+  invalid_execution_checkpoint: "阶段交接格式无效；原文件保留，检查后可接续，不能视为完成。",
+  review_incomplete: "审核材料尚未核对完整；恢复后重新审核，不需要为缩小材料删减交付内容。",
   max_turns_exhausted: "本阶段回合预算已用尽；原代码与实施指令已保留，接续前可检查进度。",
   budget_exhausted: "先调整调用预算，再接续已保存的工作。",
   permission_denied: "先检查被拒绝操作的权限与任务范围，再接续。",
@@ -13,6 +16,8 @@ const HINTS: Record<string, string> = {
   model_unavailable: "先选择可用模型，再恢复。",
   transient_failure: "服务暂时不可用；恢复前会检查原提交。",
   interrupted: "服务曾中断；可恢复提交或检查并接续未完成工作。",
+  review_revision_limit: "审核修订轮次已用尽；代码提交和待修意见已保存，检查后可接续。",
+  review_input_limit: "审核材料超过预算；提交已保存，请拆分任务或调整审核上下文预算后恢复。",
 };
 
 export function DelegationRecoveryActions({ delegation, expectedVersion, allowFullControl = false }: {
@@ -26,9 +31,12 @@ export function DelegationRecoveryActions({ delegation, expectedVersion, allowFu
   const [permission, setPermission] = useState(delegation.permissionProfile);
   const [message, setMessage] = useState<string | null>(null);
   if (!repository || !["failed", "cancelled"].includes(delegation.status)) return null;
+  const mayHaveDraft = delegation.headCommit && ["execution", "commit"].includes(delegation.execution?.phase ?? "");
+  const failureCode = delegation.error === "审核在最大修订轮次内未通过。" ? "review_revision_limit" : delegation.failureCode;
   return <div className="delegation-recovery">
-    {delegation.failureCode && HINTS[delegation.failureCode] ? <p>{t(HINTS[delegation.failureCode]!)}</p> : null}
+    {failureCode && HINTS[failureCode] ? <p>{t(HINTS[failureCode]!)}</p> : null}
     {!delegation.headCommit && delegation.baseCommit ? <p>{t("尚未生成交付提交；可以检查并接续原工作区中的代码，旧文件与失败记录会保留。")}</p> : null}
+    {mayHaveDraft ? <p>{t("已有提交；接续时会检查并保留后续修正草稿，旧工作区与审核意见保留。")}</p> : null}
     {delegation.baseCommit && allowFullControl ? <label className="delegation-resume-permission">
       {t("接续执行权限")}
       <select aria-label={t("接续执行权限")} value={permission} disabled={busy} onChange={event => setPermission(event.target.value as WorkItemDelegation["permissionProfile"])}>
@@ -40,12 +48,12 @@ export function DelegationRecoveryActions({ delegation, expectedVersion, allowFu
     {delegation.baseCommit ? <button type="button" disabled={busy} onClick={() => {
       setBusy(true); setMessage(null);
       void repository.resumeWorkItemDelegation(delegation.id, expectedVersion, permission === delegation.permissionProfile ? undefined : permission)
-        .then(() => setMessage(delegation.headCommit
+        .then(() => setMessage(delegation.headCommit && !mayHaveDraft
           ? "已从提交进度恢复，正在重新审核。"
           : "已接续未完成工作，将继续执行并审核。"))
         .catch((error: unknown) => setMessage(error instanceof Error ? error.message : "恢复失败"))
         .finally(() => setBusy(false));
-    }}>{t(busy ? "正在检查恢复条件…" : delegation.headCommit ? "从已提交进度恢复" : "接续未完成工作")}</button> : <p>{t("没有可恢复的工作区；重新委派将从项目当前基线开始。")}</p>}
+    }}>{t(busy ? "正在检查恢复条件…" : mayHaveDraft ? "接续修正工作" : delegation.headCommit ? "从已提交进度恢复" : "接续未完成工作")}</button> : <p>{t("没有可恢复的工作区；重新委派将从项目当前基线开始。")}</p>}
     {message ? <p role="status">{t(message)}</p> : null}
   </div>;
 }

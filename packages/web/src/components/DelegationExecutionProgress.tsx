@@ -1,11 +1,15 @@
-/** @input 服务端持久执行阶段与实际进度；@output 暂停原因、阶段预算及最近活动；@pos 无证据的指标不显示。 */
+/** @input 服务端持久阶段、实际进度及审核意见；@output 初次执行与审核修正区分、阶段预算及活动；@pos 无证据的指标不显示。 */
 import { useI18n } from "../i18n/I18nProvider";
+import { delegationReview } from "./DelegationDeliveryEvidence";
 import type { WorkItemDelegation } from "../types/orchestration";
 const PHASES = { brief: "生成实施指令", execution: "执行与验证", commit: "检查并提交", review: "独立审核" } as const;
-const PAUSED = new Set(["max_turns_exhausted", "budget_exhausted", "quota_exhausted"]);
-export const isDelegationPaused = (run: WorkItemDelegation) => run.status === "failed" && PAUSED.has(run.failureCode ?? "");
+const PAUSED = new Set(["max_turns_exhausted", "budget_exhausted", "quota_exhausted", "review_revision_limit", "review_input_limit", "review_incomplete", "execution_checkpoint"]);
+export const isDelegationPaused = (run: WorkItemDelegation) => run.status === "failed"
+  && (PAUSED.has(run.failureCode ?? "") || run.error === "审核在最大修订轮次内未通过。");
 export function delegationStatusLabel(run: WorkItemDelegation): string {
   if (isDelegationPaused(run)) return "已暂停，等待接续";
+  if (run.status === "executing" && run.execution?.phase === "execution"
+    && delegationReview(run)?.verdict === "changes_requested") return "按审核意见修正";
   if (["executing", "reviewing"].includes(run.status) && run.execution) return PHASES[run.execution.phase];
   return ({ queued: "等待执行", executing: "正在执行", reviewing: "正在审核", changes_requested: "审核退回", approved: "审核通过", failed: "执行失败", cancelled: "已取消" } as const)[run.status];
 }

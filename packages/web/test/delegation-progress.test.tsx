@@ -22,6 +22,7 @@ it("生成指令、实施、提交、审核与暂停各自有真实标签", () =
   expect(isDelegationPaused(paused)).toBe(true);
   expect(delegationStatusLabel(paused)).toBe("已暂停，等待接续");
   expect(isDelegationPaused({ ...paused, failureCode: "permission_denied" })).toBe(false);
+  expect(isDelegationPaused({ ...paused, failureCode: "execution_failed", error: "审核在最大修订轮次内未通过。" })).toBe(true);
 });
 it("旧记录与未知指标不补造零值，实际预算和活动有英文翻译", () => {
   expect(render(base)).toBe("");
@@ -49,4 +50,21 @@ it("长验收标准默认折叠，暂停卡保留清晰的阶段与失败原因"
   expect(html).toContain('<details class="delegation-criteria">');
   expect(html).not.toContain('open=""');
   expect(html).not.toMatch(/[\u4e00-\u9fff]/u);
+});
+
+it("二轮修正显示已有提交与上轮审核问题，不能继续伪装成首次执行", () => {
+  const run: WorkItemDelegation = { ...base, attempt: 2, headCommit: "a".repeat(40),
+    execution: { phase: "execution", phaseStartedAt: stamp, lastActivityAt: stamp },
+    review: JSON.stringify({ verdict: "changes_requested", summary: "Boundary validation needed", findings: ["Handle unknown direction"] }) };
+  expect(delegationStatusLabel(run)).toBe("按审核意见修正");
+  const html = renderToStaticMarkup(<I18nProvider initialLocale="en"><WorkItemDelegationPanel
+    item={{ title: "task", status: "in_progress", version: 1 } as CouncilWorkItem} adapters={[]} delegation={run}
+    busyAction={null} onStart={async () => {}} onCancel={async () => {}} /></I18nProvider>);
+  expect(html).toContain("Addressing review findings");
+  expect(html).toContain("Code commit saved: aaaaaaaaaaaa");
+  expect(html).toContain("Previous review: 1 findings to address");
+  expect(html).toContain("Handle unknown direction");
+  expect(html).not.toMatch(/[\u4e00-\u9fff]/u);
+  expect(delegationStatusLabel({ ...run, review: "invalid" })).toBe("执行与验证");
+  expect(isDelegationPaused({ ...run, status: "failed", failureCode: "review_revision_limit" })).toBe(true);
 });

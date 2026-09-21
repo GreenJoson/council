@@ -1,5 +1,6 @@
-/** @input CLI 白名单进度和冻结的实施指令；@output 私有检查点及公开阶段投影；@pos 会话、原始指令不进入公开进度 DTO。 */
+/** @input CLI 白名单进度、冻结指令及历史交接；@output 私有检查点及公开阶段投影；@pos 会话、原始指令与交接不进入公开进度 DTO。 */
 import type { NativeRuntimeProgress } from "../native-runtime-progress.js";
+import type { DelegationHandoff } from "./delegation-handoff.js";
 export type DelegationPhase = "brief" | "execution" | "commit" | "review";
 export interface DelegationExecutionProgress {
   phase: DelegationPhase;
@@ -16,6 +17,7 @@ export interface DelegationCheckpoint {
   version: 1;
   progress?: DelegationExecutionProgress;
   brief?: { content: string; fingerprint: string };
+  handoff?: DelegationHandoff;
 }
 export function publicExecutionProgress(checkpoint: DelegationCheckpoint | undefined): DelegationExecutionProgress | undefined {
   if (!checkpoint?.progress) return undefined;

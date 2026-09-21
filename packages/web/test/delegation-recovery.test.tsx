@@ -48,3 +48,12 @@ it("接续仅在 Agent 允许时展示完全控制选项，默认仍选择原权
   expect(html).toContain("Continuation permissions");
   expect(html).not.toMatch(/[\u4e00-\u9fff]/u);
 });
+
+it("已提交后的写入中断显示修正接续，不承诺忽略草稿直接审核", () => {
+  const html = render({ headCommit: "b".repeat(40), execution: {
+    phase: "execution", phaseStartedAt: draft.createdAt, lastActivityAt: draft.updatedAt,
+  } }, "en");
+  expect(html).toContain("Continue corrections");
+  expect(html).toContain("later correction drafts");
+  expect(html).not.toMatch(/[\u4e00-\u9fff]/u);
+});

@@ -4,10 +4,28 @@
  * @pos    中英双语的英文单一真源，用户内容不经过本词典
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
- * 覆盖阶段进度、暂停分类、检查点接续指引与显式权限选择
+ * 覆盖阶段进度、已有提交、审核修正、草稿接续与显式权限选择
  */
 
 export const englishCatalog: Readonly<Record<string, string>> = {
+  "审核在最大修订轮次内未通过。": "Review was not approved within the revision limit.",
+  "审核受阻：材料待补查": "Review blocked: evidence needs inspection",
+  "阶段交接已保存；尚未完成，接续将继续剩余工作并独立审核。": "A stage handoff is saved. Work is unfinished; continuation proceeds with remaining work and independent review.",
+  "阶段交接格式无效；原文件保留，检查后可接续，不能视为完成。": "The stage handoff format is invalid. Files are preserved for inspection and continuation; this is not completion.",
+  "审核材料尚未核对完整；恢复后重新审核，不需要为缩小材料删减交付内容。": "Review evidence is incomplete. Resume the review without removing deliverables to shorten the evidence.",
+  "审核未确认已补查完整变更；提交已保留，恢复后重新审核，无需为缩小材料删减实现或报告。": "The review has not confirmed inspection of all omitted changes. The commit is preserved for another review; do not shrink implementations or reports to fit inline evidence.",
+  "执行已按阶段保存交接，仍有未完成工作；可检查后接续。": "A stage handoff is saved. Work is unfinished and can be continued after inspection.",
+  "执行阶段交接格式无效；文件已保留，不能当作完成或进入审核。": "The execution handoff format is invalid. Files are preserved; the task cannot be marked complete or submitted for review.",
+  "按审核意见修正": "Addressing review findings",
+  "已保存代码提交：{commit}": "Code commit saved: {commit}",
+  "上轮审核：需要修正（{count} 项）": "Previous review: {count} findings to address",
+  "最近审核：通过": "Latest review: approved",
+  "已有提交；接续时会检查并保留后续修正草稿，旧工作区与审核意见保留。": "A commit is saved. Continuation checks and preserves later correction drafts, the previous workspace, and review findings.",
+  "接续修正工作": "Continue corrections",
+  "审核修订轮次已用尽；代码提交和待修意见已保存，检查后可接续。": "The review revision limit was reached. Code commits and remaining findings are saved for inspection and continuation.",
+  "审核材料超过预算；提交已保存，请拆分任务或调整审核上下文预算后恢复。": "Review evidence exceeds the context budget. The commit is saved; split the task or adjust the review context budget before resuming.",
+  "审核在最大修订轮次内未通过；提交与审核意见已保留，可检查后接续。": "The review revision limit was reached without approval. Commits and review findings are preserved for continuation.",
+  "审核文件清单超过上下文预算；提交已保留，请拆分任务或调整审核上下文预算后恢复。": "The file manifest exceeds the review context budget. The commit is preserved; split the task or adjust the budget before resuming.",
   "接续执行权限": "Continuation permissions",
   "工作区写入": "Workspace write",
   "本次选择仅用于新的接续运行；仍须遵守任务范围与验收标准。": "This selection applies to the new continuation only. Task scope and acceptance criteria still apply.",

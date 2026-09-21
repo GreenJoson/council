@@ -1,6 +1,6 @@
 /**
  * @input  依赖：当前实施项、可用 Agent 权限/职责、最新委派记录与启动/取消回调
- * @output 导出：WorkItemDelegationPanel、折叠验收条件、持久执行阶段/预算、暂停原因、本次权限和恢复入口
+ * @output 导出：WorkItemDelegationPanel、验收条件、执行阶段、已有提交与审核问题、本次权限和恢复入口
  * @pos    任务卡内的显式 supervisor→executor 委派入口与可审计进度摘要
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import { DelegationExecutionProgress, delegationStatusLabel, isDelegationPaused } from "./DelegationExecutionProgress";
 import { DelegationRecoveryActions } from "./DelegationRecoveryActions";
+import { DelegationDeliveryEvidence } from "./DelegationDeliveryEvidence";
 import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
 
 import { AlertTriangle, Bot, GitBranch, GitCommitHorizontal, LoaderCircle, ShieldCheck, X } from "lucide-react";
@@ -107,6 +108,7 @@ export function WorkItemDelegationPanel({
           ? <p>{t("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。")}</p> : null}
         <p>{t("本次执行权限：{permission}", { permission: t(delegation.permissionProfile === "danger_full_access" ? "完全控制" : "工作区写入") })}</p>
         <DelegationExecutionProgress delegation={delegation} />
+        <DelegationDeliveryEvidence delegation={delegation} />
         {delegation.acceptanceCriteria ? <details className="delegation-criteria"><summary>{t("查看验收标准")}</summary><p>{delegation.acceptanceCriteria}</p></details> : null}
         {delegation.error ? <p><AlertTriangle size={12} />{t(delegation.error)}</p> : null}
         {delegation.status === "approved" && delegation.headCommit ? (

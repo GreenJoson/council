@@ -21,7 +21,7 @@
 .work-item-delegation-form > .delegation-acceptance-criteria { grid-column: 1 / -1; }
 
 /* 阶段和恢复占整行，长验收条件由用户展开。 */
-.delegation-checkpoint, .delegation-criteria, .delegation-recovery { grid-column: 1 / -1; }
+.delegation-checkpoint, .delegation-criteria, .delegation-recovery, .delegation-delivery-evidence { grid-column: 1 / -1; }
 .delegation-checkpoint { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--color-text-muted); font-size: 11px; }
 .delegation-criteria { color: var(--color-text-muted); font-size: 11px; }
 .delegation-criteria summary { cursor: pointer; }
@@ -39,3 +39,9 @@
 .work-item-delegation-history { min-width: 0; margin: 12px 0 0 28px; color: var(--color-text-muted); }
 .work-item-delegation-history > small { display: flex; flex-wrap: wrap; gap: 4px 8px; font-family: var(--font-mono); font-size: 9px; line-height: 1.6; }
 .work-item-delegation-history time, .delegation-checkpoint > span { min-width: 0; overflow-wrap: anywhere; }
+
+/* 已有提交与审核结论独立于运行阶段，长路径不能撑破任务卡。 */
+.delegation-delivery-evidence { min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.delegation-delivery-evidence summary { cursor: pointer; color: var(--color-text-muted); }
+.delegation-delivery-evidence ul { margin: 8px 0; padding-left: 20px; max-height: 280px; overflow: auto; }
+.delegation-delivery-evidence li { margin-bottom: 8px; white-space: pre-wrap; }

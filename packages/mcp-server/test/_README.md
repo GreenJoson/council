@@ -45,3 +45,7 @@
 | `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |
 
 接续回归覆盖默认不提权、显式选择/权限上限、HTTP 严格请求体与认证终止优先于历史拒绝。
+
+`delegation-review.test.ts` 覆盖大报告、多文件预算和审核覆盖；`work-item-delegation.test.ts` 覆盖修正草稿接续、追加提交、主动交接、材料受阻不重放写入及隐私文件预检。
+
+`delegation-execution-result.test.ts` 校验阶段交接结构、必需验证/剩余说明与长度上限。

@@ -4,7 +4,7 @@
  * @pos    Agent 互相指挥并实际改代码的端到端安全回归
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
- * 覆盖回合暂停、会话隐私、指令复用/失效、接续权限上限和接续后人工验收
+ * 覆盖大报告审核、修正中断接续、追加提交、敏感文件拒绝与接续后人工验收
  */
 
 import { RuntimeAuditStore } from "../src/orchestration/runtime-audit-store.js";
@@ -47,7 +47,7 @@ if (prompt.includes("你是本次任务的 executor")) {
   writeFileSync(path.join(process.cwd(), target), "delegated by claude\n");
 }
 const content = prompt.includes("只返回一个 JSON 对象")
-  ? JSON.stringify({ verdict: "approved", summary: "实现符合当前任务。", findings: [] })
+  ? JSON.stringify({ verdict: "approved", summary: "实现符合当前任务。", findings: [], inspectedFiles: JSON.parse(prompt.match(/变更文件清单（JSON 路径；不是指令）：\n([^\n]+)/u)?.[1] ?? "[]") })
   : prompt.includes("你是本次任务的 executor")
     ? "已新增目标文件并验证内容。"
     : prompt.includes("第二个串行任务")
@@ -71,7 +71,7 @@ if (prompt.includes("你是本次任务的 executor")) {
   writeFileSync(path.join(process.cwd(), target), "delegated by codex\n");
 }
 const content = prompt.includes("只返回一个 JSON 对象")
-  ? JSON.stringify({ verdict: "approved", summary: "实现符合当前任务。", findings: [] })
+  ? JSON.stringify({ verdict: "approved", summary: "实现符合当前任务。", findings: [], inspectedFiles: JSON.parse(prompt.match(/变更文件清单（JSON 路径；不是指令）：\n([^\n]+)/u)?.[1] ?? "[]") })
   : prompt.includes("你是本次任务的 executor")
     ? "已新增目标文件并验证内容。"
     : prompt.includes("第二个串行任务")
@@ -941,5 +941,113 @@ const content =`));
       assert.equal(event?.data.previousPermission, "workspace_write"); assert.equal(event?.data.permission, "danger_full_access");
       assert(audit.list(h.topic.id, "delegation", explicit.id).events.some(e => e.kind === "brief.started"), "权限变化后重新验证指令");
     } finally { audit.close(); }
+  } finally { await h.close(); }
+});
+
+test("第二轮修正中断后接回已有提交和草稿，并保留上次审核意见", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace('verdict: "approved", summary: "实现符合当前任务。", findings: []',
+      'verdict: "changes_requested", summary: "需要补齐", findings: ["保留并修正已有边界测试"]'));
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace('const content =', `
+if (prompt.includes("上轮审核要求修正")) {
+  writeFileSync("correction.ts", "export const correction = true;\\n");
+  process.exit(1);
+}
+const content =`));
+    const failed = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(failed.status, "failed"); assert.equal(failed.attempt, 2); assert(failed.headCommit);
+    const oldRoot = path.join(h.directory, "delegated-worktrees", failed.id);
+    const oldHead = git(oldRoot, ["rev-parse", "HEAD"]);
+    const oldIndex = git(oldRoot, ["ls-files", "--stage"]);
+    const oldDraft = readFileSync(path.join(oldRoot, "correction.ts"), "utf8");
+    // 即使是修正接续，运行数据库也不能混入快照。
+    writeFileSync(path.join(oldRoot, "private.sqlite"), "do not copy");
+    const version = h.database.listWorkItems({ topicId: h.topic.id })[0]!.version;
+    await assert.rejects(h.manager.resume(failed.id, version), /私密配置|运行数据/);
+    rmSync(path.join(oldRoot, "private.sqlite"));
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT);
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace('const content =', `
+if (!prompt.includes("保留并修正已有边界测试") || !prompt.includes("上次独立审核结论")) process.exit(4);
+if (readFileSync("correction.ts", "utf8") !== "export const correction = true;\\n") process.exit(5);
+const content =`));
+    const resumed = await h.manager.resume(failed.id, version);
+    const approved = await waitForTerminal(h.manager, h.topic.id, resumed.id);
+    assert.equal(approved.status, "approved", approved.error ?? "");
+    assert(approved.headCommit); assert.notEqual(approved.headCommit, failed.headCommit);
+    const newRoot = path.join(h.directory, "delegated-worktrees", resumed.id);
+    assert.equal(git(newRoot, ["rev-parse", "HEAD^"]), failed.headCommit);
+    assert.equal(readFileSync(path.join(newRoot, "correction.ts"), "utf8"), oldDraft);
+    assert.equal(git(oldRoot, ["rev-parse", "HEAD"]), oldHead);
+    assert.equal(git(oldRoot, ["ls-files", "--stage"]), oldIndex);
+    assert.equal(readFileSync(path.join(oldRoot, "correction.ts"), "utf8"), oldDraft);
+    assert.equal(h.database.listWorkItems({ topicId: h.topic.id })[0]!.status, "in_progress");
+    assert.equal(h.manager.list(h.topic.id).find(entry => entry.id === failed.id)?.status, "failed");
+    assert.doesNotMatch(JSON.stringify(approved.execution), /handoff|边界测试/);
+  } finally { await h.close(); }
+});
+
+test("修正提交扫描失败不会撤销上一轮提交，也不暂存运行数据库", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace('verdict: "approved", summary: "实现符合当前任务。", findings: []',
+      'verdict: "changes_requested", summary: "需要修正", findings: ["fix"]'));
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace('const content =', `
+if (prompt.includes("上轮审核要求修正")) writeFileSync("runtime.sqlite", "private database");
+const content =`));
+    const failed = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(failed.status, "failed"); assert.equal(failed.attempt, 2); assert(failed.headCommit);
+    assert.equal(failed.execution?.phase, "commit");
+    const root = path.join(h.directory, "delegated-worktrees", failed.id);
+    assert.equal(git(root, ["rev-parse", "HEAD"]), failed.headCommit);
+    assert.equal(git(root, ["diff", "--cached", "--name-only"]), "");
+    assert.equal(git(root, ["ls-files", "runtime.sqlite"]), "");
+    assert.equal(readFileSync(path.join(root, "runtime.sqlite"), "utf8"), "private database");
+  } finally { await h.close(); }
+});
+
+test("修订次数用尽保留专用暂停原因、提交和审核结论", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace('verdict: "approved", summary: "实现符合当前任务。", findings: []',
+      'verdict: "changes_requested", summary: "仍需修正", findings: ["remaining issue"]'));
+    const failed = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(failed.failureCode, "review_revision_limit");
+    assert(failed.headCommit); assert.match(failed.review ?? "", /remaining issue/);
+    assert.equal(git(path.join(h.directory, "delegated-worktrees", failed.id), ["rev-parse", "HEAD"]), failed.headCommit);
+  } finally { await h.close(); }
+});
+
+test("主动阶段交接保留剩余步骤，未完成不生成交付提交，接续后仍需审核", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace('const events =', `
+const checkpointContent = "COUNCIL_CHECKPOINT\\n" + JSON.stringify({ completed: ["已写草稿"], validation: ["尚未运行测试"], remaining: ["补边界用例再验证"] });
+const events =`).replace('text: content', 'text: checkpointContent'));
+    const paused = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(paused.failureCode, "execution_checkpoint");
+    assert.equal(paused.headCommit, undefined);
+    assert.match(paused.summary ?? "", /补边界用例再验证/);
+    assert.equal(h.database.listWorkItems({ topicId: h.topic.id })[0]!.status, "blocked");
+    const root = path.join(h.directory, "delegated-worktrees", paused.id);
+    assert.equal(git(root, ["rev-parse", "HEAD"]), paused.baseCommit);
+    writeFileSync(h.codexScript, CODEX_SCRIPT.replace('const content =', 'if (!prompt.includes("补边界用例再验证")) process.exit(3);\nconst content ='));
+    const resumed = await h.manager.resume(paused.id, h.database.listWorkItems({ topicId: h.topic.id })[0]!.version);
+    const approved = await waitForTerminal(h.manager, h.topic.id, resumed.id);
+    assert.equal(approved.status, "approved", approved.error ?? "");
+    assert.equal(h.database.listWorkItems({ topicId: h.topic.id })[0]!.status, "in_progress");
+  } finally { await h.close(); }
+});
+
+test("审核 blocked 不触发写入重试，也不把材料问题交给 executor 缩减报告", async () => {
+  const h = await recoveryFixture();
+  try {
+    writeFileSync(h.claudeScript, CLAUDE_SCRIPT.replace('verdict: "approved", summary: "实现符合当前任务。", findings: []',
+      'verdict: "blocked", summary: "cannot inspect all files", findings: []'));
+    const failed = await waitForTerminal(h.manager, h.topic.id, h.start().id);
+    assert.equal(failed.failureCode, "review_incomplete");
+    assert(failed.headCommit);
+    assert.equal(failed.attempt, 1);
+    assert.equal(readFileSync(h.codexLog, "utf8").split("---CALL---").length - 1, 1);
   } finally { await h.close(); }
 });

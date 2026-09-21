@@ -1,12 +1,16 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：带完成条件的单项/串行委派、审计、提交/草稿及指令检查点恢复、显式接续权限、分阶段运行与优雅关闭
+ * @output 导出：带完成条件的委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
- * 阶段执行交由专用模块；私有指令指纹验证后复用，跨工作区不复用模型会话
+ * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
  */
 
+import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
+import { commitDelegationChanges } from "./delegation-git-delivery.js";
+import { createDelegationHandoff, handoffContext } from "./delegation-handoff.js";
+import { EXECUTION_CHECKPOINT_INSTRUCTION, executionHandoff, DelegationExecutionCheckpointError } from "./delegation-execution-result.js";
 import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-recovery.js";
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
@@ -36,6 +40,7 @@ import type { AgentDefinition, ProviderProfile } from "../model-router-store.js"
 import { normalizeProjectPath } from "../project-path.js";
 import {
   runBoundedProcess,
+  ProcessOutputLimitError,
   type BoundedProcessMessages,
   type ProcessResult,
 } from "../process-utils.js";
@@ -59,12 +64,6 @@ const ACTIVE_STATUSES = new Set(["queued", "executing", "reviewing", "changes_re
 interface RuntimeResult {
   content: string;
   sessionId?: string;
-}
-
-interface ReviewVerdict {
-  verdict: "approved" | "changes_requested";
-  summary: string;
-  findings: string[];
 }
 
 export interface StartWorkItemDelegationInput {
@@ -117,6 +116,7 @@ interface DelegationManagerConfig {
   gitKillGraceMs: number;
   gitMaxOutputChars: number;
   maxContextChars: number;
+  executionMaxTurns?: number;
 }
 
 function compact(value: string, maximum: number): string {
@@ -138,36 +138,6 @@ function publicFailure(error: unknown): string {
     ? compact(message, 500)
     : "任务执行失败，请检查本地日志。";
 }
-
-function parseReview(content: string): ReviewVerdict {
-  const candidate = content.trim()
-    .replace(/^```(?:json)?\s*/iu, "")
-    .replace(/\s*```$/u, "");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(candidate);
-  } catch {
-    throw new Error("审核 Agent 没有返回约定的 JSON 结论。");
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("审核 Agent 返回的结论结构无效。");
-  }
-  const record = parsed as Record<string, unknown>;
-  if (
-    (record.verdict !== "approved" && record.verdict !== "changes_requested")
-    || typeof record.summary !== "string"
-    || !Array.isArray(record.findings)
-    || !record.findings.every((finding) => typeof finding === "string")
-  ) {
-    throw new Error("审核 Agent 返回的结论字段无效。");
-  }
-  return {
-    verdict: record.verdict,
-    summary: compact(record.summary, 4_000),
-    findings: record.findings.map((finding) => compact(finding, 2_000)),
-  };
-}
-
 
 export class WorkItemDelegationManager {
   readonly #audit: RuntimeAuditStore;
@@ -211,6 +181,7 @@ export class WorkItemDelegationManager {
       gitKillGraceMs: councilConfig.gitDiffKillGraceMs,
       gitMaxOutputChars: councilConfig.delegationGitMaxOutputChars,
       maxContextChars: councilConfig.maxContextChars,
+      executionMaxTurns: councilConfig.claudeExecutionMaxTurns,
     }, modelRouter, claudeRuntime, codexRuntime);
   }
 
@@ -410,9 +381,11 @@ export class WorkItemDelegationManager {
         resumedFromId: id, now: new Date().toISOString(),
       });
     } catch { throw new CouncilConflictError("这条实施项已有进行中的 Agent 委派。"); }
-    if (previous.checkpoint?.brief) {
-      this.#store.update(created.id, { checkpoint: { version: 1, brief: previous.checkpoint.brief }, now: new Date().toISOString() });
-    }
+    this.#store.update(created.id, { checkpoint: { version: 1,
+      ...(previous.checkpoint?.brief ? { brief: previous.checkpoint.brief } : {}),
+      handoff: createDelegationHandoff(previous),
+    }, ...(previous.summary ? { summary: previous.summary } : {}),
+      ...(previous.review ? { review: previous.review } : {}), now: new Date().toISOString() });
     const controller = new AbortController();
     this.#controllers.set(created.id, controller);
     this.#workItemVersions.set(created.id, expectedVersion);
@@ -420,9 +393,9 @@ export class WorkItemDelegationManager {
       const branchName = `codex/council-${created.id.slice(-12)}`;
       const root = path.join(this.config.worktreeRoot, created.id);
       await this.#git(checkpoint.originalRoot, ["worktree", "add", "-b", branchName, root, checkpoint.headCommit], controller.signal);
-      this.#store.update(created.id, { baseCommit: checkpoint.baseCommit, branchName, worktreePath: root, now: new Date().toISOString() });
+      this.#store.update(created.id, { baseCommit: checkpoint.baseCommit, ...(previous.headCommit ? { headCommit: checkpoint.headCommit } : {}), branchName, worktreePath: root, now: new Date().toISOString() });
       if (snapshot) {
-        // 只写新隔离工作区；HEAD 仍是原基线，草稿经过执行和审核后才生成交付提交。
+        // 只写新隔离工作区；保留上一份提交，修正草稿完成验证后才追加交付提交。
         await this.#git(root, ["read-tree", "--reset", "-u", snapshot.tree], controller.signal);
       }
       this.#recordAudit(created.id, "delegation.resumed", { previousId: id, headCommit: checkpoint.headCommit,
@@ -431,7 +404,7 @@ export class WorkItemDelegationManager {
       await this.#executeInWorkspace(created.id, {
         root, cwd: path.join(root, checkpoint.relativeProjectPath), baseCommit: checkpoint.baseCommit, branchName,
         ...(snapshot ? { restoredWork: true } : {}),
-      }, controller.signal, snapshot ? undefined : { headCommit: checkpoint.headCommit, summary: previous.summary ?? "请直接检查保留的提交。" });
+      }, controller.signal, previous.headCommit ? { headCommit: checkpoint.headCommit, summary: previous.summary ?? "请直接检查保留的提交。" } : undefined);
     })().catch((error: unknown) => this.#recordFailure(created.id, error, true)).finally(() => {
       this.#controllers.delete(created.id); this.#tasks.delete(created.id);
       this.#workItemVersions.delete(created.id);
@@ -713,54 +686,6 @@ export class WorkItemDelegationManager {
     };
   }
 
-  async #commitChanges(
-    root: string,
-    workItemId: string,
-    baseCommit: string,
-    signal: AbortSignal,
-  ): Promise<string> {
-    const existingHead = (await this.#git(root, ["rev-parse", "HEAD"], signal)).stdout.trim();
-    if (existingHead !== baseCommit) {
-      // 提交由 Council 统一完成并先做敏感内容扫描。Agent 若自行 commit，先把它
-      // 还原成同一 worktree 内的未暂存改动；不会碰用户原始 checkout。
-      await this.#git(root, ["reset", "--mixed", baseCommit], signal);
-    }
-    await this.#git(root, ["add", "--all"], signal);
-    const names = (await this.#git(root, ["diff", "--cached", "--name-only"], signal))
-      .stdout.split("\n").filter(Boolean);
-    if (names.some((name) => FORBIDDEN_STAGED_PATH.test(name))) {
-      throw new Error("提交包含凭据或私密配置文件，已停止执行。");
-    }
-    const stagedDiff = (await this.#git(
-      root,
-      ["diff", "--cached", "--no-ext-diff", "--unified=0", "--"],
-      signal,
-    )).stdout;
-    if (SECRET_DIFF_PATTERN.test(stagedDiff)) {
-      throw new Error("提交疑似包含凭据，已停止执行。");
-    }
-    if (names.length > 0) {
-      const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        GIT_AUTHOR_NAME: "Council Agent",
-        GIT_AUTHOR_EMAIL: "council@localhost",
-        GIT_COMMITTER_NAME: "Council Agent",
-        GIT_COMMITTER_EMAIL: "council@localhost",
-      };
-      await this.#git(
-        root,
-        ["commit", "-m", `council: implement ${workItemId}`],
-        signal,
-        commitEnv,
-      );
-    }
-    const head = (await this.#git(root, ["rev-parse", "HEAD"], signal)).stdout.trim();
-    if (head === baseCommit) {
-      throw new Error("执行 Agent 没有产生代码改动。");
-    }
-    return head;
-  }
-
   async #runSingle(
     id: string,
     createInitialBaseline: boolean,
@@ -825,75 +750,78 @@ export class WorkItemDelegationManager {
     signal: AbortSignal,
     checkpoint?: { headCommit: string; summary: string },
   ): Promise<string> {
+    if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
+    let delegation = this.#store.get(id);
+    if (!delegation) throw new Error("任务委派不存在。");
+    const task = this.#taskContext(delegation.topicId, delegation.workItemId);
+    const supervisor = this.#requireAgent(delegation.supervisorAgentId, "审核");
+    const executor = this.#requireAgent(delegation.executorAgentId, "执行");
+    this.#store.update(id, {
+      baseCommit: workspace.baseCommit,
+      branchName: workspace.branchName,
+      worktreePath: workspace.root,
+      ...(checkpoint ? { headCommit: checkpoint.headCommit, summary: checkpoint.summary } : {}),
+      now: new Date().toISOString(),
+    });
+    const claimed = this.#database.claimWorkItemAsActor({
+      topicId: delegation.topicId,
+      workItemId: delegation.workItemId,
+      expectedVersion: this.#workItemVersions.get(id) ?? task.item.version,
+      statusNote: `${executor.displayName} 正在隔离 worktree 中执行；${supervisor.displayName} 负责审核。`,
+      actorId: executor.actorId,
+    });
+    this.#workItemVersions.set(id, claimed.version);
+    delegation = this.#store.update(id, {
+      status: "executing",
+      now: new Date().toISOString(),
+    });
+    const fingerprint = createHash("sha256").update(JSON.stringify({
+      criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
+      permission: delegation.permissionProfile,
+      supervisor: [supervisor.id, supervisor.configRevision, this.#requireNativeProvider(supervisor).configRevision],
+      executor: [executor.id, executor.configRevision, this.#requireNativeProvider(executor).configRevision],
+    })).digest("hex");
+    const privateCheckpoint = this.#store.getPrivate(id)?.checkpoint;
+    const continuation = handoffContext(privateCheckpoint?.handoff);
+    const savedBrief = privateCheckpoint?.brief;
+    const reuseBrief = savedBrief?.fingerprint === fingerprint;
+    const briefResponse: RuntimeResult = reuseBrief ? { content: savedBrief.content } : await this.#runtimeGenerate({
+      delegationId: id, stage: "brief",
+      agent: supervisor,
+      cwd: workspace.cwd,
+      permissionProfile: "read_only",
+      signal,
+      prompt: [
+        "你是本次代码任务的 supervisor。只讨论当前议题，不读取或总结历史议题。",
+        "请给执行 Agent 一份精确、可验证的实施指令：明确范围、必须保留的不变量、测试与验收标准。",
+        "不要修改文件，不要运行写操作。",
+        ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
+        "",
+        `验收标准：${delegation.acceptanceCriteria}`,
+        task.context,
+        ...continuation,
+      ].join("\n"),
+    });
+    const currentCheckpoint = this.#store.getPrivate(id)?.checkpoint;
+    this.#store.update(id, { checkpoint: { ...currentCheckpoint, version: 1,
+      brief: { content: briefResponse.content, fingerprint } }, now: new Date().toISOString() });
+    if (reuseBrief) this.#recordAudit(id, "brief.reused", { summary: "任务范围与 Agent 配置未变，沿用已保存的实施指令。" });
+    let supervisorSessionId = briefResponse.sessionId;
+    let executorSessionId: string | undefined;
+    let review: DelegationReview | undefined;
+    let headCommit = checkpoint?.headCommit ?? workspace.baseCommit;
+    let executorSummary = checkpoint?.summary ?? "";
+    for (let attempt = 1; attempt <= delegation.maxAttempts; attempt += 1) {
       if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
-      let delegation = this.#store.get(id);
-      if (!delegation) throw new Error("任务委派不存在。");
-      const task = this.#taskContext(delegation.topicId, delegation.workItemId);
-      const supervisor = this.#requireAgent(delegation.supervisorAgentId, "审核");
-      const executor = this.#requireAgent(delegation.executorAgentId, "执行");
-      this.#store.update(id, {
-        baseCommit: workspace.baseCommit,
-        branchName: workspace.branchName,
-        worktreePath: workspace.root,
-        ...(checkpoint ? { headCommit: checkpoint.headCommit, summary: checkpoint.summary } : {}),
-        now: new Date().toISOString(),
-      });
-      const claimed = this.#database.claimWorkItemAsActor({
-        topicId: delegation.topicId,
-        workItemId: delegation.workItemId,
-        expectedVersion: this.#workItemVersions.get(id) ?? task.item.version,
-        statusNote: `${executor.displayName} 正在隔离 worktree 中执行；${supervisor.displayName} 负责审核。`,
-        actorId: executor.actorId,
-      });
-      this.#workItemVersions.set(id, claimed.version);
       delegation = this.#store.update(id, {
         status: "executing",
+        attempt,
         now: new Date().toISOString(),
       });
-      const fingerprint = createHash("sha256").update(JSON.stringify({
-        criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
-        permission: delegation.permissionProfile,
-        supervisor: [supervisor.id, supervisor.configRevision, this.#requireNativeProvider(supervisor).configRevision],
-        executor: [executor.id, executor.configRevision, this.#requireNativeProvider(executor).configRevision],
-      })).digest("hex");
-      const savedBrief = this.#store.getPrivate(id)?.checkpoint?.brief;
-      const reuseBrief = savedBrief?.fingerprint === fingerprint;
-      const briefResponse: RuntimeResult = reuseBrief ? { content: savedBrief.content } : await this.#runtimeGenerate({
-        delegationId: id, stage: "brief",
-        agent: supervisor,
-        cwd: workspace.cwd,
-        permissionProfile: "read_only",
-        signal,
-        prompt: [
-          "你是本次代码任务的 supervisor。只讨论当前议题，不读取或总结历史议题。",
-          "请给执行 Agent 一份精确、可验证的实施指令：明确范围、必须保留的不变量、测试与验收标准。",
-          "不要修改文件，不要运行写操作。",
-          ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
-          "",
-          `验收标准：${delegation.acceptanceCriteria}`,
-          task.context,
-        ].join("\n"),
-      });
-      const currentCheckpoint = this.#store.getPrivate(id)?.checkpoint;
-      this.#store.update(id, { checkpoint: { ...currentCheckpoint, version: 1,
-        brief: { content: briefResponse.content, fingerprint } }, now: new Date().toISOString() });
-      if (reuseBrief) this.#recordAudit(id, "brief.reused", { summary: "任务范围与 Agent 配置未变，沿用已保存的实施指令。" });
-      let supervisorSessionId = briefResponse.sessionId;
-      let executorSessionId: string | undefined;
-      let review: ReviewVerdict | undefined;
-      let headCommit = checkpoint?.headCommit ?? workspace.baseCommit;
-      let executorSummary = checkpoint?.summary ?? "";
-      for (let attempt = 1; attempt <= delegation.maxAttempts; attempt += 1) {
-        if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
-        delegation = this.#store.update(id, {
-          status: "executing",
-          attempt,
-          now: new Date().toISOString(),
-        });
-        const correction = review?.findings.length
-          ? ["", "上轮审核要求修正：", ...review.findings.map((finding) => `- ${finding}`)]
-          : [];
-        if (!checkpoint || attempt > 1) {
+      const correction = review?.findings.length
+        ? ["", "上轮审核要求修正：", ...review.findings.map((finding) => `- ${finding}`)]
+        : [];
+      if (!checkpoint || workspace.restoredWork || attempt > 1) {
         const executorResponse = await this.#runtimeGenerate({
           delegationId: id, stage: "execution",
           agent: executor,
@@ -906,6 +834,9 @@ export class WorkItemDelegationManager {
             "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
             "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
             "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
+            EXECUTION_CHECKPOINT_INSTRUCTION,
+            ...(this.#requireNativeProvider(executor).protocol === "claude-cli" && this.config.executionMaxTurns
+              ? [`本次最多 ${this.config.executionMaxTurns} 个模型回合；预留回合用于验证与阶段交接，不要等 CLI 强制中断。`] : []),
             ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。旧指令如含旧工作区路径，以当前隔离工作区为准。"] : []),
             "",
             "Supervisor 指令：",
@@ -914,96 +845,118 @@ export class WorkItemDelegationManager {
             "当前实施项原文：",
             `验收标准：${delegation.acceptanceCriteria}`,
             task.context,
+            ...continuation,
             ...correction,
           ].join("\n"),
         });
         executorSessionId = executorResponse.sessionId ?? executorSessionId;
+        const partial = executionHandoff(executorResponse.content);
+        if (partial) {
+          this.#store.update(id, { summary: partial, now: new Date().toISOString() });
+          this.#recordAudit(id, "execution.checkpoint", { summary: "执行者已保存阶段交接，仍有未完成工作，尚未验收。" });
+          throw new DelegationExecutionCheckpointError("execution_checkpoint", "执行已按阶段保存交接，仍有未完成工作；可检查后接续。");
+        }
         executorSummary = compact(executorResponse.content, 8_000);
         const beforeCommit = this.#store.getPrivate(id)?.checkpoint;
         const commitTime = new Date().toISOString();
-        this.#store.update(id, { checkpoint: { ...beforeCommit, version: 1,
+        this.#store.update(id, { summary: executorSummary, checkpoint: { ...beforeCommit, version: 1,
           progress: { phase: "commit", phaseStartedAt: commitTime, lastActivityAt: commitTime } }, now: commitTime });
-        headCommit = await this.#commitChanges(
-          workspace.root,
-          delegation.workItemId,
-          workspace.baseCommit,
-          signal,
-        );
+        headCommit = await commitDelegationChanges({
+          root: workspace.root, workItemId: delegation.workItemId,
+          baseCommit: workspace.baseCommit, expectedHead: headCommit,
+          maxFileChars: this.config.gitMaxOutputChars,
+          git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+        });
         // 提交已产生就先保存检查点，后续取消或 diff 读取失败仍可显式恢复。
         this.#store.update(id, { headCommit, summary: executorSummary, now: new Date().toISOString() });
+      }
+      if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
+      this.#recordAudit(id, "commit.created", { baseCommit: workspace.baseCommit, headCommit });
+      const files = (await this.#git(workspace.root,
+        ["diff", "--name-only", "--no-renames", "-z", `${workspace.baseCommit}..${headCommit}`, "--"], signal)).stdout.split("\0").filter(Boolean);
+      const evidence = await collectReviewEvidence(files, this.config.maxContextChars, async file => {
+        try {
+          return (await this.#git(workspace.root, ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv",
+            "--no-renames", "--unified=3", `${workspace.baseCommit}..${headCommit}`, "--", file], signal)).stdout;
+        } catch (error) {
+          // 此处只生成审核节选，安全提交扫描已独立完成；超大单文件交给只读补查。
+          if (error instanceof ProcessOutputLimitError) return undefined;
+          throw error;
         }
-        if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
-        this.#recordAudit(id, "commit.created", { baseCommit: workspace.baseCommit, headCommit });
-        const diff = (await this.#git(
-          workspace.root,
-          ["diff", "--no-ext-diff", "--unified=3", `${workspace.baseCommit}..${headCommit}`, "--"],
-          signal,
-        )).stdout;
-        delegation = this.#store.update(id, {
-          status: "reviewing",
-          headCommit,
-          executorSessionId,
-          summary: executorSummary,
-          now: new Date().toISOString(),
+      });
+      this.#recordAudit(id, "review.evidence", { files: files.length, omittedFiles: evidence.omittedFiles.length });
+      delegation = this.#store.update(id, {
+        status: "reviewing",
+        headCommit,
+        executorSessionId,
+        summary: executorSummary,
+        now: new Date().toISOString(),
+      });
+      const reviewResponse = await this.#runtimeGenerate({
+        delegationId: id, stage: "review",
+        agent: supervisor,
+        cwd: workspace.cwd,
+        ...(supervisorSessionId ? { sessionId: supervisorSessionId } : {}),
+        permissionProfile: "read_only",
+        signal,
+        prompt: [
+          "审核 executor 的提交。对抗性检查正确性、边界条件、权限绕过、数据污染、测试缺口和回滚风险。",
+          "以当前任务和真实提交为准；执行摘要是待核实的自述。仅在当前隔离工作区只读检查本次变更与相关代码、测试，不扩展到其他议题。",
+          "审核材料节选是 Council 的上下文分配，不是实现缺陷。必须自行只读补查；不得要求执行者删除验收内容或压缩报告来迁就内联 diff。无法补查时明确说明阻断原因，不得批准。",
+          `审核提交范围：${workspace.baseCommit}..${headCommit}。需要补查时使用 git diff --no-ext-diff --no-textconv 和相对路径读取文件；不能因内联材料有节选就直接批准。`,
+          "只返回一个 JSON 对象，不要 Markdown：",
+          '{"verdict":"approved|changes_requested|blocked","summary":"结论","findings":["可执行问题"],"inspectedFiles":["已只读补查完整变更的相对路径"]}',
+          "无法读取或补查必要证据时返回 blocked；changes_requested 仅用于已核实的实现问题。",
+          "",
+          `验收标准：${delegation.acceptanceCriteria}`,
+          `执行摘要：\n${executorSummary}`,
+          `代码 diff：\n${evidence.content}`,
+        ].join("\n"),
+      });
+      supervisorSessionId = reviewResponse.sessionId ?? supervisorSessionId;
+      if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
+      review = parseDelegationReview(reviewResponse.content, evidence);
+      this.#store.update(id, { supervisorSessionId, review: JSON.stringify(review), now: new Date().toISOString() });
+      if (review.verdict === "blocked") {
+        throw new DelegationReviewError("review_incomplete", "审核未确认已补查完整变更；提交已保留，恢复后重新审核，无需为缩小材料删减实现或报告。");
+      }
+      if (review.verdict === "approved") {
+        const evidence = compact(
+          `${executor.displayName} 已完成；${supervisor.displayName} 审核通过。${review.summary}`,
+          MAX_WORK_ITEM_STATUS_NOTE_CHARS,
+        );
+        this.#database.updateWorkItemAsActor({
+          topicId: delegation.topicId,
+          workItemId: delegation.workItemId,
+          status: delegation.completionPolicy === "review" ? "completed" : "in_progress",
+          expectedVersion: claimed.version,
+          statusNote: delegation.completionPolicy === "human"
+            ? compact(`Agent 审核通过，等待人工验收。${evidence}`, MAX_WORK_ITEM_STATUS_NOTE_CHARS)
+            : evidence,
+          fixCommit: headCommit,
+          actorId: supervisor.actorId,
         });
-        const reviewResponse = await this.#runtimeGenerate({
-          delegationId: id, stage: "review",
-          agent: supervisor,
-          cwd: workspace.cwd,
-          ...(supervisorSessionId ? { sessionId: supervisorSessionId } : {}),
-          permissionProfile: "read_only",
-          signal,
-          prompt: [
-            "审核 executor 的提交。对抗性检查正确性、边界条件、权限绕过、数据污染、测试缺口和回滚风险。",
-            "只根据当前任务、执行摘要和下面的 diff 判断，不扩展到其他议题。",
-            "只返回一个 JSON 对象，不要 Markdown：",
-            '{"verdict":"approved|changes_requested","summary":"结论","findings":["可执行问题"]}',
-            "",
-            `验收标准：${delegation.acceptanceCriteria}`,
-            `执行摘要：\n${executorSummary}`,
-            `代码 diff：\n${compact(diff, this.config.maxContextChars)}`,
-          ].join("\n"),
-        });
-        supervisorSessionId = reviewResponse.sessionId ?? supervisorSessionId;
-        if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
-        review = parseReview(reviewResponse.content);
-        if (review.verdict === "approved") {
-          const evidence = compact(
-            `${executor.displayName} 已完成；${supervisor.displayName} 审核通过。${review.summary}`,
-            MAX_WORK_ITEM_STATUS_NOTE_CHARS,
-          );
-          this.#database.updateWorkItemAsActor({
-            topicId: delegation.topicId,
-            workItemId: delegation.workItemId,
-            status: delegation.completionPolicy === "review" ? "completed" : "in_progress",
-            expectedVersion: claimed.version,
-            statusNote: delegation.completionPolicy === "human"
-              ? compact(`Agent 审核通过，等待人工验收。${evidence}`, MAX_WORK_ITEM_STATUS_NOTE_CHARS)
-              : evidence,
-            fixCommit: headCommit,
-            actorId: supervisor.actorId,
-          });
-          this.#store.update(id, {
-            status: "approved",
-            headCommit,
-            executorSessionId,
-            supervisorSessionId,
-            summary: executorSummary,
-            review: JSON.stringify(review),
-            now: new Date().toISOString(),
-          });
-          return headCommit;
-        }
         this.#store.update(id, {
-          status: "changes_requested",
+          status: "approved",
           headCommit,
           executorSessionId,
           supervisorSessionId,
+          summary: executorSummary,
           review: JSON.stringify(review),
           now: new Date().toISOString(),
         });
+        return headCommit;
       }
-      throw new Error("审核在最大修订轮次内未通过。");
+      this.#store.update(id, {
+        status: "changes_requested",
+        headCommit,
+        executorSessionId,
+        supervisorSessionId,
+        review: JSON.stringify(review),
+        now: new Date().toISOString(),
+      });
+    }
+    throw new DelegationReviewError("review_revision_limit", "审核在最大修订轮次内未通过；提交与审核意见已保留，可检查后接续。");
   }
 
   #recordFailure(id: string, error: unknown, markWorkItem: boolean): void {

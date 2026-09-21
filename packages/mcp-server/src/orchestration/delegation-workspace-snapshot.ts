@@ -1,6 +1,6 @@
 /**
  * @input  原隔离工作区、冻结基线与有界 Git 调用
- * @output 未提交代码的只读 Git tree 快照与变更文件数；共用提交内容检查
+ * @output 未提交代码的只读 Git tree 快照与变更文件数；提交和恢复共用内容检查
  * @pos    显式接续草稿时使用临时索引，不更改原 HEAD、索引、文件或委派历史
  */
 import path from "node:path";
@@ -29,6 +29,7 @@ export async function snapshotUncommittedWork(input: {
   root: string;
   headCommit: string;
   maxFileChars: number;
+  allowEmpty?: boolean;
   git: (cwd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<string>;
 }): Promise<{ tree: string; fileCount: number }> {
   // 写入临时索引前先筛查，避免已知运行数据与凭据进入 Git 对象库。
@@ -75,7 +76,7 @@ export async function snapshotUncommittedWork(input: {
       }
       fileCount += 1;
     }
-    if (!fileCount) throw new CouncilConflictError("原工作区没有可接续的未提交代码，请重新委派。");
+    if (!fileCount && !input.allowEmpty) throw new CouncilConflictError("原工作区没有可接续的未提交代码，请重新委派。");
     if ((await input.git(input.root, ["rev-parse", "HEAD"])).trim() !== input.headCommit) {
       throw new CouncilConflictError("原工作区提交在恢复检查期间已变化，请刷新后检查。");
     }
