@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Actor 快照解析与领域类型
- * @output 导出：topics/messages/decisions/work_items/actor_identities 等表的行接口、
+ * @output 导出：topics/messages/decisions/work_items（含 v18 任务列）/actor_identities 等表的行接口、
  *         行 → 领域对象的映射函数、实施项叶子完成度汇总与父状态派生规则
  * @pos    database/ 各仓储共享的纯映射层，不持有连接；快照与索引身份不一致时直接抛错，不做修复
  *
@@ -16,9 +16,11 @@ import type {
   Topic,
   TopicStatus,
   WorkItem,
+  WorkItemKind,
   WorkItemOrigin,
   WorkItemProgress,
   WorkItemSeverity,
+  WorkItemSource,
   WorkItemStatus,
 } from "../types.js";
 
@@ -65,7 +67,8 @@ export interface DecisionRow {
 
 export interface WorkItemRow {
   id: string;
-  topic_id: string;
+  /** v18 起可空：非议题任务没有议题。 */
+  topic_id: string | null;
   decision_id: string | null;
   title: string;
   details: string;
@@ -89,6 +92,11 @@ export interface WorkItemRow {
   fix_commit: string | null;
   assignee_actor_id: string | null;
   claimed_at: string | null;
+  kind: WorkItemKind;
+  source: WorkItemSource;
+  priority: number;
+  project_path: string | null;
+  brief_json: string | null;
 }
 
 export interface WorkItemProgressRow {
@@ -253,6 +261,15 @@ export function deriveParentStatus(
   return "pending";
 }
 
+// schema 的 CHECK 已保证 brief_json 是 JSON 对象；这里仍做形状校验，坏数据直接抛错而不是静默丢弃。
+function parseWorkItemBrief(value: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Work item brief_json 不是 JSON 对象。");
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function workItemFromRow(row: WorkItemRow): WorkItem {
   const createdBySnapshot = parseActorSnapshot(row.created_by_snapshot_json);
   const updatedBySnapshot = parseActorSnapshot(row.updated_by_snapshot_json);
@@ -264,7 +281,12 @@ export function workItemFromRow(row: WorkItemRow): WorkItem {
   }
   return {
     id: row.id,
-    topicId: row.topic_id,
+    ...(row.topic_id ? { topicId: row.topic_id } : {}),
+    kind: row.kind,
+    source: row.source,
+    priority: row.priority,
+    ...(row.project_path ? { projectPath: row.project_path } : {}),
+    ...(row.brief_json === null ? {} : { brief: parseWorkItemBrief(row.brief_json) }),
     ...(row.decision_id ? { decisionId: row.decision_id } : {}),
     ...(row.parent_id ? { parentId: row.parent_id } : {}),
     title: row.title,

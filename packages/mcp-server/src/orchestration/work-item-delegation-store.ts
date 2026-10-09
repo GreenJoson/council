@@ -1,6 +1,6 @@
 /**
- * @input  依赖：canonical v17 work_item_delegations 表与 SQLite busy timeout
- * @output 导出：WorkItemDelegationStore、公开阶段快照、私有检查点与原子状态更新
+ * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
+ * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单）、私有检查点与原子状态更新
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +9,7 @@
 import { publicExecutionProgress, type DelegationCheckpoint, type DelegationExecutionProgress } from "./delegation-checkpoint.js";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentPermissionProfile } from "../agent-execution-policy.js";
+import type { WorkItemKind } from "../types.js";
 
 export const WORK_ITEM_DELEGATION_STATUSES = [
   "queued",
@@ -47,6 +48,10 @@ export interface WorkItemDelegation {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** v18：委派产出类型，现有议题委派均为 code。 */
+  kind: WorkItemKind;
+  inputAssetIds: string[];
+  outputManifest?: Record<string, unknown>;
 }
 
 interface DelegationRow {
@@ -76,6 +81,9 @@ interface DelegationRow {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  kind: WorkItemKind;
+  input_asset_ids_json: string;
+  output_manifest_json: string | null;
 }
 
 function publicDelegation(row: DelegationRow): WorkItemDelegation {
@@ -105,6 +113,12 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+    kind: row.kind,
+    // schema CHECK 已保证是 JSON 数组/对象，这里只做类型收窄。
+    inputAssetIds: JSON.parse(row.input_asset_ids_json) as string[],
+    ...(row.output_manifest_json
+      ? { outputManifest: JSON.parse(row.output_manifest_json) as Record<string, unknown> }
+      : {}),
   };
 }
 
@@ -156,6 +170,7 @@ export class WorkItemDelegationStore {
         id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id,
         permission_profile, status, attempt, max_attempts, branch_name,
         created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id
+        -- kind/input_asset_ids_json/output_manifest_json 走 v18 列默认值（code/[]/NULL）。
       ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,

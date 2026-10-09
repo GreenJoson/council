@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已构建的 Node schema migrator、目标 SQLite 路径与 fresh/v2/v3/v5 模式
- * @output 导出：由 Node canonical 迁移器真实创建的 v14 测试数据库
+ * @output 导出：由 Node canonical 迁移器真实创建的当前 canonical 版本（COUNCIL_SCHEMA_VERSION）测试数据库
  * @pos    Rust 跨语言兼容测试的唯一数据库生成入口；禁止手抄 Node DDL
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释

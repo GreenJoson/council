@@ -1,6 +1,6 @@
 /**
  * @input  依赖：MCP SDK CallToolResult、Zod、共享常量、CouncilValidationError、logger 与领域类型
- * @output 导出：council_* 工具共用的 Zod 字段/输出 schema、success/publicError/executeTool 包装与文本格式化函数
+ * @output 导出：council_* 工具共用的 Zod 字段/输出 schema（实施项含 v18 任务字段）、success/publicError/executeTool 包装与文本格式化函数
  * @pos    MCP 工具模块的共享件，不注册任何工具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -89,7 +89,13 @@ export const decisionOutput = z.object({
 });
 export const workItemOutput = z.object({
   id: z.string(),
-  topicId: z.string(),
+  // v18 起非议题任务没有议题；议题内工具返回的实施项仍总是带 topicId。
+  topicId: z.string().optional(),
+  kind: z.enum(["code", "image", "prototype", "research", "pipeline"]),
+  source: z.enum(["topic", "direct", "pipeline"]),
+  priority: z.number().int(),
+  projectPath: z.string().optional(),
+  brief: z.record(z.string(), z.unknown()).optional(),
   // 审核发现可以先于决策存在，所以锚点是可选的。
   decisionId: z.string().optional(),
   parentId: z.string().optional(),

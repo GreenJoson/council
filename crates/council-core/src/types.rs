@@ -1,5 +1,5 @@
 //! @input 依赖：Council TypeScript 内容协议与 serde
-//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项、分页、revision 和写入输入类型
+//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项（v18 含 kind/source/priority/project_path/brief，topic_id 可空）、分页、revision 和写入输入类型
 //! @pos Rust 与现有 MCP/HTTP camelCase 领域模型的同构类型正本
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -82,6 +82,70 @@ impl WorkItemOrigin {
         match value {
             "manual" => Some(Self::Manual),
             "review_finding" => Some(Self::ReviewFinding),
+            _ => None,
+        }
+    }
+}
+
+/// v18 任务类型：决定委派走哪条执行管线，默认 code。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemKind {
+    Code,
+    Image,
+    Prototype,
+    Research,
+    Pipeline,
+}
+
+impl WorkItemKind {
+    #[allow(dead_code)]
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Image => "image",
+            Self::Prototype => "prototype",
+            Self::Research => "research",
+            Self::Pipeline => "pipeline",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "code" => Some(Self::Code),
+            "image" => Some(Self::Image),
+            "prototype" => Some(Self::Prototype),
+            "research" => Some(Self::Research),
+            "pipeline" => Some(Self::Pipeline),
+            _ => None,
+        }
+    }
+}
+
+/// v18 任务来源：topic 一定挂议题；direct/pipeline 不挂议题、靠 project_path 定位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemSource {
+    Topic,
+    Direct,
+    Pipeline,
+}
+
+impl WorkItemSource {
+    #[allow(dead_code)]
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Topic => "topic",
+            Self::Direct => "direct",
+            Self::Pipeline => "pipeline",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "topic" => Some(Self::Topic),
+            "direct" => Some(Self::Direct),
+            "pipeline" => Some(Self::Pipeline),
             _ => None,
         }
     }
@@ -188,11 +252,14 @@ pub struct Decision {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// brief 是任意 JSON 对象，serde_json::Value 不实现 Eq，所以这里只派生 PartialEq。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkItem {
     pub id: String,
-    pub topic_id: String,
+    /// v18 起可空：direct/pipeline 来源的任务不挂议题。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<String>,
     /// 审核发现可以先于决策存在，因此锚点是可选的。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_id: Option<String>,
@@ -220,6 +287,14 @@ pub struct WorkItem {
     pub assignee_actor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_at: Option<String>,
+    pub kind: WorkItemKind,
+    pub source: WorkItemSource,
+    pub priority: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    /// 来自 brief_json 列，数据库约束保证是 JSON object 或 NULL。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief: Option<serde_json::Value>,
     pub created_by_actor_id: String,
     pub created_by_snapshot: ActorSnapshot,
     pub updated_by_actor_id: String,
@@ -241,7 +316,8 @@ pub struct WorkItemProgress {
     pub open_blocking_findings: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// 内含 WorkItem（带 serde_json::Value），无法派生 Eq。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopicDetail {
     pub topic: Topic,

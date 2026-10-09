@@ -1,14 +1,18 @@
 /**
  * @input  依赖：统一 RuntimeEvent、运行阶段公开摘要与 SQLite
  * @output 导出：只追加的运行审计记录和游标分页查询
- * @pos    审计只收录明确允许的字段，不保存草稿、原始工具参数或私有会话
+ * @pos    审计只收录明确允许的字段，不保存草稿、原始工具参数或私有会话；
+ *         v18 起 topic_id 可空（非议题任务的审计不挂议题）
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import { DatabaseSync } from "node:sqlite";
 import type { RuntimeEvent, RuntimeEventSink } from "council-orchestrator";
 
 export interface AuditEvent {
   id: number;
-  topicId: string;
+  /** v18 起可空：直接任务/流水线任务的审计没有议题。 */
+  topicId?: string;
   sourceKind: "run" | "delegation";
   sourceId: string;
   attempt: number;
@@ -45,7 +49,7 @@ export class RuntimeAuditStore implements RuntimeEventSink {
     this.#database.prepare(`
       INSERT INTO runtime_audit_events (topic_id, source_kind, source_id, attempt, kind, data_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(input.topicId, input.sourceKind, input.sourceId, input.attempt, input.kind, JSON.stringify(data), new Date().toISOString());
+    `).run(input.topicId ?? null, input.sourceKind, input.sourceId, input.attempt, input.kind, JSON.stringify(data), new Date().toISOString());
   }
 
   emit(event: RuntimeEvent): void {
@@ -65,11 +69,11 @@ export class RuntimeAuditStore implements RuntimeEventSink {
       SELECT * FROM runtime_audit_events WHERE topic_id = ? AND source_kind = ? AND source_id = ? AND id > ?
       ORDER BY id LIMIT 101
     `).all(topicId, sourceKind, sourceId, after) as unknown as Array<{
-      id: number; topic_id: string; source_kind: AuditEvent["sourceKind"]; source_id: string;
+      id: number; topic_id: string | null; source_kind: AuditEvent["sourceKind"]; source_id: string;
       attempt: number; kind: string; data_json: string; created_at: string;
     }>;
     const events = rows.slice(0, 100).map((row): AuditEvent => ({
-      id: row.id, topicId: row.topic_id, sourceKind: row.source_kind, sourceId: row.source_id,
+      id: row.id, ...(row.topic_id ? { topicId: row.topic_id } : {}), sourceKind: row.source_kind, sourceId: row.source_id,
       attempt: row.attempt, kind: row.kind, data: JSON.parse(row.data_json) as AuditEvent["data"], createdAt: row.created_at,
     }));
     return { events, hasMore: rows.length > 100, nextCursor: events.at(-1)?.id ?? after };

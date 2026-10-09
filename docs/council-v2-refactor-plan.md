@@ -119,6 +119,7 @@ packages/mcp-server/src/
 ### 3.2 执行模型
 
 - **Task**（`work_items` 升级）：`topic_id` 可空；新增 `kind`（`code` | `image` | `prototype` | `research` | `pipeline`）、`source`（`topic` | `direct` | `pipeline`）、`priority`、`project_root_hash`（当前项目锚点，公开 DTO 不含真实路径）、`brief_json`。父子树沿用 v12 的 `parent_id`。
+  > 实现偏离（v18 已落地）：未引入 `project_root_hash`，改用可空 `project_path`（议题实施项迁移/创建时从议题拷贝，非议题任务必填），并以 VIRTUAL 列 `scope_key = COALESCE(topic_id, project_path, '')` 承担树唯一索引；公开 DTO 的路径脱敏仍在边界层处理。
 - **Delegation**（`work_item_delegations` 升级）：新增 `kind`（与任务一致）、`output_manifest_json`、`input_asset_ids_json`。`kind = image` 时 Runtime 必须具备 `image_generate` 能力，沙箱固定 `workspace-write`，执行目录固定为任务 worktree，不进入 review 三角（图像任务由人验收或由 Lead 验收，Reviewer 不审图）。图像委派仍走 `runExecutionSegments`，但 `maxSegments = 1`、关闭自动接续、不做草稿快照（`3be9220` 的两段接续与交接校验只服务代码任务；位图产物由 `asset-ingest` 收集，不进 `delegation-workspace-snapshot`）。
 - **Pipeline** = `kind = pipeline` 的父任务 + 有序子任务。`pipeline-driver` 只做「上一阶段完成且产物入库 → 创建下一阶段子任务并挂上输入资产」，推进本身仍是显式委派，复用 `work-item-delegation-manager`。失败停在当前阶段，不自动重试图像生成（预算原因）。
 - **Team**（P4）：Lead 委派可以创建 ≤ `COUNCIL_WORKER_MAX_PARALLEL` 个 Worker 子委派，每个 Worker 独立 worktree（从 Lead 分支切出），Lead 用受控 Git 合并。Worker 有效权限 ≤ Lead 有效权限。一个任务同时只允许一个活动团队（partial unique index，照 Cindy）。
@@ -174,6 +175,8 @@ ALTER work_item_delegations:
   input_asset_ids_json TEXT NOT NULL DEFAULT '[]'
   output_manifest_json TEXT NULL
 CREATE INDEX idx_work_items_project_status ON work_items(project_root_hash, status, updated_at);
+-- 实现偏离（已落地）：project_root_hash 改为可空 project_path（议题项从 topics 拷贝），
+-- 索引为 (project_path, status, updated_at)；树唯一索引改用 VIRTUAL scope_key = COALESCE(topic_id, project_path, '')。
 
 -- v19：资产
 CREATE TABLE assets (

@@ -1,7 +1,8 @@
 /**
  * @input  依赖：共享数据库上下文、议题存在性查找、行映射/父状态派生规则与安全错误语义
  * @output 导出：WorkItemRepository —— 叶子口径的完成度批量查询、议题全量行读取、
- *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点）、
+ *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点，
+ *         project_path 从议题拷贝，kind/source/priority 走 v18 DEFAULT）、
  *         乐观版本更新、认领、祖先状态派生与过滤列表
  * @pos    实施项领域仓储；父任务状态只由子任务派生，任何写入路径都不接受手动设置
  *
@@ -176,12 +177,14 @@ export class WorkItemRepository {
           source_message_id, source_cycle_id, review_round,
           created_by_actor_id, created_by_snapshot_json,
           updated_by_actor_id, updated_by_snapshot_json,
-          created_at, updated_at, completed_at
+          created_at, updated_at, completed_at, project_path
         ) VALUES (
           ?, ?, ?, ?, ?, ?,
           'pending', NULL, 1, ?, ?, ?,
           ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, NULL
+          ?, ?, ?, ?, ?, ?, NULL,
+          -- 议题实施项的项目路径随议题快照；kind/source/priority 依赖 v18 列默认值。
+          (SELECT project_path FROM topics WHERE id = ?)
         )
       `);
       const createdIds: string[] = [];
@@ -210,6 +213,7 @@ export class WorkItemRepository {
           actorSnapshotJson,
           now,
           now,
+          input.topicId,
         );
         createdIds.push(id);
         sortOrder += 1;

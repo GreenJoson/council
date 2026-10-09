@@ -1,5 +1,5 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5/v10→v16、议题关闭、Agent 委派/决策包/实施项树、RuntimeBinding schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v18、议题关闭、Agent 委派/决策包/实施项树、RuntimeBinding schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -475,7 +475,7 @@ fn opens_node_current_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 17);
+    assert_eq!(user_version, 18);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 7); // 含审计追加 revision 与禁止覆盖触发器。
     drop(raw);
@@ -901,8 +901,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (18, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 18;",
+             VALUES (19, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 19;",
         )
         .expect("future schema fixture");
     assert!(matches!(

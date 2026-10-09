@@ -38,7 +38,7 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 
 ## 版本规则
 
-当前 schema 版本为 `17`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
+当前 schema 版本为 `18`。版本 2 引入动态 Actor Identity；v3–v5 拆分 Provider/Agent、
 冻结历史身份并增加配置 revision；v6 增加 RuntimeBinding、双 lease 与请求账本；v7–v8
 增加可恢复的 DiscussionCycle、阻断提问与能力快照；v9 在不改变既有公开内容语义的前提下，
 扩展 Provider/Runtime 约束以接纳 Kimi ACP；v10 将供应商专用协议归一为通用 `acp`，
@@ -46,6 +46,15 @@ Council 的生产数据库只有一个 schema 迁移所有者：Node Agent Servi
 v11–v12 增加实施项审核账本和任务树约束，v13 支持多决策包，v14 增加 Agent 权限/职责及隔离委派。
 v15 冻结验收标准与完成策略，历史委派保留审核即完成；v16 增加追加运行审计、失败分类与恢复来源。
 v17 为委派追加私有执行检查点，不改旧状态和审计历史。v14→v17、v16→v17 的故障注入验证事务回滚后旧结构可继续迁移，Rust 同步验证 v17；旧二进制不得打开新版本库。
+v18（`task-first-class`）让任务成为一等实体：整表重建 `work_items`、`work_item_delegations`、
+`runtime_audit_events`（SQLite 不能去掉 NOT NULL，只能重建；三表一起改名以保住外键文本，
+审计表的 `sqlite_sequence` 原值保留），三表 `topic_id` 改为可空。`work_items` 追加
+`kind`/`source`/`priority`/`project_path`/`brief_json`，以 `CHECK ((source = 'topic') = (topic_id IS NOT NULL))`
+约束只有议题来源挂议题、非议题任务必须带 `project_path`；议题实施项迁移时从所属议题拷贝 `project_path`。
+VIRTUAL 列 `scope_key = COALESCE(topic_id, project_path, '')` 承担树唯一性（`idx_work_items_parent_title`/
+`idx_work_items_parent_order`），新增 `idx_work_items_project_status`。委派追加 `kind`/`input_asset_ids_json`/
+`output_manifest_json`。旧列 DDL 与 v12/v14/v16 原文逐字一致。重构计划原定的 `project_root_hash` 改为可空
+`project_path`：议题表本就保存规范化路径，沿用同一锚点不需要第二套哈希算法，公开 DTO 的路径脱敏仍在边界层处理。
 详细字段、确定性映射与历史 `other` 的待审计语义见
 [Actor Identity v2 迁移](actor-identity-migration.md)。
 

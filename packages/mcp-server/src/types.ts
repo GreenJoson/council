@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,10 @@ export type DecisionStatus = (typeof DECISION_STATUSES)[number];
 export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 export type WorkItemOrigin = (typeof WORK_ITEM_ORIGINS)[number];
 export type WorkItemSeverity = (typeof WORK_ITEM_SEVERITIES)[number];
+/** v18 起实施项（任务）的产出类型；与 work_items.kind 的 CHECK 枚举一致。 */
+export type WorkItemKind = "code" | "image" | "prototype" | "research" | "pipeline";
+/** v18 起实施项来源：议题拆解、直接创建或流水线生成；只有 topic 来源挂议题。 */
+export type WorkItemSource = "topic" | "direct" | "pipeline";
 
 export interface CouncilConfig {
   dataDir: string;
@@ -160,7 +164,15 @@ export interface Decision {
 
 export interface WorkItem {
   id: string;
-  topicId: string;
+  /** v18 起可空：直接任务与流水线任务不挂议题，靠 projectPath 定位项目。 */
+  topicId?: string;
+  kind: WorkItemKind;
+  source: WorkItemSource;
+  priority: number;
+  /** 议题实施项迁移/创建时从议题拷贝；非议题任务必填。 */
+  projectPath?: string;
+  /** 任务简报（结构化输入），NULL 映射为缺省。 */
+  brief?: Record<string, unknown>;
   /** 审核发现可以在议题还没有 Accepted 决策时就落库，因此锚点放宽为可选。 */
   decisionId?: string;
   /** 顶层任务没有父级；子任务随父级级联删除。 */

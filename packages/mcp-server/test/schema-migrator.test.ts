@@ -898,6 +898,7 @@ test("v10 起链式升级到当前版本且保留既有议题与决策", async (
           { version: 15, name: "delegation-acceptance" },
           { version: 16, name: "runtime-audit-and-recovery" },
           { version: 17, name: "delegation-runtime-checkpoints" },
+          { version: 18, name: "task-first-class" },
         ],
       );
     } finally {
@@ -1927,8 +1928,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (15, 'delegation-acceptance', '2026-01-15T00:00:00.000Z'),
         (16, 'runtime-audit-and-recovery', '2026-01-16T00:00:00.000Z'),
         (17, 'delegation-runtime-checkpoints', '2026-01-17T00:00:00.000Z'),
-        (18, 'future', '2026-01-18T00:00:00.000Z');
-      PRAGMA user_version = 18;
+        (18, 'task-first-class', '2026-01-18T00:00:00.000Z'),
+        (19, 'future', '2026-01-19T00:00:00.000Z');
+      PRAGMA user_version = 19;
     `);
     futureDatabase.close();
     await assert.rejects(

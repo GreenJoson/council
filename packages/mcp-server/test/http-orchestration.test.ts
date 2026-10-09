@@ -42,7 +42,8 @@ test("接续 HTTP 严格校验可选权限，旧请求保持原协议", async ()
       supervisorAgentId: "reviewer", executorAgentId: "executor", permissionProfile: requestedPermission ?? "workspace_write",
       status: "queued", attempt: 0, maxAttempts: 2,
       completionPolicy: "human", acceptanceCriteria: "通过测试并等待人工验收",
-      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+      createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+      kind: "code", inputAssetIds: [] };
   };
   try {
     const url = `${harness.baseUrl}/api/v1/work-item-delegations/delegation-old/actions/resume`;
