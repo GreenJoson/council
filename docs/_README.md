@@ -12,6 +12,7 @@
 | `schema-migration-safety.md` | 运维与架构 | 说明 Node 单一迁移所有权、版本镜像、备份验证、失败语义和桌面 ready 门 |
 | `actor-identity-migration.md` | 身份与迁移 | 说明 schema v2 动态 Actor、别名、冻结快照、旧作者映射、M3 RuntimeBinding/session 生命周期和回滚边界 |
 | `review-fix-loop.md` | 设计正本 | 说明审核→修复→复审闭环、work item 树与 schema v12 数据模型、尾块协议、审核状态机与落地顺序 |
+| `council-v2-refactor-plan.md` | 重构方案 | v2 执行正本：任务/资产/流水线一等化、Codex 生图通道、UI 按模式导航、schema v18–v20 与分阶段验收，交 Opus 执行 |
 | `designs/` | 设计探索 | 保存 WebUI 视觉方案和信息架构取舍 |
 
 执行交付文档包含分阶段预算、私有检查点、指令复用、schema v17 兼容性和桌面 sidecar 生命周期边界。
