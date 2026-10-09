@@ -955,3 +955,25 @@
     flex-wrap: wrap;
   }
 }
+
+.model-discovery, .model-diagnostics {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.model-discovery > button { justify-self: start; }
+.model-diagnostics {
+  margin: 0 24px 20px;
+  padding: 16px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+.model-diagnostics p, .model-diagnostics ul { margin: 0; }
+.model-diagnostics ul { padding: 0; list-style: none; display: grid; gap: 10px; }
+.model-diagnostics li { display: grid; gap: 4px; }
+.model-diagnostics small, .model-discovery small, .model-diagnostics li > span { color: var(--color-text-muted); }
+.model-diagnostics [data-status="failed"] > strong { color: var(--color-danger); }
+
+.model-diagnostic-note { margin: 0 24px 16px; font-size: 12px; color: var(--color-text-muted); }

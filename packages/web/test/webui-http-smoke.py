@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界、Claude、持久审计、待处理消退和验收表单检查
+@output 导出：项目隔离、项目附件内部预览与受保护路径、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界、Claude、持久审计、待处理消退和验收表单检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -28,14 +28,14 @@ WEB_ORIGIN = f"{web_parts.scheme}://{web_parts.netloc}"
 LOCAL_OPENER = build_opener(ProxyHandler({}))
 
 
-def api_request(method: str, path: str, payload: dict | None = None):
+def api_request(method: str, path: str, payload: dict | None = None, timeout: int = 5):
     body = json.dumps(payload).encode() if payload is not None else None
     headers = {"Origin": WEB_ORIGIN}
     if body is not None:
         headers["Content-Type"] = "application/json"
     request = Request(f"{API_URL}{path}", data=body, headers=headers, method=method)
     try:
-        with LOCAL_OPENER.open(request, timeout=5) as response:
+        with LOCAL_OPENER.open(request, timeout=timeout) as response:
             envelope = json.load(response)
     except HTTPError as error:
         detail = error.read().decode(errors="replace")
@@ -135,6 +135,52 @@ with sync_playwright() as playwright:
     topic_id = topic["id"]
     page.get_by_role("heading", name="真实同步验收", exact=True).wait_for()
 
+
+    # 对应用户的本地 Excel/配置链接：在真实服务与浏览器内完成预览，不打开外部窗口。
+    api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": "[完整策划 Excel](docs/design.xlsx) / [配置](docs/model.json) / [说明](docs/design.md) / [结果](docs/results.csv) / [已删除文件](docs/missing.json)"
+    })
+    page.get_by_role("button", name="完整策划 Excel", exact=True).wait_for()
+    before_pages = len(browser.contexts[0].pages)
+    page.get_by_role("button", name="完整策划 Excel", exact=True).click()
+    preview = page.get_by_role("dialog", name="文件预览：design.xlsx", exact=True)
+    preview.get_by_role("tab", name="总览", exact=True).wait_for()
+    preview.get_by_role("cell", name="示例鱼种", exact=True).wait_for()
+    preview.get_by_role("cell", name="72", exact=True).wait_for()
+    preview.get_by_role("tab", name="参数", exact=True).click()
+    preview.get_by_role("cell", name="成本", exact=True).wait_for()
+    assert len(browser.contexts[0].pages) == before_pages
+    page.keyboard.press("Escape")
+    page.get_by_role("button", name="架构档案", exact=True).click()
+    attachments = page.get_by_role("region", name="项目附件", exact=True)
+    attachments.get_by_role("button", name="预览附件：配置", exact=True).click()
+    preview = page.get_by_role("dialog", name="文件预览：model.json", exact=True)
+    preview.locator("pre").filter(has_text="preview-e2e").wait_for()
+    preview.get_by_role("button", name="关闭文件预览", exact=True).click()
+    attachments.get_by_role("button", name="预览附件：说明", exact=True).click()
+    preview = page.get_by_role("dialog", name="文件预览：design.md", exact=True)
+    preview.get_by_role("heading", name="设计文档", exact=True).wait_for()
+    preview.get_by_role("button", name="参数配置", exact=True).click()
+    page.get_by_role("dialog", name="文件预览：model.json", exact=True).locator("pre").filter(has_text="preview-e2e").wait_for()
+    page.keyboard.press("Escape")
+    attachments.get_by_role("button", name="预览附件：结果", exact=True).click()
+    preview = page.get_by_role("dialog", name="文件预览：results.csv", exact=True)
+    preview.get_by_role("cell", name="含逗号,和换行\n第二行", exact=True).wait_for()
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert preview.evaluate("e => e.getBoundingClientRect().right <= window.innerWidth")
+    page.set_viewport_size({"width": 1536, "height": 1024})
+    page.keyboard.press("Escape")
+    page.screenshot(path="/tmp/council-project-attachments-e2e.png", full_page=True)
+    page.get_by_role("button", name="议题", exact=True).click()
+    for href, status in [("../outside.json", 403), (".env", 403), ("file:///etc/passwd", 403), ("docs/missing.json", 404), ("docs/bad.xlsx", 422), ("https://example.com/model.json", 400)]:
+        api_expect_error("POST", f"/api/v1/topics/{topic_id}/files/preview", status, {"href": href})
+    # 故障预览使用独立页面，预期 HTTP 404 不混入主流程控制台错误。
+    failure_page = browser.new_page(locale="zh-CN")
+    failure_page.goto(WEB_URL, wait_until="domcontentloaded")
+    failure_page.get_by_role("button", name="已删除文件", exact=True).click()
+    failure_page.get_by_role("dialog", name="文件预览：missing.json", exact=True).get_by_role("alert").filter(has_text="可能已移动或删除").wait_for()
+    failure_page.close()
+
     capabilities = api_request("GET", "/api/v1/orchestration/capabilities")
     claude_adapter = next(
         adapter
@@ -151,6 +197,12 @@ with sync_playwright() as playwright:
     )
     claude_editor.get_by_role("button", name="保存 Agent", exact=True).click()
     page.get_by_text("立即生效。", exact=False).wait_for()
+    # 所选 CLI 模型必须实际读取临时验证文件；写入权限仍不能被误标通过。
+    claude_editor.get_by_role("button", name="测试", exact=True).click()
+    native_diagnosis = page.get_by_role("region", name="连接诊断结果", exact=True)
+    native_diagnosis.get_by_text("只读工具 · 通过", exact=True).wait_for()
+    native_diagnosis.get_by_text("项目写入权限 · 未验证", exact=True).wait_for()
+    native_diagnosis.get_by_text("fake-probe-model", exact=True).wait_for()
     assert page.locator(".model-router-list-item", has_text="DeepSeek").count() == 0
     assert page.locator(".model-router-list-item", has_text="Kimi").count() == 0
     page.get_by_role("button", name="连接 Provider", exact=False).click()
@@ -292,6 +344,47 @@ with sync_playwright() as playwright:
     roundtable_roster.get_by_text("Router Tool", exact=True).wait_for()
     roundtable_roster.get_by_text("Router Git", exact=True).wait_for()
 
+    # 模型发现、真实响应模型与分项结果在设置页可见；列表不能改写 Agent 模型。
+    page.get_by_role("button", name="打开模型与 Provider 设置", exact=True).click()
+    page.locator(".model-router-list-item", has_text="Router Alpha").click()
+    editor = page.locator(".model-router-editor")
+    editor.get_by_role("button", name="获取模型列表", exact=True).click()
+    editor.get_by_text("当前连接返回 2 个模型", exact=True).wait_for()
+    assert editor.locator("datalist option").evaluate_all("nodes => nodes.map(n => n.value)") == ["router-model-alpha", "router-model-beta"]
+    editor.get_by_role("button", name="测试", exact=True).click()
+    diagnosis = page.get_by_role("region", name="连接诊断结果", exact=True)
+    diagnosis.get_by_text("reported-provider-model", exact=True).wait_for()
+    diagnosis.get_by_text("项目写入权限 · 未验证", exact=True).wait_for()
+    model_input = editor.get_by_text("模型 ID", exact=True).locator("..").locator("input")
+    model_input.fill("unavailable-model")
+    assert editor.locator("datalist option").count() == 2
+    assert diagnosis.count() == 0
+    editor.get_by_role("button", name="保存 Agent", exact=True).click()
+    page.get_by_text("立即生效。", exact=False).wait_for()
+    editor.get_by_role("button", name="测试", exact=True).click()
+    diagnosis.get_by_text("连接诊断发现问题", exact=False).wait_for()
+    diagnosis.get_by_text("模型或接口不可用，请核对精确模型 ID 与账号权限。", exact=True).wait_for()
+    assert "sensitive-body-must-not-escape" not in page.locator("body").inner_text()
+    # 配置写入包含 CLI 可用性刷新，单独给出有界等待；不重复超时的写请求。
+    # 更换 Provider 地址或凭据后，列表失败不应伪装成成功，更不能回显上游正文。
+    original_connection = {"displayName": remote_provider["displayName"], "baseUrl": FAKE_PROVIDER_URL,
+        "brandAssetId": remote_provider["brandAssetId"], "active": True}
+    provider_url = f"/api/v1/settings/providers/{remote_provider['id']}"
+    api_request("PUT", provider_url, {**original_connection, "apiKey": "intentionally-invalid"}, timeout=20)
+    unavailable_list = api_request("POST", provider_url + "/actions/models", {})
+    assert unavailable_list["status"] == "failed" and unavailable_list["code"] == "authentication_failed", unavailable_list
+    assert "sensitive-body-must-not-escape" not in json.dumps(unavailable_list)
+    api_request("PUT", provider_url, {**original_connection, "apiKey": "e2e-example-key", "baseUrl": FAKE_PROVIDER_URL + "/unsupported"}, timeout=20)
+    unsupported_list = api_request("POST", provider_url + "/actions/models", {})
+    assert unsupported_list["status"] == "unsupported", unsupported_list
+    api_request("PUT", provider_url, original_connection, timeout=20)
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("model-diagnostics.png")), full_page=True)
+    model_input.fill("router-model-alpha")
+    editor.get_by_role("button", name="保存 Agent", exact=True).click()
+    page.get_by_text("立即生效。", exact=False).wait_for()
+    page.get_by_role("button", name="关闭模型路由", exact=True).click()
+
     alpha_run = create_and_start_run(
         topic_id,
         alpha_agent["id"],
@@ -321,11 +414,11 @@ with sync_playwright() as playwright:
         git_agent["id"],
         "使用 Council 受控 Git 工具核对当前 HEAD 的已提交差异。",
     )
+    wait_for_run_status(git_run["id"], "completed")
     page.get_by_text(
         "远程 ToolLoop 已通过 Council 受控 Git 工具读取已提交 diff。",
         exact=True,
     ).wait_for()
-    wait_for_run_status(git_run["id"], "completed")
 
     renamed_alpha = api_request(
         "PUT",

@@ -29,6 +29,7 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
+  ProviderModels,
   AgentDefinition,
   CreateAgentInput,
   CreateProviderInput,
@@ -56,6 +57,7 @@ import {
 import { parseApiWorkItems } from "./api-types";
 import {
   parseAgentConnectionTest,
+  parseProviderModels,
   parseAgentDefinition,
   parseModelRouterSnapshot,
   parseProviderProfile,
@@ -505,6 +507,11 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
       parseAgentDefinition,
       { method: "DELETE" },
     );
+  }
+
+  async listProviderModels(providerId: string): Promise<ProviderModels> {
+    return requestApiData(this.#fetcher, createApiUrl(this.#baseUrl,
+      `/api/v1/settings/providers/${encodeURIComponent(providerId)}/actions/models`), parseProviderModels, jsonRequest({}));
   }
 
   async testAgent(agentId: string): Promise<AgentConnectionTest> {

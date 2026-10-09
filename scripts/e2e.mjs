@@ -1,11 +1,12 @@
 /**
  * @input  依赖：已构建的 Council API/Web、显式迁移/RuntimeBinding 配置、Playwright 与 Agent 替身
- * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、本机/远程 Agent 调用及 mock 布局的浏览器验收
+ * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、带命名空间工作簿预览、本机/远程 Agent 调用及 mock 布局的浏览器验收
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
@@ -265,8 +266,43 @@ async function runHttpBrowserE2E(dataDirectory) {
   const projectPath = path.join(dataDirectory, "project");
   mkdirSync(projectPath);
   writeFileSync(path.join(projectPath, "package.json"), JSON.stringify({ name: "council", private: true }, null, 2));
+  const XLSX = createRequire(path.join(ROOT, "packages/mcp-server/package.json"))("xlsx");
+  const docs = path.join(projectPath, "docs");
+  mkdirSync(docs);
+  const workbook = XLSX.utils.book_new();
+  const summary = XLSX.utils.aoa_to_sheet([["项目", "数量", "备注"], ["示例鱼种", 36, "多工作表只读预览"]]);
+  summary.B3 = { t: "n", f: "B2*2", v: 72 };
+  summary["!ref"] = "A1:C3";
+  XLSX.utils.book_append_sheet(workbook, summary, "总览");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["成本", 12]]), "参数");
+  XLSX.writeFile(workbook, path.join(docs, "design.xlsx"));
+  // 用户的工作簿采用合法的 OOXML 命名空间前缀；夹具保留这个外部格式差异。
+  const prefixResult = spawnSync(PYTHON_COMMAND, ["-c", `
+import sys, zipfile, re
+from pathlib import Path
+p = Path(sys.argv[1])
+with zipfile.ZipFile(p) as archive:
+    entries = [(entry, archive.read(entry)) for entry in archive.infolist()]
+with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for entry, value in entries:
+        if entry.filename.endswith(".xml"):
+            text = value.decode("utf-8")
+            namespace = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+            if namespace in text:
+                text = text.replace(namespace, 'xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')
+                text = re.sub(r'<(/?)([A-Za-z][A-Za-z0-9]*)(?=[\\s/>])', r'<\\1x:\\2', text)
+            value = text.encode("utf-8")
+        archive.writestr(entry, value)
+`, path.join(docs, "design.xlsx")], { encoding: "utf8" });
+  if (prefixResult.status !== 0) throw new Error("无法生成命名空间工作簿夹具。");
+  writeFileSync(path.join(docs, "model.json"), '{"version":"preview-e2e","count":36}');
+  writeFileSync(path.join(docs, "design.md"), '# 设计文档\n\n[参数配置](model.json)\n');
+  writeFileSync(path.join(docs, "results.csv"), '名称,备注\n示例,"含逗号,和换行\n第二行"\n');
+  writeFileSync(path.join(docs, "bad.xlsx"), 'invalid workbook');
+  writeFileSync(path.join(projectPath, ".gitignore"), '.env\n');
+  writeFileSync(path.join(projectPath, ".env"), 'COUNCIL_E2E_PRIVATE=placeholder\n');
   const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" };
-  for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=Council E2E", "-c", "user.email=council@localhost", "commit", "-qm", "baseline"]]) {
+  for (const args of [["init", "-q"], ["add", "package.json", "docs", ".gitignore"], ["-c", "user.name=Council E2E", "-c", "user.email=council@localhost", "commit", "-qm", "baseline"]]) {
     const result = spawnSync("git", args, { cwd: projectPath, env: gitEnv, encoding: "utf8" });
     if (result.status !== 0) throw new Error("无法建立隔离 E2E 项目。");
   }

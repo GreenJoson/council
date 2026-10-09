@@ -1,0 +1,67 @@
+/** @input theme.css 语义 token @output 附件卡片及内部只读预览样式 @pos 文件预览独立视觉层 */
+.markdown-file-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.markdown-file-link svg { flex: none; align-self: center; }
+.markdown-file-link:disabled { color: var(--color-text-muted); cursor: default; }
+.architecture-attachments { padding: 20px; border: 1px solid var(--color-border); border-radius: var(--radius-medium); background: var(--color-surface); }
+.architecture-attachment-hint { margin: 0 0 14px; color: var(--color-text-muted); font-size: 12px; line-height: 1.7; }
+.architecture-attachment-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 12px; }
+.architecture-attachment { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-medium); background: var(--color-surface-raised); }
+.architecture-attachment-open { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px; border: 0; color: var(--color-text); background: transparent; text-align: left; cursor: pointer; }
+.architecture-attachment-open:hover { background: var(--color-surface-hover); }
+.architecture-attachment-icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border-radius: var(--radius-small); background: var(--color-primary-soft); color: var(--color-primary); }
+.architecture-attachment-title { display: grid; flex: 1; min-width: 0; gap: 5px; }
+.architecture-attachment-title strong { font-size: 14px; overflow-wrap: anywhere; }
+.architecture-attachment-title > span { color: var(--color-text-muted); font: 11px var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.architecture-attachment-type { flex: none; color: var(--color-text-secondary); font: 10px var(--font-mono); }
+.architecture-attachment-origin { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 9px 16px; border: 0; border-top: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted); font: inherit; font-size: 11px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.architecture-attachment-origin:hover { color: var(--color-primary); }
+.architecture-attachment-origin svg { flex: none; }
+.project-file-scrim { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--color-overlay) 80%, transparent); }
+.project-file-dialog { display: flex; flex-direction: column; width: min(1400px, 96vw); height: 92dvh; min-width: 0; min-height: 0; border: 1px solid var(--color-border-strong); border-radius: var(--radius-large); background: var(--color-surface); color: var(--color-text); overflow: hidden; box-shadow: var(--shadow-large); }
+.project-file-header { display: flex; flex: none; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-border); }
+.project-file-header > svg { flex: none; color: var(--color-primary); }
+.project-file-heading { flex: 1; min-width: 0; }
+.project-file-heading h2 { margin: 0 0 4px; font-size: 17px; overflow-wrap: anywhere; }
+.project-file-heading span { font: 11px var(--font-mono); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.project-file-readonly { flex: none; padding: 4px 8px; border-radius: var(--radius-small); color: var(--color-positive); background: var(--color-positive-soft); font-size: 11px; }
+.project-file-metadata { display: flex; flex: none; flex-wrap: wrap; gap: 6px 16px; padding: 10px 20px 0; font-size: 11px; color: var(--color-text-secondary); }
+.project-file-metadata code { overflow-wrap: anywhere; }
+.project-file-notice { flex: none; margin: 8px 20px 12px; color: var(--color-text-muted); font-size: 11px; line-height: 1.6; }
+.project-file-state { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; color: var(--color-text-secondary); }
+.project-file-sheet-tabs { display: flex; flex: none; gap: 5px; overflow-x: auto; padding: 0 20px; border-bottom: 1px solid var(--color-border); }
+.project-file-sheet-tabs button { flex: none; padding: 10px 16px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--color-text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.project-file-sheet-tabs button[aria-selected="true"] { color: var(--color-primary); border-bottom-color: var(--color-primary); background: var(--color-primary-soft); }
+.project-file-sheet-info { margin: 10px 20px; font-size: 11px; color: var(--color-text-muted); }
+.project-file-grid { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--color-border); }
+.project-file-grid table { border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.project-file-grid td, .project-file-grid th { min-width: 80px; max-width: 320px; padding: 8px 10px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; overflow-wrap: anywhere; white-space: pre-wrap; }
+.project-file-grid thead th { position: sticky; top: 0; z-index: 2; background: var(--color-surface-raised); color: var(--color-text-muted); font: 11px var(--font-mono); }
+.project-file-grid tbody th { position: sticky; left: 0; z-index: 1; background: var(--color-surface-raised); color: var(--color-text-muted); font: 11px var(--font-mono); }
+.project-file-grid tr > th:first-child { min-width: 45px; }
+.project-file-grid tbody tr:hover td { background: var(--color-surface-hover); }
+.project-file-text-tabs { flex: none; padding: 0 20px 10px; }
+.project-file-text { flex: 1; min-width: 0; min-height: 0; padding: 20px; overflow: auto; border-top: 1px solid var(--color-border); }
+.project-file-text > pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.8 var(--font-mono); }
+.project-file-truncated { flex: none; margin: 0; padding: 10px 20px; background: var(--color-warning-soft); color: var(--color-warning); font-size: 12px; }
+@media (max-width: 600px) {
+  .project-file-scrim { padding: 4px; }
+  .project-file-dialog { width: 100%; height: 98dvh; }
+  .project-file-header { gap: 8px; padding: 12px; }
+  .project-file-heading h2 { font-size: 14px; }
+  .project-file-readonly { display: none; }
+}

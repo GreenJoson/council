@@ -6,7 +6,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 
 if (args.includes("--version")) {
@@ -26,6 +26,10 @@ process.stdin.on("data", (chunk) => {
   prompt += chunk;
 });
 process.stdin.on("end", () => {
+  if (prompt.includes("COUNCIL_MODEL_PROBE") && args.includes("--print")) {
+    process.stdout.write(JSON.stringify({ type: "result", result: readFileSync("council-probe.txt", "utf8"), model: "fake-probe-model" }));
+    return;
+  }
   if (prompt.includes("COUNCIL_SEGMENT_E2E") && args.includes("--print")) {
     let result;
     let turnLimit = false;

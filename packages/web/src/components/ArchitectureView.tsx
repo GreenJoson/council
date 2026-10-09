@@ -2,12 +2,12 @@
  * @input  依赖：界面语言上下文、项目名/路径、议题摘要列表、只读议题详情懒加载回调（经共享的 useTopicDetails
  *         hook 一次性加载全部议题）、跳转讨论/决策记录/创建议题三个回调，以及
  *         data/selectors.ts 的架构档案聚合纯函数（buildArchitectureTimeline/
- *         aggregateConstraints/collectArchitectureDiagrams）
+ *         aggregateConstraints/collectArchitectureDiagrams）及项目文件引用聚合
  * @output 导出：ArchitectureView 项目架构档案——按每条决策而非每个议题聚合生成的架构沉淀页，
- *         由项目概览、架构演进时间线、架构不变量、架构图/业务解析图集四个区块组成；
- *         后三个区块可折叠，折叠状态跨会话保留
+ *         由项目概览、项目附件、架构演进时间线、架构不变量、架构图/业务解析图集五个区块组成；
+ *         后四个区块可折叠，折叠状态跨会话保留
  * @pos    Operator Console 架构档案视图：只读聚合已加载数据，不改变全局选中状态；
- *         四个内容区块拆分在 components/architecture/ 下，本文件只做数据编排、折叠状态与 Lightbox 状态
+ *         五个内容区块拆分在 components/architecture/ 下，本文件只做数据编排、折叠状态与 Lightbox 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -18,6 +18,8 @@ import { ArchitectureConstraints } from "./architecture/ArchitectureConstraints"
 import { ArchitectureDiagramGallery } from "./architecture/ArchitectureDiagramGallery";
 import { ArchitectureOverview } from "./architecture/ArchitectureOverview";
 import { ArchitectureTimeline } from "./architecture/ArchitectureTimeline";
+import { ArchitectureAttachments } from "./architecture/ArchitectureAttachments";
+import { collectProjectAttachments } from "../data/project-files";
 import { Lightbox, type LightboxContent } from "./Lightbox";
 import { useTopicDetails } from "../hooks/useTopicDetails";
 import {
@@ -76,7 +78,7 @@ export function ArchitectureView({
     });
   }, []);
 
-  // 只用已经加载完成的议题详情聚合四个区块：不阻塞整页渲染，随加载进度逐步补全。
+  // 只用已经加载完成的议题详情聚合五个区块：不阻塞整页渲染，随加载进度逐步补全。
   const loadedTopics = useMemo(
     () =>
       topics
@@ -88,6 +90,7 @@ export function ArchitectureView({
   const timelineEntries = useMemo(() => buildArchitectureTimeline(loadedTopics), [loadedTopics]);
   const constraints = useMemo(() => aggregateConstraints(loadedTopics), [loadedTopics]);
   const diagrams = useMemo(() => collectArchitectureDiagrams(loadedTopics), [loadedTopics]);
+  const attachments = useMemo(() => collectProjectAttachments(loadedTopics), [loadedTopics]);
 
   const acceptedCount = loadedTopics.reduce(
     (count, topic) => count + topic.decisions.filter((decision) => decision.status === "accepted").length,
@@ -153,6 +156,7 @@ export function ArchitectureView({
           proposedCount={proposedCount}
           loadingProgressLabel={loadingProgressLabel}
         />
+        <ArchitectureAttachments attachments={attachments} isCollapsed={collapsedSections.has("attachments")} onToggleCollapse={toggleSection} onOpenTopic={onOpenTopic} />
         <ArchitectureTimeline
           entries={timelineEntries}
           onOpenTopic={onOpenTopic}

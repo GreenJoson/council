@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已安装的 Node.js、Rust host triple、esbuild、postject 与 MCP 服务源码
- * @output 生成：供 Tauri externalBin 打包的 Council Agent Service 单文件可执行程序
+ * @output 生成：供 Tauri externalBin 打包的 Council Agent Service 单文件可执行程序（内嵌表格解析 Worker 及许可证）
  * @pos    桌面构建链中把 Node 编排服务封装为免安装 sidecar 的唯一入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -32,6 +32,7 @@ const BINARIES_DIR = join(TAURI_DIR, "binaries");
 const RESOURCES_DIR = join(TAURI_DIR, "resources");
 const ENTRY_FILE = join(MCP_DIR, "dist", "src", "http-index.js");
 const BUNDLE_FILE = join(BUILD_DIR, "agent-service.cjs");
+const SPREADSHEET_WORKER_FILE = join(BUILD_DIR, "spreadsheet-worker.cjs");
 const BUNDLE_LEGAL_FILE = `${BUNDLE_FILE}.LEGAL.txt`;
 const SEA_CONFIG_FILE = join(BUILD_DIR, "sea-config.json");
 const SEA_BLOB_FILE = join(BUILD_DIR, "agent-service.blob");
@@ -166,6 +167,16 @@ async function main() {
     sourcemap: false,
     logLevel: "info",
   });
+  await build({
+    entryPoints: [join(MCP_DIR, "dist", "src", "spreadsheet-preview-worker.js")],
+    outfile: SPREADSHEET_WORKER_FILE,
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    legalComments: "external",
+    logLevel: "info",
+  });
 
   writeFileSync(
     SEA_CONFIG_FILE,
@@ -175,6 +186,7 @@ async function main() {
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: false,
+      assets: { "spreadsheet-worker.cjs": SPREADSHEET_WORKER_FILE },
     }, null, 2)}\n`,
     "utf8",
   );
@@ -197,10 +209,10 @@ async function main() {
   run("codesign", ["--verify", "--verbose=2", sidecarPath]);
 
   copyFileSync(officialNode.nodeLicense, join(RESOURCES_DIR, "node-LICENSE"));
-  copyFileSync(
-    BUNDLE_LEGAL_FILE,
-    join(RESOURCES_DIR, "agent-service-THIRD-PARTY-NOTICES.txt"),
-  );
+  const previewLicenses = ["xlsx", "yauzl", "pend"].map((name) =>
+    `\n${name}\n${readFileSync(join(MCP_DIR, "node_modules", name, "LICENSE"), "utf8")}`);
+  writeFileSync(join(RESOURCES_DIR, "agent-service-THIRD-PARTY-NOTICES.txt"),
+    `${readFileSync(BUNDLE_LEGAL_FILE, "utf8")}\n${readFileSync(`${SPREADSHEET_WORKER_FILE}.LEGAL.txt`, "utf8")}\n${previewLicenses.join("\n")}`);
   const bundleBytes = readFileSync(BUNDLE_FILE).byteLength;
   process.stdout.write(
     `Council Agent Service 已生成：${targetTriple}，业务包 ${String(bundleBytes)} bytes。\n`,

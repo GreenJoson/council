@@ -1,5 +1,5 @@
 /**
- * @input  依赖：界面语言上下文、Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、工作区视图路由和三栏组件
+ * @input  依赖：界面语言上下文、Council/Orchestration Repository、主题偏好、AI 实施计划、实施项写入、项目文件预览上下文、工作区视图路由和三栏组件
  * @output 导出：含决策包、Human Decision、显式选 Agent 的任务拆分、跨 Agent 代码委派与证据化进度的 App 根组件
  * @pos    协调内容与自动轮次的独立加载、选题、筛选、工作区视图切换、恢复和写操作状态；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 状态通知决策记录视图定位；
@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArchitectureView } from "./components/ArchitectureView";
+import { ProjectFilesProvider } from "./components/files/ProjectFilesProvider";
 import { ModelRouterDialog } from "./components/ModelRouterDialog";
 import { CreateTopicDialog } from "./components/CreateTopicDialog";
 import {
@@ -932,6 +933,7 @@ export default function App() {
 
   return (
     <ExecutionRepositoryContext.Provider value={orchestrationRepository}>
+    <ProjectFilesProvider projectKey={`${desktopSettings?.logLibrary ?? ""}:${desktopSettings?.currentProjectPath ?? workspace.project.id}`}>
     <div className="app-shell">
       <HeaderBar
         project={workspace.project}
@@ -1101,6 +1103,7 @@ export default function App() {
       {toastMessage ? <div className="toast" role="status">{toastMessage}</div> : null}
       <StatusBar />
     </div>
+    </ProjectFilesProvider>
     </ExecutionRepositoryContext.Provider>
   );
 }

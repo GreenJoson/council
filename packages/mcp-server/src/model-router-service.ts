@@ -1,11 +1,12 @@
 /**
  * @input  依赖：ModelRouterStore、Agent 执行策略、系统 SecretStore、Provider catalog 与可注入连接测试器
- * @output 导出：公开模型路由快照、含权限/职责的 Provider/Agent 增删改、连接测试和安全凭据操作
+ * @output 导出：公开模型路由快照、含权限/职责的 Provider/Agent 增删改、配置修订绑定的模型发现/分项诊断和安全凭据操作
  * @pos    HTTP 设置 API、capabilities 与临时适配器工厂之间的模型路由应用服务
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { diagnosticFailure, type AgentProbeResult, type ProviderModels } from "./model-diagnostics.js";
 import { randomUUID } from "node:crypto";
 import type { SecretStore } from "./keychain-secret-store.js";
 import {
@@ -109,15 +110,17 @@ export interface UpdateAgentDefinitionInput {
 }
 
 export interface ModelRouterConnectionTest {
-  ok: true;
+  ok: boolean;
   latencyMs: number;
+  checkedAt: string;
+  diagnosis?: AgentProbeResult;
 }
 
 export type ModelRouterConnectionTester = (
   agent: AgentDefinition,
   provider: ProviderProfile,
   apiKey: string | undefined,
-) => Promise<void>;
+) => Promise<void | AgentProbeResult>;
 
 function normalizeName(value: string, label: string): string {
   const normalized = value.trim();
@@ -273,6 +276,7 @@ function lockedSystemAgentIdentity(
 
 export class ModelRouterService {
   #tester: ModelRouterConnectionTester | undefined;
+  #modelLister?: (baseUrl: string, apiKey: string) => Promise<string[]>;
 
   constructor(
     private readonly store: ModelRouterStore,
@@ -281,6 +285,29 @@ export class ModelRouterService {
 
   registerTester(tester: ModelRouterConnectionTester): void {
     this.#tester = tester;
+  }
+
+  registerModelLister(lister: (baseUrl: string, apiKey: string) => Promise<string[]>): void { this.#modelLister = lister; }
+
+  async listModels(id: string): Promise<ProviderModels> {
+    const provider = this.store.getProvider(id);
+    if (!provider || provider.status !== "active") invalid("请先保存并启用 Provider。");
+    const checkedAt = new Date().toISOString();
+    const fallback = catalogTemplateForProvider(provider)?.modelCandidates ?? [];
+    if (provider.protocol !== "openai-compatible") return { status: "unsupported", source: "catalog", models: [...fallback], checkedAt,
+      message: "当前 CLI/ACP 连接不提供统一模型列表，请填写供应商公布的模型 ID 并测试。" };
+    const key = provider.credentialRef ? await this.secrets.get(provider.credentialRef) : undefined;
+    if (!provider.baseUrl || !key || !this.#modelLister) invalid("请先保存 Provider 地址和 API Key。");
+    try {
+      const models = await this.#modelLister(provider.baseUrl, key);
+      if (this.store.getProvider(id)?.configRevision !== provider.configRevision) conflict("Provider 配置已变化，请重新获取模型列表。");
+      return { status: "available", source: "provider", models, checkedAt, message: "模型列表来自当前 Provider；列出不代表账号已获调用权限，请保存后测试。" };
+    } catch (error) {
+      if (error instanceof ModelRouterPublicError) throw error;
+      const failure = diagnosticFailure(error);
+      const unsupported = failure.code === "models_unsupported";
+      return { status: unsupported ? "unsupported" : "failed", source: "catalog", models: [...fallback], checkedAt, ...failure };
+    }
   }
 
   getAgent(id: string): AgentDefinition | undefined {
@@ -678,8 +705,10 @@ export class ModelRouterService {
       ? await this.secrets.get(provider.credentialRef)
       : undefined;
     const startedAt = Date.now();
-    await this.#tester(agent, provider, apiKey);
-    return { ok: true, latencyMs: Date.now() - startedAt };
+    const diagnosis = await this.#tester(agent, provider, apiKey);
+    if (this.store.getAgent(id)?.configRevision !== agent.configRevision
+      || this.store.getProvider(provider.id)?.configRevision !== provider.configRevision) conflict("诊断期间配置已变化，请重新测试。");
+    return { ok: diagnosis?.ok ?? true, latencyMs: Date.now() - startedAt, checkedAt: new Date().toISOString(), ...(diagnosis ? { diagnosis } : {}) };
   }
 
   close(): void {

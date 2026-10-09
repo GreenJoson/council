@@ -66,7 +66,9 @@ import {
   type AcpRuntimeRegistry,
 } from "../acp-runtime-registry.js";
 import { OpenAICompatibleModelClient } from "../openai-compatible-model-client.js";
-import { OpenAICompatibleRuntime } from "../openai-compatible-runtime.js";
+import { createModelRouterProbe } from "../model-router-probes.js";
+import type { ModelRouterConnectionTest } from "../model-router-service.js";
+import type { ProviderModels } from "../model-diagnostics.js";
 import { ReadOnlyAgentLoop } from "../read-only-agent-loop.js";
 import type { CouncilConfig, CouncilHttpConfig } from "../types.js";
 import { ClaudeAgentAdapter } from "./claude-agent-adapter.js";
@@ -971,11 +973,16 @@ export class CouncilOrchestrationService {
     await this.#ensureFreshAvailability(true);
   }
 
-  async testAgent(id: string): Promise<{ ok: true; latencyMs: number }> {
+  async testAgent(id: string): Promise<ModelRouterConnectionTest> {
     if (!this.modelRouter) {
       throw new OrchestrationConfigError("模型路由服务未启用。");
     }
     return await this.modelRouter.testAgent(id);
+  }
+
+  async listProviderModels(id: string): Promise<ProviderModels> {
+    if (!this.modelRouter) throw new OrchestrationConfigError("模型路由服务未启用。");
+    return this.modelRouter.listModels(id);
   }
 
   async initialize(): Promise<void> {
@@ -1285,61 +1292,21 @@ export function createProductionOrchestrationService(
   const codexRuntime = new CodexRuntime(councilConfig);
   const acpRegistry = createProductionAcpRuntimeRegistry(councilConfig);
   const acpRuntime = new AcpDelegatedRuntime(councilConfig);
-  const remoteRuntime = new OpenAICompatibleRuntime(
-    councilConfig.maxOutputChars,
-    httpConfig.orchestrationDefaultAgentTimeoutMs,
-  );
   const remoteModelClient = new OpenAICompatibleModelClient(
     councilConfig.maxOutputChars,
     httpConfig.orchestrationDefaultAgentTimeoutMs,
   );
   const remoteAgentLoop = new ReadOnlyAgentLoop(remoteModelClient, councilConfig);
 
-  modelRouter.registerTester(async (agent, provider, apiKey) => {
-    if (provider.protocol === "claude-cli") {
-      await claudeRuntime.generate({
-        prompt: "只回复 OK",
-        cwd: process.cwd(),
-        ...(agent.model || councilConfig.claudeModel
-          ? { model: agent.model || councilConfig.claudeModel }
-          : {}),
-      });
-      return;
-    }
-    if (provider.protocol === "codex-cli") {
-      await codexRuntime.generate({
-        prompt: "只回复 OK",
-        cwd: process.cwd(),
-        ...(agent.model || councilConfig.codexModel
-          ? { model: agent.model || councilConfig.codexModel }
-          : {}),
-      });
-      return;
-    }
-    if (provider.protocol === "acp") {
+  modelRouter.registerModelLister((baseUrl, apiKey) => remoteModelClient.listModels(baseUrl, apiKey));
+  modelRouter.registerTester(createModelRouterProbe({ claude: claudeRuntime, codex: codexRuntime, remote: remoteModelClient,
+    claudeModel: councilConfig.claudeModel, codexModel: councilConfig.codexModel,
+    acp: async (provider, cwd, model) => {
       const definition = acpDefinitionForProvider(provider, acpRegistry);
-      const grantedCapabilities = grantRuntimeCapabilities(
-        definition.declaredCapabilities,
-        defaultPolicyCapabilitiesForTransport("acp"),
-      );
-      await acpRuntime.probe(
-        definition,
-        process.cwd(),
-        agent.model,
-        grantedCapabilities,
-      );
-      return;
-    }
-    if (!provider.baseUrl || !apiKey) {
-      throw new Error("远程 Provider 配置不完整。");
-    }
-      await remoteRuntime.generate({
-        baseUrl: provider.baseUrl,
-        model: agent.model,
-        apiKey,
-        prompt: "只回复 OK",
-      });
-  });
+      const granted = grantRuntimeCapabilities(definition.declaredCapabilities, defaultPolicyCapabilitiesForTransport("acp"));
+      await acpRuntime.probe(definition, cwd, model, granted);
+    },
+  }));
 
   const factory: EphemeralAgentFactory = (agent, provider) => {
     if (provider.protocol === "claude-cli") {

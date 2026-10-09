@@ -9,9 +9,9 @@
 
 const STORAGE_KEY = "council.collapsedSections";
 
-export type SectionId = "timeline" | "constraints" | "diagrams";
+export type SectionId = "timeline" | "constraints" | "diagrams" | "attachments";
 
-const SECTION_IDS: readonly SectionId[] = ["timeline", "constraints", "diagrams"];
+const SECTION_IDS: readonly SectionId[] = ["timeline", "constraints", "diagrams", "attachments"];
 
 function isSectionId(value: unknown): value is SectionId {
   return typeof value === "string" && SECTION_IDS.includes(value as SectionId);

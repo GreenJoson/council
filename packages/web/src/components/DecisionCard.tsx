@@ -1,6 +1,6 @@
 /**
  * @input  依赖：界面语言上下文、CouncilDecision 与决策状态徽章、MarkdownContent
- * @output 导出：DecisionCard 决策正文卡（四态、可折叠正文），尾部由调用方补
+ * @output 导出：DecisionCard 决策正文卡（四态、可折叠正文、绑定议题的文件预览），尾部由调用方补
  * @pos    议题决策 tab 与决策记录视图共用的唯一决策渲染出口；右栏只放摘要不走这里
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { DecisionStatusBadge, decisionStatusLabels } from "./presentation";
 
 export interface DecisionCardProps {
+  topicId?: string;
   decision: CouncilDecision;
   /** 卡片尾部：决策记录里放提出人，议题里放接受操作 */
   children?: ReactNode;
@@ -21,7 +22,7 @@ export interface DecisionCardProps {
   collapsible?: boolean;
 }
 
-export function DecisionCard({ decision, children, collapsible = false }: DecisionCardProps) {
+export function DecisionCard({ decision, children, collapsible = false, topicId }: DecisionCardProps) {
   const { t } = useI18n();
   const accepted = decision.status === "accepted";
   const superseded = decision.status === "superseded";
@@ -29,10 +30,10 @@ export function DecisionCard({ decision, children, collapsible = false }: Decisi
   const body = (
     <>
       <div className="decision-summary-block">
-        <MarkdownContent content={decision.summary} />
+        <MarkdownContent content={decision.summary} topicId={topicId} />
       </div>
       <div className="decision-rationale-block">
-        <MarkdownContent content={decision.rationale} />
+        <MarkdownContent content={decision.rationale} topicId={topicId} />
       </div>
     </>
   );

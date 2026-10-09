@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、Model Router、HTTP 配置、Express 安全中间件与 Zod schema
- * @output 导出：含 schema ready、议题更正/关闭、决策包、AI 实施计划、跨 Agent 任务委派与可选权限接续、模型路由、内容/编排 REST 与 SSE 的应用工厂
+ * @output 导出：含 schema ready、议题更正/关闭、决策包、AI 实施计划、跨 Agent 任务委派与可选权限接续、模型路由、项目文件只读预览、内容/编排 REST 与 SSE 的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,7 @@ import {
 import { logger } from "../logger.js";
 import { ModelRouterPublicError } from "../model-router-service.js";
 import { normalizeProjectPath } from "../project-path.js";
+import { ProjectFilePreviewService } from "../project-file-preview.js";
 import type { CouncilOrchestrationService } from "../orchestration/service.js";
 import {
   formatWorkItemPlanningContext,
@@ -230,6 +231,7 @@ export function createCouncilHttpApp(
   worker?: { snapshot: () => object; canStop: () => boolean; stop: () => void },
 ): CouncilHttpAppBundle {
   const app = express();
+  const projectFiles = new ProjectFilePreviewService(config.filePreview);
   const events = new RevisionEventStream(
     database,
     config.eventPollMs,
@@ -389,6 +391,14 @@ export function createCouncilHttpApp(
     }
   });
 
+  app.post("/api/v1/settings/providers/:providerId/actions/models", async (request, response) => {
+    if (!orchestration) throw new HttpError(503, "模型路由服务未启用。");
+    const params = parse(providerParamsSchema, request.params);
+    parse(emptyActionBodySchema, request.body ?? {});
+    try { sendSuccess(response, await orchestration.listProviderModels(params.providerId)); }
+    catch (error) { rethrowModelRouterError(error); }
+  });
+
   app.post("/api/v1/settings/agents/:agentId/actions/test", async (request, response) => {
     if (!orchestration) {
       throw new HttpError(503, "模型路由服务未启用。");
@@ -396,9 +406,10 @@ export function createCouncilHttpApp(
     const params = parse(agentParamsSchema, request.params);
     parse(emptyActionBodySchema, request.body ?? {});
     try {
-      sendSuccess(response, await orchestration.testAgent(params.agentId), "连接测试通过。");
-    } catch {
-      throw new HttpError(502, "连接测试失败，请检查模型、额度、API 地址或凭据。");
+      sendSuccess(response, await orchestration.testAgent(params.agentId), "连接诊断已完成。");
+    } catch (error) {
+      if (error instanceof ModelRouterPublicError) rethrowModelRouterError(error);
+      throw new HttpError(502, "连接诊断失败，请检查运行时配置。");
     }
   });
 
@@ -438,6 +449,16 @@ export function createCouncilHttpApp(
       actorId: "human",
     });
     sendSuccess(response, topic, "议题已创建。", 201);
+  });
+
+  app.post("/api/v1/topics/:topicId/files/preview", async (request, response) => {
+    const { topicId } = parse(topicParamsSchema, request.params);
+    const input = parse(z.object({
+      href: z.string().trim().min(1).max(4096),
+      basePath: z.string().trim().min(1).max(4096).optional(),
+    }).strict(), request.body);
+    response.set("Cache-Control", "no-store");
+    sendSuccess(response, await projectFiles.preview(database.getTopic(topicId).projectPath, input.href, input.basePath));
   });
 
   app.put("/api/v1/topics/:topicId", (request, response) => {

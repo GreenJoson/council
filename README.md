@@ -161,6 +161,21 @@ flowchart TB
 
 **Long-running tasks.** Delegation shows persisted instruction, implementation, commit, and review stages. Claude has separate configurable turn budgets: 24 for discussion/instructions on desktop, 120 for implementation (`COUNCIL_CLAUDE_EXECUTION_MAX_TURNS`), and 48 for review (`COUNCIL_CLAUDE_REVIEW_MAX_TURNS`). New delegations allow up to four execution segments within a two-hour cumulative window, configurable via `COUNCIL_DELEGATION_MAX_EXECUTION_SEGMENTS` and `COUNCIL_DELEGATION_EXECUTION_TIMEOUT_MS`. A resumable handoff or turn-limit stop with a saved session and verified file progress can continue; quota, permission, authentication, repeated no-progress, and exhausted total budgets pause for inspection. Valid instructions and source changes survive failure; a new workspace uses a fresh model session. Actual tool counts and available turn counts come from structured events, without publishing tool inputs or private session IDs.
 
+## Model discovery and diagnostics
+
+In **Provider & Agent**, save the connection, choose an Agent, and click **Fetch models**. OpenAI-compatible connections query that provider's `/models` endpoint with its saved credential. Unsupported endpoints and CLI/ACP connections keep manual model input; built-in suggestions are not a verified availability list.
+
+**Test** checks the saved Agent. Native Claude/Codex probes check CLI startup, login, and a model reading a random temporary file with read-only permissions. API probes check an actual response; ACP probes currently verify a session handshake. Results show which checks passed, failed, or remain unverified, plus the requested and provider-reported model when available. A reported name is not independent proof of the underlying model. Tests can incur model charges and do not validate project write access or complete a task. Changing configuration invalidates the displayed result; failures never trigger an automatic model or credential switch.
+
+## Project attachments and in-app previews
+
+**Project attachments** in the architecture archive collects local Markdown file links from topics, messages and decisions. Add links such as `[Design](docs/design.xlsx)` or `[Parameters](config/model.json)`. Existing absolute paths inside the project also work. Attachment cards and inline file links open a read-only preview in Council.
+
+- XLSX supports worksheet tabs; CSV/TSV opens as a grid. Formulas use saved values without recalculation.
+- Markdown has reading and source views. JSON, YAML, configuration and code open as text. Scripts and HTML are never executed, and document images are not fetched automatically.
+- Attachments are **references to current project files**. Topics retain the links; files remain in the project without automatic copying or uploading. These are not versioned backups. Missing files show an error. Uploads, snapshots, PDF/Word and legacy XLS previews are not yet supported.
+- Preview reads regular files within the topic's project only. Traversal, escaping symlinks and protected configuration paths such as `.env` or keys are rejected. `COUNCIL_FILE_PREVIEW_*` configures size, grid, expansion and parsing budgets. Truncated previews are labeled and never modify the source.
+
 ## Security and current limits
 
 - Supply your own provider credentials. macOS Keychain stores remote API keys; SQLite stores credential references and public settings. No usable API key is included.

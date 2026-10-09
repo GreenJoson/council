@@ -1,7 +1,7 @@
 /**
  * @input  依赖：界面语言上下文、带冻结 Actor 快照的 CouncilMessage、参与者回退资料、引用回复回调、MarkdownContent、
  *         召唤标记与结构化关联提交解析
- * @output 导出：含关联提交证据卡的 MessageCard 讨论时间线卡片
+ * @output 导出：含项目文件链接与关联提交证据卡的 MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
  *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
  *         高亮芯片，其余正文照常交给 MarkdownContent
@@ -18,6 +18,7 @@ import { MarkdownContent } from "./MarkdownContent";
 import { AgentAvatar, messageKindLabels } from "./presentation";
 
 export interface MessageCardProps {
+  topicId?: string;
   message: CouncilMessage;
   participant?: Participant;
   index: number;
@@ -32,6 +33,7 @@ export function MessageCard({
   index,
   elementId,
   onQuote,
+  topicId,
 }: MessageCardProps) {
   const { t } = useI18n();
   const commitAssociation = extractCommitAssociation(message.content);
@@ -83,7 +85,7 @@ export function MessageCard({
           </span>
         ) : null}
         {(mentionChip ? mentionChip.remainder : visibleContent) ? (
-          <MarkdownContent content={mentionChip ? mentionChip.remainder : visibleContent} collapsible />
+          <MarkdownContent content={mentionChip ? mentionChip.remainder : visibleContent} topicId={topicId} collapsible />
         ) : null}
         {commitAssociation ? (
           <aside className="commit-association-card" aria-label={t("关联提交")}>

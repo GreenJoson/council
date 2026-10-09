@@ -66,3 +66,6 @@
 - 从 v11 起，所有 `INSERT ... SELECT` 必须在两侧显式列出字段，禁止使用按位置匹配的 `SELECT *`。
 
 `native-runtime-progress.ts` 优先识别最终认证/服务错误，历史工具拒绝不能覆盖终止原因。
+
+| `project-file-preview.ts` / `project-file-preview-config.ts` | 文件预览 | 绑定议题项目的只读文件边界与集中预算；文本直接返回，表格放入受限 Worker；不持久化文件内容 |
+| `spreadsheet-preview-worker.ts` | 隔离解析 | SheetJS 只读 XLSX/CSV/TSV，ZIP 声明及实际解压双重限额，工作表矩阵有界，SEA 构建内嵌 Worker 资源 |

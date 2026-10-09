@@ -1,7 +1,7 @@
 /**
  * @input  依赖：界面语言上下文、当前项目名、含 owner/完整决策包/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
- * @output 导出：DiscussionPanel 中央工作区（讨论/完整决策包、单条/批量接受、任务/元数据、
+ * @output 导出：支持本地文件预览链接的DiscussionPanel 中央工作区（讨论/完整决策包、单条/批量接受、任务/元数据、
  *         议题关闭、人工签署、阶梯导航与引用回复）
  * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
@@ -380,7 +380,7 @@ export function DiscussionPanel({
           </div>
         </div>
         <div className="topic-question">
-          <MarkdownContent content={topic.question} collapsible collapseVariant="topic" />
+          <MarkdownContent content={topic.question} topicId={topic.id} collapsible collapseVariant="topic" />
         </div>
         <div className="topic-tabs" role="tablist" aria-label={t("议题视图")}>
           <button
@@ -472,6 +472,7 @@ export function DiscussionPanel({
               {topic.messages.length > 0 ? (
                 topic.messages.map((message, index) => (
                   <MessageCard
+                    topicId={topic.id}
                     message={message}
                     participant={participants.get(message.author)}
                     index={index}
@@ -587,7 +588,7 @@ export function DiscussionPanel({
                           <span>{t("选择决策：{title}", { title: decision.title })}</span>
                         </label>
                       ) : null}
-                      <DecisionCard decision={decision} collapsible={topic.decisions.length > 1}>
+                      <DecisionCard decision={decision} topicId={topic.id} collapsible={topic.decisions.length > 1}>
                         <div className="topic-decision-actions">
                           <span className="topic-decision-proposer">
                             <AgentAvatar
@@ -686,7 +687,7 @@ export function DiscussionPanel({
           <div className="metadata-field">
             <span className="metadata-label">{t("完整问题描述")}</span>
             <div className="metadata-question-full">
-              <MarkdownContent content={topic.question} />
+              <MarkdownContent content={topic.question} topicId={topic.id} />
             </div>
           </div>
 

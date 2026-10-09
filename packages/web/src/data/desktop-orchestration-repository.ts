@@ -31,6 +31,7 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
+  ProviderModels,
   AgentDefinition,
   CreateAgentInput,
   CreateProviderInput,
@@ -225,6 +226,10 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async removeAgent(agentId: string): Promise<AgentDefinition> {
     return (await this.#requireLive()).removeAgent(agentId);
+  }
+
+  async listProviderModels(providerId: string): Promise<ProviderModels> {
+    return (await this.#requireLive()).listProviderModels(providerId);
   }
 
   async testAgent(agentId: string): Promise<AgentConnectionTest> {

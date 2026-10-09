@@ -27,6 +27,7 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
+  ProviderModels,
   AgentDefinition,
   CreateAgentInput,
   CreateProviderInput,
@@ -661,6 +662,10 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     agent.deletedAt = new Date().toISOString();
     agent.updatedAt = agent.deletedAt;
     return structuredClone(agent);
+  }
+
+  async listProviderModels(_providerId: string): Promise<ProviderModels> {
+    return { status: "unsupported", source: "catalog", models: [], checkedAt: new Date().toISOString(), message: "演示模式不连接上游模型列表。" };
   }
 
   async testAgent(_agentId: string): Promise<AgentConnectionTest> {

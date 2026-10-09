@@ -26,11 +26,14 @@
     "express": "5.2.1",
     "express-rate-limit": "8.6.0",
     "helmet": "8.3.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "yauzl": "3.4.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
     "@types/node": "26.1.1",
+    "@types/yauzl": "3.4.0",
     "tsx": "4.23.1",
     "typescript": "7.0.2"
   },

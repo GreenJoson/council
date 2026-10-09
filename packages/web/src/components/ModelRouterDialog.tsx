@@ -26,6 +26,7 @@ import type {
   ProviderCatalogEntry,
   ProviderProfile,
 } from "../types/model-router";
+import { useModelDiagnostics } from "../hooks/useModelDiagnostics";
 import { BrandGlyph } from "./BrandGlyph";
 import {
   AgentDefinitionEditor,
@@ -241,6 +242,9 @@ export function ModelRouterDialog({
     (provider) => provider.id === selectedAgent?.providerId,
   );
 
+  const diagnostics = useModelDiagnostics(repository,
+    JSON.stringify([isOpen, selection, selectedAgent?.updatedAt, agentProvider?.updatedAt, agentForm]),
+    JSON.stringify([isOpen, agentProvider?.id, agentProvider?.updatedAt]), selectedAgent?.id, agentProvider?.id);
   if (!isOpen) return null;
 
   async function reload(preferred?: Selection): Promise<ModelRouterSnapshot> {
@@ -400,23 +404,6 @@ export function ModelRouterDialog({
     }
   }
 
-  async function testAgent(): Promise<void> {
-    if (!selectedAgent) return;
-    setBusyAction("test");
-    setErrorMessage(null);
-    try {
-      const result = await repository.testAgent(selectedAgent.id);
-      setResultMessage(t("{name} 连接测试通过 · {latency} ms", {
-        name: selectedAgent.displayName,
-        latency: result.latencyMs,
-      }));
-    } catch (error: unknown) {
-      setErrorMessage(getErrorMessage(error));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   const selectedBrand = snapshot
     ? selection?.kind === "new-provider"
       ? snapshot.brands.find((brand) => brand.id === selectedTemplate?.brandAssetId)
@@ -533,7 +520,7 @@ export function ModelRouterDialog({
                   <AgentDefinitionEditor
                     agent={selectedAgent}
                     provider={agentProvider}
-                    modelCandidates={
+                    modelCandidates={diagnostics.models?.status === "available" ? diagnostics.models.models :
                       snapshot.catalog.providers.find(
                         (template) =>
                           template.slug === agentProvider.slug
@@ -542,7 +529,7 @@ export function ModelRouterDialog({
                     }
                     brand={selectedBrand}
                     draft={agentForm}
-                    busyAction={busyAction}
+                    busyAction={busyAction ?? diagnostics.busy}
                     isAdding={selection?.kind === "new-agent"}
                     isDirty={agentDirty}
                     identityLocked={Boolean(
@@ -554,7 +541,11 @@ export function ModelRouterDialog({
                     removeConfirming={removeConfirming}
                     onDraftChange={(patch) => setAgentForm((current) => current ? { ...current, ...patch } : current)}
                     onSave={() => void saveAgent()}
-                    onTest={() => void testAgent()}
+                    onTest={() => { setResultMessage(null); setErrorMessage(null); void diagnostics.test(); }}
+                    onRefreshModels={() => { setResultMessage(null); setErrorMessage(null); void diagnostics.refresh(); }}
+                    modelDiscovery={diagnostics.models}
+                    diagnosticResult={agentDirty ? undefined : diagnostics.result}
+                    diagnosticError={diagnostics.error}
                     onCancel={cancelEdit}
                     onRequestRemove={() => setRemoveConfirming(true)}
                     onCancelRemove={() => setRemoveConfirming(false)}
@@ -566,7 +557,7 @@ export function ModelRouterDialog({
                     template={providerTemplate}
                     brand={selectedBrand}
                     draft={providerForm}
-                    busyAction={busyAction}
+                    busyAction={busyAction ?? diagnostics.busy}
                     isAdding={selection?.kind === "new-provider"}
                     isDirty={providerDirty}
                     identityLocked={

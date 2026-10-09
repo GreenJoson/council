@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型与含迁移策略、独立 CLI 事件流与委派 Git 检查预算的配置类型
+ * @output 导出：领域模型与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -83,6 +83,7 @@ export interface McpCouncilConfig extends CouncilConfig {
 }
 
 export interface CouncilHttpConfig {
+  filePreview?: import("./project-file-preview-config.js").ProjectFilePreviewConfig;
   databasePath: string;
   sqliteBusyTimeoutMs: number;
   schemaMigrationMaxAttempts: number;

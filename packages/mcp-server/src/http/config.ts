@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_DATA_DIR、schema 迁移与 COUNCIL_HTTP_* 环境变量
- * @output 导出：经过 Zod 校验且含迁移重试策略的 CouncilHttpConfig
+ * @output 导出：经过 Zod 校验且含文件预览预算与迁移重试策略的 CouncilHttpConfig
  * @pos    本地 HTTP 服务的唯一配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,6 +16,7 @@ import {
   MAX_ORCHESTRATION_STARTUP_SCAN,
 } from "../constants.js";
 import type { CouncilHttpConfig } from "../types.js";
+import { loadProjectFilePreviewConfig } from "../project-file-preview-config.js";
 
 const positiveInteger = z.coerce.number().int().positive();
 const nonNegativeInteger = z.coerce.number().int().min(0);
@@ -140,6 +141,7 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 
   return {
+    filePreview: loadProjectFilePreviewConfig(env),
     databasePath: path.join(dataDir, "council.sqlite3"),
     sqliteBusyTimeoutMs: parsed.data.COUNCIL_SQLITE_BUSY_TIMEOUT_MS,
     schemaMigrationMaxAttempts:

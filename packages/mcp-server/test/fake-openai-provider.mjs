@@ -32,6 +32,13 @@ function readJson(request) {
 }
 
 const server = createServer(async (request, response) => {
+  if (request.method === "GET" && request.url === "/v1/models") {
+    if (request.headers.authorization !== "Bearer e2e-example-key") { response.writeHead(401).end("sensitive-body-must-not-escape"); return; }
+    response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ data: [
+      { id: "router-model-alpha" }, { id: "router-model-beta" }, { id: "router-model-alpha" },
+    ] }));
+    return;
+  }
   if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
     response.writeHead(404).end();
     return;
@@ -48,6 +55,8 @@ const server = createServer(async (request, response) => {
     return;
   }
   const model = typeof payload?.model === "string" ? payload.model : "";
+  if (model === "denied-model") { response.writeHead(403).end("sensitive-body-must-not-escape"); return; }
+  if (model === "unavailable-model") { response.writeHead(404).end("sensitive-body-must-not-escape"); return; }
   if (model === "failure-model") {
     response.writeHead(503).end();
     return;
@@ -130,7 +139,7 @@ const server = createServer(async (request, response) => {
   });
   const midpoint = Math.ceil(reply.length / 2);
   for (const content of [reply.slice(0, midpoint), reply.slice(midpoint)]) {
-    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+    response.write(`data: ${JSON.stringify({ model: "reported-provider-model", choices: [{ delta: { content } }] })}\n\n`);
   }
   response.end("data: [DONE]\n\n");
 });

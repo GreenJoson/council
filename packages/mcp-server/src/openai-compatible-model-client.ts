@@ -1,16 +1,19 @@
 /**
  * @input  依赖：OpenAI-compatible Chat Completions、消息、只读工具定义与 AbortSignal
- * @output 导出：有界 ModelClient、公开文本增量、结构化 Tool Call 与按 HTTP 状态脱敏的错误原因
+ * @output 导出：有界 ModelClient、模型发现/返回模型标识、公开文本增量、Tool Call 与脱敏 HTTP 诊断
  * @pos    Provider 通信层；不访问项目文件、不执行工具、不管理 Council 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import { observedModel } from "./model-diagnostics.js";
 
 export class OpenAICompatibleRuntimeError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
     readonly diagnosticCode: string,
+    readonly httpStatus?: number,
   ) {
     super(message);
     this.name = "OpenAICompatibleRuntimeError";
@@ -53,6 +56,7 @@ export interface ModelClientInput {
 }
 
 export interface ModelClientResult {
+  observedModel?: string;
   content: string;
   toolCalls: ModelToolCall[];
 }
@@ -67,6 +71,7 @@ interface ApiToolCall {
 }
 
 interface ChatCompletionResponse {
+  model?: unknown;
   choices?: Array<{
     message?: {
       content?: unknown;
@@ -76,6 +81,7 @@ interface ChatCompletionResponse {
 }
 
 interface ChatCompletionChunk {
+  model?: unknown;
   choices?: Array<{
     delta?: {
       content?: unknown;
@@ -156,6 +162,7 @@ function classifyResponseStatus(status: number): OpenAICompatibleRuntimeError {
     diagnostic.message,
     status === 429 || status >= 500,
     diagnostic.code,
+    status,
   );
 }
 
@@ -244,7 +251,7 @@ function parseCompletionBody(body: string): ModelClientResult {
       "empty_response",
     );
   }
-  return { content: content.trim(), toolCalls };
+  return { content: content.trim(), toolCalls, ...(observedModel(parsed.model) ? { observedModel: observedModel(parsed.model) } : {}) };
 }
 
 function appendBounded(
@@ -285,6 +292,7 @@ async function readStreamingCompletion(
   let content = "";
   let transportChars = 0;
   let completed = false;
+  let responseModel: string | undefined;
   onTextEvent?.({ operation: "reset" });
 
   const processToolDeltas = (value: unknown): void => {
@@ -374,6 +382,7 @@ async function readStreamingCompletion(
         "invalid_response",
       );
     }
+    responseModel = observedModel(chunk.model) ?? responseModel;
     const delta = chunk.choices?.[0]?.delta;
     if (typeof delta?.content === "string" && delta.content) {
       content = appendBounded(content, delta.content, maximum);
@@ -448,7 +457,7 @@ async function readStreamingCompletion(
       "empty_response",
     );
   }
-  return { content: content.trim(), toolCalls: parsedToolCalls };
+  return { content: content.trim(), toolCalls: parsedToolCalls, ...(responseModel ? { observedModel: responseModel } : {}) };
 }
 
 export class OpenAICompatibleModelClient {
@@ -461,6 +470,30 @@ export class OpenAICompatibleModelClient {
     }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
       throw new Error("远程模型超时必须是正整数。");
+    }
+  }
+
+  async listModels(baseUrl: string, apiKey: string): Promise<string[]> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    try {
+      const response = await fetch(new URL("models", baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`), {
+        headers: { Authorization: `Bearer ${apiKey}` }, signal, redirect: "error",
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        if ([404, 405, 501].includes(response.status)) throw new OpenAICompatibleRuntimeError("模型列表不受支持。", false, "models_unsupported");
+        throw classifyResponseStatus(response.status);
+      }
+      const parsed: unknown = JSON.parse(await readBoundedText(response, this.maxOutputChars));
+      if (!parsed || typeof parsed !== "object" || !("data" in parsed) || !Array.isArray(parsed.data)) {
+        throw new OpenAICompatibleRuntimeError("模型列表格式无效。", false, "invalid_response");
+      }
+      const models = parsed.data.map(item => observedModel(item?.id));
+      if (models.some(value => !value)) throw new OpenAICompatibleRuntimeError("模型 ID 格式无效。", false, "invalid_response");
+      return [...new Set(models as string[])].sort();
+    } catch (error) {
+      if (error instanceof OpenAICompatibleRuntimeError) throw error;
+      throw new OpenAICompatibleRuntimeError("无法读取模型列表。", false, signal.aborted ? "timeout" : error instanceof SyntaxError ? "invalid_response" : "network_error");
     }
   }
 

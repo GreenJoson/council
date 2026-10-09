@@ -40,3 +40,5 @@
 `ImplementationProgress.tsx` 为历史委派提供独立布局类，时间和证据与任务正文对齐，避开层级竖线。
 
 `DelegationDeliveryEvidence.tsx` 展示所有状态下已保存的提交、审核问题和材料阻断。执行阶段区分首次实施与按审核意见修正，恢复入口区分提交复审与修正草稿接续。
+
+| `files/` | 文件预览 | ProjectFilesProvider 统一内部打开、竞态与项目切换；ProjectFileDialog 显示只读工作表/Markdown/源码，ProjectFileIcon 提供类型图标 |

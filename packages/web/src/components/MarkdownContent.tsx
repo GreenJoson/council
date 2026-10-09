@@ -1,8 +1,8 @@
 /**
  * @input  依赖：界面语言上下文、react-markdown、remark-gfm、rehype-raw、rehype-sanitize、MermaidDiagram、
- *         Lightbox 与 theme.css 语义类名
+ *         Lightbox、项目文件打开上下文与 theme.css 语义类名
  * @output 导出：MarkdownContent 统一 Markdown 渲染组件（GFM、内嵌 HTML 安全渲染、
- *         ```mermaid 围栏内联渲染成缩略图、图片/图表大图浏览、长内容折叠）
+ *         ```mermaid 围栏内联渲染成缩略图、图片/图表大图浏览、长内容折叠、项目文件内部预览链接）
  * @pos    讨论消息、议题问题与决策文本的唯一 Markdown 渲染入口；安全白名单集中维护于此；
  *         mermaid 走独立渲染路径（不经 rehype-raw 的 HTML 注入），架构档案图集复用同一份
  *         MermaidDiagram/Lightbox 保证渲染与主题联动逻辑一致
@@ -20,6 +20,9 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../i18n/I18nProvider";
 import { Lightbox, type LightboxContent } from "./Lightbox";
 import { MermaidDiagram } from "./MermaidDiagram";
+import { isProjectFileLink } from "../data/project-files";
+import { useOpenProjectFile } from "../hooks/useProjectFiles";
+import { ProjectFileIcon } from "./files/ProjectFileIcon";
 
 /** CSS token 缺失时的安全回退；正常路径从 --markdown-collapse-height 读取当前上下文阈值 */
 const FALLBACK_COLLAPSE_THRESHOLD_PX = 420;
@@ -53,6 +56,7 @@ const markdownSanitizeSchema: Schema = {
   },
   protocols: {
     ...(defaultSchema.protocols ?? {}),
+    href: [...(defaultSchema.protocols?.href ?? []), "file"],
     src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
 };
@@ -61,6 +65,8 @@ const markdownSanitizeSchema: Schema = {
 const SAFE_DATA_IMAGE_SRC = /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i;
 
 const markdownUrlTransform: UrlTransform = (url, key, node) => {
+  // 本地 href 只交给按钮与受限文件接口，绝不作为 WebView 导航地址。
+  if (key === "href" && isProjectFileLink(url)) return url;
   if (key === "src" && node.tagName === "img" && SAFE_DATA_IMAGE_SRC.test(url)) {
     return url;
   }
@@ -69,6 +75,10 @@ const markdownUrlTransform: UrlTransform = (url, key, node) => {
 
 export interface MarkdownContentProps {
   content: string;
+  topicId?: string;
+  fileBasePath?: string;
+  /** 本地文档禁止自动加载外链图片，避免打开文档时产生网络副作用。 */
+  localFilePreview?: boolean;
   /** 超过折叠阈值时默认收起并显示"展开全文"；默认 false（如决策详情，需要完整展示） */
   collapsible?: boolean;
   /** 议题摘要使用更紧凑的高度阈值和专属文案；正文默认使用 content */
@@ -79,8 +89,12 @@ export function MarkdownContent({
   content,
   collapsible = false,
   collapseVariant = "content",
+  topicId,
+  fileBasePath,
+  localFilePreview = false,
 }: MarkdownContentProps) {
   const { t } = useI18n();
+  const openFile = useOpenProjectFile();
   const [lightboxContent, setLightboxContent] = useState<LightboxContent | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -147,8 +161,15 @@ export function MarkdownContent({
     h6: ({ node: _node, ...props }) => (
       <h6 className="markdown-heading markdown-heading-6" {...props} />
     ),
-    a: ({ node: _node, href, children, ...props }) => (
-      <a
+    a: ({ node: _node, href, children, ...props }) => {
+      if (href && isProjectFileLink(href)) return (
+        <button type="button" className="markdown-file-link" disabled={!topicId || !openFile}
+          title={t("在软件内预览文件")}
+          onClick={() => topicId && openFile?.({ topicId, href, label: textOf(children), basePath: fileBasePath })}>
+          <ProjectFileIcon href={href} size={14} />{children}
+        </button>
+      );
+      return <a
         {...props}
         href={href}
         rel="noopener noreferrer"
@@ -161,14 +182,14 @@ export function MarkdownContent({
         }}
       >
         {children}
-      </a>
-    ),
+      </a>;
+    },
     table: ({ node: _node, children, ...props }) => (
       <div className="markdown-table-scroll">
         <table {...props}>{children}</table>
       </div>
     ),
-    img: ({ src, alt, title }) => (
+    img: ({ src, alt, title }) => localFilePreview ? <span>{alt || t("图片")}</span> : (
       <MarkdownImage
         src={typeof src === "string" ? src : ""}
         alt={alt ?? ""}
@@ -192,7 +213,7 @@ export function MarkdownContent({
         />
       );
     },
-  }), [t]);
+  }), [t, topicId, openFile, fileBasePath, localFilePreview]);
 
   const collapseLabels = COLLAPSE_LABELS[collapseVariant];
   const collapseToggle = collapsible && needsCollapse ? (
@@ -248,6 +269,13 @@ interface MarkdownImageProps {
   alt: string;
   title?: string;
   onOpen: (src: string, alt: string) => void;
+}
+
+function textOf(value: ReactNode): string {
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(textOf).join("");
+  if (isValidElement<{ children?: ReactNode }>(value)) return textOf(value.props.children);
+  return "";
 }
 
 /** 缩略图：加载失败时退化为占位提示，不留一个破图标 */

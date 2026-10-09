@@ -122,7 +122,23 @@ export interface UpdateAgentInput {
   executionRole: AgentExecutionRole;
 }
 
+export interface DiagnosticCheck {
+  stage: "runtime" | "authentication" | "model" | "tools" | "write_permission";
+  status: "passed" | "failed" | "unverified";
+  code?: string;
+  message: string;
+}
 export interface AgentConnectionTest {
-  ok: true;
+  ok: boolean;
   latencyMs: number;
+  checkedAt?: string;
+  diagnosis?: { ok: boolean; checks: DiagnosticCheck[]; requestedModel: string; observedModel?: string };
+}
+export interface ProviderModels {
+  status: "available" | "unsupported" | "failed";
+  models: string[];
+  source: "provider" | "catalog";
+  checkedAt: string;
+  code?: string;
+  message: string;
 }

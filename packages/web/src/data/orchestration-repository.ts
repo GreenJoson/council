@@ -26,6 +26,7 @@ import type {
 } from "../types/orchestration";
 import type {
   AgentConnectionTest,
+  ProviderModels,
   AgentDefinition,
   CreateAgentInput,
   CreateProviderInput,
@@ -66,6 +67,7 @@ export interface OrchestrationRepository {
   createAgent(input: CreateAgentInput): Promise<AgentDefinition>;
   updateAgent(input: UpdateAgentInput): Promise<AgentDefinition>;
   removeAgent(agentId: string): Promise<AgentDefinition>;
+  listProviderModels(providerId: string): Promise<ProviderModels>;
   testAgent(agentId: string): Promise<AgentConnectionTest>;
   listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]>;
   startWorkItemDelegation(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation>;

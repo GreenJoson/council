@@ -20,6 +20,8 @@ import {
   X,
 } from "lucide-react";
 import type {
+  AgentConnectionTest,
+  ProviderModels,
   AgentExecutionRole,
   AgentDefinition,
   AgentPermissionProfile,
@@ -28,6 +30,7 @@ import type {
   ProviderProfile,
 } from "../types/model-router";
 import { useI18n } from "../i18n/I18nProvider";
+import { ModelRouterDiagnostics } from "./ModelRouterDiagnostics";
 import { BrandGlyph } from "./BrandGlyph";
 
 export interface AgentDefinitionDraft {
@@ -52,7 +55,7 @@ export interface ProviderProfileDraft {
 
 interface CommonEditorProps {
   brand?: BrandAsset;
-  busyAction: "save" | "test" | "remove" | null;
+  busyAction: "save" | "test" | "models" | "remove" | null;
   isDirty: boolean;
   removeConfirming: boolean;
   onCancel: () => void;
@@ -66,6 +69,10 @@ interface AgentDefinitionEditorProps extends CommonEditorProps {
   provider: ProviderProfile;
   /** 目录给出的候选模型；只是提示，不是白名单。 */
   modelCandidates: readonly string[];
+  modelDiscovery?: ProviderModels;
+  diagnosticResult?: AgentConnectionTest;
+  diagnosticError?: string;
+  onRefreshModels?: () => void;
   draft: AgentDefinitionDraft;
   isAdding: boolean;
   identityLocked: boolean;
@@ -156,7 +163,7 @@ function RemoveConfirm({
 export function AgentDefinitionEditor({
   agent,
   provider,
-  modelCandidates,
+  modelCandidates, modelDiscovery, diagnosticResult, diagnosticError, onRefreshModels,
   brand,
   draft,
   busyAction,
@@ -231,9 +238,8 @@ export function AgentDefinitionEditor({
             ? t("可以留空并跟随 Codex CLI 默认模型")
             : t("使用该供应商公布的精确模型标识")}</small>
           {/*
-            用 datalist 而不是 select：候选表是静态的，真实可用模型随会员档位、
-            CLI 版本变化——ACP 那边实际广播出来的比目录里列的多。封成下拉框
-            会在供应商上新模型的当天就把用户挡在外面。
+            保留自由输入：上游列表也可能不完整，且列出模型不等于账号已获权限。
+            获取失败时显示候选来源，不把静态目录伪装成当前可用列表。
           */}
           <input
             value={draft.model}
@@ -250,6 +256,13 @@ export function AgentDefinitionEditor({
             </datalist>
           ) : null}
         </label>
+        <div className="model-discovery">
+          {onRefreshModels ? <button type="button" className="secondary-button compact-button" disabled={isBusy} onClick={onRefreshModels}>
+            {busyAction === "models" ? <LoaderCircle className="spinner" size={14} /> : null}{t("获取模型列表")}
+          </button> : null}
+          <small>{t(modelDiscovery?.message ?? "候选模型仅供填写参考，未验证当前账号权限。")}</small>
+          {modelDiscovery?.status === "available" ? <small>{t("当前连接返回 {count} 个模型", { count: modelDiscovery.models.length })}</small> : null}
+        </div>
         <label>
           <span>{t("召唤别名")}</span>
           <small>{t("Composer 中直接使用；每个 Agent 必须唯一")}</small>
@@ -327,6 +340,9 @@ export function AgentDefinitionEditor({
           ) : null}
         </fieldset>
       </div>
+      {!isAdding ? <p className="model-diagnostic-note">{t("测试会调用所选模型，可能产生费用；CLI 只读检查使用临时文件。")}</p> : null}
+      {diagnosticError ? <p className="model-diagnostics" role="alert">{t(diagnosticError)}</p> : null}
+      {diagnosticResult ? <ModelRouterDiagnostics result={diagnosticResult} /> : null}
       {removeConfirming ? (
         <RemoveConfirm
           label={agent?.displayName ?? draft.displayName}

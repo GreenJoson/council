@@ -8,6 +8,8 @@
 
 import type {
   AgentConnectionTest,
+  DiagnosticCheck,
+  ProviderModels,
   AgentDefinition,
   BrandAsset,
   ModelRouterSnapshot,
@@ -202,8 +204,33 @@ export function parseModelRouterSnapshot(value: unknown): ModelRouterSnapshot {
 export function parseAgentConnectionTest(value: unknown): AgentConnectionTest {
   const record = asRecord(value, "agent connection test");
   const latencyMs = record.latencyMs;
-  if (record.ok !== true || typeof latencyMs !== "number" || !Number.isSafeInteger(latencyMs)) {
+  if (typeof record.ok !== "boolean" || typeof latencyMs !== "number" || !Number.isSafeInteger(latencyMs)) {
     throw new Error("连接测试响应无效");
   }
-  return { ok: true, latencyMs };
+  const diagnosis = record.diagnosis === undefined ? undefined : asRecord(record.diagnosis, "diagnosis");
+  let checks: DiagnosticCheck[] = [];
+  if (diagnosis) {
+    if (!Array.isArray(diagnosis.checks)) throw new Error("诊断步骤无效");
+    checks = diagnosis.checks.map(value => {
+      const check = asRecord(value, "check");
+      const stage = stringValue(check, "stage") as DiagnosticCheck["stage"];
+      const status = stringValue(check, "status") as DiagnosticCheck["status"];
+      if (!["runtime", "authentication", "model", "tools", "write_permission"].includes(stage)
+        || !["passed", "failed", "unverified"].includes(status)) throw new Error("诊断步骤无效");
+      return { stage, status, message: stringValue(check, "message"), code: optionalString(check, "code") };
+    });
+  }
+  return { ok: record.ok, latencyMs, checkedAt: optionalString(record, "checkedAt"),
+    ...(diagnosis ? { diagnosis: { ok: booleanValue(diagnosis, "ok"), checks,
+      requestedModel: stringValue(diagnosis, "requestedModel", true), observedModel: optionalString(diagnosis, "observedModel") } } : {}) };
+}
+
+export function parseProviderModels(value: unknown): ProviderModels {
+  const record = asRecord(value, "provider models");
+  const status = stringValue(record, "status") as ProviderModels["status"];
+  const source = stringValue(record, "source") as ProviderModels["source"];
+  if (!["available", "unsupported", "failed"].includes(status) || !["provider", "catalog"].includes(source)
+    || !Array.isArray(record.models) || !record.models.every(value => typeof value === "string" && value.length <= 200)) throw new Error("模型列表无效");
+  return { status, source, models: record.models as string[], checkedAt: stringValue(record, "checkedAt"),
+    code: optionalString(record, "code"), message: stringValue(record, "message") };
 }

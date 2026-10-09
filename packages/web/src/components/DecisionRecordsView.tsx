@@ -4,7 +4,7 @@
  * @output 导出：DecisionRecordsView ADR 风格决策档案（左列表右详情）、
  *         DecisionRecordArticle 多条冻结身份档案
  * @pos    Operator Console 决策记录视图：归档已接受/拟议中/已被取代的结构化决策
- *         （决策正文走共用的 DecisionCard，原始问题按 Markdown 渲染、不折叠，含 mermaid 围栏），
+ *         （决策正文走共用的 DecisionCard，原始问题按 Markdown 渲染、支持绑定议题文件预览、不折叠，含 mermaid 围栏），
  *         详情经 useTopicDetails 按需懒加载并缓存；架构档案时间线点击某条 ADR 后
  *         通过 focusRequest 定位到对应条目
  *
@@ -192,7 +192,7 @@ export function DecisionRecordArticle({
               participants.get(decision.proposedBy),
             );
             return (
-              <DecisionCard decision={decision} collapsible={detail.decisions.length > 1} key={decision.id}>
+              <DecisionCard decision={decision} topicId={detail.id} collapsible={detail.decisions.length > 1} key={decision.id}>
                 <div className="decision-record-proposer">
                   <AgentAvatar
                     agent={decision.proposedBy}
@@ -304,7 +304,7 @@ export function DecisionRecordArticle({
           </div>
         </header>
         <div className="metadata-question-full">
-          <MarkdownContent content={detail.question} />
+          <MarkdownContent content={detail.question} topicId={detail.id} />
         </div>
       </section>
 
