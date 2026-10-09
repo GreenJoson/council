@@ -29,6 +29,8 @@ packages/desktop/src-tauri/resources/agent-service-THIRD-PARTY-NOTICES.txt
 *.db-shm
 *.db-wal
 *.db-journal
+*.worker.json
+*.worker.json.*.tmp
 *.log
 /settings.json
 /data/

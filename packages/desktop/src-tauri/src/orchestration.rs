@@ -1,6 +1,6 @@
 /**
  * @input  依赖：loopback 端点、日志库、内置 sidecar/默认配置与 std 网络/进程原语
- * @output 导出：Agent 服务启动配置、ready + 数据库身份探测/等待、进程拉起与退出终止函数
+ * @output 导出：Agent 服务启动配置、ready + 数据库身份探测/等待、后台进程拉起与空闲停止函数
  * @pos    桌面壳与内置 Agent Service 之间唯一的进程、配置和连通性边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -29,8 +29,7 @@ const SERVICE_LOG_FILE_NAME: &str = "agent-service.log";
 const LOGIN_SHELL_PATH_MARKER: &str = "__COUNCIL_PATH__";
 const LOGIN_SHELL_POLL_COUNT: u32 = 50;
 const LOG_TAIL_BYTES: u64 = 16 * 1024;
-/// SIGTERM 后的有界等待：20 次 × 100ms = 2 秒，超时升级 SIGKILL。
-const TERMINATE_POLL_COUNT: u32 = 20;
+/// 登录 shell 的短轮询间隔。
 const TERMINATE_POLL_INTERVAL_MS: u64 = 100;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,7 +270,7 @@ pub fn wait_for_http_service(endpoint: &LoopbackEndpoint) -> Result<ReadyService
 }
 
 /// 按 autostart 配置拉起本地 Agent 服务子进程。
-/// Unix 下放入独立进程组，便于退出时把 npm/node 之类的整棵子进程树一起终止。
+/// Unix 下使用独立进程组和文件日志，桌面退出不关闭后台服务。
 pub fn spawn_service(autostart: &OrchestrationAutostart, log_path: &Path) -> Result<Child, String> {
     if autostart.command.trim().is_empty() {
         return Err("orchestrationAutostart.command 不能为空".to_string());
@@ -313,7 +312,7 @@ pub fn spawn_service(autostart: &OrchestrationAutostart, log_path: &Path) -> Res
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // 新进程组：组长 pid 即子进程 pid，退出清理时对 -pid 发信号覆盖整个进程树。
+        // 与桌面进程组分离，任务生命周期由服务自身控制。
         command.process_group(0);
     }
     command
@@ -321,33 +320,58 @@ pub fn spawn_service(autostart: &OrchestrationAutostart, log_path: &Path) -> Res
         .map_err(|error| format!("无法启动本地 Agent 服务：{error}"))
 }
 
-/// 应用退出时终止托管的服务子进程：先 SIGTERM（服务端有优雅关闭逻辑），
-/// 有界等待后升级 SIGKILL，避免退出流程被挂住或留下孤儿进程。
-pub fn terminate_service(child: &mut Child) {
-    if matches!(child.try_wait(), Ok(Some(_))) {
-        return;
+/// 日志库切换前通过服务自身检查空闲；不会强杀仍在执行的 Agent。
+pub fn stop_idle_service(endpoint: &LoopbackEndpoint, identity: &str) -> Result<(), String> {
+    let address = format!("{}:{}", endpoint.host, endpoint.port);
+    let addresses = address
+        .to_socket_addrs()
+        .map_err(|_| "无法连接原后台服务".to_string())?;
+    let body = serde_json::json!({"databaseInstanceId": identity}).to_string();
+    let mut accepted = false;
+    for address in addresses {
+        let Ok(mut stream) =
+            TcpStream::connect_timeout(&address, Duration::from_millis(PROBE_CONNECT_TIMEOUT_MS))
+        else {
+            continue;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(PROBE_IO_TIMEOUT_MS)));
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(PROBE_IO_TIMEOUT_MS)));
+        let request = format!(
+            "POST /api/v1/service/actions/stop HTTP/1.1\r\nHost: {}:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            endpoint.host,
+            endpoint.port,
+            body.len(),
+            body
+        );
+        stream
+            .write_all(request.as_bytes())
+            .map_err(|_| "无法请求停止原后台服务".to_string())?;
+        let mut reply = String::new();
+        stream
+            .take(8192)
+            .read_to_string(&mut reply)
+            .map_err(|_| "无法确认原后台服务停止状态".to_string())?;
+        accepted = reply.starts_with("HTTP/1.1 200 ") || reply.starts_with("HTTP/1.0 200 ");
+        break;
     }
-    #[cfg(unix)]
-    {
-        let group = -(child.id() as i32);
-        unsafe {
-            libc::kill(group, libc::SIGTERM);
-        }
-        for _ in 0..TERMINATE_POLL_COUNT {
-            if matches!(child.try_wait(), Ok(Some(_))) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(TERMINATE_POLL_INTERVAL_MS));
-        }
-        unsafe {
-            libc::kill(group, libc::SIGKILL);
-        }
+    if !accepted {
+        return Err("后台服务仍有活动任务、身份不匹配或版本不支持停止；请先完成或取消任务，保留当前日志库。".to_string());
     }
-    #[cfg(not(unix))]
-    {
-        let _ = child.kill();
+    for _ in 0..positive_default(READY_MAX_ATTEMPTS_KEY)? {
+        // 必须等待监听端口释放，ready=false 仍可能处于关闭过程。
+        if !address
+            .to_socket_addrs()
+            .map_err(|_| "无法确认原后台服务停止".to_string())?
+            .any(|addr| {
+                TcpStream::connect_timeout(&addr, Duration::from_millis(PROBE_CONNECT_TIMEOUT_MS))
+                    .is_ok()
+            })
+        {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(positive_default(READY_POLL_MS_KEY)?));
     }
-    let _ = child.wait();
+    Err("原后台服务尚未退出，请稍后重试；日志库未改变。".to_string())
 }
 
 #[cfg(test)]

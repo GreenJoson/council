@@ -7,10 +7,12 @@
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
  */
 
+import { EXECUTION_DEFAULTS } from "../config.js";
+import { runExecutionSegments } from "./delegation-execution-segments.js";
 import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
 import { commitDelegationChanges } from "./delegation-git-delivery.js";
 import { createDelegationHandoff, handoffContext } from "./delegation-handoff.js";
-import { EXECUTION_CHECKPOINT_INSTRUCTION, executionHandoff, DelegationExecutionCheckpointError } from "./delegation-execution-result.js";
+import { EXECUTION_CHECKPOINT_INSTRUCTION } from "./delegation-execution-result.js";
 import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-recovery.js";
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
@@ -117,6 +119,8 @@ interface DelegationManagerConfig {
   gitMaxOutputChars: number;
   maxContextChars: number;
   executionMaxTurns?: number;
+  maxExecutionSegments?: number;
+  executionTimeoutMs?: number;
 }
 
 function compact(value: string, maximum: number): string {
@@ -182,6 +186,8 @@ export class WorkItemDelegationManager {
       gitMaxOutputChars: councilConfig.delegationGitMaxOutputChars,
       maxContextChars: councilConfig.maxContextChars,
       executionMaxTurns: councilConfig.claudeExecutionMaxTurns,
+      maxExecutionSegments: councilConfig.delegationMaxExecutionSegments,
+      executionTimeoutMs: councilConfig.delegationExecutionTimeoutMs,
     }, modelRouter, claudeRuntime, codexRuntime);
   }
 
@@ -195,6 +201,8 @@ export class WorkItemDelegationManager {
     this.#database.getTopic(topicId);
     return this.#store.list(topicId);
   }
+
+  get activeTaskCount(): number { return this.#tasks.size; }
 
   start(input: StartWorkItemDelegationInput): WorkItemDelegation {
     const detail = this.#database.getTopicDetail(
@@ -797,7 +805,7 @@ export class WorkItemDelegationManager {
         "不要修改文件，不要运行写操作。",
         ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
         "",
-        `验收标准：${delegation.acceptanceCriteria}`,
+        `验收标准：${delegation!.acceptanceCriteria}`,
         task.context,
         ...continuation,
       ].join("\n"),
@@ -822,40 +830,61 @@ export class WorkItemDelegationManager {
         ? ["", "上轮审核要求修正：", ...review.findings.map((finding) => `- ${finding}`)]
         : [];
       if (!checkpoint || workspace.restoredWork || attempt > 1) {
-        const executorResponse = await this.#runtimeGenerate({
-          delegationId: id, stage: "execution",
-          agent: executor,
-          cwd: workspace.cwd,
-          ...(executorSessionId ? { sessionId: executorSessionId } : {}),
-          permissionProfile: delegation.permissionProfile,
-          signal,
-          prompt: [
-            "你是本次任务的 executor。只处理下面这一个实施项。",
-            "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
-            "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
-            "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
-            EXECUTION_CHECKPOINT_INSTRUCTION,
-            ...(this.#requireNativeProvider(executor).protocol === "claude-cli" && this.config.executionMaxTurns
-              ? [`本次最多 ${this.config.executionMaxTurns} 个模型回合；预留回合用于验证与阶段交接，不要等 CLI 强制中断。`] : []),
-            ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。旧指令如含旧工作区路径，以当前隔离工作区为准。"] : []),
-            "",
-            "Supervisor 指令：",
-            briefResponse.content,
-            "",
-            "当前实施项原文：",
-            `验收标准：${delegation.acceptanceCriteria}`,
-            task.context,
-            ...continuation,
-            ...correction,
-          ].join("\n"),
+        const executionAssignment = delegation;
+        const executorResponse = await runExecutionSegments({
+          maxSegments: (this.config.maxExecutionSegments ?? 1) > 1 ? this.config.maxExecutionSegments! : executionAssignment.maxAttempts,
+          automaticContinuation: (this.config.maxExecutionSegments ?? 1) > 1,
+          timeoutMs: this.config.executionTimeoutMs ?? EXECUTION_DEFAULTS.timeoutMs,
+          sessionId: executorSessionId, signal,
+          read: () => this.#store.getPrivate(id)!,
+          save: (budget, summary) => this.#store.update(id, {
+            checkpoint: { ...this.#store.getPrivate(id)?.checkpoint, version: 1, executionBudget: { ...budget } },
+            ...(summary ? { summary } : {}), now: new Date().toISOString(),
+          }),
+          snapshot: async () => (await snapshotUncommittedWork({ root: workspace.root, headCommit,
+            allowEmpty: true, maxFileChars: this.config.gitMaxOutputChars,
+            git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+          })).tree,
+          validate: () => {
+            const current = this.#taskContext(executionAssignment.topicId, executionAssignment.workItemId);
+            if (current.item.version !== claimed.version || current.contextFingerprint !== task.contextFingerprint) {
+              throw new CouncilConflictError("任务在执行期间已变化，已停止接续，请检查最新范围。");
+            }
+            if (this.#resolveAssignment({ ...executionAssignment, requestedPermission: executionAssignment.permissionProfile }).permission !== executionAssignment.permissionProfile) {
+              throw new CouncilConflictError("执行权限已变化，已停止接续。");
+            }
+          },
+          record: (kind, data) => this.#recordAudit(id, kind, data),
+          generate: (sessionId, segmentContinuation, segmentSignal) => this.#runtimeGenerate({
+            delegationId: id, stage: "execution",
+            agent: executor,
+            cwd: workspace.cwd,
+            ...(sessionId ? { sessionId } : {}),
+            permissionProfile: executionAssignment.permissionProfile,
+            signal: segmentSignal,
+            prompt: [
+              "你是本次任务的 executor。只处理下面这一个实施项。",
+              "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
+              "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
+              "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
+              EXECUTION_CHECKPOINT_INSTRUCTION,
+              ...(this.#requireNativeProvider(executor).protocol === "claude-cli" && this.config.executionMaxTurns
+                ? [`本次最多 ${this.config.executionMaxTurns} 个模型回合；预留回合用于验证与阶段交接，不要等 CLI 强制中断。`] : []),
+              ...(workspace.restoredWork ? ["当前工作区保留了上次未完成的代码，请基于这些改动继续检查、补齐与测试，不要因为存在草稿就假定任务已完成。旧指令如含旧工作区路径，以当前隔离工作区为准。"] : []),
+              "",
+              "Supervisor 指令：",
+              briefResponse.content,
+              "",
+              "当前实施项原文：",
+              `验收标准：${executionAssignment.acceptanceCriteria}`,
+              task.context,
+              ...continuation,
+              ...correction,
+              segmentContinuation,
+            ].join("\n"),
+          }),
         });
         executorSessionId = executorResponse.sessionId ?? executorSessionId;
-        const partial = executionHandoff(executorResponse.content);
-        if (partial) {
-          this.#store.update(id, { summary: partial, now: new Date().toISOString() });
-          this.#recordAudit(id, "execution.checkpoint", { summary: "执行者已保存阶段交接，仍有未完成工作，尚未验收。" });
-          throw new DelegationExecutionCheckpointError("execution_checkpoint", "执行已按阶段保存交接，仍有未完成工作；可检查后接续。");
-        }
         executorSummary = compact(executorResponse.content, 8_000);
         const beforeCommit = this.#store.getPrivate(id)?.checkpoint;
         const commitTime = new Date().toISOString();
@@ -908,7 +937,7 @@ export class WorkItemDelegationManager {
           '{"verdict":"approved|changes_requested|blocked","summary":"结论","findings":["可执行问题"],"inspectedFiles":["已只读补查完整变更的相对路径"]}',
           "无法读取或补查必要证据时返回 blocked；changes_requested 仅用于已核实的实现问题。",
           "",
-          `验收标准：${delegation.acceptanceCriteria}`,
+          `验收标准：${delegation!.acceptanceCriteria}`,
           `执行摘要：\n${executorSummary}`,
           `代码 diff：\n${evidence.content}`,
         ].join("\n"),

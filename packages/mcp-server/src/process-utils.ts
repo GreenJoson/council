@@ -8,6 +8,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { ownWorkerChild } from "./service-worker.js";
 
 export interface ProcessResult {
   stdout: string;
@@ -347,9 +348,11 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   child.stdin.on("error", () => {
     // 进程提前结束或被取消时，关闭中的 stdin 可能报告 EPIPE；由 close/error 决定结果。
   });
-  child.stdin.end(options.input);
-
+  let releaseOwnership = () => {};
   try {
+    try { releaseOwnership = ownWorkerChild(child.pid); }
+    catch (error) { await terminateAndWait(child, completion, options.killGraceMs); throw error; }
+    child.stdin.end(options.input);
     const outcome = await Promise.race([closed, stopped]);
     if (outcome.kind === "closed") {
       return outcome.result;
@@ -366,5 +369,6 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abortListener);
+    releaseOwnership();
   }
 }

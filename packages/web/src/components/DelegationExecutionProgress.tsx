@@ -3,7 +3,7 @@ import { useI18n } from "../i18n/I18nProvider";
 import { delegationReview } from "./DelegationDeliveryEvidence";
 import type { WorkItemDelegation } from "../types/orchestration";
 const PHASES = { brief: "生成实施指令", execution: "执行与验证", commit: "检查并提交", review: "独立审核" } as const;
-const PAUSED = new Set(["max_turns_exhausted", "budget_exhausted", "quota_exhausted", "review_revision_limit", "review_input_limit", "review_incomplete", "execution_checkpoint"]);
+const PAUSED = new Set(["max_turns_exhausted", "budget_exhausted", "quota_exhausted", "review_revision_limit", "review_input_limit", "review_incomplete", "execution_checkpoint", "execution_segment_limit", "execution_time_limit", "execution_no_progress"]);
 export const isDelegationPaused = (run: WorkItemDelegation) => run.status === "failed"
   && (PAUSED.has(run.failureCode ?? "") || run.error === "审核在最大修订轮次内未通过。");
 export function delegationStatusLabel(run: WorkItemDelegation): string {
@@ -20,6 +20,8 @@ export function DelegationExecutionProgress({ delegation }: { delegation: WorkIt
   const timestamp = new Date(progress.lastActivityAt);
   return <div className="delegation-checkpoint">
     <span>{t("阶段：{phase}", { phase: t(PHASES[progress.phase]) })}</span>
+    {progress.segmentsUsed !== undefined && progress.segmentLimit !== undefined
+      ? <span>{t("执行段：{used}/{limit}", { used: progress.segmentsUsed, limit: progress.segmentLimit })}</span> : null}
     {progress.turnsUsed !== undefined && progress.turnLimit !== undefined
       ? <span>{t("模型回合：{used}/{limit}", { used: progress.turnsUsed, limit: progress.turnLimit })}</span>
       : progress.turnLimit !== undefined ? <span>{t("本阶段最多 {limit} 个模型回合", { limit: progress.turnLimit })}</span> : null}

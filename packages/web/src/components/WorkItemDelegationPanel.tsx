@@ -102,12 +102,14 @@ export function WorkItemDelegationPanel({
           {executing?.label ?? delegation.executorAgentId}
           {" → "}
           {supervisor?.label ?? delegation.supervisorAgentId}
-          {delegation.attempt > 0 ? ` · ${delegation.attempt}/${delegation.maxAttempts}` : ""}
+          {delegation.attempt > 0 ? ` · ${t("审核轮次：{used}/{limit}", { used: delegation.attempt, limit: delegation.maxAttempts })}` : ""}
         </small>
         {delegation.completionPolicy === "human" && delegation.status === "approved" && item.status !== "completed"
           ? <p>{t("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。")}</p> : null}
         <p>{t("本次执行权限：{permission}", { permission: t(delegation.permissionProfile === "danger_full_access" ? "完全控制" : "工作区写入") })}</p>
         <DelegationExecutionProgress delegation={delegation} />
+        {active ? <p>{t("后台执行中，关闭桌面后任务继续；重新打开可查看进度。")}</p> : null}
+        {delegation.summary?.startsWith("阶段交接") ? <details className="delegation-criteria"><summary>{t("查看最近阶段交接")}</summary><p>{delegation.summary}</p></details> : null}
         <DelegationDeliveryEvidence delegation={delegation} />
         {delegation.acceptanceCriteria ? <details className="delegation-criteria"><summary>{t("查看验收标准")}</summary><p>{delegation.acceptanceCriteria}</p></details> : null}
         {delegation.error ? <p><AlertTriangle size={12} />{t(delegation.error)}</p> : null}
@@ -156,6 +158,7 @@ export function WorkItemDelegationPanel({
   return (
     <div className="work-item-delegation-form">
       <header><span><Bot size={13} />{t("Agent 协作执行")}</span><button type="button" aria-label={t("关闭")} onClick={() => setOpen(false)}><X size={13} /></button></header>
+      <p>{t("有进展的长任务会在本次预算内自动接续；遇到权限、认证或无进展问题时暂停并保留代码。")}</p>
       <label>
         <span>{t("执行 Agent")}</span>
         <select value={executorId} onChange={(event) => {

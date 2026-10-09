@@ -8,6 +8,7 @@
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 from urllib.error import HTTPError
@@ -569,7 +570,74 @@ with sync_playwright() as playwright:
     delegation_form.get_by_label("完成条件", exact=True).select_option("human")
     if SCREENSHOT_PATH:
         page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("delegation-acceptance.png")), full_page=True)
-    delegation_form.get_by_role("button", name="关闭", exact=True).click()
+    # 真实 HTTP -> 子进程 -> 两段改代码 -> Git 提交 -> 审核 -> 人工验收边界。
+    delegation_form.get_by_label("验收标准", exact=True).fill("COUNCIL_SEGMENT_E2E：两段文件交付，保留人工验收")
+    delegation_form.locator("select").nth(1).select_option(label="Acceptance Reviewer")
+    delegation_form.get_by_role("button", name="开始执行与审核", exact=True).click()
+    page.get_by_text("后台执行中，关闭桌面后任务继续；重新打开可查看进度。", exact=True).wait_for()
+    service = api_request("GET", "/api/v1/status")
+    api_expect_error("POST", "/api/v1/service/actions/stop", 409, {"databaseInstanceId": service["databaseInstanceId"]})
+    page.close()
+
+    def wait_delegation(expected, timeout=20):
+        deadline = time.monotonic() + timeout
+        latest = None
+        while time.monotonic() < deadline:
+            runs = api_request("GET", f"/api/v1/topics/{topic_id}/work-item-delegations")
+            latest = runs[0] if runs else None
+            if latest and latest["status"] == expected:
+                return latest
+            if latest and latest["status"] in {"failed", "cancelled", "approved"}:
+                break
+            time.sleep(0.1)
+        raise AssertionError(f"委派没有达到 {expected}：{latest}")
+
+    completed = wait_delegation("approved")
+    assert completed["execution"]["segmentsUsed"] == 2, completed
+    assert completed["execution"]["segmentLimit"] == 4, completed
+    detail = api_request("GET", f"/api/v1/topics/{topic_id}")
+    item = next(value for value in detail["workItems"] if value["id"] == completed["workItemId"])
+    assert item["status"] == "in_progress", item
+    assert not (Path(PROJECT_PATH) / "stage-one.txt").exists()
+    for filename in ["stage-one.txt", "stage-two.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{completed['headCommit']}:{filename}"]).strip()
+    page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
+    page.on("console", lambda message: collect_console_error(message, console_errors))
+    page.on("pageerror", lambda error: console_errors.append(str(error)))
+    page.goto(WEB_URL, wait_until="domcontentloaded")
+    page.get_by_role("tab", name="任务", exact=False).click()
+    page.get_by_text("执行段：2/4", exact=True).wait_for()
+    page.get_by_text("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。", exact=True).wait_for()
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("delegation-segments.png")), full_page=True)
+
+    # 无文件进展的连续交接须暂停，不能无限续跑或产生交付提交。
+    created_items = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "无进展必须暂停", "details": "COUNCIL_SEGMENT_E2E NO_PROGRESS"}],
+    })
+    blocked_item = created_items[0]
+    api_request("POST", f"/api/v1/topics/{topic_id}/work-items/{blocked_item['id']}/delegations", {
+        "expectedVersion": blocked_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_SEGMENT_E2E NO_PROGRESS", "completionPolicy": "human",
+    })
+    paused = wait_delegation("failed")
+    assert paused["failureCode"] == "execution_no_progress", paused
+    assert paused["execution"]["segmentsUsed"] == 2 and not paused.get("headCommit"), paused
+    page.get_by_text("已暂停，等待接续", exact=True).wait_for()
+
+    # 对应实际故障：CLI 回合上限中断后，有安全文件进展和会话才能自动接续。
+    turn_item = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "回合用尽保留进展继续", "details": "COUNCIL_SEGMENT_E2E TURN_LIMIT"}],
+    })[0]
+    api_request("POST", f"/api/v1/topics/{topic_id}/work-items/{turn_item['id']}/delegations", {
+        "expectedVersion": turn_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_SEGMENT_E2E TURN_LIMIT", "completionPolicy": "human",
+    })
+    continued = wait_delegation("approved")
+    assert continued["execution"]["segmentsUsed"] == 2 and continued.get("headCommit"), continued
+
 
     second_topic = api_request(
         "POST",

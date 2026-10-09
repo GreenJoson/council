@@ -36,6 +36,11 @@ export interface CouncilConfig {
   claudeMaxTurns: number;
   claudeExecutionMaxTurns: number;
   claudeReviewMaxTurns: number;
+  /** loadConfig 总会提供；可选字段兼容直接嵌入旧 Runtime 的调用方。 */
+  workerHeartbeatMs?: number;
+  workerIdleTimeoutMs?: number;
+  delegationMaxExecutionSegments?: number;
+  delegationExecutionTimeoutMs?: number;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;

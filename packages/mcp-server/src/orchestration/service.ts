@@ -1215,6 +1215,10 @@ export class CouncilOrchestrationService {
     }
   }
 
+  get activeTaskCount(): number {
+    return this.manager.activeTaskCount + (this.delegationManager?.activeTaskCount ?? 0);
+  }
+
   async shutdown(): Promise<void> {
     if (this.#runtimeBindingIdleTimer) {
       globalThis.clearInterval(this.#runtimeBindingIdleTimer);

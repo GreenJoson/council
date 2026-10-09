@@ -73,6 +73,8 @@ export class RunExecutionManager {
     return run;
   }
 
+  get activeTaskCount(): number { return this.#tasks.size; }
+
   async approve(input: ApproveGateInput): Promise<ApproveGateResult> {
     const result = await this.orchestrator.applyApproval(input);
     if (result.run.status === "running") {

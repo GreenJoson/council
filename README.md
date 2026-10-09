@@ -22,7 +22,7 @@ Using several capable agents often leaves the coordination work to you:
 | A failed run leaves you unsure what changed or whether retrying is safe. | Isolated Git worktrees, recorded commits, classified failures, and recovery from a verified commit without blindly replaying writes. |
 | Pending decisions and blocked tasks disappear across conversations. | **Needs my attention** collects actionable items for the current project and takes you back to the original topic. |
 
-Delegated work retains commits, interrupted correction drafts, and review findings. Review evidence is organized per file, and incomplete evidence blocks approval. Long tasks can save an explicit stage handoff; execution still stops when the desktop service exits. See [execution and recovery boundaries](docs/execution-delivery.md).
+Delegated work retains commits, interrupted correction drafts, and review findings. Review evidence is organized per file, and incomplete evidence blocks approval. Long tasks can continue in bounded segments with saved handoffs and verified file progress. The local worker keeps active tasks running after the desktop closes. See [execution and recovery boundaries](docs/execution-delivery.md).
 
 Council keeps discussion records on your machine. Model calls still send the selected topic context and permitted code evidence to the provider or CLI you choose. It does not import the private history of your other chat applications.
 
@@ -143,7 +143,7 @@ flowchart TB
 | Module | Responsibility |
 |---|---|
 | [`packages/web`](packages/web) | React UI, repository adapters, runtime status, decisions, tasks, and attention views. |
-| [`packages/desktop`](packages/desktop) | Tauri shell, native directory selection, local settings, and sidecar lifecycle. |
+| [`packages/desktop`](packages/desktop) | Tauri shell, native directory selection, local settings, and background worker connection. |
 | [`crates/council-core`](crates/council-core) | Rust content reads/writes and validation of the shared SQLite schema. |
 | [`packages/mcp-server`](packages/mcp-server) | MCP/HTTP boundaries, the sole schema migrator, provider routing, credentials, runtime adapters, and delegation. |
 | [`packages/orchestrator`](packages/orchestrator) | Model-independent run and roundtable state machines, persistence, leases, and cancellation. |
@@ -159,7 +159,7 @@ flowchart TB
 
 **Recovery and evidence.** Runtime events are stored after redaction. Recovery verifies the repository, managed directory, recorded HEAD, permissions, and task version before creating a new run. A clean delivery commit goes back to review. If execution failed before committing, “Continue unfinished work” copies checked source changes into a new isolated workspace for implementation and review, preserving the original files and history. Missing tool detail is shown as unavailable; context usage is not presented as billing tokens or a calculated cost.
 
-**Long-running tasks.** Delegation shows persisted instruction, implementation, commit, and review stages. Claude has separate configurable turn budgets: 24 for discussion/instructions on desktop, 120 for implementation (`COUNCIL_CLAUDE_EXECUTION_MAX_TURNS`), and 48 for review (`COUNCIL_CLAUDE_REVIEW_MAX_TURNS`). Turn or quota exhaustion pauses for explicit continuation. Valid instructions and source changes survive failure; a new workspace uses a fresh model session. Actual tool counts and available turn counts come from structured events, without publishing tool inputs or private session IDs.
+**Long-running tasks.** Delegation shows persisted instruction, implementation, commit, and review stages. Claude has separate configurable turn budgets: 24 for discussion/instructions on desktop, 120 for implementation (`COUNCIL_CLAUDE_EXECUTION_MAX_TURNS`), and 48 for review (`COUNCIL_CLAUDE_REVIEW_MAX_TURNS`). New delegations allow up to four execution segments within a two-hour cumulative window, configurable via `COUNCIL_DELEGATION_MAX_EXECUTION_SEGMENTS` and `COUNCIL_DELEGATION_EXECUTION_TIMEOUT_MS`. A resumable handoff or turn-limit stop with a saved session and verified file progress can continue; quota, permission, authentication, repeated no-progress, and exhausted total budgets pause for inspection. Valid instructions and source changes survive failure; a new workspace uses a fresh model session. Actual tool counts and available turn counts come from structured events, without publishing tool inputs or private session IDs.
 
 ## Security and current limits
 
@@ -167,9 +167,9 @@ flowchart TB
 - Official API addresses in the provider catalog are editable defaults, not private upstream services. Environment-dependent paths, ports, and runtime settings belong in local configuration.
 - The HTTP control plane is **loopback-only and intended for one local user**. It has no per-instance authentication token. Do not expose it through a tunnel, reverse proxy, or public listener.
 - Only deliberately published topic content is shared between agent clients. Model calls and authorized code reads still leave the machine through the selected provider; local storage does not mean offline inference.
-- New delegations default to human acceptance. Write failures and uncommitted changes are not automatically replayed. Explicit continuation can retain uncommitted source files in a verified workspace; private configuration, runtime data, binary files, symlinks, and suspected secrets are rejected.
+- New delegations default to human acceptance. Unknown write failures are not automatically replayed; bounded continuation requires a resumable handoff or a turn-limit stop with verified progress. Explicit continuation can retain uncommitted source files in a verified workspace; private configuration, runtime data, binary files, symlinks, and suspected secrets are rejected.
 - SQLite audit records are local evidence, not an independently tamper-proof audit service. Native CLI delegations provide stage/commit evidence and observed activity counts; complete tool transcripts are not exposed.
-- Execution is still hosted by the desktop sidecar. Closing the application stops it; after restart, interrupted delegations require explicit continuation. An independent background worker is not yet implemented.
+- The local Node worker survives desktop exit and is reused on reconnect. A database-scoped process lock prevents duplicate workers; idle services exit after five minutes by default. Crashes and system restarts still require explicit delegation recovery, and surviving CLI processes block takeover. Finish tasks and stop the old worker before replacing its binary.
 - This is a macOS-first, single-user workspace. Multi-user hosting, Windows/Linux desktop releases, cost accounting, automatic ADR export, and automatic merging/deployment are not current release promises.
 
 See [Security / 安全说明](SECURITY.md), [execution and recovery](docs/execution-delivery.md) (Chinese), and [schema migration safety](docs/schema-migration-safety.md) (Chinese).

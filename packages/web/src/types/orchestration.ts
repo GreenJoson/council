@@ -76,6 +76,9 @@ export interface WorkItemDelegation {
     lastTool?: string;
     stopReason?: string;
     checkpointAvailable?: boolean;
+    segmentsUsed?: number;
+    segmentLimit?: number;
+    executionDeadline?: string;
   };
   resumedFromId?: string;
   failureCode?: string;

@@ -263,15 +263,25 @@ fn configure_log_library(
         .inner
         .lock()
         .map_err(|_| "桌面状态锁已损坏".to_string())?;
+    // 先确认旧服务空闲并停止，再改变设置；失败时保留原数据源和任务。
+    let old_endpoint =
+        validation::loopback_http_base_url(&inner.settings.snapshot().orchestration_base_url)?;
+    if orchestration::probe_http_service(&old_endpoint).is_some() {
+        let identity = inner
+            .store
+            .as_ref()
+            .ok_or_else(|| "无法核对原服务身份，请先恢复当前日志库连接。".to_string())?
+            .database_instance_id()
+            .to_string();
+        orchestration::stop_idle_service(&old_endpoint, &identity)?;
+    }
     let settings = inner
         .settings
         .configure_log_library(path)
         .map_err(|error| error.to_string())?;
     inner.database_path = None;
     inner.store = None;
-    if let Some(mut child) = inner.service_child.take() {
-        orchestration::terminate_service(&mut child);
-    }
+    inner.service_child = None;
     // 日志库决定 sidecar 的 SQLite 路径；切换后必须重启，避免 UI 与 Agent 写入不同库。
     start_managed_service(&mut inner, &app)?;
     let endpoint = validation::loopback_http_base_url(&settings.orchestration_base_url)?;
@@ -716,17 +726,6 @@ fn start_orchestration_service(
     start_managed_service(&mut inner, &app)
 }
 
-/// 应用退出时终止托管的服务子进程，防止 macOS 上留下孤儿进程。
-fn shutdown_managed_service(app_handle: &tauri::AppHandle) {
-    if let Some(state) = app_handle.try_state::<AppState>() {
-        if let Ok(mut inner) = state.inner.lock() {
-            if let Some(mut child) = inner.service_child.take() {
-                orchestration::terminate_service(&mut child);
-            }
-        }
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -787,11 +786,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("Council 桌面应用启动失败")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                shutdown_managed_service(app_handle);
-            }
-        });
+        // 后台服务自行管理活动任务和空闲退出；桌面只断开连接。
+        .run(|_, _| {});
 }
 
 #[cfg(test)]

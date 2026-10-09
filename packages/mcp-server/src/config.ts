@@ -206,6 +206,11 @@ function parseArgsJson(
   return parsed;
 }
 
+export const EXECUTION_DEFAULTS = {
+  workerHeartbeatMs: 5_000, workerIdleTimeoutMs: 300_000,
+  maxSegments: 4, timeoutMs: 7_200_000,
+} as const;
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig {
   const dataDir = requireEnv("COUNCIL_DATA_DIR", env);
   if (!path.isAbsolute(dataDir)) {
@@ -336,6 +341,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       DEFAULT_GIT_DIFF_MAX_OUTPUT_CHARS,
     ),
     claudeExecutionMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_EXECUTION_MAX_TURNS", env, 120),
+    workerHeartbeatMs: parseOptionalTimer("COUNCIL_WORKER_HEARTBEAT_MS", env, EXECUTION_DEFAULTS.workerHeartbeatMs),
+    workerIdleTimeoutMs: parseOptionalTimer("COUNCIL_WORKER_IDLE_TIMEOUT_MS", env, EXECUTION_DEFAULTS.workerIdleTimeoutMs),
+    delegationMaxExecutionSegments: parseOptionalPositiveInteger("COUNCIL_DELEGATION_MAX_EXECUTION_SEGMENTS", env, EXECUTION_DEFAULTS.maxSegments),
+    delegationExecutionTimeoutMs: parseOptionalTimer("COUNCIL_DELEGATION_EXECUTION_TIMEOUT_MS", env, EXECUTION_DEFAULTS.timeoutMs),
     claudeReviewMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_REVIEW_MAX_TURNS", env, 48),
     delegationWorktreeRoot,
     delegationGitMaxOutputChars: parseOptionalPositiveInteger(

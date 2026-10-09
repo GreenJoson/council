@@ -6,6 +6,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { existsSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 
 if (args.includes("--version")) {
@@ -25,6 +26,30 @@ process.stdin.on("data", (chunk) => {
   prompt += chunk;
 });
 process.stdin.on("end", () => {
+  if (prompt.includes("COUNCIL_SEGMENT_E2E") && args.includes("--print")) {
+    let result;
+    let turnLimit = false;
+    if (prompt.includes("你是本次任务的 executor")) {
+      if (prompt.includes("NO_PROGRESS")) {
+        result = 'COUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: [], validation: ["检查后没有文件变化"], remaining: ["仍未完成"], canContinue: true });
+      } else if (!existsSync("stage-one.txt")) {
+        writeFileSync("stage-one.txt", "first segment\n");
+        turnLimit = prompt.includes("TURN_LIMIT");
+        result = 'COUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: ["第一段文件已保存"], validation: ["文件已写入"], remaining: ["写入第二段文件"], canContinue: true });
+      } else {
+        writeFileSync("stage-two.txt", "second segment\n");
+        result = "两段文件已保存并核对；等待独立审核。";
+      }
+    } else if (prompt.includes("只返回一个 JSON 对象")) {
+      result = JSON.stringify({ verdict: "approved", summary: "两段交付符合验收标准。", findings: [], inspectedFiles: ["stage-one.txt", "stage-two.txt"] });
+    } else {
+      result = "COUNCIL_SEGMENT_E2E：分两段保存文件，并检查文件内容。";
+    }
+    // 给浏览器留出观察真实后台阶段的时间，不引入付费模型调用。
+    setTimeout(() => process.stdout.write(JSON.stringify({ type: "result", result, session_id: "fake-segment-session", is_error: turnLimit,
+      ...(turnLimit ? { subtype: "error_max_turns", num_turns: 121 } : {}) })), 300);
+    return;
+  }
   if (!args.includes("--print") || !prompt.includes("真实编排 E2E")) {
     process.stderr.write("生成协议或测试指令无效\n");
     process.exitCode = 2;

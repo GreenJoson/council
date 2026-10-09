@@ -227,6 +227,7 @@ export function createCouncilHttpApp(
   config: CouncilHttpConfig,
   database: CouncilDatabase,
   orchestration?: CouncilOrchestrationService,
+  worker?: { snapshot: () => object; canStop: () => boolean; stop: () => void },
 ): CouncilHttpAppBundle {
   const app = express();
   const events = new RevisionEventStream(
@@ -260,12 +261,23 @@ export function createCouncilHttpApp(
   );
   app.use(express.json({ limit: config.bodyLimitBytes, strict: true }));
 
+  app.post("/api/v1/service/actions/stop", (request, response) => {
+    const input = parse(z.object({ databaseInstanceId: z.string().min(1).max(128) }).strict(), request.body);
+    if (!worker) throw new HttpError(409, "当前服务不支持后台生命周期控制。");
+    if (input.databaseInstanceId !== database.getDatabaseInstanceId()) throw new HttpError(409, "服务数据库身份不匹配，拒绝停止。");
+    if (!worker.canStop()) throw new HttpError(409, "后台仍有活动任务或请求，请先完成或取消后再停止服务。");
+    sendSuccess(response, { stopping: true });
+    // 同步停止接受新任务，避免检查空闲后又派发写入任务。
+    worker.stop();
+  });
+
   app.get("/api/v1/status", (_request, response) => {
     const revisions = database.getRevisions();
     sendSuccess(response, {
       ready: true,
       schemaVersion: COUNCIL_SCHEMA_VERSION,
       databaseInstanceId: database.getDatabaseInstanceId(),
+      ...(worker ? { worker: worker.snapshot() } : {}),
       ...database.getCounts(),
       revision: revisions.total,
       revisions: {

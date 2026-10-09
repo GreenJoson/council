@@ -5,6 +5,9 @@ import { useI18n } from "../i18n/I18nProvider";
 import type { WorkItemDelegation } from "../types/orchestration";
 
 const HINTS: Record<string, string> = {
+  execution_segment_limit: "本次自动接续次数已用尽；检查现有成果后，可显式接续并开始新的预算。",
+  execution_time_limit: "本次累计执行时间已用尽；原代码保留，检查后可接续。",
+  execution_no_progress: "连续执行没有可核对的代码进展；请检查任务范围、依赖或执行阻断，再接续。",
   execution_checkpoint: "阶段交接已保存；尚未完成，接续将继续剩余工作并独立审核。",
   invalid_execution_checkpoint: "阶段交接格式无效；原文件保留，检查后可接续，不能视为完成。",
   review_incomplete: "审核材料尚未核对完整；恢复后重新审核，不需要为缩小材料删减交付内容。",

@@ -7,7 +7,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -188,6 +188,9 @@ function apiEnvironment(dataDirectory) {
       path.join(ROOT, "packages/mcp-server/test/fake-claude.mjs"),
     ]),
     COUNCIL_CLAUDE_MODEL: "claude-opus-test",
+    COUNCIL_CODEX_COMMAND: process.execPath,
+    COUNCIL_CODEX_ARGS_JSON: JSON.stringify([path.join(ROOT, "packages/mcp-server/test/fake-claude.mjs")]),
+    COUNCIL_CODEX_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_PERMISSION_MODE: "plan",
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",
@@ -241,12 +244,12 @@ function apiEnvironment(dataDirectory) {
   };
 }
 
-function httpWebEnvironment() {
+function httpWebEnvironment(projectPath) {
   return {
     ...process.env,
     VITE_COUNCIL_DATA_MODE: "http",
     VITE_COUNCIL_API_URL: `http://localhost:${String(API_PORT)}`,
-    VITE_COUNCIL_PROJECT_PATH: ROOT,
+    VITE_COUNCIL_PROJECT_PATH: projectPath,
     VITE_COUNCIL_TOPIC_PAGE_SIZE: "100",
     VITE_COUNCIL_MESSAGE_PAGE_SIZE: "100",
     VITE_COUNCIL_EVENT_REFRESH_MAX_ATTEMPTS: "5",
@@ -258,6 +261,15 @@ function httpWebEnvironment() {
 }
 
 async function runHttpBrowserE2E(dataDirectory) {
+  // 写入链路只使用临时项目，不依赖也不修改开发工作区。
+  const projectPath = path.join(dataDirectory, "project");
+  mkdirSync(projectPath);
+  writeFileSync(path.join(projectPath, "package.json"), JSON.stringify({ name: "council", private: true }, null, 2));
+  const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" };
+  for (const args of [["init", "-q"], ["add", "package.json"], ["-c", "user.name=Council E2E", "-c", "user.email=council@localhost", "commit", "-qm", "baseline"]]) {
+    const result = spawnSync("git", args, { cwd: projectPath, env: gitEnv, encoding: "utf8" });
+    if (result.status !== 0) throw new Error("无法建立隔离 E2E 项目。");
+  }
   await Promise.all([
     assertPortFree(API_PORT),
     assertPortFree(HTTP_WEB_PORT),
@@ -287,7 +299,7 @@ async function runHttpBrowserE2E(dataDirectory) {
       "http-web",
       process.execPath,
       [VITE_ENTRY, WEB_ROOT, "--host", "localhost", "--port", String(HTTP_WEB_PORT)],
-      httpWebEnvironment(),
+      httpWebEnvironment(projectPath),
     );
     children.push(web);
     await waitForServer("Council HTTP Web", web, HTTP_WEB_PORT);
@@ -299,7 +311,7 @@ async function runHttpBrowserE2E(dataDirectory) {
         ...process.env,
         COUNCIL_WEB_URL: `http://localhost:${String(HTTP_WEB_PORT)}`,
         COUNCIL_API_URL: `http://localhost:${String(API_PORT)}`,
-        COUNCIL_PROJECT_PATH: ROOT,
+        COUNCIL_PROJECT_PATH: projectPath,
         COUNCIL_FAKE_PROVIDER_URL: `http://localhost:${String(REMOTE_PROVIDER_PORT)}/v1`,
       },
     );

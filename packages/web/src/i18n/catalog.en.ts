@@ -8,6 +8,17 @@
  */
 
 export const englishCatalog: Readonly<Record<string, string>> = {
+  "执行段：{used}/{limit}": "Execution segment: {used}/{limit}",
+  "审核轮次：{used}/{limit}": "Review round: {used}/{limit}",
+  "后台执行中，关闭桌面后任务继续；重新打开可查看进度。": "Running in the background. Work continues after the desktop closes; reopen it to see progress.",
+  "查看最近阶段交接": "View latest stage handoff",
+  "有进展的长任务会在本次预算内自动接续；遇到权限、认证或无进展问题时暂停并保留代码。": "Long tasks that make progress continue within this run's budget. Permission, authentication, or no-progress issues pause execution and preserve files.",
+  "本次自动接续次数已用尽；检查现有成果后，可显式接续并开始新的预算。": "This run's continuation limit is reached. Inspect the saved work, then explicitly resume with a new budget.",
+  "本次累计执行时间已用尽；原代码保留，检查后可接续。": "This run's time budget is exhausted. Files are preserved for inspection and continuation.",
+  "连续执行没有可核对的代码进展；请检查任务范围、依赖或执行阻断，再接续。": "Consecutive segments made no verifiable code progress. Check the task scope, dependencies, or blockers before resuming.",
+  "执行接续预算已用尽；代码与阶段记录已保存，请检查后接续。": "The execution segment budget is exhausted. Code and stage records are saved for inspection and continuation.",
+  "执行累计时间预算已用尽；代码已保留，请检查后接续。": "The execution time budget is exhausted. Code is preserved for inspection and continuation.",
+  "执行连续未产生可核对的代码进展；已暂停，保留文件和阶段记录，请检查任务范围或阻断。": "Execution paused after repeated segments without verifiable code progress. Files and records are preserved; check the scope or blockers.",
   "审核在最大修订轮次内未通过。": "Review was not approved within the revision limit.",
   "审核受阻：材料待补查": "Review blocked: evidence needs inspection",
   "阶段交接已保存；尚未完成，接续将继续剩余工作并独立审核。": "A stage handoff is saved. Work is unfinished; continuation proceeds with remaining work and independent review.",
