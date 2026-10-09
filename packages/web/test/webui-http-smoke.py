@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、项目附件内部预览与受保护路径、REST/SSE、圆桌名册热加载、远程 Provider 安全失败原因、受控 Git ToolLoop、配置失效边界、Claude、持久审计、待处理消退和验收表单检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文与人工验收边界检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -672,11 +672,11 @@ with sync_playwright() as playwright:
     api_expect_error("POST", "/api/v1/service/actions/stop", 409, {"databaseInstanceId": service["databaseInstanceId"]})
     page.close()
 
-    def wait_delegation(expected, timeout=20):
+    def wait_delegation(expected, timeout=20, delegation_topic_id=None):
         deadline = time.monotonic() + timeout
         latest = None
         while time.monotonic() < deadline:
-            runs = api_request("GET", f"/api/v1/topics/{topic_id}/work-item-delegations")
+            runs = api_request("GET", f"/api/v1/topics/{delegation_topic_id or topic_id}/work-item-delegations")
             latest = runs[0] if runs else None
             if latest and latest["status"] == expected:
                 return latest
@@ -731,6 +731,58 @@ with sync_playwright() as playwright:
     continued = wait_delegation("approved")
     assert continued["execution"]["segmentsUsed"] == 2 and continued.get("headCommit"), continued
 
+    # 包装后的损坏交接不能被当作完成；草稿留在原工作区，不进入提交或审核。
+    malformed_item = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "损坏交接必须停住", "details": "COUNCIL_SEGMENT_E2E INVALID_CHECKPOINT"}],
+    })[0]
+    api_request("POST", f"/api/v1/topics/{topic_id}/work-items/{malformed_item['id']}/delegations", {
+        "expectedVersion": malformed_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": malformed_item["details"], "completionPolicy": "human",
+    })
+    malformed = wait_delegation("failed")
+    assert malformed["failureCode"] == "invalid_execution_checkpoint" and not malformed.get("headCommit"), malformed
+    assert malformed["execution"]["phase"] == "execution", malformed
+
+    # 背景与约束的前缀超过旧截断位置时，实施正文仍完整传到指令、执行与审核阶段。
+    long_topic = api_request("POST", "/api/v1/topics", {
+        "title": "长背景不能挤掉任务", "question": "背景资料 " + "b" * 11800,
+        "constraints": [f"保留约束 {index}: " + "c" * 940 for index in range(9)],
+        "projectPath": PROJECT_PATH,
+    })
+    api_request("POST", f"/api/v1/topics/{long_topic['id']}/decisions", {
+        "title": "长背景下仍按完整任务实施", "decision": "保留全部任务正文和约束。",
+        "rationale": "不能用背景占用预算作为遗漏任务的理由。", "alternatives": [], "status": "accepted",
+    })
+    long_item = api_request("POST", f"/api/v1/topics/{long_topic['id']}/work-items", {
+        "items": [{"title": "完整保留当前任务", "details": "COUNCIL_SEGMENT_E2E LONG_CONTEXT\nCOUNCIL_REQUIRED_TASK_TAIL"}],
+    })[0]
+    api_request("POST", f"/api/v1/topics/{long_topic['id']}/work-items/{long_item['id']}/delegations", {
+        "expectedVersion": long_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_SEGMENT_E2E LONG_CONTEXT", "completionPolicy": "human",
+    })
+    long_completed = wait_delegation("approved", delegation_topic_id=long_topic["id"])
+    assert long_completed["execution"]["segmentsUsed"] == 2 and long_completed.get("headCommit"), long_completed
+
+    oversized_topic = api_request("POST", "/api/v1/topics", {
+        "title": "关键要求超限须拒绝", "question": "不得截断强制约束。",
+        "constraints": [f"constraint-{index}:" + "c" * 800 for index in range(26)],
+        "projectPath": PROJECT_PATH,
+    })
+    api_request("POST", f"/api/v1/topics/{oversized_topic['id']}/decisions", {
+        "title": "保留全部关键约束", "decision": "上下文不足时停止派发。",
+        "rationale": "不能在缺少关键要求时执行。", "alternatives": [], "status": "accepted",
+    })
+    oversized_item = api_request("POST", f"/api/v1/topics/{oversized_topic['id']}/work-items", {
+        "items": [{"title": "不能丢失要求", "details": "COUNCIL_SEGMENT_E2E"}],
+    })[0]
+    api_expect_error("POST", f"/api/v1/topics/{oversized_topic['id']}/work-items/{oversized_item['id']}/delegations", 400, {
+        "expectedVersion": oversized_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "保留全部约束", "completionPolicy": "human",
+    })
+    assert api_request("GET", f"/api/v1/topics/{oversized_topic['id']}/work-item-delegations") == []
 
     second_topic = api_request(
         "POST",

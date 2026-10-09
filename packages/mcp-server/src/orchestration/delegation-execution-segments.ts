@@ -1,5 +1,5 @@
-/** @input 冻结预算、隔离工作区快照与 Runtime；@output 有界分段执行及持久接续证据；@pos 仅主动交接或有代码进展的回合耗尽可以接续。 */
-import { DelegationExecutionCheckpointError, executionHandoff } from "./delegation-execution-result.js";
+/** @input 冻结预算、隔离工作区快照与已校验的交接；@output 有界分段执行及持久接续证据；@pos CLI 调用结束与任务完成分离，交接包装不改变接续条件。 */
+import { DelegationExecutionCheckpointError, parseExecutionHandoff } from "./delegation-execution-result.js";
 import { delegationFailureCode } from "./delegation-recovery.js";
 import type { DelegationCheckpoint } from "./delegation-checkpoint.js";
 
@@ -55,12 +55,13 @@ export async function runExecutionSegments(input: {
     input.signal.throwIfAborted();
     input.validate();
     sessionId = result?.sessionId ?? input.read().executorSessionId ?? sessionId;
-    const partial = result ? executionHandoff(result.content) : undefined;
-    if (result && !partial) return { ...result, sessionId };
+    const handoff = result ? parseExecutionHandoff(result.content) : undefined;
+    const partial = handoff?.summary;
+    if (result && !handoff) return { ...result, sessionId };
     if (partial) input.save(budget, partial);
     // 未声明可自主继续的旧交接、等待用户输入的交接保留原来的暂停行为。
-    const mayContinue = result && partial
-      ? JSON.parse(result.content.trim().slice("COUNCIL_CHECKPOINT".length)).canContinue === true
+    const mayContinue = result && handoff
+      ? handoff.canContinue
       : Boolean(exhausted && sessionId);
     input.record("execution.checkpoint", { segment: budget.used, summary: partial ?? "CLI 回合耗尽；已保留文件，准备检查实际进展。" });
     if (!mayContinue || !input.automaticContinuation) {

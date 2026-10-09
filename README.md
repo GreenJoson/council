@@ -24,6 +24,8 @@ Using several capable agents often leaves the coordination work to you:
 
 Delegated work retains commits, interrupted correction drafts, and review findings. Review evidence is organized per file, and incomplete evidence blocks approval. Long tasks can continue in bounded segments with saved handoffs and verified file progress. The local worker keeps active tasks running after the desktop closes. See [execution and recovery boundaries](docs/execution-delivery.md).
 
+Long background text cannot displace the current task, constraints, or accepted conclusions. If required material exceeds the context budget, delegation is rejected explicitly. A checkpoint wrapped in prose or Markdown still means unfinished work and cannot become a delivery commit.
+
 Council keeps discussion records on your machine. Model calls still send the selected topic context and permitted code evidence to the provider or CLI you choose. It does not import the private history of your other chat applications.
 
 ## The workflow

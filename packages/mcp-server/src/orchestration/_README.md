@@ -6,6 +6,9 @@
 |---|---|---|
 | `delegation-checkpoint.ts` | 检查点协议 | 私有指令与进度、公开白名单投影 |
 | `delegation-runtime-stage.ts` | 阶段执行 | 独立预算、早期会话与进度持久化，仅只读瞬态故障有界重试 |
+| `delegation-task-context.ts` | 任务上下文 | 完整保留任务、约束与已接受结论，只节选背景；关键材料超限在派发前拒绝，完整内容参与指纹 |
+| `delegation-execution-result.ts` | 阶段交接 | 识别说明和 Markdown 包装中的交接，损坏交接不能成为完成摘要 |
+| `delegation-execution-segments.ts` | 有界接续 | CLI 调用终态与任务终态分离，按已校验的交接、真实文件变化和冻结预算继续 |
 | `runtime-audit-store.ts` | 执行证据 | 持久化脱敏阶段/工具事件，提供不可覆盖的游标分页记录，不存私有草稿与未知用量 |
 | `work-attention-store.ts` | 聚合查询 | 按当前项目汇总待决策、待验收、阻断、失败与待回复，较新执行取代历史状态 |
 | `delegation-workspace-snapshot.ts` | 草稿快照 | 临时索引保留原 HEAD/索引/文件；拒绝配置、运行数据、二进制、符号链接和疑似凭据后接续未提交代码 |
@@ -96,3 +99,5 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 接续只为新运行选择权限；创建前复核 Agent 上限，权限变化使指令检查点失效，审计保留前后权限。
 
 交付可靠性模块：`delegation-review.ts` 管理逐文件材料和审核覆盖，`delegation-git-delivery.ts` 通过安全快照追加提交，`delegation-execution-result.ts` 接收主动阶段交接，`delegation-handoff.ts` 将旧摘要与审核意见传给新运行。修正阶段中断可接回上一提交后的草稿；材料不足独立于实现缺陷处理。
+
+任务正文、约束和已接受结论不能被长背景截断；关键材料本身超限时，在创建委派/工作区前拒绝请求。审核每次显式收到当前任务上下文，不依赖保存的 supervisor 会话仍在。交接解析只产出一个经过校验的对象，接续层不得重新按原始字符串位置解析 JSON。

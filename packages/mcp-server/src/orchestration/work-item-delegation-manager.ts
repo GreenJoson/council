@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：带完成条件的委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
+ * @output 导出：关键上下文完整的委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +9,7 @@
 
 import { EXECUTION_DEFAULTS } from "../config.js";
 import { runExecutionSegments } from "./delegation-execution-segments.js";
+import { delegationTaskContext } from "./delegation-task-context.js";
 import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
 import { commitDelegationChanges } from "./delegation-git-delivery.js";
 import { createDelegationHandoff, handoffContext } from "./delegation-handoff.js";
@@ -223,6 +224,7 @@ export class WorkItemDelegationManager {
     if (!detail.topic.projectPath) {
       throw new CouncilValidationError("项目尚未绑定本地路径，不能执行代码任务。");
     }
+    delegationTaskContext(detail, item, this.config.maxContextChars);
     const { supervisor, executor, permission } = this.#resolveAssignment(input);
     const now = new Date().toISOString();
     let delegation: WorkItemDelegation;
@@ -297,6 +299,7 @@ export class WorkItemDelegationManager {
       if (item.status === "completed") {
         throw new CouncilValidationError("一键委派不能包含已完成实施项。");
       }
+      delegationTaskContext(detail, item, this.config.maxContextChars);
       return item;
     });
     const { supervisor, executor, permission } = this.#resolveAssignment(input);
@@ -670,26 +673,9 @@ export class WorkItemDelegationManager {
     if (!item || !detail.topic.projectPath) {
       throw new Error("任务或项目路径已失效。");
     }
-    const accepted = detail.decisions.filter((decision) => decision.status === "accepted");
-    const context = [
-      `议题：${detail.topic.title}`,
-      `当前问题：${detail.topic.question}`,
-      detail.topic.constraints.length > 0
-        ? `约束：\n${detail.topic.constraints.map((value) => `- ${value}`).join("\n")}`
-        : "约束：无额外约束",
-      `当前实施项：${item.title}\n${item.details || "无补充说明"}`,
-      accepted.length > 0
-        ? `已接受决策：\n${accepted.map((decision) => [
-            `- ${decision.title}`,
-            `  结论：${decision.decision}`,
-            `  理由：${decision.rationale}`,
-          ].join("\n")).join("\n")}`
-        : "已接受决策：无",
-    ].join("\n\n");
     return {
       item,
-      context: compact(context, this.config.maxContextChars),
-      contextFingerprint: createHash("sha256").update(context).digest("hex"),
+      ...delegationTaskContext(detail, item, this.config.maxContextChars),
       projectPath: detail.topic.projectPath,
     };
   }
@@ -938,6 +924,7 @@ export class WorkItemDelegationManager {
           "无法读取或补查必要证据时返回 blocked；changes_requested 仅用于已核实的实现问题。",
           "",
           `验收标准：${delegation!.acceptanceCriteria}`,
+          `当前任务与约束（不能依赖旧会话是否仍在）：\n${task.context}`,
           `执行摘要：\n${executorSummary}`,
           `代码 diff：\n${evidence.content}`,
         ].join("\n"),

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：ClaudeRuntime 传入的版本、认证或生成参数与 stdin prompt
- * @output 导出：可用性检查和真实子进程 E2E 所需的稳定 JSON 响应
+ * @output 导出：可用性检查、长上下文与 Markdown 交接边界的子进程 E2E 协议响应
  * @pos    测试专用的 Claude Code CLI 最小协议替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -31,15 +31,23 @@ process.stdin.on("end", () => {
     return;
   }
   if (prompt.includes("COUNCIL_SEGMENT_E2E") && args.includes("--print")) {
+    if (prompt.includes("LONG_CONTEXT") && !prompt.includes("COUNCIL_REQUIRED_TASK_TAIL")) {
+      process.stderr.write("当前任务正文缺失\n");
+      process.exitCode = 2;
+      return;
+    }
     let result;
     let turnLimit = false;
     if (prompt.includes("你是本次任务的 executor")) {
-      if (prompt.includes("NO_PROGRESS")) {
+      if (prompt.includes("INVALID_CHECKPOINT")) {
+        writeFileSync("stage-one.txt", "unfinished draft\n");
+        result = '代码尚未完成。\n```json\nCOUNCIL_CHECKPOINT\n{"remaining":[]}\n```';
+      } else if (prompt.includes("NO_PROGRESS")) {
         result = 'COUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: [], validation: ["检查后没有文件变化"], remaining: ["仍未完成"], canContinue: true });
       } else if (!existsSync("stage-one.txt")) {
         writeFileSync("stage-one.txt", "first segment\n");
         turnLimit = prompt.includes("TURN_LIMIT");
-        result = 'COUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: ["第一段文件已保存"], validation: ["文件已写入"], remaining: ["写入第二段文件"], canContinue: true });
+        result = '第一阶段已保存，工作还没完成。\n```json\nCOUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: ["第一段文件已保存"], validation: ["文件已写入"], remaining: ["写入第二段文件"], canContinue: true }) + '\n```';
       } else {
         writeFileSync("stage-two.txt", "second segment\n");
         result = "两段文件已保存并核对；等待独立审核。";
