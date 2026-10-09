@@ -1,5 +1,5 @@
 /**
- * @input  依赖：HttpRouteContext（HTTP 配置、CouncilDatabase、可选编排服务）、AI 实施计划规划器、Zod schema 与统一响应
+ * @input  依赖：HttpRouteContext（HTTP 配置、CouncilDatabase、可选编排服务）、tasks 议题入口、AI 实施计划规划器、Zod schema 与统一响应
  * @output 导出：注册实施项创建/AI 生成/更新/认领、项目待处理、运行审计与跨 Agent 任务委派（单项、批量、接续、取消）REST 的 registerWorkItemRoutes
  * @pos    WebUI 推进决策落地：实施项生命周期与委派执行的 HTTP 路由模块
  *
@@ -12,6 +12,7 @@ import {
   parseWorkItemPlan,
   WORK_ITEM_PLANNING_INSTRUCTION,
 } from "../../orchestration/work-item-planner.js";
+import { createTopicTasks } from "../../tasks/task-intake.js";
 import { HttpError, sendSuccess } from "../responses.js";
 import {
   claimWorkItemBodySchema,
@@ -35,7 +36,7 @@ export function registerWorkItemRoutes(app: Express, context: HttpRouteContext):
   app.post("/api/v1/topics/:topicId/work-items", (request, response) => {
     const params = parse(topicParamsSchema, request.params);
     const input = parse(createWorkItemsBodySchema, request.body);
-    const workItems = database.createWorkItemsAsActor({
+    const workItems = createTopicTasks(database, {
       topicId: params.topicId,
       ...(input.decisionId ? { decisionId: input.decisionId } : {}),
       ...(input.parentId ? { parentId: input.parentId } : {}),

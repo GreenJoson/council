@@ -1,5 +1,5 @@
 /**
- * @input  依赖：McpToolContext、Zod、council-orchestrator 修复提交上限、共享常量与 tool-support 共享件
+ * @input  依赖：McpToolContext、Zod、council-orchestrator 修复提交上限、共享常量、tasks 议题入口与 tool-support 共享件
  * @output 导出：registerWorkItemTools，注册 council_add_work_items / council_update_work_item / council_list_work_items / council_claim_work_item / council_submit_fixes
  * @pos    实施项拆分、进度更新、清单、认领与修复提交复审的 MCP 工具模块
  *
@@ -20,6 +20,7 @@ import {
   MAX_WORK_ITEM_STATUS_NOTE_CHARS,
   WORK_ITEM_ORIGINS,
 } from "../../constants.js";
+import { createTopicTasks } from "../../tasks/task-intake.js";
 import type { McpToolContext } from "../tool-context.js";
 import {
   executeTool,
@@ -75,7 +76,7 @@ export function registerWorkItemTools(context: McpToolContext): void {
     },
     async ({ topic_id, decision_id, parent_id, items }) =>
       await executeTool("council_add_work_items", () => {
-        const workItems = database.createWorkItemsAsActor({
+        const workItems = createTopicTasks(database, {
           topicId: topic_id,
           ...(decision_id ? { decisionId: decision_id } : {}),
           ...(parent_id ? { parentId: parent_id } : {}),

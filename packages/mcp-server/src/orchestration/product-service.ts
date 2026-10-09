@@ -2,7 +2,7 @@
  * @input  依赖：SQLiteCouncilStore、CouncilOrchestrator、RunExecutionManager、CycleDriver、AgentRegistry、
  *         模型路由服务与回退路由仓库、任务委派管理器、HTTP 编排配置、决策写入器取值器与配置互斥回调
  * @output 导出：CouncilProductService —— 圆桌开局/推进/放弃、Run 创建/启动/审批/取消/恢复、只读任务规划、
- *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发
+ *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发（议题入口与任务入口）
  * @pos    Composer/@Agent 产品接线的真正实现；CouncilOrchestrationService 以同名同签名方法转发到这里
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -730,6 +730,12 @@ export class CouncilProductService {
       throw new OrchestrationConfigError("任务委派服务未启用。");
     }
     return this.#delegationManager.list(topicId);
+  }
+
+  /** 任务入口：单个任务（含无议题直接任务）的委派列表。 */
+  listTaskDelegations(workItemId: string): WorkItemDelegation[] {
+    if (!this.#delegationManager) throw new OrchestrationConfigError("任务委派服务未启用。");
+    return this.#delegationManager.listForWorkItem(workItemId);
   }
 
   startWorkItemDelegation(input: StartWorkItemDelegationInput): WorkItemDelegation {

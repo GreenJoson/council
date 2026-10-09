@@ -1,6 +1,7 @@
 /**
  * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
- * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单）、私有检查点与原子状态更新
+ * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单，topicId 对非议题任务缺省）、
+ *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -27,7 +28,8 @@ export type DelegationExecutionPermission = Exclude<AgentPermissionProfile, "rea
 export interface WorkItemDelegation {
   execution?: DelegationExecutionProgress;
   id: string;
-  topicId: string;
+  /** v18 起可空：直接任务的委派不属于任何议题。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
@@ -57,7 +59,7 @@ export interface WorkItemDelegation {
 interface DelegationRow {
   execution_state_json: string | null;
   id: string;
-  topic_id: string;
+  topic_id: string | null;
   work_item_id: string;
   supervisor_agent_id: string;
   executor_agent_id: string;
@@ -92,7 +94,7 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
   return {
     ...(execution ? { execution } : {}),
     id: row.id,
-    topicId: row.topic_id,
+    ...(row.topic_id ? { topicId: row.topic_id } : {}),
     workItemId: row.work_item_id,
     supervisorAgentId: row.supervisor_agent_id,
     executorAgentId: row.executor_agent_id,
@@ -131,7 +133,8 @@ export interface DelegationPrivateState extends WorkItemDelegation {
 
 export interface CreateWorkItemDelegationInput {
   id: string;
-  topicId: string;
+  /** 取自实施项本身：议题项有，直接任务没有。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
@@ -142,6 +145,9 @@ export interface CreateWorkItemDelegationInput {
   acceptanceCriteria: string;
   maxAttempts: number;
   branchName?: string;
+  /** 缺省 code；P1 只有 code，资产通道（P2）前不写入非空素材。 */
+  kind?: WorkItemKind;
+  inputAssetIds?: readonly string[];
   now: string;
 }
 
@@ -169,12 +175,13 @@ export class WorkItemDelegationStore {
       INSERT INTO work_item_delegations (
         id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id,
         permission_profile, status, attempt, max_attempts, branch_name,
-        created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id
-        -- kind/input_asset_ids_json/output_manifest_json 走 v18 列默认值（code/[]/NULL）。
-      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id,
+        kind, input_asset_ids_json
+        -- output_manifest_json 走 v18 列默认值 NULL。
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
-      input.topicId,
+      input.topicId ?? null,
       input.workItemId,
       input.supervisorAgentId,
       input.executorAgentId,
@@ -186,6 +193,8 @@ export class WorkItemDelegationStore {
       input.completionPolicy,
       input.acceptanceCriteria,
       input.resumedFromId ?? null,
+      input.kind ?? "code",
+      JSON.stringify(input.inputAssetIds ?? []),
     );
   }
 
@@ -229,6 +238,25 @@ export class WorkItemDelegationStore {
       WHERE topic_id = ?
       ORDER BY created_at DESC, rowid DESC
     `).all(topicId) as unknown as DelegationRow[]).map(publicDelegation);
+  }
+
+  /** 单个任务的委派历史（新到旧）；直接任务没有议题，只能按 work_item_id 取。 */
+  listForWorkItem(workItemId: string): WorkItemDelegation[] {
+    return (this.#database.prepare(`
+      SELECT * FROM work_item_delegations
+      WHERE work_item_id = ?
+      ORDER BY created_at DESC, rowid DESC
+    `).all(workItemId) as unknown as DelegationRow[]).map(publicDelegation);
+  }
+
+  /** 项目视图：委派本身不存项目路径，经 work_items.project_path 归属（议题项创建时已拷贝）。 */
+  listForProject(projectPath: string): WorkItemDelegation[] {
+    return (this.#database.prepare(`
+      SELECT d.* FROM work_item_delegations AS d
+      JOIN work_items AS w ON w.id = d.work_item_id
+      WHERE w.project_path = ?
+      ORDER BY d.created_at DESC, d.rowid DESC
+    `).all(projectPath) as unknown as DelegationRow[]).map(publicDelegation);
   }
 
   update(id: string, patch: {

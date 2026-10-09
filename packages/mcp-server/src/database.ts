@@ -2,7 +2,7 @@
  * @input  依赖：已由 Node 迁移器准备的 SQLite、database/ 下的领域仓储与行映射、安全错误语义
  * @output 导出：CouncilDatabase（连接与 PRAGMA、BEGIN IMMEDIATE 事务、动态 Actor alias/可信 actorId
  *         解析、无损 Session 历史、计数/revision/圆桌度量）及同名同签名转发到仓储的议题、消息、
- *         决策、实施项方法；CouncilRevisions
+ *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表）；CouncilRevisions
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问入口；领域 SQL 住在 database/ 各仓储，
  *         调用方签名不变；身份漂移或停用时失败关闭
  *
@@ -33,8 +33,10 @@ import type {
   TopicDetail,
   TopicStatus,
   WorkItem,
+  WorkItemKind,
   WorkItemOrigin,
   WorkItemSeverity,
+  WorkItemSource,
   WorkItemStatus,
 } from "./types.js";
 import type { DatabaseContext, TopicLookup } from "./database/context.js";
@@ -319,7 +321,8 @@ export class CouncilDatabase {
   }
 
   updateWorkItem(input: {
-    topicId: string;
+    /** 议题内接口传入并校验归属；任务入口省略，以 id 为准。 */
+    topicId?: string;
     workItemId: string;
     status: WorkItemStatus;
     expectedVersion: number;
@@ -331,7 +334,8 @@ export class CouncilDatabase {
   }
 
   updateWorkItemAsActor(input: {
-    topicId: string;
+    /** 议题内接口传入并校验归属；任务入口省略，以 id 为准。 */
+    topicId?: string;
     workItemId: string;
     status: WorkItemStatus;
     expectedVersion: number;
@@ -343,7 +347,8 @@ export class CouncilDatabase {
   }
 
   claimWorkItemAsActor(input: {
-    topicId: string;
+    /** 议题内接口传入并校验归属；任务入口省略，以 id 为准。 */
+    topicId?: string;
     workItemId: string;
     expectedVersion: number;
     statusNote?: string;
@@ -359,6 +364,37 @@ export class CouncilDatabase {
     origin?: WorkItemOrigin;
   }): WorkItem[] {
     return this.#workItems.list(input);
+  }
+
+  // 任务（v18 一等化）：同一张 work_items 表，仍由 WorkItemRepository 唯一持有读写。
+
+  getWorkItem(workItemId: string): WorkItem {
+    return this.#workItems.get(workItemId);
+  }
+
+  workItemHasChildren(workItemId: string): boolean {
+    return this.#workItems.hasChildren(workItemId);
+  }
+
+  createDirectTaskAsActor(input: {
+    projectPath: string;
+    title: string;
+    details: string;
+    kind: WorkItemKind;
+    priority: number;
+    brief?: Record<string, unknown>;
+    actorId: string;
+  }): WorkItem {
+    return this.#workItems.createDirectAsActor(input);
+  }
+
+  listTasks(input: {
+    projectPath: string;
+    status?: WorkItemStatus;
+    kind?: WorkItemKind;
+    source?: WorkItemSource;
+  }): WorkItem[] {
+    return this.#workItems.listByProject(input);
   }
 
   // ------------------------------------------------------------

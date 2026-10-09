@@ -114,6 +114,8 @@ packages/mcp-server/src/
 └── orchestration/product-service.ts  # 拆出：Composer/@Agent 产品接线
 ```
 
+> P1 落地注记：任务存储职责由既有 `database/work-item-repository.ts` 承担（v18 的 `work_items` 即任务表，经 `CouncilDatabase` 门面暴露），不另建 `tasks/task-store.ts`；`tasks/` 只放 `task-intake.ts`（P1 只有直接任务 / 议题派生两个入口，流水线入口留给 P3）与 `task-service.ts`。委派前的任务解析与校验集中在 `orchestration/delegation-task-resolver.ts`。
+
 `database.ts` 同步按领域拆为 `database/{topics,messages,decisions,work-items}.ts` 的薄仓储，`database.ts` 只保留连接与事务封装。`schema-migrator.ts` 不动已发布迁移，新迁移继续一文件一版。
 
 ### 3.2 执行模型
@@ -233,7 +235,9 @@ Rust `council-core` 只读侧同步 `types.rs` / `store.rs`：任务列表允许
 | REST（`http/app.ts`） | `POST /tasks`、`GET /tasks?project&status&kind`、`GET /tasks/:id`、`POST /tasks/:id/delegations`（带 `kind`、`inputAssetIds`）、`GET /assets?project&kind`、`GET /assets/:id`（元数据）、`GET /assets/:id/content`（loopback 流式、`Content-Type` 白名单、禁缓存）、`GET /assets/:id/thumbnail`、`POST /pipelines`（模板 + brief）、`POST /tasks/:id/team` 系列（P4） | `http/app.ts` 已 984 行，按领域拆成 `http/routes/{tasks,assets,pipelines}.ts` |
 | MCP（`server.ts`） | `council_create_task`、`council_list_tasks`、`council_delegate_task`、`council_list_assets`、`council_attach_asset`、`council_submit_brief`（写 `council-brief` 到任务）、`council_start_pipeline` | 给 Claude 在 Council 外（例如用户直接在 Claude Code 里）下任务用；`server.ts` 951 行，工具注册拆到 `mcp/tools/*.ts` |
 | Tauri（`lib.rs`） | `list_tasks`、`get_task`、`create_task`、`list_assets`、`get_asset_thumbnail_path` | 桌面只读核心继续只读；写入走 Node HTTP |
-| SSE | `task.updated`、`asset.created`、`pipeline.stage_changed` | 沿用 revision 校准机制 |
+| SSE | `task.updated`、`asset.created`、`pipeline.stage_changed` | 沿用 revision 校准机制。P1 不新增事件：任务写入走既有 SQLite revision，复用 `council.changed` 触发刷新；`task.updated` 推迟到确有按任务增量刷新需求时再加 |
+
+P1 已落地的任务接口（Node 侧）：REST `POST /api/v1/tasks`、`GET /api/v1/tasks?project&status&kind&source`、`GET /api/v1/tasks/:taskId`（含所属议题摘要与委派列表）、`PUT /api/v1/tasks/:taskId`（乐观版本）、`GET|POST /api/v1/tasks/:taskId/delegations`（P1 只接受 `kind=code`、`inputAssetIds=[]`）；MCP `council_create_task`、`council_list_tasks`、`council_get_task`、`council_delegate_task`。stdio MCP 进程没有委派执行器，`council_delegate_task` 转发到本机 loopback HTTP 服务（地址取 `COUNCIL_HTTP_HOST/PORT`，超时 `COUNCIL_MCP_HTTP_TIMEOUT_MS`），服务未运行时明确报错。议题派生入口沿用 `POST /api/v1/topics/:topicId/work-items` 与 `council_add_work_items`。
 
 ## 4. 流水线设计（用户要的核心场景）
 

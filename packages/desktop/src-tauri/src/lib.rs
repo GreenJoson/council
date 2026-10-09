@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与动态 Actor Rust Store
- * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/议题关闭/决策包接受/实施项、设置和编排服务命令
+ * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/议题关闭/决策包接受/实施项、只读任务查询（list_tasks/get_task）、设置和编排服务命令
  * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -13,7 +13,7 @@ use council_core::{
     AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
     CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, Decision,
     DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic,
-    TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemStatus,
+    TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemKind, WorkItemStatus,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -320,6 +320,27 @@ fn get_topic(
     with_store(&state, |store| {
         store.get_topic(&topic_id, message_limit, message_offset)
     })
+}
+
+/// 按项目列任务（议题派生项与直接任务都在内）。桌面任务视图只读，写入走 Node HTTP。
+#[tauri::command]
+fn list_tasks(
+    project_path: String,
+    status: Option<WorkItemStatus>,
+    kind: Option<WorkItemKind>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<WorkItem>, String> {
+    validation::directory(std::path::Path::new(&project_path), "项目目录")?;
+    with_store(&state, |store| {
+        store.list_tasks(&project_path, status, kind)
+    })
+}
+
+/// 按 id 取单个任务，不要求挂议题；不存在时返回 null 交给界面处理。
+#[tauri::command]
+fn get_task(id: String, state: tauri::State<'_, AppState>) -> Result<Option<WorkItem>, String> {
+    validation::identifier(&id, "work_item_", "id")?;
+    with_store(&state, |store| store.get_task(&id))
 }
 
 #[tauri::command]
@@ -771,6 +792,8 @@ pub fn run() {
             select_project,
             list_topics,
             get_topic,
+            list_tasks,
+            get_task,
             create_topic,
             close_topic,
             post_message,

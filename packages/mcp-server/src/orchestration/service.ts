@@ -384,6 +384,10 @@ export class CouncilOrchestrationService {
     return this.#product.listWorkItemDelegations(topicId);
   }
 
+  listTaskDelegations(workItemId: string): WorkItemDelegation[] {
+    return this.#product.listTaskDelegations(workItemId);
+  }
+
   startWorkItemDelegation(input: StartWorkItemDelegationInput): WorkItemDelegation {
     return this.#product.startWorkItemDelegation(input);
   }

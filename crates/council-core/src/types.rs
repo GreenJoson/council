@@ -99,7 +99,6 @@ pub enum WorkItemKind {
 }
 
 impl WorkItemKind {
-    #[allow(dead_code)]
     pub(crate) const fn as_db(self) -> &'static str {
         match self {
             Self::Code => "code",

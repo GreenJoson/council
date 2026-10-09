@@ -1,6 +1,6 @@
 /**
- * @input  依赖：MCP SDK CallToolResult、Zod、共享常量、CouncilValidationError、logger 与领域类型
- * @output 导出：council_* 工具共用的 Zod 字段/输出 schema（实施项含 v18 任务字段）、success/publicError/executeTool 包装与文本格式化函数
+ * @input  依赖：MCP SDK CallToolResult、Zod、共享常量、委派状态枚举、CouncilValidationError、logger 与领域类型
+ * @output 导出：council_* 工具共用的 Zod 字段/输出 schema（实施项含 v18 任务字段、委派 topicId 可选）、success/publicError/executeTool 包装与文本格式化函数（含任务与委派）
  * @pos    MCP 工具模块的共享件，不注册任何工具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,11 +12,17 @@ import {
   MAX_ID_CHARS,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_KINDS,
   WORK_ITEM_ORIGINS,
   WORK_ITEM_SEVERITIES,
+  WORK_ITEM_SOURCES,
   WORK_ITEM_STATUSES,
 } from "../constants.js";
 import { CouncilValidationError } from "../errors.js";
+import {
+  WORK_ITEM_DELEGATION_STATUSES,
+  type WorkItemDelegation,
+} from "../orchestration/work-item-delegation-store.js";
 import { logger } from "../logger.js";
 import type {
   CouncilMessage,
@@ -91,8 +97,8 @@ export const workItemOutput = z.object({
   id: z.string(),
   // v18 起非议题任务没有议题；议题内工具返回的实施项仍总是带 topicId。
   topicId: z.string().optional(),
-  kind: z.enum(["code", "image", "prototype", "research", "pipeline"]),
-  source: z.enum(["topic", "direct", "pipeline"]),
+  kind: z.enum(WORK_ITEM_KINDS),
+  source: z.enum(WORK_ITEM_SOURCES),
   priority: z.number().int(),
   projectPath: z.string().optional(),
   brief: z.record(z.string(), z.unknown()).optional(),
@@ -120,6 +126,36 @@ export const workItemOutput = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   completedAt: z.string().optional(),
+});
+
+/** 委派公开 DTO：直接任务的委派没有议题，topicId 可选；本机 worktree 路径不在 DTO 中。 */
+export const delegationOutput = z.object({
+  id: z.string(),
+  topicId: z.string().optional(),
+  workItemId: z.string(),
+  supervisorAgentId: z.string(),
+  executorAgentId: z.string(),
+  permissionProfile: z.enum(["workspace_write", "danger_full_access"]),
+  resumedFromId: z.string().optional(),
+  failureCode: z.string().optional(),
+  completionPolicy: z.enum(["review", "human"]),
+  acceptanceCriteria: z.string(),
+  status: z.enum(WORK_ITEM_DELEGATION_STATUSES),
+  attempt: z.number().int().nonnegative(),
+  maxAttempts: z.number().int().positive(),
+  baseCommit: z.string().optional(),
+  headCommit: z.string().optional(),
+  branchName: z.string().optional(),
+  summary: z.string().optional(),
+  review: z.string().optional(),
+  error: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().optional(),
+  kind: z.enum(WORK_ITEM_KINDS),
+  inputAssetIds: z.array(z.string()),
+  outputManifest: z.record(z.string(), z.unknown()).optional(),
+  execution: z.record(z.string(), z.unknown()).optional(),
 });
 
 export function toStructured(value: object): Record<string, unknown> {
@@ -150,6 +186,8 @@ export function publicError(error: unknown): string {
     "环境变量",
     "COUNCIL_",
     "实施项",
+    "任务",
+    "直接任务",
     "当前议题没有可绑定的 Accepted 决策",
   ];
   return safePrefixes.some((prefix) => error.message.startsWith(prefix))
@@ -222,6 +260,25 @@ export function formatWorkItem(workItem: WorkItem): string {
     ...(workItem.fixCommit ? [`  修复提交：${workItem.fixCommit}`] : []),
     ...(workItem.assigneeActorId ? [`  执行者：${workItem.assigneeActorId}`] : []),
     `  实施项 ID：${workItem.id}`,
+  ].join("\n");
+}
+
+/** 任务入口的单行摘要：比实施项多出 kind/source/优先级与项目归属。 */
+export function formatTask(task: WorkItem): string {
+  return [
+    formatWorkItem(task).replace(`  实施项 ID：${task.id}`, `  任务 ID：${task.id}`),
+    `  类型：${task.kind} · 来源：${task.source} · 优先级：${String(task.priority)}`
+      + (task.topicId ? ` · 议题：${task.topicId}` : "")
+      + (task.projectPath ? ` · 项目：${task.projectPath}` : ""),
+  ].join("\n");
+}
+
+export function formatDelegation(delegation: WorkItemDelegation): string {
+  return [
+    `- 委派 ${delegation.id} · ${delegation.status} · 第 ${String(delegation.attempt)}/${String(delegation.maxAttempts)} 轮`,
+    `  执行：${delegation.executorAgentId} · 审核：${delegation.supervisorAgentId} · 权限：${delegation.permissionProfile}`,
+    ...(delegation.headCommit ? [`  提交：${delegation.headCommit}`] : []),
+    ...(delegation.error ? [`  错误：${delegation.error}`] : []),
   ].join("\n");
 }
 

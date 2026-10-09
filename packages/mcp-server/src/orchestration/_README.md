@@ -26,8 +26,9 @@
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
 | `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
 | `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |
-| `work-item-delegation-store.ts` | 委派账本 | 持久化 supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
-| `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；只传当前议题/任务/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
+| `delegation-task-resolver.ts` | 任务解析 | 按任务 id 读取任务与可选议题（无议题时决策为空、项目路径取任务自身），并集中执行委派前置校验：kind=code、无输入资产、版本、议题归属、未完成、叶子任务与上下文预算 |
+| `work-item-delegation-store.ts` | 委派账本 | 持久化可选议题、委派 kind 与输入资产、supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
+| `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；任务可不属于任何议题（单项委派），批量委派仍按议题；只传当前任务/所属议题/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
 Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，

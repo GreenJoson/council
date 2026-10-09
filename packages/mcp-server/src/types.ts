@@ -11,8 +11,10 @@ import type {
   DECISION_STATUSES,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_KINDS,
   WORK_ITEM_ORIGINS,
   WORK_ITEM_SEVERITIES,
+  WORK_ITEM_SOURCES,
   WORK_ITEM_STATUSES,
 } from "./constants.js";
 import type { ActorId, ActorSnapshot } from "./actor-identity.js";
@@ -24,9 +26,9 @@ export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 export type WorkItemOrigin = (typeof WORK_ITEM_ORIGINS)[number];
 export type WorkItemSeverity = (typeof WORK_ITEM_SEVERITIES)[number];
 /** v18 起实施项（任务）的产出类型；与 work_items.kind 的 CHECK 枚举一致。 */
-export type WorkItemKind = "code" | "image" | "prototype" | "research" | "pipeline";
+export type WorkItemKind = (typeof WORK_ITEM_KINDS)[number];
 /** v18 起实施项来源：议题拆解、直接创建或流水线生成；只有 topic 来源挂议题。 */
-export type WorkItemSource = "topic" | "direct" | "pipeline";
+export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
 
 export interface CouncilConfig {
   dataDir: string;
@@ -84,6 +86,9 @@ export interface CouncilConfig {
 
 export interface McpCouncilConfig extends CouncilConfig {
   callerActorAlias: string;
+  /** 同机 HTTP 服务基址（仅回环）；任务委派等需要后台执行的 MCP 工具经它转发。 */
+  httpServiceUrl: string;
+  httpForwardTimeoutMs: number;
 }
 
 export interface CouncilHttpConfig {

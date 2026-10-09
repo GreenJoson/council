@@ -7,7 +7,6 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { isIP } from "node:net";
 import path from "node:path";
 import { z } from "zod/v4";
 import {
@@ -15,6 +14,7 @@ import {
   MAX_ORCHESTRATION_PLAN_ROUNDS,
   MAX_ORCHESTRATION_STARTUP_SCAN,
 } from "../constants.js";
+import { isLoopbackHost } from "../config.js";
 import type { CouncilHttpConfig } from "../types.js";
 import { loadProjectFilePreviewConfig } from "../project-file-preview-config.js";
 
@@ -89,14 +89,6 @@ function parseAllowedOrigins(raw: string): string[] {
     return url.origin;
   });
   return [...new Set(origins)];
-}
-
-function isLoopbackHost(value: string): boolean {
-  const host = value.toLowerCase();
-  if (host === "localhost" || host === "::1") {
-    return true;
-  }
-  return isIP(host) === 4 && host.split(".")[0] === "127";
 }
 
 export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHttpConfig {

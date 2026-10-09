@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流与委派 Git 检查预算的 CouncilConfig 与绑定调用者身份的 McpCouncilConfig
+ * @output 导出：含独立 CLI 事件流与委派 Git 检查预算的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
  */
 
 import { mkdirSync } from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import { MAX_LIST_LIMIT } from "./constants.js";
 import type { CouncilConfig, McpCouncilConfig } from "./types.js";
@@ -16,6 +17,10 @@ const MAX_NODE_TIMER_MS = 2_147_483_647;
 const REQUIRED_PERMISSION_MODE = "plan";
 const REQUIRED_CODEX_SANDBOX_MODE = "read-only";
 const DEFAULT_CODEX_COMMAND = "codex";
+/** MCP 转发本机 HTTP 服务的缺省地址与超时；与 .env.example 的 COUNCIL_HTTP_* 缺省一致，可由环境覆盖。 */
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+const DEFAULT_HTTP_PORT = 4317;
+const DEFAULT_MCP_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
@@ -368,9 +373,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
   };
 }
 
+/** HTTP 服务与 MCP 转发共用：只允许本机回环地址，防止任务委派被转发到外部主机。 */
+export function isLoopbackHost(value: string): boolean {
+  const host = value.toLowerCase();
+  if (host === "localhost" || host === "::1") {
+    return true;
+  }
+  return isIP(host) === 4 && host.split(".")[0] === "127";
+}
+
+/** stdio MCP 进程不持有委派管理器；需要执行的工具转发到同机 HTTP 服务。 */
+function loadHttpServiceUrl(env: NodeJS.ProcessEnv): string {
+  const host = env.COUNCIL_HTTP_HOST?.trim() || DEFAULT_HTTP_HOST;
+  if (!isLoopbackHost(host)) {
+    throw new Error("COUNCIL_HTTP_HOST 只允许 loopback 主机。");
+  }
+  const port = parseOptionalPositiveInteger("COUNCIL_HTTP_PORT", env, DEFAULT_HTTP_PORT);
+  if (port > 65_535) {
+    throw new Error("环境变量 COUNCIL_HTTP_PORT 超出端口范围。");
+  }
+  return `http://${host.includes(":") ? `[${host}]` : host}:${String(port)}`;
+}
+
 export function loadMcpConfig(env: NodeJS.ProcessEnv = process.env): McpCouncilConfig {
   return {
     ...loadConfig(env),
     callerActorAlias: requireEnv("COUNCIL_CALLER_ACTOR_ALIAS", env),
+    httpServiceUrl: loadHttpServiceUrl(env),
+    httpForwardTimeoutMs: parseOptionalTimer("COUNCIL_MCP_HTTP_TIMEOUT_MS", env, DEFAULT_MCP_HTTP_TIMEOUT_MS),
   };
 }

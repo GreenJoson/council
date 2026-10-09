@@ -1,5 +1,5 @@
 //! @input 依赖：已由 Node 迁移器准备的 v18 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v18 schema（任务一等化：实施项/委派/审计 topic_id 可空）、议题关闭、内容与实施项查询写入和 revision API
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v18 schema（任务一等化：实施项/委派/审计 topic_id 可空）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1189,6 +1189,54 @@ impl CouncilStore {
             has_more_messages,
             next_message_offset: has_more_messages.then_some(next_message_offset),
         })
+    }
+
+    /// 按项目列任务：议题派生项的 project_path 已在 v18 从议题拷贝，
+    /// 所以这里一条查询同时覆盖议题项与直接任务，不需要再 JOIN topics。
+    /// 过滤列顺序贴合 idx_work_items_project_status(project_path, status, updated_at)。
+    pub fn list_tasks(
+        &self,
+        project_path: &str,
+        status: Option<WorkItemStatus>,
+        kind: Option<WorkItemKind>,
+    ) -> CouncilResult<Vec<WorkItem>> {
+        let project_path = project_path.trim();
+        if project_path.is_empty() {
+            return Err(CouncilError::InvalidData("任务项目路径不能为空。".into()));
+        }
+        // 按实际传入的过滤条件拼 WHERE：status 作为等值条件出现时，
+        // 索引 (project_path, status, updated_at) 可直接给出 updated_at 顺序；
+        // 用「?2 IS NULL OR status = ?2」占位会让规划器放弃 status 列。
+        let mut sql =
+            format!("SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items WHERE project_path = ?1");
+        let mut values: Vec<&str> = vec![project_path];
+        if let Some(status) = status {
+            values.push(status.as_db());
+            sql.push_str(&format!(" AND status = ?{}", values.len()));
+        }
+        if let Some(kind) = kind {
+            values.push(kind.as_db());
+            sql.push_str(&format!(" AND kind = ?{}", values.len()));
+        }
+        sql.push_str(" ORDER BY updated_at DESC, created_at DESC, rowid DESC");
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values), read_work_item_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(work_item_from_row).collect()
+    }
+
+    /// 按 id 取单个任务，不要求挂议题；不存在返回 None，由调用方决定是否算错误。
+    pub fn get_task(&self, id: &str) -> CouncilResult<Option<WorkItem>> {
+        let row = self
+            .connection
+            .query_row(
+                &format!("SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items WHERE id = ?1"),
+                params![id],
+                read_work_item_row,
+            )
+            .optional()?;
+        row.map(work_item_from_row).transpose()
     }
 
     pub fn create_topic(&mut self, input: CreateTopicInput) -> CouncilResult<Topic> {

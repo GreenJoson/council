@@ -1,7 +1,7 @@
 /**
- * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：关键上下文完整的委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
- * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
+ * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git、委派账本与任务上下文解析
+ * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
+ * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层；P1 只接受 kind=code 且无输入资产的委派
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
@@ -10,6 +10,7 @@
 import { EXECUTION_DEFAULTS } from "../config.js";
 import { runExecutionSegments } from "./delegation-execution-segments.js";
 import { delegationTaskContext } from "./delegation-task-context.js";
+import { assertDelegableTask, resolveDelegationTask, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
 import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
 import { commitDelegationChanges } from "./delegation-git-delivery.js";
 import { createDelegationHandoff, handoffContext } from "./delegation-handoff.js";
@@ -47,7 +48,7 @@ import {
   type BoundedProcessMessages,
   type ProcessResult,
 } from "../process-utils.js";
-import type { CouncilConfig, CouncilHttpConfig, WorkItem } from "../types.js";
+import type { CouncilConfig, CouncilHttpConfig, WorkItem, WorkItemKind } from "../types.js";
 import {
   WorkItemDelegationStore,
   type DelegationExecutionPermission,
@@ -70,7 +71,8 @@ interface RuntimeResult {
 }
 
 export interface StartWorkItemDelegationInput {
-  topicId: string;
+  /** 议题入口传入时校验任务归属；直接任务入口省略。 */
+  topicId?: string;
   workItemId: string;
   expectedVersion: number;
   supervisorAgentId: string;
@@ -80,6 +82,10 @@ export interface StartWorkItemDelegationInput {
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   createInitialBaseline?: boolean;
+  /** P1 只允许 code；缺省视为 code。 */
+  kind?: WorkItemKind;
+  /** P1 只接受空数组。 */
+  inputAssetIds?: readonly string[];
 }
 
 export interface StartWorkItemDelegationBatchInput {
@@ -203,36 +209,30 @@ export class WorkItemDelegationManager {
     return this.#store.list(topicId);
   }
 
+  /** 任务入口：列出单个任务（含无议题任务）的全部委派，新者在前。 */
+  listForWorkItem(workItemId: string): WorkItemDelegation[] {
+    this.#database.getWorkItem(workItemId);
+    return this.#store.listForWorkItem(workItemId);
+  }
+
+  listForProject(projectPath: string): WorkItemDelegation[] {
+    return this.#store.listForProject(projectPath);
+  }
+
   get activeTaskCount(): number { return this.#tasks.size; }
 
   start(input: StartWorkItemDelegationInput): WorkItemDelegation {
-    const detail = this.#database.getTopicDetail(
-      input.topicId,
-      this.config.defaultMessageLimit,
-    );
-    const item = detail.workItems.find((candidate) => candidate.id === input.workItemId);
-    if (!item) {
-      throw new CouncilNotFoundError("实施项不存在。");
-    }
-    if (item.version !== input.expectedVersion) {
-      throw new CouncilConflictError("实施项已被更新，请刷新后重试。");
-    }
-    if (detail.topic.status === "closed" || item.status === "completed"
-      || detail.workItems.some((candidate) => candidate.parentId === item.id)) {
-      throw new CouncilConflictError("只能委派未关闭议题中的未完成叶子任务。");
-    }
-    if (!detail.topic.projectPath) {
-      throw new CouncilValidationError("项目尚未绑定本地路径，不能执行代码任务。");
-    }
-    delegationTaskContext(detail, item, this.config.maxContextChars);
+    const { item, topicId } = assertDelegableTask(this.#database, input, this.#taskLimits);
     const { supervisor, executor, permission } = this.#resolveAssignment(input);
     const now = new Date().toISOString();
     let delegation: WorkItemDelegation;
     try {
       delegation = this.#store.create({
         id: `delegation-${randomUUID()}`,
-        topicId: input.topicId,
+        ...(topicId ? { topicId } : {}),
         workItemId: input.workItemId,
+        kind: "code",
+        inputAssetIds: [],
         supervisorAgentId: supervisor.id,
         executorAgentId: executor.id,
         permissionProfile: permission,
@@ -355,7 +355,7 @@ export class WorkItemDelegationManager {
     if (!["failed", "cancelled"].includes(previous.status) || this.#controllers.has(id)) {
       throw new CouncilConflictError("原委派尚未停止，不能恢复。");
     }
-    const task = this.#taskContext(previous.topicId, previous.workItemId);
+    const task = this.#taskContext(previous.workItemId);
     if (task.item.version !== expectedVersion || task.item.status === "completed") {
       throw new CouncilConflictError("实施项已更新或完成，请刷新后检查。");
     }
@@ -373,10 +373,10 @@ export class WorkItemDelegationManager {
       maxFileChars: this.config.gitMaxOutputChars,
       git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
     }) : undefined;
-    if (this.#taskContext(previous.topicId, previous.workItemId).item.version !== expectedVersion) {
+    if (this.#taskContext(previous.workItemId).item.version !== expectedVersion) {
       throw new CouncilConflictError("实施项在恢复检查期间已变化，请刷新后重试。");
     }
-    const latest = this.#store.list(previous.topicId).find((entry) => entry.workItemId === previous.workItemId);
+    const latest = this.#store.listForWorkItem(previous.workItemId)[0];
     if (latest?.id !== id) throw new CouncilConflictError("已有更新的委派，请从最新记录继续。");
     // 工作区检查会让出执行权，创建运行前重新核对当前权限上限。
     if (this.#resolveAssignment({ ...previous, requestedPermission: desiredPermission }).permission !== desiredPermission) {
@@ -385,7 +385,7 @@ export class WorkItemDelegationManager {
     let created: WorkItemDelegation;
     try {
       created = this.#store.create({
-        id: `delegation-${randomUUID()}`, topicId: previous.topicId, workItemId: previous.workItemId,
+        id: `delegation-${randomUUID()}`, ...(previous.topicId ? { topicId: previous.topicId } : {}), workItemId: previous.workItemId,
         supervisorAgentId: previous.supervisorAgentId, executorAgentId: previous.executorAgentId,
         permissionProfile: assignment.permission, completionPolicy: previous.completionPolicy,
         acceptanceCriteria: previous.acceptanceCriteria, maxAttempts: this.config.maxAttempts,
@@ -663,21 +663,13 @@ export class WorkItemDelegationManager {
     };
   }
 
-  #taskContext(topicId: string, workItemId: string): { item: WorkItem; context: string; contextFingerprint: string; projectPath: string } {
-    const detail = this.#database.getTopicDetail(
-      topicId,
-      this.config.defaultMessageLimit,
-    );
-    const item = detail.workItems.find((candidate) => candidate.id === workItemId);
-    if (detail.topic.status === "closed") throw new CouncilConflictError("已关闭议题不能继续执行任务。");
-    if (!item || !detail.topic.projectPath) {
-      throw new Error("任务或项目路径已失效。");
-    }
-    return {
-      item,
-      ...delegationTaskContext(detail, item, this.config.maxContextChars),
-      projectPath: detail.topic.projectPath,
-    };
+  get #taskLimits(): { messageLimit: number; maxContextChars: number } {
+    return { messageLimit: this.config.defaultMessageLimit, maxContextChars: this.config.maxContextChars };
+  }
+
+  /** 按任务 id 解析上下文：有议题沿用议题约束与已接受决策，无议题只用任务本身。 */
+  #taskContext(workItemId: string): ResolvedDelegationTask {
+    return resolveDelegationTask(this.#database, workItemId, this.#taskLimits);
   }
 
   async #runSingle(
@@ -688,7 +680,7 @@ export class WorkItemDelegationManager {
     try {
       const delegation = this.#store.get(id);
       if (!delegation) throw new Error("任务委派不存在。");
-      const task = this.#taskContext(delegation.topicId, delegation.workItemId);
+      const task = this.#taskContext(delegation.workItemId);
       const workspace = await this.#prepareWorktree(
         delegation,
         task.projectPath,
@@ -713,7 +705,7 @@ export class WorkItemDelegationManager {
     }
     let activeId: string | undefined;
     try {
-      const firstTask = this.#taskContext(first.topicId, first.workItemId);
+      const firstTask = this.#taskContext(first.workItemId);
       const workspace = await this.#prepareWorktree(
         first,
         firstTask.projectPath,
@@ -747,7 +739,7 @@ export class WorkItemDelegationManager {
     if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
     let delegation = this.#store.get(id);
     if (!delegation) throw new Error("任务委派不存在。");
-    const task = this.#taskContext(delegation.topicId, delegation.workItemId);
+    const task = this.#taskContext(delegation.workItemId);
     const supervisor = this.#requireAgent(delegation.supervisorAgentId, "审核");
     const executor = this.#requireAgent(delegation.executorAgentId, "执行");
     this.#store.update(id, {
@@ -786,7 +778,7 @@ export class WorkItemDelegationManager {
       permissionProfile: "read_only",
       signal,
       prompt: [
-        "你是本次代码任务的 supervisor。只讨论当前议题，不读取或总结历史议题。",
+        "你是本次代码任务的 supervisor。只讨论当前任务及其所属议题，不读取或总结历史议题。",
         "请给执行 Agent 一份精确、可验证的实施指令：明确范围、必须保留的不变量、测试与验收标准。",
         "不要修改文件，不要运行写操作。",
         ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
@@ -832,7 +824,7 @@ export class WorkItemDelegationManager {
             git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
           })).tree,
           validate: () => {
-            const current = this.#taskContext(executionAssignment.topicId, executionAssignment.workItemId);
+            const current = this.#taskContext(executionAssignment.workItemId);
             if (current.item.version !== claimed.version || current.contextFingerprint !== task.contextFingerprint) {
               throw new CouncilConflictError("任务在执行期间已变化，已停止接续，请检查最新范围。");
             }
@@ -990,14 +982,14 @@ export class WorkItemDelegationManager {
       now: new Date().toISOString(),
     });
     if (!markWorkItem) return;
-    const item = this.#database.listWorkItems({ topicId: current.topicId })
-      .find((candidate) => candidate.id === current.workItemId);
+    let item: WorkItem | undefined;
+    try { item = this.#database.getWorkItem(current.workItemId); } catch { item = undefined; }
     const executor = this.modelRouter.getAgent(current.executorAgentId);
     const expectedVersion = this.#workItemVersions.get(id);
     if (item && item.status !== "completed" && executor && expectedVersion === item.version) {
       try {
         this.#database.updateWorkItemAsActor({
-          topicId: current.topicId,
+          ...(current.topicId ? { topicId: current.topicId } : {}),
           workItemId: current.workItemId,
           status: "blocked",
           expectedVersion,

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划与实施项）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项与任务入口）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,8 @@ import {
   MAX_WORK_ITEM_STATUS_NOTE_CHARS,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_KINDS,
+  WORK_ITEM_SOURCES,
   WORK_ITEM_STATUSES,
 } from "../constants.js";
 import {
@@ -337,6 +339,42 @@ export const startWorkItemDelegationBatchBodySchema = z
     createInitialBaseline: z.boolean().optional(),
   })
   .strict();
+
+// ---- 任务入口（/api/v1/tasks）：语义归一化在 tasks/task-intake.ts，这里只校验形状 ----
+
+const taskProjectPathSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PATH_CHARS)
+  .refine((value) => path.isAbsolute(value), "projectPath 必须是绝对路径");
+
+export const taskParamsSchema = z.object({ taskId: workItemIdSchema }).strict();
+
+export const createTaskBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    title: nonBlankString(MAX_TITLE_CHARS),
+    details: z.string().max(MAX_WORK_ITEM_DETAILS_CHARS).optional(),
+    kind: z.enum(WORK_ITEM_KINDS).optional(),
+    priority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    brief: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const listTasksQuerySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    status: z.enum(WORK_ITEM_STATUSES).optional(),
+    kind: z.enum(WORK_ITEM_KINDS).optional(),
+    source: z.enum(WORK_ITEM_SOURCES).optional(),
+  })
+  .strict();
+
+/** 与议题内单项委派同形，另加 P1 只接受 code 的 kind 与只接受空数组的 inputAssetIds。 */
+export const startTaskDelegationBodySchema = startWorkItemDelegationBodySchema.extend({
+  kind: z.enum(WORK_ITEM_KINDS).default("code"),
+  inputAssetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_WORK_ITEM_BATCH).default([]),
+}).strict();
 
 export const listRunsQuerySchema = z
   .object({

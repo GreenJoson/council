@@ -191,6 +191,12 @@ Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
 `council_update_work_item` 更新为 `in_progress`、`blocked` 或 `completed`。每次更新必须携带
 最新 `expected_version`，过期写入会被拒绝。标记完成时应在 `status_note` 写明测试、构建或交付证据。
 
+不需要讨论的工作可以直接建任务，不必先建议题和决策：MCP 用 `council_create_task`（必填项目路径与标题）、
+`council_list_tasks`、`council_get_task`，HTTP 对应 `/api/v1/tasks`。直接任务同样可以委派给 Agent
+（`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），当前只支持 `kind=code` 的代码任务；
+MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 或 `start:http` 需要在运行。
+议题实施项也会出现在同一项目的任务列表中。
+
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
 会以 Human 身份直接写入 `accepted`，关闭圆桌、持久会话和后续 Agent 入口；整个过程不会创建

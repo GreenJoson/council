@@ -1,6 +1,6 @@
 /**
  * @input  依赖：无
- * @output 导出：协议枚举、输入边界与服务标识
+ * @output 导出：协议枚举（含 v18 任务 kind/source）、输入边界与服务标识
  * @pos    MCP 服务的集中式不变量定义
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,12 @@ export const WORK_ITEM_STATUSES = [
   "blocked",
   "completed",
 ] as const;
+
+/** v18 任务产出类型与来源；与 work_items 的 CHECK 枚举一致，types.ts 与 Zod 共用。 */
+export const WORK_ITEM_KINDS = ["code", "image", "prototype", "research", "pipeline"] as const;
+export const WORK_ITEM_SOURCES = ["topic", "direct", "pipeline"] as const;
+/** 任务简报 JSON 序列化后的上限，防止把大文件塞进 brief_json。 */
+export const MAX_TASK_BRIEF_CHARS = 16_000;
 
 export const MAX_TITLE_CHARS = 200;
 export const MAX_ID_CHARS = 250;

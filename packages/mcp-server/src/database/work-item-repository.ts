@@ -3,8 +3,11 @@
  * @output 导出：WorkItemRepository —— 叶子口径的完成度批量查询、议题全量行读取、
  *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点，
  *         project_path 从议题拷贝，kind/source/priority 走 v18 DEFAULT）、
- *         乐观版本更新、认领、祖先状态派生与过滤列表
- * @pos    实施项领域仓储；父任务状态只由子任务派生，任何写入路径都不接受手动设置
+ *         直接任务建项（topic_id NULL、source direct、project_path 必填）、按 id 读取、
+ *         以 id 为准的乐观版本更新/认领（给了 topicId 时仍校验议题归属）、祖先状态派生、
+ *         议题内过滤列表与按项目列表（走 idx_work_items_project_status，含议题派生项）
+ * @pos    实施项（任务）领域仓储，work_items 表唯一数据访问所有者；父任务状态只由子任务派生，
+ *         任何写入路径都不接受手动设置
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -14,9 +17,11 @@ import { serializeActorSnapshot, toActorSnapshot } from "../actor-identity.js";
 import { CouncilConflictError, CouncilNotFoundError } from "../errors.js";
 import type {
   WorkItem,
+  WorkItemKind,
   WorkItemOrigin,
   WorkItemProgress,
   WorkItemSeverity,
+  WorkItemSource,
   WorkItemStatus,
 } from "../types.js";
 import type { DatabaseContext, TopicLookup } from "./context.js";
@@ -232,6 +237,79 @@ export class WorkItemRepository {
   }
 
   /**
+   * 直接任务：不经过议题与决策，topic_id/decision_id 均为 NULL，source 固定 direct、origin 固定 manual。
+   * 标题/项目路径的规范化由 tasks/task-intake.ts 负责，这里只守住 schema 不变量与同项目顶层重名。
+   */
+  createDirectAsActor(input: {
+    projectPath: string;
+    title: string;
+    details: string;
+    kind: WorkItemKind;
+    priority: number;
+    brief?: Record<string, unknown>;
+    actorId: string;
+  }): WorkItem {
+    const title = input.title.trim();
+    if (!title) {
+      throw new CouncilConflictError("任务标题不能为空。");
+    }
+    if (!input.projectPath) {
+      throw new CouncilConflictError("直接任务必须绑定项目路径。");
+    }
+    const now = new Date().toISOString();
+    return this.#context.transaction(() => {
+      const actor = this.#context.activeActorById(input.actorId);
+      const actorSnapshotJson = serializeActorSnapshot(toActorSnapshot(actor));
+      // 非议题任务的树作用域是 project_path（scope_key = COALESCE(topic_id, project_path, '')）。
+      const duplicate = this.#context.database.prepare(`
+        SELECT id FROM work_items
+        WHERE scope_key = ? AND parent_key = '' AND title = ? COLLATE NOCASE
+      `).get(input.projectPath, title);
+      if (duplicate) {
+        throw new CouncilConflictError(`任务“${title}”在该项目中已经存在。`);
+      }
+      const nextSortOrder = this.#context.database.prepare(`
+        SELECT COALESCE(MAX(sort_order), -1) + 1 AS value
+        FROM work_items WHERE scope_key = ? AND parent_key = ''
+      `).get(input.projectPath) as unknown as { value: number };
+      const id = `work_item_${randomUUID()}`;
+      this.#context.database.prepare(`
+        INSERT INTO work_items (
+          id, topic_id, decision_id, parent_id, title, details,
+          status, status_note, version, sort_order, origin, severity,
+          created_by_actor_id, created_by_snapshot_json,
+          updated_by_actor_id, updated_by_snapshot_json,
+          created_at, updated_at, completed_at,
+          kind, source, priority, project_path, brief_json
+        ) VALUES (
+          ?, NULL, NULL, NULL, ?, ?,
+          'pending', NULL, 1, ?, 'manual', NULL,
+          ?, ?, ?, ?, ?, ?, NULL,
+          ?, 'direct', ?, ?, ?
+        )
+      `).run(
+        id,
+        title,
+        input.details.trim(),
+        nextSortOrder.value,
+        actor.actorId,
+        actorSnapshotJson,
+        actor.actorId,
+        actorSnapshotJson,
+        now,
+        now,
+        input.kind,
+        input.priority,
+        input.projectPath,
+        input.brief ? JSON.stringify(input.brief) : null,
+      );
+      return workItemFromRow(this.#context.database
+        .prepare("SELECT * FROM work_items WHERE id = ?")
+        .get(id) as unknown as WorkItemRow);
+    });
+  }
+
+  /**
    * 手工拆解仍然要求先有 Accepted 决策——那是「先定架构再执行」的闸门。
    * 审核发现例外：commit 互审可能发生在议题还没产出任何决策的时候，
    * 若强行要求决策，评审挑出的问题就无处落账，只能散在讨论消息里。
@@ -263,14 +341,35 @@ export class WorkItemRepository {
     return decision.id;
   }
 
-  #requireWorkItem(workItemId: string, topicId: string): WorkItemRow {
-    const row = this.#context.database.prepare(`
-      SELECT * FROM work_items WHERE id = ? AND topic_id = ?
-    `).get(workItemId, topicId) as unknown as WorkItemRow | undefined;
+  /** 给了 topicId 就同时校验议题归属（议题内接口的既有语义）；任务入口只按 id 取。 */
+  #requireWorkItem(workItemId: string, topicId?: string): WorkItemRow {
+    const row = (topicId
+      ? this.#context.database.prepare(`
+          SELECT * FROM work_items WHERE id = ? AND topic_id = ?
+        `).get(workItemId, topicId)
+      : this.#context.database.prepare(`
+          SELECT * FROM work_items WHERE id = ?
+        `).get(workItemId)) as unknown as WorkItemRow | undefined;
     if (!row) {
       throw new CouncilNotFoundError(`实施项 ${workItemId} 不存在。`);
     }
     return row;
+  }
+
+  /** 议题项写入后刷新议题排序时间；非议题任务没有议题可刷新。 */
+  #touchTopic(topicId: string | null, now: string): void {
+    if (!topicId) return;
+    this.#context.database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?").run(now, topicId);
+  }
+
+  /** 按 id 读取单个任务；议题项与非议题项同一入口。 */
+  get(workItemId: string): WorkItem {
+    return workItemFromRow(this.#requireWorkItem(workItemId));
+  }
+
+  /** 是否为父任务；委派只允许叶子任务。 */
+  hasChildren(workItemId: string): boolean {
+    return this.#hasChildren(workItemId);
   }
 
   #hasChildren(workItemId: string): boolean {
@@ -335,7 +434,7 @@ export class WorkItemRepository {
   }
 
   update(input: {
-    topicId: string;
+    topicId?: string;
     workItemId: string;
     status: WorkItemStatus;
     expectedVersion: number;
@@ -345,7 +444,7 @@ export class WorkItemRepository {
   }): WorkItem {
     const actor = this.#context.resolveActorAlias(input.updatedByAlias);
     return this.updateAsActor({
-      topicId: input.topicId,
+      ...(input.topicId ? { topicId: input.topicId } : {}),
       workItemId: input.workItemId,
       status: input.status,
       expectedVersion: input.expectedVersion,
@@ -356,7 +455,8 @@ export class WorkItemRepository {
   }
 
   updateAsActor(input: {
-    topicId: string;
+    /** 议题内接口传入并校验归属；任务入口省略，以 id 为准。 */
+    topicId?: string;
     workItemId: string;
     status: WorkItemStatus;
     expectedVersion: number;
@@ -366,7 +466,7 @@ export class WorkItemRepository {
   }): WorkItem {
     const now = new Date().toISOString();
     return this.#context.transaction(() => {
-      this.#topics.get(input.topicId);
+      if (input.topicId) this.#topics.get(input.topicId);
       const current = this.#requireWorkItem(input.workItemId, input.topicId);
       if (current.version !== input.expectedVersion) {
         throw new CouncilConflictError("实施项已被其他参与者更新，请刷新后重试。");
@@ -400,7 +500,7 @@ export class WorkItemRepository {
         SET status = ?, status_note = ?, fix_commit = ?, version = version + 1,
             updated_by_actor_id = ?, updated_by_snapshot_json = ?,
             updated_at = ?, completed_at = ?
-        WHERE id = ? AND topic_id = ? AND version = ?
+        WHERE id = ? AND version = ?
       `).run(
         input.status,
         statusNote,
@@ -410,7 +510,6 @@ export class WorkItemRepository {
         now,
         completedAt,
         input.workItemId,
-        input.topicId,
         input.expectedVersion,
       );
       if (result.changes !== 1) {
@@ -419,10 +518,7 @@ export class WorkItemRepository {
       if (current.parent_id) {
         this.#recomputeAncestors(current.parent_id, actor.actorId, actorSnapshotJson, now);
       }
-      this.#context.database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?").run(
-        now,
-        input.topicId,
-      );
+      this.#touchTopic(current.topic_id, now);
       const updated = this.#context.database
         .prepare("SELECT * FROM work_items WHERE id = ?")
         .get(input.workItemId) as unknown as WorkItemRow;
@@ -436,7 +532,7 @@ export class WorkItemRepository {
    * 界面才能显示是谁正在修哪一条，而不是只看到一个跑了很久的黑箱。
    */
   claimAsActor(input: {
-    topicId: string;
+    topicId?: string;
     workItemId: string;
     expectedVersion: number;
     statusNote?: string;
@@ -444,7 +540,7 @@ export class WorkItemRepository {
   }): WorkItem {
     const now = new Date().toISOString();
     return this.#context.transaction(() => {
-      this.#topics.get(input.topicId);
+      if (input.topicId) this.#topics.get(input.topicId);
       const current = this.#requireWorkItem(input.workItemId, input.topicId);
       if (current.version !== input.expectedVersion) {
         throw new CouncilConflictError("实施项已被其他参与者更新，请刷新后重试。");
@@ -466,7 +562,7 @@ export class WorkItemRepository {
             assignee_actor_id = ?, claimed_at = ?,
             updated_by_actor_id = ?, updated_by_snapshot_json = ?,
             updated_at = ?, completed_at = NULL
-        WHERE id = ? AND topic_id = ? AND version = ?
+        WHERE id = ? AND version = ?
       `).run(
         statusNote,
         actor.actorId,
@@ -475,7 +571,6 @@ export class WorkItemRepository {
         actorSnapshotJson,
         now,
         input.workItemId,
-        input.topicId,
         input.expectedVersion,
       );
       if (result.changes !== 1) {
@@ -484,10 +579,7 @@ export class WorkItemRepository {
       if (current.parent_id) {
         this.#recomputeAncestors(current.parent_id, actor.actorId, actorSnapshotJson, now);
       }
-      this.#context.database.prepare("UPDATE topics SET updated_at = ? WHERE id = ?").run(
-        now,
-        input.topicId,
-      );
+      this.#touchTopic(current.topic_id, now);
       const updated = this.#context.database
         .prepare("SELECT * FROM work_items WHERE id = ?")
         .get(input.workItemId) as unknown as WorkItemRow;
@@ -520,6 +612,38 @@ export class WorkItemRepository {
       SELECT * FROM work_items
       WHERE ${conditions.join(" AND ")}
       ORDER BY parent_key ASC, sort_order ASC, created_at ASC, rowid ASC
+    `).all(...parameters) as unknown as WorkItemRow[];
+    return rows.map(workItemFromRow);
+  }
+
+  /**
+   * 项目视图：按 project_path 列出任务。议题派生项创建时已拷贝 project_path，所以同样出现在这里；
+   * 排序先按优先级（高在前）再按最近更新，与任务板的阅读顺序一致。
+   */
+  listByProject(input: {
+    projectPath: string;
+    status?: WorkItemStatus;
+    kind?: WorkItemKind;
+    source?: WorkItemSource;
+  }): WorkItem[] {
+    const conditions = ["project_path = ?"];
+    const parameters: Array<string | number> = [input.projectPath];
+    if (input.status) {
+      conditions.push("status = ?");
+      parameters.push(input.status);
+    }
+    if (input.kind) {
+      conditions.push("kind = ?");
+      parameters.push(input.kind);
+    }
+    if (input.source) {
+      conditions.push("source = ?");
+      parameters.push(input.source);
+    }
+    const rows = this.#context.database.prepare(`
+      SELECT * FROM work_items
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY priority DESC, updated_at DESC, rowid DESC
     `).all(...parameters) as unknown as WorkItemRow[];
     return rows.map(workItemFromRow);
   }

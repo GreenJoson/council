@@ -1,5 +1,5 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5/v10→v18、议题关闭、Agent 委派/决策包/实施项树、RuntimeBinding schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v18、议题关闭、Agent 委派/决策包/实施项树、按项目只读任务查询、RuntimeBinding schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,7 +8,7 @@ use council_core::{
     AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
     CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, DecisionStatus,
     MessageKind, PostMessageInput, RecordDecisionInput, TopicStatus, UpdateWorkItemInput,
-    WorkItemProgress, WorkItemStatus,
+    WorkItemKind, WorkItemProgress, WorkItemSource, WorkItemStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -195,6 +195,44 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             .work_items
             .len(),
         2
+    );
+
+    // ---- v18 任务只读查询：议题派生项按议题路径即可列出，不必经议题 ----
+    let tasks = store
+        .list_tasks(" /workspace/project-alpha ", None, None)
+        .expect("tasks by project");
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks.iter().all(|task| {
+        task.project_path.as_deref() == Some("/workspace/project-alpha")
+            && task.source == WorkItemSource::Topic
+            && task.kind == WorkItemKind::Code
+            && task.topic_id.as_deref() == Some(topic.id.as_str())
+    }));
+    let completed_tasks = store
+        .list_tasks(
+            "/workspace/project-alpha",
+            Some(WorkItemStatus::Completed),
+            Some(WorkItemKind::Code),
+        )
+        .expect("filtered tasks");
+    assert_eq!(completed_tasks, vec![completed.clone()]);
+    assert!(
+        store
+            .list_tasks("/workspace/project-alpha", None, Some(WorkItemKind::Image))
+            .expect("image tasks")
+            .is_empty()
+    );
+    assert!(matches!(
+        store.list_tasks("   ", None, None),
+        Err(CouncilError::InvalidData(_))
+    ));
+    assert_eq!(
+        store.get_task(&completed.id).expect("task by id"),
+        Some(completed.clone())
+    );
+    assert_eq!(
+        store.get_task("work_item_missing").expect("missing task"),
+        None
     );
 
     // ---- 实施项树：父状态只能由子任务派生 ----
