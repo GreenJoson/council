@@ -10,7 +10,7 @@
 | `schema-v16-migration.ts` | 迁移步骤 | 增加追加审计、失败分类、恢复来源及审计 revision |
 | `index.ts` | 入口 | 加载配置，等待 schema 迁移完成后连接 stdio MCP |
 | `http-index.ts` | 入口 | 默认迁移 schema 后启动本地 REST/SSE；sidecar 子模式只启动 Kimi 使用的单工具 Git MCP |
-| `server.ts` | 核心 | 绑定 MCP 调用者 Actor，注册不可伪造作者的议题创建/更正/关闭、消息、proposed 决策和可传递请求取消的 Claude 工具 |
+| `server.ts` | MCP 入口 | 绑定不可伪造的 MCP 调用者 Actor，按 topic → message → work-item → claude → status 固定顺序装配 `mcp/` 工具模块；工具实现见 `mcp/_README.md` |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
 | `schema-definitions.ts` | Schema 正本 | 保存 v1–v17 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
@@ -30,7 +30,7 @@
 | `schema-v13-migration.ts` | 迁移步骤 | 将议题从单决策接受扩展为稳定 ID 的多决策包，最后一项接受后才结束议题 |
 | `schema-v14-migration.ts` | 迁移步骤 | 为 Agent 增加职责/权限上限，并建立 supervisor→executor→review 的实施项委派账本 |
 | `agent-execution-policy.ts` | 权限正本 | 定义顾问/执行/审核职责、只读/工作区/完全控制权限，以及每次委派与 Agent 上限的交集规则 |
-| `database.ts` | 核心 | 验证已迁移 schema，以 `updatedAt` CAS 更正 open 议题并安全归档静止议题；区分外部 alias 解析与事务内 active actorId 写入，校验行快照与索引 Actor 一致，并提供无损 Session 历史和单调 revision |
+| `database.ts` | 数据访问入口 | 验证已迁移 schema，持有 SQLite 连接、BEGIN IMMEDIATE 事务、外部 alias 与事务内 active actorId 解析，并以同名同签名转发把议题/消息/决策/实施项操作交给 `database/` 仓储；Session 历史与单调 revision 仍在此；仓储与行映射见 `database/_README.md` |
 | `errors.ts` | 边界 | 定义协议层可安全识别的领域错误 |
 | `project-path.ts` | 边界 | 统一 MCP 与 HTTP 的项目路径规范化和存在性校验 |
 | `prompt-budget.ts` | 安全边界 | 保留可信指令并只裁较早的不可信公开历史 |
@@ -57,6 +57,8 @@
 | `constants.ts` | 常量 | 定义协议枚举和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型与 RuntimeBinding HTTP 配置 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |
+| `mcp/` | MCP 工具 | `council_*` 工具按议题/消息/实施项/Claude/状态分模块注册，共享 Zod 字段、脱敏错误与 Markdown 格式化 |
+| `database/` | 领域仓储 | 议题/消息/决策/实施项仓储与行映射，`database.ts` 通过 `DatabaseContext` 闭包注入连接、事务与 Actor 解析 |
 | `http/` | 协议 | 提供 WebUI 使用的 REST、安全基线与跨进程 SSE |
 | `orchestration/` | 编排 | 接入本机/远程纯 Agent、显式传递安全失败原因、后台 lease 执行、周期恢复与浏览器安全策略 |
 

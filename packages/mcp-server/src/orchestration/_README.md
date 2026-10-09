@@ -19,7 +19,12 @@
 | `acp-delegated-agent-adapter.ts` | Delegated 适配 | 将注册表选定的 ACP session、只读工具/审批和公开文本映射到统一 RuntimeEvent，禁止写操作越过 Council policy |
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
-| `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
+| `service.ts` | 装配与生命周期 | 组装 store、注册表、attention/audit、编排器、执行管理器、CycleDriver 与产品服务；持有配置锁、决策写入器/审核账本挂载、initialize/shutdown 与空闲绑定回收，对外以同名同签名转发注册表与产品服务；`createProductionOrchestrationService` 在此 |
+| `agent-registry.ts` | Agent 注册表 | 固定 Actor 与适配器注册（重复注册即关闭 store 并拒绝）、capabilities 快照与 TTL 刷新、动态 Agent 同步、冻结周期的 Agent/Provider/Runtime 修订与授权能力；`transportKindForProtocol` 在此导出 |
+| `product-service.ts` | 产品用例 | 圆桌周期开始/读取/作答/提交修复/放弃、Run 创建/启动/批准/取消/恢复（模型调用前 fail-fast）、实施计划生成、RuntimeBinding 列表/关闭/重开、Provider/Agent 设置变更与委派单项/批量/接续/取消；Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单，自由 instruction 不能自行扩大授权 |
+| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
+| `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
+| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
 | `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |
 | `work-item-delegation-store.ts` | 委派账本 | 持久化 supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
 | `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；只传当前议题/任务/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
@@ -89,10 +94,8 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续通用 Run。
 已决议题仍允许显式实施计划和委派。一次性实施计划不恢复旧 session、不创建 RuntimeBinding/Run，也不给模型 Council
 写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。显式委派使用独立账本与隔离工作区，完成条件和恢复规则见 [执行交付](../../../../docs/execution-delivery.md)。
-| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
-| `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
-| `service.ts` | 产品聚合 | Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单；自由 instruction 不能自行扩大授权 |
+
+`service.ts` 的初始化顺序固定为 store → 回退路由存储 → `AgentRegistry`（注册循环先于其余 SQLite 句柄，重复注册以原文案拒绝）→ attention → audit → orchestrator → 执行管理器 → CycleDriver → `CouncilProductService`；指向产品服务的回调（`onRunSettled`、CycleRunner、注册表关闭绑定）都是闭包，只在 `initialize()` 或显式调用后解引用。注册表与产品服务之间只有一条边：注册表同步动态 Agent 时通过注入的 `closeRuntimeBinding` 关闭失效绑定。
 
 委派从派发与认领时保存任务版本，成功/失败回写均不能覆盖后续人工作答；已提交检查点在后续模型调用之前保存。活动委派占用的 Agent/Provider 禁止修改配置，Node 与 Rust 同时禁止关闭仍有活动委派的议题。
 
