@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、客户端接入写入/还原徽标、Agent 动态、大屏流体讨论列、
+@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、编辑器引用图片（mock 上传 → council-asset 引用 → 发布后内嵌渲染）、系统 Agent 身份只读、客户端接入写入/还原徽标、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、P3 流水线页（分组、选定 final、失败恢复、新建确认 brief）、
          P4 任务详情右栏「团队」（两列布局、Worker 聚焦切换、打断、归档、结束团队）、
          移动端布局（含 #/pipelines 无横向溢出）和控制台错误的浏览器验收
@@ -9,6 +9,7 @@
 ⚠️ 一旦本文件被更新，务必更新以上注释
 """
 
+import base64
 import os
 from pathlib import Path
 
@@ -497,6 +498,42 @@ def verify_task_team(page) -> None:
     assert panel.get_by_role("button", name="结束团队", exact=True).count() == 0
 
 
+# 1×1 真 PNG：mock 上传按 File 读成 data URI，渲染出来的 img 必须有自然尺寸。
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+def verify_composer_image_attachment(page) -> None:
+    """编辑器「引用图片」：mock 上传 → 正文插入 council-asset: 引用 → 发布后内嵌渲染。"""
+    page.get_by_label("选择要引用的图片").set_input_files(
+        {"name": "settlement-empty-state.png", "mimeType": "image/png", "buffer": TINY_PNG}
+    )
+    page.wait_for_function(
+        "() => (document.querySelector('textarea[placeholder^=\"写下公开结论\"]')?.value ?? '').includes('council-asset:asset_mock_upload_')"
+    )
+    page.get_by_role("button", name="Critique", exact=True).click()
+    page.get_by_role("button", name="发布 Critique", exact=True).click()
+    page.get_by_text("回复已发布并同步", exact=True).wait_for()
+    image = page.locator("img.markdown-image[alt='settlement-empty-state']")
+    image.scroll_into_view_if_needed()
+    image.evaluate(
+        """async (element) => {
+          const settled = element.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                element.addEventListener("load", resolve, { once: true });
+                element.addEventListener("error", resolve, { once: true });
+              });
+          await Promise.race([
+            settled,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("图片加载超时")), 10000)),
+          ]);
+          if (!(element.naturalWidth > 0)) throw new Error("图片未加载：" + element.currentSrc.slice(0, 40));
+        }"""
+    )
+
+
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
@@ -532,6 +569,7 @@ def verify_desktop(browser) -> list[str]:
     page.locator(".topic-row", has_text="支付回调幂等方案").click()
     page.get_by_text("等待 Agent", exact=True).wait_for()
     verify_agent_reply_activity(page)
+    verify_composer_image_attachment(page)
 
     page.get_by_placeholder("写下公开结论、证据或回应…").fill(
         """补充验证：重复回调和乱序回调必须分别覆盖。

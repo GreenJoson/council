@@ -6,12 +6,12 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `asset-repository.ts` | 边界 | 定义资产列表（kind/target/unlinked 查询）/详情/导入/挂接/解除挂接/软删除与同步的缩略图、原文 URL 接口；不提供 subscribe |
+| `asset-repository.ts` | 边界 | 定义资产列表（kind/target/unlinked 查询）/详情/导入/浏览器上传 `uploadImage`/本机图片入库 `ingestLocalFile`/挂接/解除挂接/软删除与同步的缩略图、原文 URL 接口；不提供 subscribe |
 | `asset-api.ts` | 协议 | 严格解析 Asset DTO、可空资产（Tauri `get_asset`）与分页结果；未知 kind/role/targetKind 直接拒绝 |
-| `http-asset-repository.ts` | 真实 | 调用 `/api/v1/assets` REST；201/204 空体由本地 `#send` 处理，挂接/解除后回读资产拿最新 links |
-| `desktop-asset-repository.ts` | 桌面 | 列表/详情走 Tauri `list_assets`/`get_asset`；导入、挂接、删除委托本地 Agent 服务 HTTP，离线写抛诚实指引；图片 URL 指向 sidecar，地址未知时为 undefined |
+| `http-asset-repository.ts` | 真实 | 调用 `/api/v1/assets` REST；上传以原始字节 POST `/upload?project=`，本机入库 POST `/ingest`；201/204 空体由本地 `#send` 处理，挂接/解除后回读资产拿最新 links |
+| `desktop-asset-repository.ts` | 桌面 | 列表/详情走 Tauri `list_assets`/`get_asset`；导入、上传、本机入库、挂接、删除委托本地 Agent 服务 HTTP，离线写抛诚实指引；图片 URL 指向 sidecar，地址未知时为 undefined |
 | `mock-assets.ts` | 示例 | 脱敏夹具：3 张挂在「结算页空状态插画」任务上的 output（其一为 final）、1 张 reference、1 张未挂接的线框图、1 份 PDF；图像均为内联 SVG data URI |
-| `mock-asset-repository.ts` | 原型 | 内存实现：分页、kind/target/unlinked 筛选、按扩展名导入、主键去重的挂接、软删除；刷新即重置 |
+| `mock-asset-repository.ts` | 原型 | 内存实现：分页、kind/target/unlinked 筛选、按扩展名导入、上传读成 data URI 存内存（同名同大小去重）、本机入库诚实拒绝、主键去重的挂接、软删除；刷新即重置 |
 | `create-asset-repository.ts` | 配置 | 按 `VITE_COUNCIL_DATA_MODE` 选择实现；页大小取 `VITE_COUNCIL_ASSET_PAGE_SIZE`（留空 60，上限 100）；mock 返回模块级单例 |
 
 ## 职责
@@ -22,7 +22,7 @@
 
 ## 入口与依赖方向
 
-`features/assets`、`features/tasks` → `create-asset-repository.ts` → 三种实现 → `asset-api.ts` / `http-client.ts` / `desktop-bridge.ts`。`desktop-bridge.ts` 反向只依赖 `asset-api.ts` 的解析函数，不依赖仓储实现。
+`features/assets`、`features/tasks`、`features/discussion`（编辑器引用图片）、`data/markdown-images.ts`（消息内嵌图片） → `create-asset-repository.ts` → 三种实现 → `asset-api.ts` / `http-client.ts` / `desktop-bridge.ts`。`desktop-bridge.ts` 反向只依赖 `asset-api.ts` 的解析函数，不依赖仓储实现。
 
 ## 验证
 

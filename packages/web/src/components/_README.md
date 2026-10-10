@@ -16,7 +16,7 @@
 | `BrandGlyph.tsx` | 品牌 | 离线渲染受控 glyph、供应商名称和语义色；未知品牌使用通用网络图形，不写成 Other |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
 | `ConversationList.tsx` | 导航 | 会话列表栏：顶部项目切换菜单（原生项目/日志库入口）与新建议题，⌘K 搜索框，全部/议题/任务/流水线筛选 chips；议题行时间与实施完成度左右分列（未拆分实施项时不渲染徽标），任务与流水线作为同一条流里的行（全部模式各预览 5 条 + 「更多」链接，任务/流水线模式全量），点行写 hash；≤920px 作为抽屉打开 |
-| `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览，以及正文/议题两种语义化折叠；议题展开后把唯一收起入口移到正文顶部并吸顶，折叠高度从主题 token 读取，内容切换后恢复默认收起；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
+| `MarkdownContent.tsx` | 基础 | 统一 Markdown 渲染入口（react-markdown + remark-gfm + rehype-raw/rehype-sanitize 白名单），提供标题降级、表格滚动、图片/Mermaid 缩略预览、大图浏览（图片 src 经 `data/markdown-images` 解析：`council-asset:` 走资产接口、项目内相对路径走议题只读图片接口；缩略图失败回退原图，仍失败或未连接项目时显示占位），以及正文/议题两种语义化折叠；议题展开后把唯一收起入口移到正文顶部并吸顶，折叠高度从主题 token 读取，内容切换后恢复默认收起；稳定组件映射避免 Mermaid 与高度测量互相触发重挂载 |
 | `MermaidDiagram.tsx` | 基础 | 动态 import mermaid（首屏不加载）把源码渲染成固定上限缩略 SVG；按 data-theme 联动主题，securityLevel 显式声明为 strict；点击放大，失败降级为原始代码块 + 错误提示 |
 | `Lightbox.tsx` | 基础 | 通过 body Portal 提供全视口大图浏览，支持图片与 mermaid SVG、50%–300% 缩放、内部滚动、快捷键和遮罩/Esc/关闭退出；不受消息卡 transform/裁剪影响 |
 | `ImplementationProgress.tsx` | 执行 | 导出右栏 `ImplementationSummary` 完成度摘要与主区 `ImplementationProgress` 任务清单；接受决策不自动调用规划 Agent，用户须先显式选择 Agent 再触发分拆，也可手动添加；任务按 `parentId` 渲染成父子两层，父任务状态由子任务派生且不可手改，完成度只数叶子；审核发现标出阻断/非阻断与复审轮次，叶子可认领并回写修复 commit；叶子只显示最新委派状态摘要与进度，并给出「在任务页管理委派」链接（`#/tasks/<id>`），单条委派面板与历史委派已迁到任务详情，批量委派保留 |

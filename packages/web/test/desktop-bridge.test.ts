@@ -23,6 +23,7 @@ function runtime(selected: string | null): DesktopRuntime {
     }) as DesktopRuntime["invoke"],
     listen: vi.fn(async () => () => undefined) as DesktopRuntime["listen"],
     chooseDirectory: vi.fn(async () => selected),
+    chooseFile: vi.fn(async () => null),
   };
 }
 

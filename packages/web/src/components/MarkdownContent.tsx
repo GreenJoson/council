@@ -4,6 +4,8 @@
  * @output 导出：MarkdownContent 统一 Markdown 渲染组件（GFM、内嵌 HTML 安全渲染、
  *         ```mermaid 围栏内联渲染成缩略图、图片/图表大图浏览、长内容折叠、项目文件内部预览链接）
  * @pos    讨论消息、议题问题与决策文本的唯一 Markdown 渲染入口；安全白名单集中维护于此；
+ *         图片 src 经 data/markdown-images 解析：council-asset: 引用走资产接口、项目内相对路径走议题只读图片接口、
+ *         http(s)/data 直出；解析不到（mock 或无议题）显示「需连接项目」占位，缩略图加载失败回退原图，仍失败显示失败占位；
  *         mermaid 走独立渲染路径（不经 rehype-raw 的 HTML 注入），架构档案图集复用同一份
  *         MermaidDiagram/Lightbox 保证渲染与主题联动逻辑一致
  *
@@ -20,6 +22,12 @@ import remarkGfm from "remark-gfm";
 import { useI18n } from "../i18n/I18nProvider";
 import { Lightbox, type LightboxContent } from "./Lightbox";
 import { MermaidDiagram } from "./MermaidDiagram";
+import {
+  isCouncilAssetReference,
+  isDirectImageSrc,
+  resolveMarkdownImageSrc,
+  type ResolvedMarkdownImage,
+} from "../data/markdown-images";
 import { isProjectFileLink } from "../data/project-files";
 import { useOpenProjectFile } from "../hooks/useProjectFiles";
 import { ProjectFileIcon } from "./files/ProjectFileIcon";
@@ -42,7 +50,8 @@ const COLLAPSE_LABELS: Record<
  * 标题、列表、引用块等常见标签，且不含 script/iframe/on* 事件属性）为基础做最小追加：
  * - img 显式补充 alt/title（默认 schema 通过通配符 "*" 已隐式允许，这里显式声明便于审计）；
  * - img 的 src 额外放行 data: 协议，用于消息里内嵌的 data URI 缩略图（例如小型 SVG 图标），
- *   避免真实场景下必须外链图床。绝不放行 script、事件属性或未在白名单内的标签。
+ *   避免真实场景下必须外链图床；再放行 council-asset: 资产引用，它不是可导航地址，
+ *   由 MarkdownImage 解析成资产接口 URL 后才进 <img>。绝不放行 script、事件属性或未在白名单内的标签。
  *
  * 注意：react-markdown 在这层 sanitize 之前，还会用自带的 urlTransform 预先过滤 href/src——
  * 默认白名单只有 http(s)/ircs?/mailto/xmpp，data: 会被提前清空，光改这里的 protocols 不够，
@@ -57,7 +66,7 @@ const markdownSanitizeSchema: Schema = {
   protocols: {
     ...(defaultSchema.protocols ?? {}),
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
-    src: [...(defaultSchema.protocols?.src ?? []), "data"],
+    src: [...(defaultSchema.protocols?.src ?? []), "data", "council-asset"],
   },
 };
 
@@ -67,7 +76,7 @@ const SAFE_DATA_IMAGE_SRC = /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64
 const markdownUrlTransform: UrlTransform = (url, key, node) => {
   // 本地 href 只交给按钮与受限文件接口，绝不作为 WebView 导航地址。
   if (key === "href" && isProjectFileLink(url)) return url;
-  if (key === "src" && node.tagName === "img" && SAFE_DATA_IMAGE_SRC.test(url)) {
+  if (key === "src" && node.tagName === "img" && (SAFE_DATA_IMAGE_SRC.test(url) || isCouncilAssetReference(url))) {
     return url;
   }
   return defaultUrlTransform(url);
@@ -194,6 +203,8 @@ export function MarkdownContent({
         src={typeof src === "string" ? src : ""}
         alt={alt ?? ""}
         title={title}
+        topicId={topicId}
+        basePath={fileBasePath}
         onOpen={(openedSrc, openedAlt) =>
           setLightboxContent({ kind: "image", src: openedSrc, alt: openedAlt })}
       />
@@ -268,7 +279,16 @@ interface MarkdownImageProps {
   src: string;
   alt: string;
   title?: string;
+  topicId?: string;
+  basePath?: string;
   onOpen: (src: string, alt: string) => void;
+}
+
+/** undefined = 解析中；null = 当前环境给不出地址（mock / 无议题 / 无服务）。 */
+type ImageResolution = ResolvedMarkdownImage | null | undefined;
+
+function directImage(src: string): ImageResolution {
+  return isDirectImageSrc(src) ? { thumbnail: src, full: src } : undefined;
 }
 
 function textOf(value: ReactNode): string {
@@ -278,16 +298,49 @@ function textOf(value: ReactNode): string {
   return "";
 }
 
-/** 缩略图：加载失败时退化为占位提示，不留一个破图标 */
-function MarkdownImage({ src, alt, title, onOpen }: MarkdownImageProps) {
+/**
+ * 缩略图：src 先经 resolveMarkdownImageSrc 解析（资产引用 / 项目内相对路径 / 直出地址），
+ * 解析不到显示「需连接项目」占位；缩略图加载失败先退回原图（缩略图命令不可用时 404），
+ * 原图也失败才退化为失败占位，不留一个破图标。
+ */
+function MarkdownImage({ src, alt, title, topicId, basePath, onOpen }: MarkdownImageProps) {
   const { t } = useI18n();
+  const [resolved, setResolved] = useState<ImageResolution>(() => directImage(src));
   const [hasError, setHasError] = useState(false);
+  const [useFull, setUseFull] = useState(false);
 
-  if (!src || hasError) {
+  useEffect(() => {
+    const direct = directImage(src);
+    setResolved(direct);
+    setHasError(false);
+    setUseFull(false);
+    if (direct || !src) {
+      if (!src) setResolved(null);
+      return undefined;
+    }
+    let cancelled = false;
+    resolveMarkdownImageSrc({ src, topicId, basePath })
+      .then((value) => { if (!cancelled) setResolved(value ?? null); })
+      .catch(() => { if (!cancelled) { setResolved(null); setHasError(true); } });
+    return () => { cancelled = true; };
+  }, [src, topicId, basePath]);
+
+  if (hasError || resolved === null) {
+    const label = hasError
+      ? (alt ? t("{alt}（加载失败）", { alt }) : t("图片加载失败"))
+      : (alt ? t("{alt}（需连接项目后查看）", { alt }) : t("图片需连接项目后查看"));
     return (
-      <span className="markdown-image-fallback" role="img" aria-label={alt || t("图片加载失败")}>
+      <span className="markdown-image-fallback" role="img" aria-label={label}>
         <ImageOff size={15} aria-hidden="true" />
-        <span>{alt ? t("{alt}（加载失败）", { alt }) : t("图片加载失败")}</span>
+        <span>{label}</span>
+      </span>
+    );
+  }
+
+  if (resolved === undefined) {
+    return (
+      <span className="markdown-image-fallback" role="img" aria-busy="true" aria-label={alt || t("图片")}>
+        <span>{alt || t("图片")}</span>
       </span>
     );
   }
@@ -295,13 +348,16 @@ function MarkdownImage({ src, alt, title, onOpen }: MarkdownImageProps) {
   return (
     <img
       className="markdown-image"
-      src={src}
+      src={useFull ? resolved.full : resolved.thumbnail}
       alt={alt}
       title={title}
       loading="lazy"
       decoding="async"
-      onError={() => setHasError(true)}
-      onClick={() => onOpen(src, alt)}
+      onError={() => {
+        if (!useFull && resolved.full !== resolved.thumbnail) setUseFull(true);
+        else setHasError(true);
+      }}
+      onClick={() => onOpen(resolved.full, alt)}
     />
   );
 }

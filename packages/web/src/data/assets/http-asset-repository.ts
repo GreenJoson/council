@@ -1,6 +1,6 @@
 /**
  * @input  依赖：http-client 的 URL 构造/统一请求/错误类型、asset-api 严格解析器
- * @output 导出：HttpAssetRepository（/api/v1/assets 全量 REST 实现）与其构造参数类型
+ * @output 导出：HttpAssetRepository（/api/v1/assets 全量 REST 实现，含 upload 原始字节上传与 ingest 本机路径入库）与其构造参数类型
  * @pos    http 模式的资产仓储；桌面模式也用它承接写操作（每次按 sidecar 地址与当前项目路径构造）。
  *         缩略图与原文只生成 URL，由 <img src>/<a href> 直接加载，不经 fetch
  *
@@ -76,6 +76,25 @@ export class HttpAssetRepository implements AssetRepository {
       createApiUrl(this.#baseUrl, "/api/v1/assets/import"),
       parseAsset,
       jsonRequest({ projectPath: this.#projectPath, relativePath }),
+    );
+  }
+
+  async uploadImage(file: File): Promise<Asset> {
+    // 正文直接是文件字节，由服务端嗅探真实类型；content-type 只作提示。
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/assets/upload", { project: this.#projectPath }),
+      parseAsset,
+      { method: "POST", headers: { "content-type": file.type || "application/octet-stream" }, body: file },
+    );
+  }
+
+  async ingestLocalFile(sourcePath: string): Promise<Asset> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/assets/ingest"),
+      parseAsset,
+      jsonRequest({ projectPath: this.#projectPath, sourcePath }),
     );
   }
 

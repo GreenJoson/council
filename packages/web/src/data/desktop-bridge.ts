@@ -1,7 +1,8 @@
 /**
- * @input  依赖：Tauri invoke、event 与原生目录对话框
+ * @input  依赖：Tauri invoke、event 与原生目录/文件对话框
  * @output 导出：可注入测试的 DesktopBridge（含议题关闭/决策包接受/实施项写入、任务只读查询
- *         list_tasks/get_task 与资产只读查询 list_assets/get_asset 的严格解析）、设置类型与本地 Agent 服务配置/健康解析
+ *         list_tasks/get_task 与资产只读查询 list_assets/get_asset 的严格解析、引用图片的原生文件选择 chooseImageFile）、
+ *         设置类型与本地 Agent 服务配置/健康解析
  * @pos    浏览器领域代码进入 Tauri IPC 的唯一低层边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -53,7 +54,12 @@ export interface DesktopRuntime {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
   listen<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn>;
   chooseDirectory(title: string): Promise<string | null>;
+  /** 单选文件；extensions 为不带点的扩展名白名单。取消返回 null。 */
+  chooseFile(title: string, extensions: readonly string[]): Promise<string | null>;
 }
+
+/** 编辑器「引用图片」允许的扩展名；与服务端资产图片白名单一致。 */
+export const IMAGE_FILE_EXTENSIONS: readonly string[] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
 export interface DesktopBridge {
   getSettings(): Promise<DesktopSettings>;
@@ -79,6 +85,8 @@ export interface DesktopBridge {
   listAssets(args: DesktopListAssetsArgs): Promise<AssetPage>;
   /** 不存在时为 null。 */
   getAsset(id: string): Promise<Asset | null>;
+  /** 原生选择器选一张本机图片，返回绝对路径；取消为 null。路径只交给本地 Agent 服务入库，不进消息正文。 */
+  chooseImageFile(): Promise<string | null>;
   listenChanged(handler: (payload: unknown) => void): Promise<UnlistenFn>;
   getOrchestrationConfig(): Promise<DesktopOrchestrationConfig>;
   checkOrchestrationService(): Promise<DesktopOrchestrationHealth>;
@@ -97,6 +105,15 @@ const tauriRuntime: DesktopRuntime = {
   listen: tauriListen,
   chooseDirectory: async (title) => {
     const selected = await open({ directory: true, multiple: false, title });
+    return typeof selected === "string" ? selected : null;
+  },
+  chooseFile: async (title, extensions) => {
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      title,
+      filters: [{ name: "图片", extensions: [...extensions] }],
+    });
     return typeof selected === "string" ? selected : null;
   },
 };
@@ -218,6 +235,7 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
       offset: args.offset,
     })),
     getAsset: async (id) => parseOptionalAsset(await runtime.invoke<unknown>("get_asset", { id })),
+    chooseImageFile: () => runtime.chooseFile("选择要引用的图片", IMAGE_FILE_EXTENSIONS),
     listenChanged: (handler) => runtime.listen("council://changed", handler),
     getOrchestrationConfig: async () =>
       parseOrchestrationConfig(await runtime.invoke("get_orchestration_config")),

@@ -1123,4 +1123,10 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "把 Council MCP 注册与 Council Skill 写入本机 Claude Code / Codex 配置。写入前自动备份原文件，可随时还原；只改 Council 自己的片段。": "Write the Council MCP registration and Council Skill into the local Claude Code / Codex config. Original files are backed up first and can be restored at any time; only Council's own fragment is changed.",
   "正在读取客户端接入状态…": "Loading client access status…",
   "客户端接入操作失败": "Client access operation failed",
+  "引用图片": "Attach image",
+  "正在加入图片…": "Adding image…",
+  "选择要引用的图片": "Choose an image to attach",
+  "只能引用图片文件": "Only image files can be attached",
+  "图片需连接项目后查看": "Connect the project to view this image",
+  "{alt}（需连接项目后查看）": "{alt} (connect the project to view)",
 };

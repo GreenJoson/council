@@ -1,7 +1,10 @@
 /**
- * @input  依赖：议题绑定项目、文件引用、集中预览预算与敏感路径策略
- * @output 导出：ProjectFilePreviewService，返回只读文本/Markdown/表格预览
- * @pos    HTTP 文件入口的业务边界；拒绝越界/敏感路径及符号链接逃逸，文件内容不写数据库与日志
+ * @input  依赖：议题绑定项目、文件引用、集中预览预算与敏感路径策略、assets/asset-sniff 的文件头嗅探
+ * @output 导出：ProjectFilePreviewService（preview 只读文本/Markdown/表格预览、image 项目内图片字节只读出站）与 ProjectImagePayload
+ * @pos    HTTP 文件入口的业务边界；解析与读取两段共用：拒绝越界/敏感路径及符号链接逃逸，文件内容不写数据库与日志；
+ *         图片出站要求扩展名与文件头都是图片，大小沿用预览上限
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
@@ -9,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { getAsset, isSea } from "node:sea";
+import { sniffAssetMime } from "./assets/asset-sniff.js";
 import { HttpError } from "./http/responses.js";
 import { isProtectedProjectRelativePath } from "./project-path-policy.js";
 import { DEFAULT_PROJECT_FILE_PREVIEW_CONFIG, type ProjectFilePreviewConfig } from "./project-file-preview-config.js";
@@ -19,6 +23,13 @@ const TEXT_EXTENSIONS = new Set([
   ".rs", ".go", ".sql", ".sh", ".bash", ".zsh", ".log", ".csv", ".tsv", ".svg",
 ]);
 const SPREADSHEET_EXTENSIONS = new Set([".xlsx", ".csv", ".tsv"]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
+
+export interface ProjectImagePayload {
+  bytes: Buffer;
+  mime: string;
+  name: string;
+}
 
 function within(root: string, target: string): boolean {
   const rel = path.relative(root, target);
@@ -42,12 +53,48 @@ export class ProjectFilePreviewService {
   constructor(readonly config: ProjectFilePreviewConfig = DEFAULT_PROJECT_FILE_PREVIEW_CONFIG) {}
 
   async preview(projectPath: string | undefined, href: string, basePath?: string) {
+    const { absolute, relativePath } = await this.#resolve(projectPath, href, basePath);
+    const extension = path.extname(absolute).toLowerCase();
+    if (!TEXT_EXTENSIONS.has(extension) && !SPREADSHEET_EXTENSIONS.has(extension) && !/^(readme|license|dockerfile|makefile)$/i.test(path.basename(absolute))) {
+      throw new HttpError(415, "暂不支持此文件格式；可预览 XLSX、CSV、Markdown 和文本配置文件。");
+    }
+    const { bytes, updatedAt } = await this.#readBytes(absolute);
+    const metadata = { name: path.basename(absolute), relativePath, sizeBytes: bytes.length, updatedAt };
+    if (SPREADSHEET_EXTENSIONS.has(extension)) {
+      if (this.#active) throw new HttpError(429, "正在解析另一个表格，请稍后重试。");
+      this.#active = true;
+      try { return { ...metadata, kind: "spreadsheet" as const, ...await this.#spreadsheet(bytes, extension) }; }
+      finally { this.#active = false; }
+    }
+    let text: string;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    catch { throw new HttpError(415, "文件不是 UTF-8 文本，暂时无法预览。"); }
+    if (text.includes("\0")) throw new HttpError(415, "文件不是可预览的文本格式。");
+    return {
+      ...metadata, kind: extension === ".md" || extension === ".markdown" ? "markdown" as const : "text" as const,
+      text: text.slice(0, this.config.maxTextChars), truncated: text.length > this.config.maxTextChars,
+    };
+  }
+
+  /** 消息正文里项目相对路径图片的只读出站：扩展名与文件头都必须是图片；字节不入库、不写日志。 */
+  async image(projectPath: string | undefined, href: string, basePath?: string): Promise<ProjectImagePayload> {
+    const { absolute } = await this.#resolve(projectPath, href, basePath);
+    if (!IMAGE_EXTENSIONS.has(path.extname(absolute).toLowerCase())) {
+      throw new HttpError(415, "该文件不是图片，无法作为图片显示。");
+    }
+    const { bytes } = await this.#readBytes(absolute);
+    const mime = sniffAssetMime(bytes);
+    if (!mime?.startsWith("image/")) throw new HttpError(415, "该文件内容不是图片，无法显示。");
+    return { bytes, mime, name: path.basename(absolute) };
+  }
+
+  /** 议题项目根 + 引用 → 真实绝对路径；越界、敏感路径、符号链接逃逸一律 403，不存在 404。 */
+  async #resolve(projectPath: string | undefined, href: string, basePath?: string): Promise<{ absolute: string; relativePath: string }> {
     if (!projectPath) throw new HttpError(409, "议题未绑定项目目录，无法预览项目文件。");
-    let root: string;
     let absolute: string;
     let relativePath: string;
     try {
-      root = await realpath(projectPath);
+      const root = await realpath(projectPath);
       const base = basePath ? path.resolve(root, localPath(basePath)) : root;
       const requested = path.resolve(basePath ? path.dirname(base) : base, localPath(href));
       const lexicalRoot = within(root, requested) ? root : path.resolve(projectPath);
@@ -63,10 +110,11 @@ export class ProjectFilePreviewService {
       if (error instanceof HttpError) throw error;
       throw new HttpError(404, "项目文件不存在或不可读取，可能已移动或删除。");
     }
-    const extension = path.extname(absolute).toLowerCase();
-    if (!TEXT_EXTENSIONS.has(extension) && !SPREADSHEET_EXTENSIONS.has(extension) && !/^(readme|license|dockerfile|makefile)$/i.test(path.basename(absolute))) {
-      throw new HttpError(415, "暂不支持此文件格式；可预览 XLSX、CSV、Markdown 和文本配置文件。");
-    }
+    return { absolute, relativePath };
+  }
+
+  /** 校验后的路径读入内存：非阻塞打开、NOFOLLOW、inode 复核，超过预览上限 413。 */
+  async #readBytes(absolute: string): Promise<{ bytes: Buffer; updatedAt: string }> {
     let bytes: Buffer;
     let updatedAt: string;
     try {
@@ -96,21 +144,7 @@ export class ProjectFilePreviewService {
       if (error instanceof HttpError) throw error;
       throw new HttpError(404, "项目文件不存在或不可读取，可能已移动或删除。");
     }
-    const metadata = { name: path.basename(absolute), relativePath, sizeBytes: bytes.length, updatedAt };
-    if (SPREADSHEET_EXTENSIONS.has(extension)) {
-      if (this.#active) throw new HttpError(429, "正在解析另一个表格，请稍后重试。");
-      this.#active = true;
-      try { return { ...metadata, kind: "spreadsheet" as const, ...await this.#spreadsheet(bytes, extension) }; }
-      finally { this.#active = false; }
-    }
-    let text: string;
-    try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-    catch { throw new HttpError(415, "文件不是 UTF-8 文本，暂时无法预览。"); }
-    if (text.includes("\0")) throw new HttpError(415, "文件不是可预览的文本格式。");
-    return {
-      ...metadata, kind: extension === ".md" || extension === ".markdown" ? "markdown" as const : "text" as const,
-      text: text.slice(0, this.config.maxTextChars), truncated: text.length > this.config.maxTextChars,
-    };
+    return { bytes, updatedAt };
   }
 
   async #spreadsheet(bytes: Buffer, extension: string): Promise<{

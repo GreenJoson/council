@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,8 +9,10 @@
 import json
 import os
 import re
+import struct
 import subprocess
 import time
+import zlib
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
@@ -66,6 +68,59 @@ def api_expect_error(
         assert envelope["code"] == expected_status, envelope
         return envelope
     raise AssertionError(f"API {method} {path} 应返回 {expected_status}")
+
+
+def tiny_png(rgb: tuple[int, int, int]) -> bytes:
+    """1×1 真 PNG：服务端按文件头嗅探并解析 IHDR，不同颜色得到不同 sha256 以区分去重用例。"""
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"\x00" + bytes(rgb))) + chunk(b"IEND", b"")
+
+
+def api_upload(path: str, data: bytes, content_type: str):
+    """浏览器上传入口：请求正文就是文件字节；返回 (HTTP 状态, 资产)。"""
+    request = Request(f"{API_URL}{path}", data=data, headers={"Origin": WEB_ORIGIN, "Content-Type": content_type}, method="POST")
+    try:
+        with LOCAL_OPENER.open(request, timeout=10) as response:
+            status = response.status
+            envelope = json.load(response)
+    except HTTPError as error:
+        detail = error.read().decode(errors="replace")
+        raise AssertionError(f"上传 {path} 失败：{error.code} {detail}") from error
+    assert envelope["code"] == 0, envelope
+    return status, envelope["data"]
+
+
+def api_upload_expect_error(path: str, data: bytes, content_type: str, expected_status: int):
+    request = Request(f"{API_URL}{path}", data=data, headers={"Origin": WEB_ORIGIN, "Content-Type": content_type}, method="POST")
+    try:
+        LOCAL_OPENER.open(request, timeout=10)
+    except HTTPError as error:
+        envelope = json.loads(error.read().decode(errors="replace"))
+        assert error.code == expected_status, envelope
+        return envelope
+    raise AssertionError(f"上传 {path} 应返回 {expected_status}")
+
+
+def wait_for_image_loaded(image) -> None:
+    """消息内嵌图片是 loading=lazy，先滚进视口，再等真正解码出尺寸；失败占位会替换掉 img，所以要限时。"""
+    image.scroll_into_view_if_needed()
+    image.evaluate(
+        """async (element) => {
+          const settled = element.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                element.addEventListener("load", resolve, { once: true });
+                element.addEventListener("error", resolve, { once: true });
+              });
+          await Promise.race([
+            settled,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("图片加载超时：" + element.currentSrc)), 10000)),
+          ]);
+          if (!(element.naturalWidth > 0)) throw new Error("图片未加载：" + element.currentSrc);
+        }"""
+    )
 
 
 def create_and_start_run(
@@ -206,6 +261,57 @@ with sync_playwright() as playwright:
     failure_page.get_by_role("button", name="已删除文件", exact=True).click()
     failure_page.get_by_role("dialog", name="文件预览：missing.json", exact=True).get_by_role("alert").filter(has_text="可能已移动或删除").wait_for()
     failure_page.close()
+
+    # 消息图片：项目内相对路径经议题只读图片接口出站；council-asset: 引用经资产接口渲染并自动挂到消息。
+    api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": "项目内架构草图：\n\n![架构草图](docs/logo.png)",
+    })
+    project_image = page.locator("img.markdown-image[alt='架构草图']")
+    wait_for_image_loaded(project_image)
+    project_image_src = project_image.get_attribute("src") or ""
+    assert f"/api/v1/topics/{topic_id}/files/image?" in project_image_src and "docs%2Flogo.png" in project_image_src, project_image_src
+
+    upload_path = f"/api/v1/assets/upload?project={quote(PROJECT_PATH, safe='')}"
+    upload_status, uploaded = api_upload(upload_path, tiny_png((200, 30, 30)), "image/png")
+    assert upload_status == 201 and uploaded["kind"] == "image", (upload_status, uploaded)
+    duplicate_status, duplicate = api_upload(upload_path, tiny_png((200, 30, 30)), "image/png")
+    assert duplicate_status == 200 and duplicate["id"] == uploaded["id"], (duplicate_status, duplicate)
+    asset_message = api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": f"API 上传的参考图：\n\n![上传图](council-asset:{uploaded['id']})",
+    })
+    asset_image = page.locator("img.markdown-image[alt='上传图']")
+    wait_for_image_loaded(asset_image)
+    assert f"/api/v1/assets/{uploaded['id']}/" in (asset_image.get_attribute("src") or "")
+    linked = api_request("GET", f"/api/v1/assets/{uploaded['id']}")
+    assert any(
+        link["targetKind"] == "message" and link["targetId"] == asset_message["id"] and link["role"] == "reference"
+        for link in linked["links"]
+    ), linked["links"]
+
+    # 编辑器「引用图片」：浏览器端经隐藏文件输入上传，正文插入 council-asset: 引用，发布后内嵌渲染并挂到新消息。
+    page.get_by_label("选择要引用的图片").set_input_files(
+        {"name": "composer-upload.png", "mimeType": "image/png", "buffer": tiny_png((30, 30, 200))}
+    )
+    page.wait_for_function(
+        "() => /council-asset:asset_[A-Za-z0-9_-]+/.test(document.querySelector('textarea[placeholder^=\"写下公开结论\"]')?.value ?? '')"
+    )
+    composer_value = page.get_by_placeholder("写下公开结论、证据或回应…").input_value()
+    composer_asset_id = re.search(r"council-asset:(asset_[A-Za-z0-9_-]+)", composer_value).group(1)
+    assert composer_asset_id != uploaded["id"]
+    page.get_by_role("button", name="Critique", exact=True).click()
+    page.get_by_role("button", name="发布 Critique", exact=True).click()
+    page.get_by_text("回复已发布并同步", exact=True).wait_for()
+    wait_for_image_loaded(page.locator("img.markdown-image[alt='composer-upload']"))
+    detail = api_request("GET", f"/api/v1/topics/{topic_id}")
+    composer_message = next(message for message in detail["messages"] if composer_asset_id in message["content"])
+    composer_links = api_request("GET", f"/api/v1/assets/{composer_asset_id}")["links"]
+    assert any(
+        link["targetKind"] == "message" and link["targetId"] == composer_message["id"] for link in composer_links
+    ), composer_links
+
+    for href, status in [("../outside.png", 403), ("docs/missing.png", 404), ("docs/design.md", 415)]:
+        api_expect_error("GET", f"/api/v1/topics/{topic_id}/files/image?href={quote(href, safe='')}", status)
+    api_upload_expect_error(upload_path, b"not an image", "text/plain", 415)
 
     capabilities = api_request("GET", "/api/v1/orchestration/capabilities")
     claude_adapter = next(

@@ -514,6 +514,26 @@ export const importAssetBodySchema = z
   })
   .strict();
 
+/** 浏览器上传图片字节：项目路径走查询串，请求正文是原始文件内容（路由级 raw 解析）。 */
+export const uploadAssetQuerySchema = z.object({ project: taskProjectPathSchema }).strict();
+
+/** 桌面壳把用户在原生文件选择器里选中的本机绝对路径交给服务入库，原文件不复制不移动。 */
+export const ingestAssetBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    sourcePath: nonBlankString(MAX_PATH_CHARS),
+  })
+  .strict();
+
+// ---- 项目文件引用（议题预览 body 与图片出站 query 共用） ----
+
+export const projectFileReferenceSchema = z
+  .object({
+    href: z.string().trim().min(1).max(4096),
+    basePath: z.string().trim().min(1).max(4096).optional(),
+  })
+  .strict();
+
 export const addAssetLinkBodySchema = z
   .object({
     targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
