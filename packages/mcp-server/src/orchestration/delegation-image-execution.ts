@@ -34,6 +34,7 @@ import {
 import { normalizeProjectPath } from "../project-path.js";
 import type { WorkItem } from "../types.js";
 import type { ResolvedDelegationTask } from "./delegation-task-resolver.js";
+import { redactAuditText } from "./runtime-audit-store.js";
 import type { WorkItemDelegationStore } from "./work-item-delegation-store.js";
 
 // ┌─────────────────────────────────────────────────────────────┐
@@ -288,6 +289,12 @@ export async function executeImageDelegation(
   }
 
   const deduplicated = collected.localDuplicates + ingest.deduplicated;
+  // 清单是模型自述：notes 与逐张 prompt 落库前统一脱敏；path 已被协议约束为相对路径。
+  const publicManifest = {
+    schemaVersion: manifest.schemaVersion,
+    outputs: manifest.outputs.map((output) => ({ ...output, prompt: redactAuditText(output.prompt) })),
+    notes: redactAuditText(manifest.notes),
+  };
   const statusNote = compact(
     `图像已入库 ${String(ingest.assetIds.length)} 张（去重 ${String(deduplicated)} 张），等待人工验收。`,
     MAX_WORK_ITEM_STATUS_NOTE_CHARS,
@@ -303,8 +310,8 @@ export async function executeImageDelegation(
   deps.store.update(id, {
     status: "approved",
     headCommit: workspace.baseCommit,
-    summary: compact(`${statusNote}${manifest.notes ? ` ${manifest.notes}` : ""}`, 8_000),
-    outputManifest: { ...manifest },
+    summary: compact(`${statusNote}${publicManifest.notes ? ` ${publicManifest.notes}` : ""}`, 8_000),
+    outputManifest: publicManifest,
     now: new Date().toISOString(),
   });
   return workspace.baseCommit;
@@ -458,7 +465,7 @@ async function ingestOutputs(
         projectPath: input.projectPath,
         sourcePath: file.absolutePath,
         origin: { delegationId: input.delegationId },
-        prompt: file.prompt,
+        prompt: redactAuditText(file.prompt),
       });
       deps.assets.addLink(result.asset.id, "work_item", input.workItemId, "output");
       if (result.deduplicated) deduplicated += 1;
