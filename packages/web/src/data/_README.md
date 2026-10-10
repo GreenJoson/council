@@ -35,6 +35,7 @@
 | `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 | `decision-package.ts` | 查询 | 计算议题 proposed/accepted 决策包状态，支持逐条或批量接受而不把列表压成单条结论 |
 | `assets/` | 资产域 | P2 资产库仓储接口、协议解析、http/desktop/mock 三实现与选择入口（页大小 `VITE_COUNCIL_ASSET_PAGE_SIZE`），详见 `assets/_README.md` |
+| `pipelines/` | 流水线域 | P3 流水线仓储接口、`council-pipeline` 协议解析、http/desktop/mock 三实现与选择入口；不新增 SSE，靠两路 revision 重读，详见 `pipelines/_README.md` |
 | `tasks/` | 任务域 | v18 任务（直接任务 + 议题实施项）仓储接口、协议解析、http/desktop/mock 三实现与选择入口，详见 `tasks/_README.md` |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。

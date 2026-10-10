@@ -30,6 +30,7 @@ import "./styles/model-router.css";
 import "./styles/manual-decision.css";
 import "./styles/tasks.css";
 import "./styles/assets.css";
+import "./styles/pipelines.css";
 import "./styles/responsive.css";
 
 initTheme();

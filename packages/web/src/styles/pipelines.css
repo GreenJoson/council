@@ -1,0 +1,288 @@
+/*
+ * 流水线（features/pipelines）：#/pipelines 列表阶段徽标、详情阶段轨道、人工操作区、
+ * select 阶段并排对比与新建对话框差异。容器与分组沿用 tasks.css 的 tasks-view / tasks-group，
+ * 只用 theme.css 语义 token；720px 以下轨道纵向堆叠、对比单列，保证 375px 无横向滚动。
+ */
+
+/* ============================== */
+/* 阶段徽标（列表行、轨道、头部共用） */
+/* ============================== */
+
+.pipeline-stage-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pipeline-stage-badge.is-running { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.pipeline-stage-badge.is-waiting_human { border-color: var(--color-warning); background: var(--color-warning-soft); }
+.pipeline-stage-badge.is-completed { border-color: var(--color-positive); background: var(--color-positive-soft); }
+.pipeline-stage-badge.is-failed { border-color: var(--color-danger); background: var(--color-danger-soft); }
+.pipeline-stage-badge.is-skipped { color: var(--color-text-muted); }
+
+.pipeline-row.is-done strong {
+  color: var(--color-text-secondary);
+}
+
+/* ============================== */
+/* 阶段轨道 */
+/* ============================== */
+
+.pipeline-track {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-stage {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-top-width: 3px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  font-size: 12px;
+}
+
+.pipeline-stage.is-running { border-top-color: var(--color-primary); }
+.pipeline-stage.is-waiting_human { border-top-color: var(--color-warning); }
+.pipeline-stage.is-completed { border-top-color: var(--color-positive); }
+.pipeline-stage.is-failed { border-top-color: var(--color-danger); }
+
+.pipeline-stage.is-current {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.pipeline-stage-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.pipeline-stage-time {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.pipeline-stage-error {
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+
+.pipeline-stage-error code {
+  font-family: var(--font-mono);
+}
+
+.pipeline-stage-link {
+  color: var(--color-primary);
+  font-size: 12px;
+}
+
+/* ============================== */
+/* 人工操作区 */
+/* ============================== */
+
+.pipeline-controls-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pipeline-global-actions {
+  justify-content: flex-start;
+}
+
+.secondary-button.is-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.pipeline-reviews {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-reviews li {
+  display: grid;
+  gap: 4px;
+}
+
+.pipeline-reviews p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pipeline-final-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* ============================== */
+/* select 阶段并排对比 */
+/* ============================== */
+
+.pipeline-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pipeline-compare[data-columns="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pipeline-compare-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  transition: border-color var(--transition-fast);
+}
+
+.pipeline-compare-card.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.pipeline-compare-preview {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.pipeline-compare-preview:disabled {
+  cursor: default;
+}
+
+.pipeline-compare-preview .asset-thumbnail {
+  width: 100%;
+}
+
+.pipeline-compare-missing {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.pipeline-compare-card figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.pipeline-compare-card figcaption label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.pipeline-compare-card code {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* ============================== */
+/* 新建对话框差异 */
+/* ============================== */
+
+.pipeline-template-options {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pipeline-template-options legend {
+  margin-bottom: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.pipeline-template-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.pipeline-template-option.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.pipeline-template-option > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pipeline-template-option small {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.pipeline-agent-row {
+  grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+}
+
+/* ============================== */
+/* 窄屏：轨道纵向、对比单列 */
+/* ============================== */
+
+@media (max-width: 720px) {
+  .pipeline-track {
+    grid-auto-flow: row;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pipeline-compare,
+  .pipeline-compare[data-columns="3"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
