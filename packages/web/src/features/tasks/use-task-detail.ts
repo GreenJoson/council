@@ -1,6 +1,7 @@
 /**
  * @input  依赖：TaskRepository（由 TasksView 注入）、路由中的 taskId、内容 revision 与编排 revision
- * @output 导出：useTaskDetail —— 任务详情读取、加载/错误态、手动重读，以及状态更新、简报保存、发起（代码/图像）/取消委派写操作与忙碌标记
+ * @output 导出：useTaskDetail —— 任务详情读取、加载/错误态、手动重读，以及状态更新、简报保存、发起（代码/图像）/取消委派、
+ *         以团队模式发起 Lead 委派（返回新团队交给 use-task-team）写操作与忙碌标记
  * @pos    任务详情的状态与副作用层；调用方按 taskId 作 key 重挂载，切换任务不残留旧详情；
  *         写操作返回的最新行就地合并，随后仍以 revision 驱动的重读为准
  *
@@ -11,10 +12,14 @@ import { useCallback, useEffect, useState } from "react";
 import { getErrorMessage } from "../../data/error-message";
 import type { TaskRepository } from "../../data/tasks/task-repository";
 import type { StartTaskDelegationInput, WorkItemDelegation } from "../../types/orchestration";
+import type { StartTaskTeamInput, TaskTeam } from "../../types/team";
 import type { TaskDetail, UpdateTaskInput } from "../../types/tasks";
 
 /** 委派面板（代码 / 图像）发起时提交的字段；expectedVersion 由 hook 用当前任务版本补齐。 */
 export type TaskDelegationStartInput = Omit<StartTaskDelegationInput, "expectedVersion">;
+
+/** 团队模式发起时提交的字段；expectedVersion 由 hook 补齐。 */
+export type TaskTeamStartInput = Omit<StartTaskTeamInput, "expectedVersion">;
 
 export interface TaskDetailState {
   detail: TaskDetail | null;
@@ -31,6 +36,8 @@ export interface TaskDetailState {
   saveBrief: (brief: Record<string, unknown>) => Promise<boolean>;
   startDelegation: (input: TaskDelegationStartInput) => Promise<void>;
   cancelDelegation: (delegationId: string) => Promise<void>;
+  /** 团队模式发起：成功返回新团队（Lead 委派已并入 delegations），失败写 actionError(kind=delegate) 并返回 null。 */
+  startTeam: (input: TaskTeamStartInput) => Promise<TaskTeam | null>;
 }
 
 function byCreatedAtDesc(left: WorkItemDelegation, right: WorkItemDelegation): number {
@@ -126,6 +133,26 @@ export function useTaskDetail(
     }
   }
 
+  async function startTeam(input: TaskTeamStartInput): Promise<TaskTeam | null> {
+    if (!task) return null;
+    // 与单执行者委派共用忙碌键，面板按钮的转圈与禁用逻辑不用区分两种发起方式。
+    setBusyAction(`delegate:${task.id}`);
+    setActionError(null);
+    try {
+      const { team, leadDelegation } = await repository.startTaskTeam(task.id, { ...input, expectedVersion: task.version });
+      setDetail((current) => current && current.task.id === leadDelegation.workItemId
+        ? { ...current, delegations: [leadDelegation, ...current.delegations.filter((entry) => entry.id !== leadDelegation.id)] }
+        : current);
+      reload();
+      return team;
+    } catch (reason: unknown) {
+      setActionError({ kind: "delegate", message: getErrorMessage(reason) });
+      return null;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function cancelDelegation(delegationId: string): Promise<void> {
     setBusyAction(`cancel-delegation:${delegationId}`);
     setActionError(null);
@@ -141,5 +168,5 @@ export function useTaskDetail(
     }
   }
 
-  return { detail, isLoading, loadError, actionError, busyAction, reload, updateStatus, saveBrief, startDelegation, cancelDelegation };
+  return { detail, isLoading, loadError, actionError, busyAction, reload, updateStatus, saveBrief, startDelegation, cancelDelegation, startTeam };
 }
