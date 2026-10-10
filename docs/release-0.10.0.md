@@ -37,3 +37,19 @@
 - 启动后核对 schema v20 就绪、历史议题与任务完整。旧二进制不读 v20；回退必须配合对应版本的迁移前备份。
 - 团队模式要求执行者是带 @别名的系统 Claude/Codex CLI Agent；检查点/合并与 Lead 正在写文件并发时，半写文件可能被收进检查点提交。
 - 浏览器验收使用 Agent 替身，不代表真实上游模型已验收；E2E 在高负载下首轮偶发 `agent_timeout`，重跑一次再判定。
+
+## 真实验收（桌面替换后）
+
+2026-10-11 用已安装的 `/Applications/Council.app`（0.10.0，内嵌提交 `8f93fd8`，二进制与干净提交的构建产物逐字节一致）完成。先把设置切到临时日志库与临时项目，用真实的系统 Claude / Codex CLI 走通各条链路，再切回真实日志库：
+
+| 项目 | 结果 |
+|---|---|
+| 替换 | 退出 0.9.8，经 `POST /api/v1/service/actions/stop` 停掉旧 Agent Service（200），旧应用打包保留在应用支持目录 `app-backups/`，日志库先做一致性备份（v19，`quick_check` ok）再替换安装包 |
+| 临时库启动 | 新库直接建到 schema v20，`/api/v1/status` ready |
+| Agent 连通 | 系统 Claude、Codex CLI 经内置 Agent Service 的测试动作均通过（权限档 `workspace_write`） |
+| 流水线（app-mockup） | brief 由真实 Claude 起草→人工确认；真实 Codex 生图 1 张（1024×1536）→评审 pass→选定终稿→真实 Codex 实现原型（新增 `prototype/index.html`）并经 Claude 评审 approved；五个阶段全部 completed，原型子任务按 human 完成策略等待人工验收 |
+| Worker 团队 | 执行者 Claude、监督 Codex，`maxParallel` 2；Lead 经内置 sidecar（`--council-stdio-mcp`）拿到团队工具，并行派出 2 个 Worker：Worker B 通过并合并；Worker A 首轮因命令需审批而以检查点结束，Lead 归档后重派 v2，通过并合并（2 个 `--no-ff` 合并提交）；Lead 最终以检查点交接（`workspace_write` 下无法运行 node 做验证），任务进入 blocked，链路与限制均与设计一致 |
+| 消息图片 | `POST /api/v1/assets/upload` 入库→消息正文引用 `council-asset:<id>`→资产反查到该消息的 reference 挂接 |
+| 真实库迁移 | 还原设置后重启：迁移器自动生成 `council.schema-v19-*.sqlite3.backup`，主库 `user_version` 20、`quick_check` ok，议题 84 / 消息 2159 / 任务 640 / 决策 178 与迁移前一致 |
+
+限制：两个 Agent 都以 `workspace_write` 验收，未验 `danger_full_access`；界面未做视觉驱动，证据来自 HTTP API、日志库与临时项目的 git 记录；内置限流（120 次/分钟）与桌面自身轮询共用，外部轮询须放慢，否则会收到 429。
