@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文与人工验收边界检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,11 +8,12 @@
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import ConsoleMessage, sync_playwright
@@ -100,6 +101,20 @@ def wait_for_run_status(run_id: str, expected_status: str, timeout: float = 10):
             break
         time.sleep(0.05)
     raise AssertionError(f"Run {run_id} 未进入 {expected_status}：{last_run}")
+
+
+def stage_status(page, stage_id: str) -> str | None:
+    return page.locator(f".pipeline-track [data-stage-id='{stage_id}']").get_attribute("data-stage-status")
+
+
+def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 60000) -> None:
+    """等阶段轨道上某阶段进入给定状态之一；真实后端经替身 Agent 推进，比 mock 慢，默认 60 秒。"""
+    page.wait_for_function(
+        "([id, statuses]) => statuses.includes("
+        "document.querySelector(`.pipeline-track [data-stage-id='${id}']`)?.dataset.stageStatus)",
+        arg=[stage_id, list(statuses)],
+        timeout=timeout,
+    )
 
 
 def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
@@ -559,7 +574,7 @@ with sync_playwright() as playwright:
         screenshot = Path(SCREENSHOT_PATH)
         screenshot.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot.with_name("audit-expanded.png")), full_page=True)
-    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_role("button", name=re.compile(r"^需要我处理")).click()  # 徽标会把可访问名拼成「需要我处理 · N 个…」，只按前缀匹配
     page.get_by_role("heading", name="需要我处理", exact=True).wait_for()
     page.locator(".work-attention-view").get_by_text("等待回复或确认 1", exact=False).wait_for()
     if SCREENSHOT_PATH:
@@ -568,7 +583,7 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="确认并完成", exact=True).click()
     page.get_by_text("确认已提交，自动轮次继续", exact=True).wait_for()
     wait_for_run_status(claude_run["id"], "completed")
-    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_role("button", name=re.compile(r"^需要我处理")).click()  # 徽标会把可访问名拼成「需要我处理 · N 个…」，只按前缀匹配
     page.get_by_text("当前没有需要处理的事项。", exact=True).wait_for()
     page.get_by_role("button", name="议题", exact=True).click()
 
@@ -643,11 +658,14 @@ with sync_playwright() as playwright:
         "mentionAlias": "acceptance-reviewer", "enabled": True,
         "permissionProfile": "read_only", "executionRole": "reviewer",
     })
-    api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+    created = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
         "items": [{"title": "验证交付表单", "details": "检查提交与验收证据"}],
     })
+    item_id = created[0]["id"]
+    # 单条委派入口已迁到任务详情页，直接按任务 id 打开；只改 hash 不会重新加载页面，
+    # 需 reload 才能取到刚配置的 Agent 能力。
+    page.goto(f"{WEB_URL}#/tasks/{item_id}", wait_until="domcontentloaded")
     page.reload(wait_until="domcontentloaded")
-    page.get_by_role("tab", name="任务", exact=False).click()
     page.get_by_role("button", name="委派", exact=True).click()
     delegation_form = page.locator(".work-item-delegation-form")
     delegation_form.wait_for()
@@ -697,8 +715,7 @@ with sync_playwright() as playwright:
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
     page.on("console", lambda message: collect_console_error(message, console_errors))
     page.on("pageerror", lambda error: console_errors.append(str(error)))
-    page.goto(WEB_URL, wait_until="domcontentloaded")
-    page.get_by_role("tab", name="任务", exact=False).click()
+    page.goto(f"{WEB_URL}#/tasks/{completed['workItemId']}", wait_until="domcontentloaded")
     page.get_by_text("执行段：2/4", exact=True).wait_for()
     page.get_by_text("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。", exact=True).wait_for()
     if SCREENSHOT_PATH:
@@ -717,6 +734,7 @@ with sync_playwright() as playwright:
     paused = wait_delegation("failed")
     assert paused["failureCode"] == "execution_no_progress", paused
     assert paused["execution"]["segmentsUsed"] == 2 and not paused.get("headCommit"), paused
+    page.goto(f"{WEB_URL}#/tasks/{blocked_item['id']}", wait_until="domcontentloaded")
     page.get_by_text("已暂停，等待接续", exact=True).wait_for()
 
     # 对应实际故障：CLI 回合上限中断后，有安全文件进展和会话才能自动接续。
@@ -783,6 +801,341 @@ with sync_playwright() as playwright:
         "acceptanceCriteria": "保留全部约束", "completionPolicy": "human",
     })
     assert api_request("GET", f"/api/v1/topics/{oversized_topic['id']}/work-item-delegations") == []
+
+    # 直接任务闭环：不经议题，从浏览器新建 -> REST 委派 -> Agent 执行审核 -> 人工在任务页验收完成；
+    # 全程议题数量不变，证明任务已是一等入口而不是议题的附属。
+    topics_before = api_request("GET", "/api/v1/topics", None)["total"]
+    page.goto(f"{WEB_URL}#/tasks", wait_until="domcontentloaded")
+    page.get_by_role("button", name="新建任务", exact=True).click()
+    page.get_by_label("任务标题", exact=True).fill("直接任务闭环")
+    page.get_by_label("任务说明", exact=False).fill("COUNCIL_SEGMENT_E2E：直接任务两段交付")
+    page.get_by_role("button", name="创建任务", exact=True).click()
+    page.get_by_role("heading", name="直接任务闭环", exact=True).wait_for()
+    direct_tasks = api_request("GET", f"/api/v1/tasks?project={PROJECT_PATH}&source=direct")
+    direct_task = next(task for task in direct_tasks if task["title"] == "直接任务闭环")
+    assert direct_task.get("topicId") is None and direct_task["kind"] == "code", direct_task
+    direct_detail = api_request("GET", f"/api/v1/tasks/{direct_task['id']}")
+    assert direct_detail.get("topic") is None and direct_detail["delegations"] == [], direct_detail
+    api_request("POST", f"/api/v1/tasks/{direct_task['id']}/delegations", {
+        "expectedVersion": direct_task["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_SEGMENT_E2E：直接任务两段交付", "completionPolicy": "human",
+        "kind": "code", "inputAssetIds": [],
+    })
+
+    def wait_task_delegation(task_id, expected, timeout=20):
+        deadline = time.monotonic() + timeout
+        latest = None
+        while time.monotonic() < deadline:
+            runs = api_request("GET", f"/api/v1/tasks/{task_id}/delegations")
+            latest = runs[0] if runs else None
+            if latest and latest["status"] == expected:
+                return latest
+            if latest and latest["status"] in {"failed", "cancelled", "approved"}:
+                break
+            time.sleep(0.1)
+        raise AssertionError(f"任务委派没有达到 {expected}：{latest}")
+
+    direct_done = wait_task_delegation(direct_task["id"], "approved")
+    assert direct_done.get("topicId") is None and direct_done["kind"] == "code", direct_done
+    assert direct_done["execution"]["segmentsUsed"] == 2 and direct_done.get("headCommit"), direct_done
+    for filename in ["stage-one.txt", "stage-two.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{direct_done['headCommit']}:{filename}"]).strip()
+    # 人工验收在任务页完成：证据必填，保存后状态落库。
+    page.goto(f"{WEB_URL}#/tasks/{direct_task['id']}", wait_until="domcontentloaded")
+    page.get_by_text("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。", exact=True).wait_for()
+    status_form = page.locator(".task-status-form")
+    status_form.get_by_label("任务状态", exact=True).select_option("completed")
+    assert status_form.get_by_role("button", name="保存进度", exact=True).is_disabled()
+    status_form.get_by_label("说明", exact=True).fill("已核对两段交付提交")
+    status_form.get_by_role("button", name="保存进度", exact=True).click()
+    page.locator(".task-status-form").get_by_role("button", name="保存进度", exact=True).wait_for()
+    deadline = time.monotonic() + 10
+    while True:
+        finished_task = api_request("GET", f"/api/v1/tasks/{direct_task['id']}")["task"]
+        if finished_task["status"] == "completed":
+            break
+        assert time.monotonic() < deadline, finished_task
+        time.sleep(0.1)
+    assert finished_task["statusNote"] == "已核对两段交付提交", finished_task
+    assert api_request("GET", "/api/v1/topics", None)["total"] == topics_before
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("direct-task-completed.png")), full_page=True)
+
+    # 图像委派闭环：Codex（替身）生图 -> 三路收集按 sha256 去重入库 -> 以 output 角色挂到任务；
+    # 监督者省略时取默认 Claude，completionPolicy 强制 human，工作项停在 in_progress 等人工验收。
+    router_snapshot = api_request("GET", "/api/v1/settings/model-router")
+    codex_provider = next(provider for provider in router_snapshot["providers"] if provider["protocol"] == "codex-cli")
+    if codex_provider["status"] != "active":
+        api_request("PUT", f"/api/v1/settings/providers/{codex_provider['id']}", {
+            "displayName": codex_provider["displayName"], "brandAssetId": codex_provider["brandAssetId"],
+            "active": True,
+        })
+    codex_agent = next(agent for agent in router_snapshot["agents"] if agent["providerId"] == codex_provider["id"])
+    api_request("PUT", f"/api/v1/settings/agents/{codex_agent['id']}", {
+        "displayName": codex_agent["displayName"], "model": codex_agent["model"],
+        "mentionAlias": codex_agent["mentionAlias"], "enabled": True,
+        "permissionProfile": "workspace_write", "executionRole": "executor",
+    })
+    image_brief = {
+        "schemaVersion": 1, "kind": "custom", "goal": "图像委派闭环验收",
+        "deliverables": [{"id": "hero", "description": "首页主视觉占位图", "size": "1024x1024"}],
+        "acceptance": ["产物入库并挂到任务"],
+    }
+    image_task = api_request("POST", "/api/v1/tasks", {
+        "projectPath": PROJECT_PATH, "title": "图像委派闭环", "kind": "image", "brief": image_brief,
+    })
+    assert image_task["kind"] == "image", image_task
+    # 执行者不是 Codex 时固定拒绝，且不留下委派记录。
+    rejected = api_expect_error("POST", f"/api/v1/tasks/{image_task['id']}/delegations", 400, {
+        "expectedVersion": image_task["version"], "executorAgentId": completed["executorAgentId"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "产物入库", "completionPolicy": "human",
+        "kind": "image", "inputAssetIds": [],
+    })
+    assert "生图需要本机 ChatGPT 登录的 Codex" in rejected["message"], rejected
+    assert api_request("GET", f"/api/v1/tasks/{image_task['id']}/delegations") == []
+    api_request("POST", f"/api/v1/tasks/{image_task['id']}/delegations", {
+        "expectedVersion": image_task["version"], "executorAgentId": codex_agent["id"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "产物入库", "completionPolicy": "review",
+        "kind": "image", "inputAssetIds": [],
+    })
+    image_done = wait_task_delegation(image_task["id"], "approved")
+    assert image_done["kind"] == "image" and image_done["completionPolicy"] == "human", image_done
+    assert image_done["supervisorAgentId"] == completed["executorAgentId"], image_done
+    assert image_done["headCommit"] == image_done["baseCommit"], image_done
+    manifest_outputs = image_done["outputManifest"]["outputs"]
+    assert manifest_outputs and all(not item["path"].startswith("/") for item in manifest_outputs), image_done
+    image_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{image_task['id']}")
+    assert image_assets["total"] >= 2 and all(asset["kind"] == "image" for asset in image_assets["items"]), image_assets
+    content_request = Request(
+        f"{API_URL}/api/v1/assets/{image_assets['items'][0]['id']}/content", headers={"Origin": WEB_ORIGIN},
+    )
+    with LOCAL_OPENER.open(content_request, timeout=5) as response:
+        assert response.headers.get_content_type() == "image/png", response.headers
+        assert response.read(8) == b"\x89PNG\r\n\x1a\n"
+    image_item = api_request("GET", f"/api/v1/tasks/{image_task['id']}")["task"]
+    assert image_item["status"] == "in_progress" and "等待人工验收" in image_item["statusNote"], image_item
+    # 投递目录 .council/ 已写入 exclude，项目工作区保持干净。
+    council_status = subprocess.run(
+        ["git", "-C", PROJECT_PATH, "status", "--porcelain", "--", ".council"],
+        check=True, capture_output=True, text=True,
+    )
+    assert council_status.stdout == "", council_status.stdout
+    # 第二轮：先经 PUT 写入 brief，再以首轮产物作参考图委派；同内容产物按 sha256 去重仍挂到新任务。
+    variant_task = api_request("POST", "/api/v1/tasks", {
+        "projectPath": PROJECT_PATH, "title": "图像变体闭环", "kind": "image",
+    })
+    variant_task = api_request("PUT", f"/api/v1/tasks/{variant_task['id']}", {
+        "status": variant_task["status"], "expectedVersion": variant_task["version"],
+        "brief": {**image_brief, "goal": "基于参考图出变体"},
+    })
+    assert variant_task["brief"]["goal"] == "基于参考图出变体", variant_task
+    reference_id = image_assets["items"][0]["id"]
+    api_request("POST", f"/api/v1/tasks/{variant_task['id']}/delegations", {
+        "expectedVersion": variant_task["version"], "executorAgentId": codex_agent["id"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "变体入库", "completionPolicy": "human",
+        "kind": "image", "inputAssetIds": [reference_id],
+    })
+    variant_done = wait_task_delegation(variant_task["id"], "approved")
+    assert variant_done["inputAssetIds"] == [reference_id], variant_done
+    variant_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{variant_task['id']}")
+    assert variant_assets["total"] >= 2, variant_assets
+    first_ids = {asset["id"] for asset in image_assets["items"]}
+    assert {asset["id"] for asset in variant_assets["items"]} == first_ids, (variant_assets, first_ids)
+
+    # P3 流水线闭环：brief（Claude 替身）→ 人工确认 → 生图（Codex 替身）→ 复盘首轮 revise 自动修订 → 次轮 pass
+    # → 人工选终稿 → 原型代码委派；另一条 concept-sheet 首轮生图无产物失败后 resume，
+    # 第二次清单损坏（草稿图已入库）再 resume，复盘只看本次入库的产物，最后取消。
+    pipeline_started = time.monotonic()
+
+    def wait_pipeline(pipeline_id, predicate, description, timeout=60):
+        deadline = time.monotonic() + timeout
+        latest = None
+        while time.monotonic() < deadline:
+            latest = api_request("GET", f"/api/v1/pipelines/{pipeline_id}")
+            if predicate(latest):
+                return latest
+            time.sleep(0.1)
+        raise AssertionError(f"流水线没有到达{description}：{json.dumps(latest, ensure_ascii=False)[:4000]}")
+
+    def pipeline_stage(detail, stage_id):
+        return next(stage for stage in detail["document"]["stages"] if stage["id"] == stage_id)
+
+    def waiting_at(stage_id):
+        return lambda detail: detail["document"]["currentStageId"] == stage_id \
+            and pipeline_stage(detail, stage_id)["status"] == "waiting_human"
+
+    api_expect_error("POST", "/api/v1/tasks", 400, {"projectPath": PROJECT_PATH, "title": "绕过入口", "kind": "pipeline"})
+    mockup_payload = {
+        "project": PROJECT_PATH, "template": "app-mockup",
+        "goal": "COUNCIL_SEGMENT_E2E PIPELINE_HANDOFF_ONCE 流水线：记账 App 首页与详情页",
+        "agents": {"prototype": {
+            "executor": completed["executorAgentId"], "supervisor": completed["supervisorAgentId"],
+        }},
+    }
+    mockup = api_request("POST", "/api/v1/pipelines", mockup_payload)["pipeline"]
+    mockup_id = mockup["task"]["id"]
+    assert mockup["task"]["kind"] == "pipeline" and mockup["task"]["source"] == "direct", mockup
+    assert mockup["task"]["title"] == f"[App 原型] {mockup_payload['goal']}", mockup
+    api_expect_error("POST", "/api/v1/pipelines", 409, mockup_payload)
+    mockup = wait_pipeline(mockup_id, waiting_at("brief"), " brief 待确认")
+    draft = mockup["document"]["draftBrief"]
+    assert draft["kind"] == "app-mockup" and draft["nextStage"]["kind"] == "prototype", draft
+    version = mockup["task"]["version"]
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 400,
+                     {"brief": {**draft, "kind": "concept-sheet"}, "expectedVersion": version})
+    # 交付物 count 合计超过单次生图上限（默认 16）也在确认时拒绝
+    oversized = {**draft, "deliverables": [{**item, "count": 16} for item in draft["deliverables"]]}
+    assert sum(item["count"] for item in oversized["deliverables"]) > 16, oversized
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 400,
+                     {"brief": oversized, "expectedVersion": version})
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 409,
+                     {"brief": draft, "expectedVersion": version + 1})
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/final", 409,
+                     {"assetIds": sorted(first_ids)[:1], "expectedVersion": version})
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/resume", 409, {"expectedVersion": version})
+    api_request("POST", f"/api/v1/pipelines/{mockup_id}/brief", {"brief": draft, "expectedVersion": version})
+    mockup = wait_pipeline(mockup_id, waiting_at("select"), "选定终稿")
+    document = mockup["document"]
+    assert [review["verdict"] for review in document["reviews"]] == ["revise", "pass"], document
+    assert document["revisionCount"] == 1, document
+    image_children = [child for child in mockup["children"] if child["kind"] == "image"]
+    assert len(image_children) == 2, mockup["children"]
+    assert all(child["source"] == "pipeline" and child["parentId"] == mockup_id for child in image_children), image_children
+    assert mockup["outputAssetIds"], mockup
+    listed = api_request("GET", f"/api/v1/pipelines?project={quote(PROJECT_PATH)}")["items"]
+    assert any(item["id"] == mockup_id and item["currentStageId"] == "select" for item in listed), listed
+    version = mockup["task"]["version"]
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/final", 400,
+                     {"assetIds": ["asset_00000000-0000-0000-0000-000000000000"], "expectedVersion": version})
+    final_ids = mockup["outputAssetIds"][:1]
+    mockup = api_request("POST", f"/api/v1/pipelines/{mockup_id}/final", {"assetIds": final_ids, "expectedVersion": version})
+    assert mockup["document"]["finalAssetIds"] == final_ids, mockup["document"]
+    parent_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{mockup_id}")
+    assert any(
+        asset["id"] == final_ids[0] and any(link["role"] == "final" and link["targetId"] == mockup_id for link in asset["links"])
+        for asset in parent_assets["items"]
+    ), parent_assets
+    for child in mockup["children"]:
+        if child["kind"] == "image":
+            assert child["status"] == "completed" and child["statusNote"] == "已在流水线中选定终稿", child
+    prototype_child = next(child for child in mockup["children"] if child["kind"] == "prototype")
+    # 原型第一段以 canContinue:false 交接（沙箱不许起服务验证）→ 委派 execution_checkpoint、阶段 failed 带接续提示；
+    # 流水线「恢复」接续上一次委派而不是重做：新委派带 resumedFromId、沿用输入图，第一段的文件保留进最终提交。
+    prototype_paused = wait_task_delegation(prototype_child["id"], "failed", timeout=30)
+    assert prototype_paused["failureCode"] == "execution_checkpoint" and not prototype_paused.get("headCommit"), prototype_paused
+    mockup = wait_pipeline(mockup_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "failed", "原型交接暂停")
+    prototype_error = pipeline_stage(mockup, "prototype")["error"]
+    assert prototype_error["code"] == "execution_checkpoint" and "接续" in prototype_error["message"], prototype_error
+    mockup = api_request("POST", f"/api/v1/pipelines/{mockup_id}/resume", {"expectedVersion": mockup["task"]["version"]})
+    assert pipeline_stage(mockup, "prototype")["status"] == "running", mockup["document"]
+    prototype_done = wait_task_delegation(prototype_child["id"], "approved", timeout=30)
+    assert prototype_done["id"] != prototype_paused["id"], prototype_done
+    assert prototype_done["resumedFromId"] == prototype_paused["id"], prototype_done
+    assert prototype_done["kind"] == "code" and prototype_done["inputAssetIds"] == final_ids, prototype_done
+    assert prototype_done["completionPolicy"] == "human", prototype_done
+    for filename in ["stage-one.txt", "stage-two.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{prototype_done['headCommit']}:{filename}"]).strip()
+    mockup = wait_pipeline(mockup_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "completed", "原型完成")
+    prototype_task = next(child for child in mockup["children"] if child["id"] == prototype_child["id"])
+    assert prototype_task["status"] == "in_progress", prototype_task
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/cancel", 409, {"expectedVersion": mockup["task"]["version"]})
+
+    concept = api_request("POST", "/api/v1/pipelines", {
+        "project": PROJECT_PATH, "template": "concept-sheet",
+        "goal": "COUNCIL_PIPELINE_NO_OUTPUTS_ONCE COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 概念设定：森林守卫",
+    })["pipeline"]
+    concept_id = concept["task"]["id"]
+    concept = wait_pipeline(concept_id, waiting_at("brief"), " brief 待确认")
+    api_request("POST", f"/api/v1/pipelines/{concept_id}/brief", {
+        "brief": concept["document"]["draftBrief"], "expectedVersion": concept["task"]["version"],
+    })
+    concept = wait_pipeline(concept_id, lambda detail: pipeline_stage(detail, "image")["status"] == "failed", "生图失败")
+    assert pipeline_stage(concept, "image")["error"]["code"] == "outputs_missing", concept["document"]
+    failed_child = pipeline_stage(concept, "image")["workItemId"]
+    concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/resume", {"expectedVersion": concept["task"]["version"]})
+    # 第二次重跑：替身写了一张草稿图但清单损坏 → manifest_invalid；草稿图已入库，以 output 挂在同一子任务上。
+    concept = wait_pipeline(
+        concept_id,
+        lambda detail: pipeline_stage(detail, "image")["status"] == "failed"
+        and pipeline_stage(detail, "image")["error"]["code"] == "manifest_invalid",
+        "清单损坏失败",
+    )
+    assert pipeline_stage(concept, "image")["workItemId"] == failed_child, concept["document"]
+    draft_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{failed_child}")
+    assert draft_assets["total"] == 1, draft_assets
+    draft_asset_id = draft_assets["items"][0]["id"]
+    concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/resume", {"expectedVersion": concept["task"]["version"]})
+    concept = wait_pipeline(concept_id, waiting_at("select"), "选定终稿")
+    concept_images = [child for child in concept["children"] if child["kind"] == "image"]
+    # resume 只对原子任务重新委派，不新建子任务；同一子任务的产物不因重跑翻倍（草稿 1 张 + 本次 2 张）。
+    assert len(concept_images) == 2 and concept_images[0]["id"] == failed_child, concept["children"]
+    rerun_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{failed_child}")
+    assert rerun_assets["total"] == 3, rerun_assets
+    # 复盘只看本次委派入库的产物：失败尝试留下的草稿图不进复盘，也不会被当成修订对象。
+    reviewed_asset_ids = {item["assetId"] for review in concept["document"]["reviews"] for item in review["items"]}
+    assert reviewed_asset_ids and draft_asset_id not in reviewed_asset_ids, concept["document"]["reviews"]
+    assert all(item["deliverableId"] == "main-screen" for item in concept["document"]["reviews"][0]["items"]), concept["document"]["reviews"]
+    # 选定阶段仍能从子任务全部 output 资产里挑，草稿图也在并排对比之列。
+    assert len(concept["outputAssetIds"]) == len(set(concept["outputAssetIds"])) == 3, concept
+    assert draft_asset_id in concept["outputAssetIds"], concept
+    concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/cancel", {"expectedVersion": concept["task"]["version"]})
+    assert concept["document"]["status"] == "cancelled", concept["document"]
+    select_stage = pipeline_stage(concept, "select")
+    assert select_stage["status"] == "skipped" and select_stage["error"]["code"] == "cancelled", select_stage
+    cancelled_version = concept["task"]["version"]
+    api_expect_error("POST", f"/api/v1/pipelines/{concept_id}/final", 409,
+                     {"assetIds": concept["outputAssetIds"][:1], "expectedVersion": cancelled_version})
+    api_expect_error("POST", f"/api/v1/pipelines/{concept_id}/resume", 409, {"expectedVersion": cancelled_version})
+    print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
+
+    # P3 流水线界面（http 模式，真实后端 + 替身 Agent）：列表分组与取消徽标 → 已完成详情 →
+    # 界面新建 concept-sheet → 确认 brief → 自动修订后并排勾选 → 选定收尾（无原型阶段，父任务直接完成）
+    ui_started = time.monotonic()
+    page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
+    page.get_by_role("heading", name="流水线", exact=True).wait_for()
+    page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{mockup_id}']").wait_for()
+    cancelled_row = page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{concept_id}']")
+    cancelled_row.wait_for()
+    assert "已取消" in cancelled_row.locator(".pipeline-stage-badge").inner_text()
+    page.locator(f"[data-pipeline-id='{mockup_id}']").click()
+    page.locator(f"[data-pipeline-detail='{mockup_id}']").wait_for()
+    for stage_id in ("brief", "image", "review", "select", "prototype"):
+        wait_stage(page, stage_id, ("completed",))
+    assert page.locator("[data-pipeline-final] code").count() == len(final_ids)
+
+    page.get_by_role("link", name="返回流水线列表").click()
+    page.get_by_role("button", name="新建流水线", exact=True).click()
+    dialog = page.locator("dialog.pipeline-create-dialog")
+    dialog.get_by_role("radio", name="概念设定图").check()
+    dialog.get_by_role("textbox", name="目标").fill("界面新建：概念设定图冒烟")
+    dialog.get_by_role("button", name="创建流水线", exact=True).click()
+    page.wait_for_function("location.hash.startsWith('#/pipelines/')")
+    ui_pipeline_id = page.locator("[data-pipeline-detail]").get_attribute("data-pipeline-detail")
+    assert ui_pipeline_id and ui_pipeline_id not in (mockup_id, concept_id), ui_pipeline_id
+    wait_stage(page, "brief", ("waiting_human",))
+    brief_control = page.locator("[data-pipeline-control='brief']")
+    brief_control.locator(".brief-editor").wait_for()
+    brief_control.get_by_role("button", name="确认简报", exact=True).click()
+    wait_stage(page, "brief", ("completed",))
+    wait_stage(page, "select", ("waiting_human",))
+    assert stage_status(page, "image") == "completed" and stage_status(page, "review") == "completed"
+    compare = page.locator(".pipeline-compare")
+    compare.wait_for()
+    final_boxes = compare.get_by_role("checkbox", name="选为最终稿")
+    assert final_boxes.count() >= 1
+    final_boxes.nth(0).check()
+    page.get_by_role("button", name="选定", exact=True).click()
+    wait_stage(page, "select", ("completed",))
+    page.locator("[data-pipeline-final] code").first.wait_for()
+    ui_detail = api_request("GET", f"/api/v1/pipelines/{ui_pipeline_id}")
+    assert ui_detail["task"]["status"] == "completed" and ui_detail["document"]["template"] == "concept-sheet", ui_detail["task"]
+    assert len(ui_detail["document"]["reviews"]) == 2 and ui_detail["document"]["revisionCount"] == 1, ui_detail["document"]
+    assert len(ui_detail["document"]["finalAssetIds"]) == 1, ui_detail["document"]
+    page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
+    page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{ui_pipeline_id}']").wait_for()
+    print(f"P3 流水线界面通过，耗时 {time.monotonic() - ui_started:.1f}s")
+    page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 
     second_topic = api_request(
         "POST",

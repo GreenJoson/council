@@ -1,5 +1,5 @@
 //! @input 依赖：Council TypeScript 内容协议与 serde
-//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项、分页、revision 和写入输入类型
+//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项（v18 含 kind/source/priority/project_path/brief，topic_id 可空）、v19 资产（Asset/AssetLink/AssetTargetFilter/PaginatedAssets，不含存储路径）、分页、revision 和写入输入类型
 //! @pos Rust 与现有 MCP/HTTP camelCase 领域模型的同构类型正本
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -82,6 +82,69 @@ impl WorkItemOrigin {
         match value {
             "manual" => Some(Self::Manual),
             "review_finding" => Some(Self::ReviewFinding),
+            _ => None,
+        }
+    }
+}
+
+/// v18 任务类型：决定委派走哪条执行管线，默认 code。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemKind {
+    Code,
+    Image,
+    Prototype,
+    Research,
+    Pipeline,
+}
+
+impl WorkItemKind {
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Image => "image",
+            Self::Prototype => "prototype",
+            Self::Research => "research",
+            Self::Pipeline => "pipeline",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "code" => Some(Self::Code),
+            "image" => Some(Self::Image),
+            "prototype" => Some(Self::Prototype),
+            "research" => Some(Self::Research),
+            "pipeline" => Some(Self::Pipeline),
+            _ => None,
+        }
+    }
+}
+
+/// v18 任务来源：topic 一定挂议题；direct/pipeline 不挂议题、靠 project_path 定位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkItemSource {
+    Topic,
+    Direct,
+    Pipeline,
+}
+
+impl WorkItemSource {
+    #[allow(dead_code)]
+    pub(crate) const fn as_db(self) -> &'static str {
+        match self {
+            Self::Topic => "topic",
+            Self::Direct => "direct",
+            Self::Pipeline => "pipeline",
+        }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "topic" => Some(Self::Topic),
+            "direct" => Some(Self::Direct),
+            "pipeline" => Some(Self::Pipeline),
             _ => None,
         }
     }
@@ -188,11 +251,14 @@ pub struct Decision {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// brief 是任意 JSON 对象，serde_json::Value 不实现 Eq，所以这里只派生 PartialEq。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkItem {
     pub id: String,
-    pub topic_id: String,
+    /// v18 起可空：direct/pipeline 来源的任务不挂议题。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<String>,
     /// 审核发现可以先于决策存在，因此锚点是可选的。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_id: Option<String>,
@@ -220,6 +286,14 @@ pub struct WorkItem {
     pub assignee_actor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_at: Option<String>,
+    pub kind: WorkItemKind,
+    pub source: WorkItemSource,
+    pub priority: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
+    /// 来自 brief_json 列，数据库约束保证是 JSON object 或 NULL。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief: Option<serde_json::Value>,
     pub created_by_actor_id: String,
     pub created_by_snapshot: ActorSnapshot,
     pub updated_by_actor_id: String,
@@ -241,7 +315,8 @@ pub struct WorkItemProgress {
     pub open_blocking_findings: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// 内含 WorkItem（带 serde_json::Value），无法派生 Eq。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopicDetail {
     pub topic: Topic,
@@ -353,6 +428,128 @@ pub struct ClaimWorkItemInput {
     pub status_note: Option<String>,
     pub expected_version: u32,
     pub actor_alias: String,
+}
+
+// v19 资产库：只读镜像 Node 的公开 DTO，不含 project_path 与 storage_rel_path。
+string_enum!(AssetKind {
+    Image => "image",
+    Model3d => "model3d",
+    Document => "document",
+    Archive => "archive",
+});
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AssetLinkRole {
+    Reference,
+    Output,
+    Final,
+    Brief,
+}
+
+impl AssetLinkRole {
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "reference" => Some(Self::Reference),
+            "output" => Some(Self::Output),
+            "final" => Some(Self::Final),
+            "brief" => Some(Self::Brief),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetLinkTargetKind {
+    WorkItem,
+    Message,
+    Decision,
+}
+
+impl AssetLinkTargetKind {
+    pub(crate) fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "work_item" => Some(Self::WorkItem),
+            "message" => Some(Self::Message),
+            "decision" => Some(Self::Decision),
+            _ => None,
+        }
+    }
+}
+
+/// 资产列表的链接目标过滤；编码与 REST `target=<targetKind>:<targetId>` 一致。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetTargetFilter {
+    pub kind: AssetLinkTargetKind,
+    pub id: String,
+}
+
+impl AssetTargetFilter {
+    /// 与 Node listAssetsQuerySchema 同规则：kind 为 work_item|message|decision，id 仅 [A-Za-z0-9_-] 且不超过 250 字符。
+    pub fn parse(value: &str) -> Option<Self> {
+        let (kind, id) = value.split_once(':')?;
+        let kind = AssetLinkTargetKind::from_db(kind)?;
+        let valid_id = !id.is_empty()
+            && id.len() <= 250
+            && id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            });
+        valid_id.then(|| Self {
+            kind,
+            id: id.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetLink {
+    pub target_kind: AssetLinkTargetKind,
+    pub target_id: String,
+    pub role: AssetLinkRole,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetOrigin {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Asset {
+    pub id: String,
+    pub kind: AssetKind,
+    pub mime: String,
+    pub byte_size: i64,
+    pub sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    pub origin: AssetOrigin,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
+    pub links: Vec<AssetLink>,
+}
+
+/// 与 REST `GET /api/v1/assets` 同形的分页结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedAssets {
+    pub items: Vec<Asset>,
+    pub total: u64,
+    pub count: u64,
+    pub offset: u32,
+    pub has_more: bool,
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 /**
- * @input  依赖：React、App、主题/语言初始化和分层全局样式（含人工决策、Agent 调用、媒体浏览与项目文件层）
+ * @input  依赖：React、app/App 壳、主题/语言初始化和分层全局样式（含人工决策、任务视图、资产库、流水线、Agent 调用、媒体浏览与项目文件层）
  * @output 导出：挂载到浏览器根节点的 Council Web 应用
  * @pos    Operator Console 客户端启动入口
  *
@@ -12,7 +12,7 @@ import "@fontsource-variable/ibm-plex-sans";
 import "@fontsource-variable/jetbrains-mono";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import App from "./App";
+import App from "./app/App";
 import { initTheme } from "./data/theme";
 import { I18nProvider } from "./i18n/I18nProvider";
 import { initLocale } from "./i18n/locale";
@@ -28,6 +28,9 @@ import "./styles/project-files.css";
 import "./styles/mentions.css";
 import "./styles/model-router.css";
 import "./styles/manual-decision.css";
+import "./styles/tasks.css";
+import "./styles/assets.css";
+import "./styles/pipelines.css";
 import "./styles/responsive.css";
 
 initTheme();

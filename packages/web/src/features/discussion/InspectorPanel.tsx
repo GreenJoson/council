@@ -1,0 +1,341 @@
+/**
+ * @input  依赖：界面语言上下文、含 owner/完整决策包/备选/实施进度冻结快照的当前议题、
+ *         参与者回退、自动轮次与决策入口
+ * @output 导出：InspectorPanel「上下文」右栏：圆桌（含轮次耗尽后的人工裁决出口）、决策包摘要卡与
+ *         人工签署入口、紧凑实施进度、按需运行状态、议题摘要表，以及约束/证据/备选三个只读区块
+ *         （默认收起只露标题与数量，整行标题即开关；展开集合与切换回调由上层 useInspectorSections 提供并跨会话记住）
+ * @pos    Operator Console 右侧上下文栏；自上而下按「正在发生 → 结论 → 执行 → 元信息 → 背景」排列。
+ *         决策这里只放状态、数量/待办状态和「查看全部」入口；接受动作必须在能看见具体决策的主列完成
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+import {
+  ArrowRight,
+  BookOpen,
+  Check,
+  ChevronDown,
+  FileText,
+  ShieldCheck,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import type { Participant, TopicDetail } from "../../types/council";
+import { selectDecisionPackageLead, summarizeDecisionPackage } from "../../data/decision-package";
+import type { InspectorSectionId } from "../../data/section-collapse";
+import type {
+  CycleReviewScope,
+  OrchestrationRun,
+  OrchestrationSnapshot,
+} from "../../types/orchestration";
+import { useI18n } from "../../i18n/I18nProvider";
+import { AutoRoundsPanel } from "./AutoRoundsPanel";
+import { CyclePanel } from "./CyclePanel";
+import { ImplementationSummary } from "../../components/ImplementationProgress";
+import {
+  AgentAvatar,
+  DecisionStatusBadge,
+  participantFromActorSnapshot,
+  StatusBadge,
+} from "../../components/presentation";
+
+export interface InspectorPanelProps {
+  topic: TopicDetail;
+  participants: Map<string, Participant>;
+  isRecordingManualDecision: boolean;
+  isOpen: boolean;
+  onRecordManualDecision: () => void;
+  /** 切到主列「决策」tab 读全文 */
+  onOpenDecision: () => void;
+  onClose: () => void;
+  orchestration: OrchestrationSnapshot | null;
+  orchestrationBusyAction: string | null;
+  onStartCycle: (
+    participants: string[],
+    roundBudget: number,
+    reviewScope: CycleReviewScope,
+  ) => Promise<boolean>;
+  onAnswerCycleQuestion: (
+    questionMessageId: string,
+    content: string,
+  ) => Promise<boolean>;
+  onSubmitFixes: () => Promise<void>;
+  onAbandonCycle: () => Promise<void>;
+  onStartRun: (runId: string) => Promise<void>;
+  onApproveRun: (run: OrchestrationRun) => Promise<void>;
+  onCancelRun: (runId: string) => Promise<void>;
+  onRecoverRun: (runId: string) => Promise<void>;
+  onCloseRuntimeBinding: (bindingId: string) => Promise<void>;
+  onReopenRuntimeBinding: (bindingId: string) => Promise<void>;
+  /** 约束/证据/备选三个背景区块的展开集合，默认全部收起；状态由 hooks/useInspectorSections 持有 */
+  expandedSections: ReadonlySet<InspectorSectionId>;
+  onToggleSection: (id: InspectorSectionId) => void;
+}
+
+export function InspectorPanel({
+  topic,
+  participants,
+  isRecordingManualDecision,
+  isOpen,
+  onRecordManualDecision,
+  onOpenDecision,
+  onClose,
+  orchestration,
+  orchestrationBusyAction,
+  onStartCycle,
+  onAnswerCycleQuestion,
+  onSubmitFixes,
+  onAbandonCycle,
+  onStartRun,
+  onApproveRun,
+  onCancelRun,
+  onRecoverRun,
+  onCloseRuntimeBinding,
+  onReopenRuntimeBinding,
+  expandedSections,
+  onToggleSection,
+}: InspectorPanelProps) {
+  const { t } = useI18n();
+  const owner = participantFromActorSnapshot(
+    topic.ownerSnapshot,
+    participants.get(topic.owner),
+  );
+  const decisionSummary = summarizeDecisionPackage(topic.decisions);
+  const leadDecision = selectDecisionPackageLead(topic.decisions);
+
+  return (
+    <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label={t("议题摘要")}>
+      <div className="inspector-heading">
+        <h2>{t("上下文")}</h2>
+        <button className="icon-button inspector-close" type="button" aria-label={t("关闭议题摘要")} onClick={onClose}>
+          <X size={18} />
+        </button>
+      </div>
+
+      <CyclePanel
+        topicId={topic.id}
+        initiatorActorId={topic.owner}
+        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
+        snapshot={orchestration}
+        busyAction={orchestrationBusyAction}
+        onStart={onStartCycle}
+        onAnswer={onAnswerCycleQuestion}
+        onSubmitFixes={onSubmitFixes}
+        onAbandon={onAbandonCycle}
+        onRecordManualDecision={onRecordManualDecision}
+      />
+
+      {leadDecision ? (
+        <section className="decision-card decision-package-summary-card">
+          <div className="decision-title-row">
+            <div>
+              <ShieldCheck size={17} />
+              <span>{t("决策包")}</span>
+            </div>
+            <span className="count-pill">{decisionSummary.total}</span>
+          </div>
+          <h3>
+            {decisionSummary.proposed > 0
+              ? t("{count} 条决策待确认", { count: decisionSummary.proposed })
+              : t("决策包已处理")}
+          </h3>
+          <p>
+            {t("{accepted} 条已接受，{rejected} 条已拒绝，{superseded} 条已取代", {
+              accepted: decisionSummary.accepted,
+              rejected: decisionSummary.rejected,
+              superseded: decisionSummary.superseded,
+            })}
+          </p>
+          <div className="decision-package-lead">
+            <DecisionStatusBadge status={leadDecision.status} />
+            <span>{leadDecision.title}</span>
+          </div>
+          <button className="decision-open-button" type="button" onClick={onOpenDecision}>
+            <BookOpen size={16} />
+            {t("查看全部 {count} 条决策", { count: decisionSummary.total })}
+            <ArrowRight size={15} />
+          </button>
+          {topic.status !== "decided" && topic.status !== "closed" ? (
+            <button
+              className="secondary-button manual-decision-entry"
+              type="button"
+              disabled={isRecordingManualDecision}
+              onClick={onRecordManualDecision}
+            >
+              <FileText size={15} />
+              {t("记录独立人工决策")}
+            </button>
+          ) : null}
+        </section>
+      ) : (
+        <section className="decision-card">
+          <div className="decision-title-row">
+            <div>
+              <ShieldCheck size={17} />
+              <span>{t("决策")}</span>
+            </div>
+          </div>
+          <h3>{t("尚无拟议决策")}</h3>
+          <p>{t("无需等待 Agent，你可以直接记录外部实施结果并结束议题。")}</p>
+          <button
+            className="primary-button manual-decision-entry"
+            type="button"
+            disabled={isRecordingManualDecision}
+            onClick={onRecordManualDecision}
+          >
+            <FileText size={15} />
+            {t("人工记录并结束")}
+          </button>
+        </section>
+      )}
+
+      <ImplementationSummary topic={topic} />
+
+      <AutoRoundsPanel
+        topicId={topic.id}
+        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
+        snapshot={orchestration}
+        busyAction={orchestrationBusyAction}
+        onStart={onStartRun}
+        onApprove={onApproveRun}
+        onCancel={onCancelRun}
+        onRecover={onRecoverRun}
+        onCloseBinding={onCloseRuntimeBinding}
+        onReopenBinding={onReopenRuntimeBinding}
+      />
+
+      <dl className="summary-grid">
+        <div>
+          <dt>{t("状态")}</dt>
+          <dd><StatusBadge status={topic.status} /></dd>
+        </div>
+        <div>
+          <dt>{t("所有者")}</dt>
+          <dd>
+            <AgentAvatar agent={topic.owner} participant={owner} size="small" />
+            <span>{owner?.name ?? topic.owner}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("参与者")}</dt>
+          <dd className="summary-participants">
+            {topic.participants.map((agent) => (
+              <AgentAvatar
+                agent={agent}
+                participant={participants.get(agent)}
+                key={agent}
+                size="small"
+              />
+            ))}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("更新")}</dt>
+          <dd>{topic.updatedLabel}</dd>
+        </div>
+      </dl>
+
+      <InspectorSection id="constraints" title="约束条件" isExpanded={expandedSections.has("constraints")} onToggle={onToggleSection} count={topic.constraints.length}>
+        <ul className="inspector-list constraint-list">
+          {topic.constraints.map((constraint) => (
+            <li key={constraint.id}>
+              {constraint.tone === "warning" ? (
+                <TriangleAlert className="warning-icon" size={15} />
+              ) : (
+                <Check className="positive-icon" size={15} />
+              )}
+              <span>{constraint.label}</span>
+            </li>
+          ))}
+        </ul>
+      </InspectorSection>
+
+      <InspectorSection id="evidence" title="关键证据" isExpanded={expandedSections.has("evidence")} onToggle={onToggleSection} count={topic.evidence.length}>
+        {topic.evidence.length > 0 ? (
+          <ul className="inspector-list evidence-list">
+            {topic.evidence.map((evidence) => (
+              <li key={evidence.id}>
+                <FileText size={15} />
+                <span>
+                  <strong>{evidence.label}</strong>
+                  <small>{evidence.meta}</small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-copy">{t("尚未添加证据。")}</p>
+        )}
+      </InspectorSection>
+
+      <InspectorSection id="alternatives" title="备选方案" isExpanded={expandedSections.has("alternatives")} onToggle={onToggleSection} count={topic.alternatives.length}>
+        {topic.alternatives.length > 0 ? (
+          <ol className="alternative-list">
+            {topic.alternatives.map((alternative, index) => {
+              const author = participantFromActorSnapshot(
+                alternative.authorSnapshot,
+                participants.get(alternative.author),
+              );
+              return (
+                <li key={alternative.id}>
+                  <span className="alternative-index">{index + 1}</span>
+                  <div>
+                    <strong>{alternative.title}</strong>
+                    <small>
+                      {author?.name ?? alternative.author}
+                      <span aria-hidden="true"> · </span>
+                      {alternative.createdLabel}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="empty-copy">{t("尚未提出备选方案。")}</p>
+        )}
+      </InspectorSection>
+    </aside>
+  );
+}
+
+interface InspectorSectionProps {
+  id: InspectorSectionId;
+  title: string;
+  count: number;
+  isExpanded: boolean;
+  onToggle: (id: InspectorSectionId) => void;
+  children: React.ReactNode;
+}
+
+/**
+ * 背景区块默认收起：上下文栏先让人看见正在发生的事和结论，约束/证据/备选按需展开。
+ * 收起时仍显示数量，知道「有 3 条约束」通常就够了，不必每次都把清单撑开。
+ */
+function InspectorSection({ id, title, count, isExpanded, onToggle, children }: InspectorSectionProps) {
+  const { t } = useI18n();
+  const label = t(title);
+  const bodyId = `inspector-section-${id}`;
+  return (
+    <section
+      className={`inspector-section inspector-section-collapsible ${isExpanded ? "" : "inspector-section-collapsed"}`}
+    >
+      {/* 按钮放在 h3 里：h3 只能装 phrasing content，反过来会生成非法 HTML；这也是 ARIA accordion 的标准结构。 */}
+      <h3>
+        <button
+          className="inspector-section-toggle"
+          type="button"
+          aria-expanded={isExpanded}
+          aria-controls={bodyId}
+          title={isExpanded ? t("收起{title}", { title: label }) : t("展开{title}", { title: label })}
+          onClick={() => onToggle(id)}
+        >
+          <span className="inspector-section-title">{label}</span>
+          <span className="count-pill">{count}</span>
+          <ChevronDown className="inspector-section-chevron" size={15} aria-hidden="true" />
+        </button>
+      </h3>
+      {isExpanded ? <div className="inspector-section-body" id={bodyId}>{children}</div> : null}
+    </section>
+  );
+}

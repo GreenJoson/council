@@ -2,7 +2,7 @@
  * @input  依赖：隔离 SQLite、真实 HTTP 服务与运行记录存储
  * @output 验证：审计不可覆盖/分页/脱敏、项目隔离、待办消退和迁移回滚
  * @pos    交付状态与可追溯证据的跨层回归
- * 包含 v16 到 v17 失败回滚与历史逐字段保留
+ * 包含 v16 到 v17 失败回滚与历史逐字段保留；旧版本起点先经 v19→v17 形状退回（先删资产表）再伪造
  */
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,73 @@ import { RuntimeAuditStore, redactAuditText } from "../src/orchestration/runtime
 import { WorkItemDelegationStore } from "../src/orchestration/work-item-delegation-store.js";
 import { ModelRouterStore } from "../src/model-router-store.js";
 import { migrateCouncilSchema } from "../src/schema-migrator.js";
+
+/**
+ * 把测试库从 v18 结构退回 v17 形状，供旧版本回滚用例继续伪造更早的起点。
+ * 只保证 v17 迁移源验证与后续迁移按名删除的对象存在；三表的最终结构由 v18 迁移按 DDL 正本重建，
+ * 所以这里用 CREATE TABLE AS 只保留 v17 列与数据，触发器/索引用同名占位对象。
+ */
+function downgradeTaskTablesToV17(raw: DatabaseSync): void {
+  raw.exec(`
+    DROP TABLE asset_links;
+    DROP TABLE assets;
+    DROP INDEX idx_work_items_project_status;
+    DROP INDEX idx_work_items_parent_title;
+    DROP INDEX idx_work_items_parent_order;
+    DROP INDEX idx_work_items_topic_status;
+    DROP INDEX idx_work_item_delegations_topic_updated;
+    DROP INDEX idx_work_item_delegations_work_item;
+    DROP INDEX idx_work_item_delegations_one_active;
+    DROP INDEX idx_runtime_audit_source;
+    DROP TRIGGER trg_work_items_revision_insert;
+    DROP TRIGGER trg_work_items_revision_update;
+    DROP TRIGGER trg_work_items_revision_delete;
+    DROP TRIGGER trg_work_items_delegation_acceptance;
+    DROP TRIGGER trg_work_item_delegations_revision_insert;
+    DROP TRIGGER trg_work_item_delegations_revision_update;
+    DROP TRIGGER trg_work_item_delegations_revision_delete;
+    DROP TRIGGER trg_runtime_audit_revision_insert;
+    DROP TRIGGER trg_runtime_audit_immutable;
+    CREATE TABLE work_items_v17 AS SELECT
+      id, topic_id, decision_id, title, details, status, status_note, version,
+      created_by_actor_id, created_by_snapshot_json, updated_by_actor_id, updated_by_snapshot_json,
+      created_at, updated_at, completed_at, parent_id, sort_order, origin, severity,
+      source_message_id, source_cycle_id, review_round, fix_commit, assignee_actor_id, claimed_at
+    FROM work_items;
+    CREATE TABLE work_item_delegations_v17 AS SELECT
+      id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id, permission_profile,
+      status, attempt, max_attempts, base_commit, head_commit, branch_name, worktree_path,
+      executor_session_id, supervisor_session_id, summary, review, error,
+      created_at, updated_at, completed_at, completion_policy, acceptance_criteria,
+      resumed_from_id, failure_code, execution_state_json
+    FROM work_item_delegations;
+    CREATE TABLE runtime_audit_events_v17 AS SELECT * FROM runtime_audit_events;
+    DROP TABLE runtime_audit_events;
+    DROP TABLE work_item_delegations;
+    DROP TABLE work_items;
+    ALTER TABLE work_items_v17 RENAME TO work_items;
+    ALTER TABLE work_item_delegations_v17 RENAME TO work_item_delegations;
+    ALTER TABLE runtime_audit_events_v17 RENAME TO runtime_audit_events;
+    CREATE INDEX idx_work_items_topic_status ON work_items(topic_id);
+    CREATE INDEX idx_work_items_parent_title ON work_items(parent_id);
+    CREATE INDEX idx_work_items_parent_order ON work_items(sort_order);
+    CREATE INDEX idx_work_item_delegations_topic_updated ON work_item_delegations(topic_id);
+    CREATE INDEX idx_work_item_delegations_work_item ON work_item_delegations(work_item_id);
+    CREATE INDEX idx_work_item_delegations_one_active ON work_item_delegations(status);
+    CREATE INDEX idx_runtime_audit_source ON runtime_audit_events(source_id);
+    CREATE TRIGGER trg_work_items_revision_insert AFTER INSERT ON work_items BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_items_revision_update AFTER UPDATE ON work_items BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_items_revision_delete AFTER DELETE ON work_items BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_items_delegation_acceptance BEFORE UPDATE ON work_items BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_item_delegations_revision_insert AFTER INSERT ON work_item_delegations BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_item_delegations_revision_update AFTER UPDATE ON work_item_delegations BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_work_item_delegations_revision_delete AFTER DELETE ON work_item_delegations BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_runtime_audit_revision_insert AFTER INSERT ON runtime_audit_events BEGIN SELECT 1; END;
+    CREATE TRIGGER trg_runtime_audit_immutable BEFORE UPDATE ON runtime_audit_events BEGIN SELECT 1; END;
+    DELETE FROM schema_migrations WHERE version >= 18;
+    PRAGMA user_version = 17;
+  `);
+}
 
 test("运行记录分页不重叠、不泄露敏感参数，且禁止覆盖", async () => {
   assert.doesNotMatch(redactAuditText('"/Users/fixture user/测试/private.md" /tmp/测试/private.md Bearer example-secret'), /fixture user|测试|example-secret/u);
@@ -85,6 +152,7 @@ test("v14 升级新增验收与审计失败时完整回滚，再次迁移成功"
   const h = await startHttpHarness();
   try {
     const raw = new DatabaseSync(h.databasePath);
+    downgradeTaskTablesToV17(raw);
     raw.exec(`
       DROP TABLE runtime_audit_events;
       DROP TRIGGER trg_work_items_delegation_acceptance;
@@ -123,6 +191,7 @@ test("v16 检查点迁移失败可回滚，升级后旧委派与审计逐字段�
     store.update("old-run", { status: "failed", failureCode: "execution_failed", executorSessionId: "old-private-session", now: new Date().toISOString() });
     h.orchestration!.audit.append({ topicId: topic.id, sourceKind: "delegation", sourceId: "old-run", attempt: 1, kind: "execution.failed", data: { failureCode: "execution_failed" } });
     const raw = new DatabaseSync(h.databasePath);
+    downgradeTaskTablesToV17(raw);
     raw.exec("ALTER TABLE work_item_delegations DROP COLUMN execution_state_json; DELETE FROM schema_migrations WHERE version=17; PRAGMA user_version=16;");
     const before = raw.prepare("SELECT * FROM work_item_delegations").all();
     const events = raw.prepare("SELECT * FROM runtime_audit_events").all();

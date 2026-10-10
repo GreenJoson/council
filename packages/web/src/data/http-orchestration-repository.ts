@@ -20,6 +20,7 @@ import type {
   DiscussionCycleView,
   OrchestrationRun,
   OrchestrationSnapshot,
+  ProjectActivity,
   OrchestrationAgentOutput,
   RuntimeBinding,
   StartCycleInput,
@@ -43,6 +44,7 @@ import type { EventStream, EventStreamFactory } from "./http-repository";
 import { parseCouncilChangedRevision } from "./http-repository";
 import {
   parseCycleMetrics,
+  parseProjectActivity,
   parseDiscussionCycleView,
   parseOrchestrationCapabilities,
   parseOrchestrationApprovalResult,
@@ -80,6 +82,12 @@ export interface HttpOrchestrationRepositoryOptions {
 
 function browserEventStreamFactory(url: string): EventStream {
   return new EventSource(url);
+}
+
+function sameActivity(left: ProjectActivity, right: ProjectActivity | undefined): boolean {
+  return right !== undefined
+    && left.activeAgents === right.activeAgents
+    && left.attention === right.attention;
 }
 
 function cloneSnapshot(snapshot: OrchestrationSnapshot): OrchestrationSnapshot {
@@ -193,12 +201,13 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     generation: number,
   ): Promise<OrchestrationSnapshot> {
     try {
-      const [status, runs, runtimeBindings, cycle, cycleMetrics] = await Promise.all([
+      const [status, runs, runtimeBindings, cycle, cycleMetrics, activity] = await Promise.all([
         this.#loadStatus(),
         this.#loadAllRuns(topicId),
         this.#loadRuntimeBindings(topicId),
         this.#loadCycle(topicId),
         this.#loadCycleMetrics(),
+        this.#loadActivity(topicId),
       ]);
       if (generation !== this.#selectionGeneration) {
         return cloneSnapshot(this.#snapshot);
@@ -213,6 +222,7 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         runtimeBindings,
         cycle,
         cycleMetrics,
+        activity,
         agentOutputs: this.#outputsForTopic(topicId),
         sync: { status: "connected", label: "自动轮次已同步" },
       };
@@ -753,6 +763,15 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
     );
   }
 
+  /** 按议题所在项目汇总的活动 Agent 数与待处理议题数；图标栏徽标与状态条共用。 */
+  async #loadActivity(topicId: string): Promise<ProjectActivity> {
+    return await requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, `/api/v1/topics/${encodeURIComponent(topicId)}/activity`),
+      parseProjectActivity,
+    );
+  }
+
   async #bindingAction(
     bindingId: string,
     action: "close" | "reopen",
@@ -942,28 +961,37 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
           return false;
         }
         this.#observedTotalRevision = status.revision;
-        if (status.orchestration !== this.#appliedOrchestrationRevision) {
-          const topicId = this.#snapshot.activeTopicId;
-          const selectionGeneration = this.#selectionGeneration;
-          const runs = topicId ? await this.#loadAllRuns(topicId) : [];
-          if (
-            this.#listeners.size === 0
-            || generation !== this.#eventGeneration
-            || selectionGeneration !== this.#selectionGeneration
-            || this.#snapshot.activeTopicId !== topicId
-          ) {
-            return false;
-          }
+        const topicId = this.#snapshot.activeTopicId;
+        const selectionGeneration = this.#selectionGeneration;
+        const orchestrationChanged = status.orchestration !== this.#appliedOrchestrationRevision;
+        // 活动计数里的「待处理」也随内容版本（拟议决策）变化，所以每次总版本变了都重读，不只盯编排版本
+        const [runs, activity] = await Promise.all([
+          orchestrationChanged && topicId ? this.#loadAllRuns(topicId) : Promise.resolve(undefined),
+          topicId ? this.#loadActivity(topicId) : Promise.resolve(undefined),
+        ]);
+        if (
+          this.#listeners.size === 0
+          || generation !== this.#eventGeneration
+          || selectionGeneration !== this.#selectionGeneration
+          || this.#snapshot.activeTopicId !== topicId
+        ) {
+          return false;
+        }
+        if (orchestrationChanged) {
           this.#appliedOrchestrationRevision = status.orchestration;
           if (topicId) {
-            this.#pruneInactiveAgentOutputs(topicId, runs);
+            this.#pruneInactiveAgentOutputs(topicId, runs ?? []);
           }
           this.#snapshot = {
             ...this.#snapshot,
-            runs,
+            runs: runs ?? [],
             agentOutputs: topicId ? this.#outputsForTopic(topicId) : [],
+            activity,
             sync: { status: "connected", label: "自动轮次已实时校准" },
           };
+          this.#publishSnapshot();
+        } else if (activity && !sameActivity(activity, this.#snapshot.activity)) {
+          this.#snapshot = { ...this.#snapshot, activity };
           this.#publishSnapshot();
         }
         return true;

@@ -1,11 +1,15 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派、AI 计划、会话和独立快照类型
+ * @output 导出：含权限/职责的 Capabilities（能力键含 P2 的 image_generate/image_input）、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
+ *         inputAssetIds、outputManifest）、议题/任务两条委派入参（任务入参的 supervisorAgentId 对图像委派可省略）、
+ *         AI 计划、会话和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 委派公开阶段进度和可选预算指标
  */
+
+import type { WorkItemKind } from "./council";
 
 export type OrchestrationStatus =
   | "idle"
@@ -35,7 +39,10 @@ export type RuntimeCapabilityKey =
   | "git_commit"
   | "media_read"
   | "vision"
-  | "session_resume";
+  | "session_resume"
+  /** P2：Codex 生图探针通过后声明；图像委派只列 granted 含它的执行者。 */
+  | "image_generate"
+  | "image_input";
 
 export interface OrchestrationAdapter {
   id: string;
@@ -85,12 +92,18 @@ export interface WorkItemDelegation {
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   id: string;
-  topicId: string;
+  /** v18 起直接任务的委派不属于任何议题。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
   permissionProfile: "workspace_write" | "danger_full_access";
   status: WorkItemDelegationStatus;
+  /** 委派产出类型；议题委派与 P1 任务委派均为 code。 */
+  kind: WorkItemKind;
+  inputAssetIds: string[];
+  /** 产出清单：结构由 kind 决定，前端只做 record 校验。 */
+  outputManifest?: Record<string, unknown>;
   attempt: number;
   maxAttempts: number;
   baseCommit?: string;
@@ -114,6 +127,23 @@ export interface StartWorkItemDelegationInput {
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   createInitialBaseline?: boolean;
+}
+
+/**
+ * 任务入口（/api/v1/tasks/:taskId/delegations）的委派入参：任务 id 走路径参数，
+ * 不需要 topicId；kind 缺省 code、inputAssetIds 缺省 []，与服务端 schema 默认值一致。
+ */
+export interface StartTaskDelegationInput {
+  expectedVersion: number;
+  /** 代码委派必填；图像委派不进审核三角，省略不发。 */
+  supervisorAgentId?: string;
+  executorAgentId: string;
+  requestedPermission: "workspace_write" | "danger_full_access";
+  completionPolicy?: "review" | "human";
+  acceptanceCriteria?: string;
+  createInitialBaseline?: boolean;
+  kind?: WorkItemKind;
+  inputAssetIds?: string[];
 }
 
 export interface StartWorkItemDelegationBatchInput {
@@ -391,6 +421,12 @@ export interface CycleMetrics {
   decisionConsistency: { checked: number; divergedCycleIds: string[] };
 }
 
+/** 当前项目范围的活动计数：activeAgents 只数正在跑的 Run 与执行/审核中的委派，attention 是需要人处理的议题数。 */
+export interface ProjectActivity {
+  activeAgents: number;
+  attention: number;
+}
+
 export interface OrchestrationSnapshot {
   /** 已应用的数据库编排版本；草稿文本更新不推进它。 */
   revision?: number;
@@ -403,6 +439,8 @@ export interface OrchestrationSnapshot {
   cycleMetrics?: CycleMetrics;
   runtimeBindings?: RuntimeBinding[];
   agentOutputs?: OrchestrationAgentOutput[];
+  /** 当前议题所在项目的活动计数；离线或尚未选题时为空，徽标与状态条据此隐藏。 */
+  activity?: ProjectActivity;
   sync: {
     status: "connected" | "syncing" | "offline";
     label: string;

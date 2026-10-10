@@ -1,6 +1,8 @@
 /**
- * @input  依赖：canonical v17 work_item_delegations 表与 SQLite busy timeout
- * @output 导出：WorkItemDelegationStore、公开阶段快照、私有检查点与原子状态更新
+ * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
+ * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单，topicId 对非议题任务缺省）、
+ *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新（含图像产物清单写入）；
+ *         onSettled：非终态→终态时异步通知一次（流水线据此推进阶段）
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +11,7 @@
 import { publicExecutionProgress, type DelegationCheckpoint, type DelegationExecutionProgress } from "./delegation-checkpoint.js";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentPermissionProfile } from "../agent-execution-policy.js";
+import type { WorkItemKind } from "../types.js";
 
 export const WORK_ITEM_DELEGATION_STATUSES = [
   "queued",
@@ -26,7 +29,8 @@ export type DelegationExecutionPermission = Exclude<AgentPermissionProfile, "rea
 export interface WorkItemDelegation {
   execution?: DelegationExecutionProgress;
   id: string;
-  topicId: string;
+  /** v18 起可空：直接任务的委派不属于任何议题。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
@@ -47,12 +51,16 @@ export interface WorkItemDelegation {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** v18：委派产出类型，现有议题委派均为 code。 */
+  kind: WorkItemKind;
+  inputAssetIds: string[];
+  outputManifest?: Record<string, unknown>;
 }
 
 interface DelegationRow {
   execution_state_json: string | null;
   id: string;
-  topic_id: string;
+  topic_id: string | null;
   work_item_id: string;
   supervisor_agent_id: string;
   executor_agent_id: string;
@@ -76,6 +84,9 @@ interface DelegationRow {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  kind: WorkItemKind;
+  input_asset_ids_json: string;
+  output_manifest_json: string | null;
 }
 
 function publicDelegation(row: DelegationRow): WorkItemDelegation {
@@ -84,7 +95,7 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
   return {
     ...(execution ? { execution } : {}),
     id: row.id,
-    topicId: row.topic_id,
+    ...(row.topic_id ? { topicId: row.topic_id } : {}),
     workItemId: row.work_item_id,
     supervisorAgentId: row.supervisor_agent_id,
     executorAgentId: row.executor_agent_id,
@@ -105,6 +116,12 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+    kind: row.kind,
+    // schema CHECK 已保证是 JSON 数组/对象，这里只做类型收窄。
+    inputAssetIds: JSON.parse(row.input_asset_ids_json) as string[],
+    ...(row.output_manifest_json
+      ? { outputManifest: JSON.parse(row.output_manifest_json) as Record<string, unknown> }
+      : {}),
   };
 }
 
@@ -117,7 +134,8 @@ export interface DelegationPrivateState extends WorkItemDelegation {
 
 export interface CreateWorkItemDelegationInput {
   id: string;
-  topicId: string;
+  /** 取自实施项本身：议题项有，直接任务没有。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
@@ -128,6 +146,9 @@ export interface CreateWorkItemDelegationInput {
   acceptanceCriteria: string;
   maxAttempts: number;
   branchName?: string;
+  /** 缺省 code；P1 只有 code，资产通道（P2）前不写入非空素材。 */
+  kind?: WorkItemKind;
+  inputAssetIds?: readonly string[];
   now: string;
 }
 
@@ -141,8 +162,13 @@ function privateDelegation(row: DelegationRow): DelegationPrivateState {
   };
 }
 
+function isTerminalStatus(status: WorkItemDelegationStatus): boolean {
+  return status === "approved" || status === "failed" || status === "cancelled";
+}
+
 export class WorkItemDelegationStore {
   readonly #database: DatabaseSync;
+  readonly #settledListeners = new Set<(delegation: WorkItemDelegation) => void | Promise<void>>();
 
   constructor(databasePath: string, busyTimeoutMs: number) {
     this.#database = new DatabaseSync(databasePath);
@@ -155,11 +181,13 @@ export class WorkItemDelegationStore {
       INSERT INTO work_item_delegations (
         id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id,
         permission_profile, status, attempt, max_attempts, branch_name,
-        created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id
-      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id,
+        kind, input_asset_ids_json
+        -- output_manifest_json 走 v18 列默认值 NULL。
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
-      input.topicId,
+      input.topicId ?? null,
       input.workItemId,
       input.supervisorAgentId,
       input.executorAgentId,
@@ -171,6 +199,8 @@ export class WorkItemDelegationStore {
       input.completionPolicy,
       input.acceptanceCriteria,
       input.resumedFromId ?? null,
+      input.kind ?? "code",
+      JSON.stringify(input.inputAssetIds ?? []),
     );
   }
 
@@ -216,6 +246,25 @@ export class WorkItemDelegationStore {
     `).all(topicId) as unknown as DelegationRow[]).map(publicDelegation);
   }
 
+  /** 单个任务的委派历史（新到旧）；直接任务没有议题，只能按 work_item_id 取。 */
+  listForWorkItem(workItemId: string): WorkItemDelegation[] {
+    return (this.#database.prepare(`
+      SELECT * FROM work_item_delegations
+      WHERE work_item_id = ?
+      ORDER BY created_at DESC, rowid DESC
+    `).all(workItemId) as unknown as DelegationRow[]).map(publicDelegation);
+  }
+
+  /** 项目视图：委派本身不存项目路径，经 work_items.project_path 归属（议题项创建时已拷贝）。 */
+  listForProject(projectPath: string): WorkItemDelegation[] {
+    return (this.#database.prepare(`
+      SELECT d.* FROM work_item_delegations AS d
+      JOIN work_items AS w ON w.id = d.work_item_id
+      WHERE w.project_path = ?
+      ORDER BY d.created_at DESC, d.rowid DESC
+    `).all(projectPath) as unknown as DelegationRow[]).map(publicDelegation);
+  }
+
   update(id: string, patch: {
     checkpoint?: DelegationCheckpoint;
     status?: WorkItemDelegationStatus;
@@ -231,6 +280,8 @@ export class WorkItemDelegationStore {
     error?: string;
     completedAt?: string;
     failureCode?: string;
+    /** 图像委派产物清单（已经过协议校验，不含绝对路径）。 */
+    outputManifest?: Record<string, unknown>;
     now: string;
   }): WorkItemDelegation {
     const current = this.getPrivate(id);
@@ -244,7 +295,8 @@ export class WorkItemDelegationStore {
       UPDATE work_item_delegations
       SET status = ?, attempt = ?, base_commit = ?, head_commit = ?, branch_name = ?,
           worktree_path = ?, executor_session_id = ?, supervisor_session_id = ?,
-          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?, execution_state_json = ?
+          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?, execution_state_json = ?,
+          output_manifest_json = COALESCE(?, output_manifest_json)
       WHERE id = ?
     `).run(
       status,
@@ -262,12 +314,37 @@ export class WorkItemDelegationStore {
       completedAt,
       patch.failureCode ?? current.failureCode ?? null,
       patch.checkpoint ? JSON.stringify(patch.checkpoint) : current.checkpoint ? JSON.stringify(current.checkpoint) : null,
+      patch.outputManifest ? JSON.stringify(patch.outputManifest) : null,
       id,
     );
     if (result.changes !== 1) {
       throw new Error("委派记录更新失败。");
     }
-    return this.get(id) as WorkItemDelegation;
+    const updated = this.get(id) as WorkItemDelegation;
+    // 只在「非终态 → 终态」时通知一次；终态上的补写（如摘要）不重复触发。
+    if (terminal && !isTerminalStatus(current.status)) this.#emitSettled(updated);
+    return updated;
+  }
+
+  /**
+   * 订阅委派进入终态（approved / failed / cancelled）。每次终态转换恰好通知一次，
+   * 通过 setImmediate 异步派发，不在写事务调用栈内执行；监听器异常只写 stderr，不影响委派本身。
+   */
+  onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void {
+    this.#settledListeners.add(listener);
+    return () => { this.#settledListeners.delete(listener); };
+  }
+
+  #emitSettled(delegation: WorkItemDelegation): void {
+    for (const listener of this.#settledListeners) {
+      setImmediate(() => {
+        Promise.resolve()
+          .then(() => listener(delegation))
+          .catch((error: unknown) => {
+            process.stderr.write(`[delegation-store] 终态监听器执行失败：${error instanceof Error ? error.message : String(error)}\n`);
+          });
+      });
+    }
   }
 
   markInterrupted(now: string): string[] {
@@ -278,6 +355,10 @@ export class WorkItemDelegationStore {
       WHERE status IN ('queued', 'executing', 'reviewing', 'changes_requested')
       RETURNING id
     `).all(now, now) as Array<{ id: string }>;
+    for (const row of rows) {
+      const delegation = this.get(row.id);
+      if (delegation) this.#emitSettled(delegation);
+    }
     return rows.map((row) => row.id);
   }
 

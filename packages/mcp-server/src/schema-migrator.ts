@@ -1,6 +1,6 @@
 /**
  * @input  依赖：SQLite 文件、纯 schema 定义、Node online backup 与编排 schema 契约
- * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v17、逐版本 schema 指纹、版本/实例身份验证
+ * @output 导出：唯一生产迁移入口、冻结 v1/v2、canonical v19、逐版本 schema 指纹、版本/实例身份验证
  * @pos    所有 Council Store 打开数据库前必须经过的备份、身份与迁移安全边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -92,6 +92,8 @@ import {
 } from "./schema-v14-migration.js";
 import { migrateVersionFifteen } from "./schema-v15-migration.js";
 import { migrateVersionSeventeen } from "./schema-v17-migration.js";
+import { migrateVersionEighteen } from "./schema-v18-migration.js";
+import { migrateVersionNineteen } from "./schema-v19-migration.js";
 import { migrateVersionSixteen } from "./schema-v16-migration.js";
 import {
   assertCountsPreserved,
@@ -105,7 +107,7 @@ import {
 
 export { FROZEN_LEGACY_V1_SCHEMA_SQL } from "./schema-definitions.js";
 
-export const COUNCIL_SCHEMA_VERSION = 17;
+export const COUNCIL_SCHEMA_VERSION = 19;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -469,6 +471,8 @@ const CANONICAL_MIGRATION_STEPS: readonly Readonly<{
   { version: 15, apply: (database) => { migrateVersionFifteen(database, false); } },
   { version: 16, apply: (database) => { migrateVersionSixteen(database, false); } },
   { version: 17, apply: (database) => { migrateVersionSeventeen(database, false); } },
+  { version: 18, apply: (database) => { migrateVersionEighteen(database, false); } },
+  { version: 19, apply: (database) => { migrateVersionNineteen(database, false); } },
 ];
 
 /**
@@ -683,6 +687,8 @@ export function assertCouncilSchema(database: DatabaseSync): void {
     [15, "delegation-acceptance"],
     [16, "runtime-audit-and-recovery"],
     [17, "delegation-runtime-checkpoints"],
+    [18, "task-first-class"],
+    [19, "asset-library"],
   ] as const;
   if (
     migrationRows.length !== expectedMigrations.length ||
@@ -690,7 +696,7 @@ export function assertCouncilSchema(database: DatabaseSync): void {
       migrationRows[index]?.version !== versionNumber ||
       migrationRows[index]?.name !== name)
   ) {
-    throw new Error("Council v17 迁移账本内容无效。");
+    throw new Error("Council v19 迁移账本内容无效。");
   }
   readCouncilDatabaseInstanceId(database);
   assertDatabaseIntegrity(database);
@@ -1322,6 +1328,14 @@ export async function migrateCouncilSchema(
       if (migratingVersion === 16) {
         migrateVersionSeventeen(database);
         migratingVersion = 17;
+      }
+      if (migratingVersion === 17) {
+        migrateVersionEighteen(database);
+        migratingVersion = 18;
+      }
+      if (migratingVersion === 18) {
+        migrateVersionNineteen(database);
+        migratingVersion = 19;
       }
       if (migratingVersion !== COUNCIL_SCHEMA_VERSION) {
         throw new Error("Council 数据库迁移版本链不连续。");

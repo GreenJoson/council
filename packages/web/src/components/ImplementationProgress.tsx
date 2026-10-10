@@ -1,14 +1,17 @@
 /**
- * @input  依赖：界面语言、议题/实施项树、AI 规划、动态 Actor、跨 Agent 委派、认领与证据化更新回调
- * @output 导出：右栏进度摘要，以及主区显式选 Agent 拆分、人工补充、Agent 协作执行和对齐正文的委派历史
+ * @input  依赖：界面语言、议题/实施项树、AI 规划、动态 Actor、批量委派、委派状态快照、认领与证据化更新回调、app/routes 的 buildHash
+ * @output 导出：WORK_ITEM_STATUS_LABELS 状态文案表、右栏进度摘要，以及主区显式选 Agent 拆分、人工补充、批量委派、
+ *         每个叶子最近委派的紧凑摘要与“在任务页管理委派”入口
  * @pos    Accepted 架构决策与外部 Codex/Claude 实际交付之间的可审计执行账本；
- *         接受决策不会自动生成任务；父任务状态只读派生，完成度只数叶子，审核发现在这里以子任务形式关闭
+ *         接受决策不会自动生成任务；父任务状态只读派生，完成度只数叶子，审核发现在这里以子任务形式关闭；
+ *         单项委派的发起/取消/历史已迁到任务详情（features/tasks），这里只留摘要与跳转
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import {
   AlertTriangle,
+  Bot,
   Check,
   CircleDot,
   GitCommitHorizontal,
@@ -31,15 +34,20 @@ import {
 import { useI18n } from "../i18n/I18nProvider";
 import type { CouncilWorkItem, Participant, TopicDetail, WorkItemStatus } from "../types/council";
 import type { OrchestrationAdapter, WorkItemDelegation } from "../types/orchestration";
+import { buildHash } from "../app/routes";
 import { participantFromActorSnapshot } from "./presentation";
-import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
-import { WorkItemDelegationPanel } from "./WorkItemDelegationPanel";
+import {
+  DelegationExecutionProgress,
+  delegationStatusLabel,
+  isDelegationPaused,
+} from "./DelegationExecutionProgress";
 import {
   BatchWorkItemDelegationPanel,
   type BatchDelegationOptions,
 } from "./BatchWorkItemDelegationPanel";
 
-const STATUS_LABELS: Record<WorkItemStatus, string> = {
+/** 实施项/任务状态文案的单一真源；任务视图（features/tasks）复用同一张表。 */
+export const WORK_ITEM_STATUS_LABELS: Record<WorkItemStatus, string> = {
   pending: "待处理",
   in_progress: "进行中",
   blocked: "受阻",
@@ -64,22 +72,10 @@ export interface ImplementationProgressProps {
   delegationAgents?: OrchestrationAdapter[];
   delegations?: WorkItemDelegation[];
   delegationBusyAction?: string | null;
-  onDelegate?: (
-    item: CouncilWorkItem,
-    input: {
-      supervisorAgentId: string;
-      executorAgentId: string;
-      requestedPermission: "workspace_write" | "danger_full_access";
-      completionPolicy?: "review" | "human";
-      acceptanceCriteria?: string;
-      createInitialBaseline?: boolean;
-    },
-  ) => Promise<void>;
   onDelegateBatch?: (
     items: CouncilWorkItem[],
     input: BatchDelegationOptions,
   ) => Promise<void>;
-  onCancelDelegation?: (delegationId: string) => Promise<void>;
 }
 
 export interface ImplementationSummaryProps {
@@ -151,9 +147,7 @@ export function ImplementationProgress({
   delegationAgents = [],
   delegations = [],
   delegationBusyAction = null,
-  onDelegate = async () => undefined,
   onDelegateBatch = async () => undefined,
-  onCancelDelegation = async () => undefined,
 }: ImplementationProgressProps) {
   const { t } = useI18n();
   const [isAdding, setIsAdding] = useState(false);
@@ -271,6 +265,8 @@ export function ImplementationProgress({
             const canClaim = !isParent && !item.assignee && item.status !== "completed";
             const editing = editingItemId === item.id;
             const evidenceRequired = nextStatus === "blocked" || nextStatus === "completed";
+            // 委派列表按 createdAt 倒序，同一实施项的第一条就是最近一次。
+            const latestDelegation = delegations.find((entry) => entry.workItemId === item.id);
             return (
               <li
                 className={[
@@ -318,7 +314,7 @@ export function ImplementationProgress({
                       aria-expanded={editing}
                       onClick={() => editing ? setEditingItemId(null) : beginProgressUpdate(item)}
                     >
-                      <MessageSquarePlus size={12} /> {t(STATUS_LABELS[item.status])}
+                      <MessageSquarePlus size={12} /> {t(WORK_ITEM_STATUS_LABELS[item.status])}
                     </button>
                     <div className="work-item-buttons">
                       {canClaim ? (
@@ -352,7 +348,7 @@ export function ImplementationProgress({
                       value={nextStatus}
                       onChange={(event) => setNextStatus(event.target.value as WorkItemStatus)}
                     >
-                      {Object.entries(STATUS_LABELS).map(([status, label]) => (
+                      {Object.entries(WORK_ITEM_STATUS_LABELS).map(([status, label]) => (
                         <option key={status} value={status}>{t(label)}</option>
                       ))}
                     </select>
@@ -377,22 +373,17 @@ export function ImplementationProgress({
                     </div>
                   </div>
                 ) : null}
-                {!isParent && (item.status !== "completed" || delegations.some((entry) => entry.workItemId === item.id)) ? (
-                  <div>
-                  <WorkItemDelegationPanel
-                    item={item}
-                    adapters={delegationAgents}
-                    delegation={delegations.find((candidate) => candidate.workItemId === item.id)}
-                    busyAction={delegationBusyAction}
-                    onStart={(input) => onDelegate(item, input)}
-                    onCancel={onCancelDelegation}
-                  />
-                  {delegations.filter((entry) => entry.workItemId === item.id).slice(1).map((entry) => (
-                    <div className="work-item-delegation-history" key={entry.id}>
-                      <small><span>{t("历史委派")}</span><time dateTime={entry.createdAt}>{entry.createdAt}</time></small>
-                      <RuntimeAuditDetails topicId={entry.topicId} sourceKind="delegation" sourceId={entry.id} />
-                    </div>
-                  ))}
+                {/* 委派面板已迁入任务详情：这里只留最近一次委派的状态与执行段进度，以及跳转入口。 */}
+                {!isParent && (item.status !== "completed" || latestDelegation) ? (
+                  <div className={`work-item-delegation-summary${latestDelegation
+                    ? ` is-${isDelegationPaused(latestDelegation) ? "paused" : latestDelegation.status}` : ""}`}>
+                    {latestDelegation ? (
+                      <>
+                        <span><Bot size={13} /><strong>{t(delegationStatusLabel(latestDelegation))}</strong></span>
+                        <DelegationExecutionProgress delegation={latestDelegation} />
+                      </>
+                    ) : null}
+                    <a href={buildHash({ view: "tasks", taskId: item.id })}>{t("在任务页管理委派")}</a>
                   </div>
                 ) : null}
               </li>

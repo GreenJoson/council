@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council-orchestrator 的 RuntimeBinding DDL 正本
- * @output 导出：Council v1-v17 required objects、冻结 DDL 与 canonical schema 常量
+ * @output 导出：Council v1-v19 required objects、冻结 DDL 与 canonical schema 常量
  * @pos    SQLite schema 的纯定义层；不得包含备份、数据迁移或事务编排
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -34,6 +34,8 @@ export const REQUIRED_TABLES = [
   "orchestration_runs",
   "orchestration_approvals",
   "orchestration_run_leases",
+  "assets",
+  "asset_links",
   "schema_migrations",
 ] as const;
 
@@ -45,6 +47,7 @@ export const REQUIRED_INDEXES = [
   "idx_work_items_topic_status",
   "idx_work_items_parent_title",
   "idx_work_items_parent_order",
+  "idx_work_items_project_status",
   "idx_actor_identities_status_slug",
   "idx_actor_aliases_actor",
   "idx_provider_profiles_status_slug",
@@ -69,6 +72,8 @@ export const REQUIRED_INDEXES = [
   "idx_orchestration_runs_status_updated",
   "idx_orchestration_runs_one_active_topic",
   "idx_orchestration_run_leases_expiry",
+  "idx_assets_project_kind",
+  "idx_asset_links_target",
 ] as const;
 
 export const LEGACY_V1_TABLES = [
@@ -162,6 +167,11 @@ export const REQUIRED_REVISION_TRIGGERS = [
   "trg_blocking_questions_revision_delete",
   "trg_decisions_cycle_close_insert",
   "trg_decisions_cycle_close_update",
+  "trg_assets_revision_insert",
+  "trg_assets_revision_update",
+  "trg_assets_revision_delete",
+  "trg_asset_links_revision_insert",
+  "trg_asset_links_revision_delete",
 ] as const;
 
 export const LEGACY_REQUIRED_REVISION_TRIGGERS = [

@@ -9,7 +9,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ArchitectureSection } from "../src/components/architecture/ArchitectureSection";
+import { ArchitectureSection } from "../src/features/architecture/ArchitectureSection";
 import { I18nProvider } from "../src/i18n/I18nProvider";
 import { parseCollapsedSections } from "../src/data/section-collapse";
 

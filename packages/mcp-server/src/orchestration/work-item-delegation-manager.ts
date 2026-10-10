@@ -1,15 +1,25 @@
 /**
- * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git 与委派账本
- * @output 导出：关键上下文完整的委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
- * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层
+ * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git、委派账本与任务上下文解析
+ * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复（沿用原 kind 与输入图）、显式权限及优雅关闭
+ * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
+ *         审核提示词写明 approved 时 findings 必须为空（解析器会把带 findings 的 approved 改判 changes_requested），非阻断建议与人工验证项进 summary
+ *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
+ *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
+ *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
  */
 
-import { EXECUTION_DEFAULTS } from "../config.js";
+import {
+  DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+  DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+  EXECUTION_DEFAULTS,
+  loadAssetConfig,
+} from "../config.js";
 import { runExecutionSegments } from "./delegation-execution-segments.js";
-import { delegationTaskContext } from "./delegation-task-context.js";
+import { delegationInputAssetsContext, delegationTaskContext } from "./delegation-task-context.js";
+import { assertDelegableTask, resolveDelegationTask, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
 import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
 import { commitDelegationChanges } from "./delegation-git-delivery.js";
 import { createDelegationHandoff, handoffContext } from "./delegation-handoff.js";
@@ -18,6 +28,16 @@ import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
+import {
+  copyInputAssets,
+  COUNCIL_INPUT_DIR,
+  defaultImageSupervisor,
+  excludeCouncilDir,
+  executeImageDelegation,
+  IMAGE_EXECUTOR_REQUIRED_MESSAGE,
+  validateImageDelegationRequest,
+} from "./delegation-image-execution.js";
+import { AssetService } from "../assets/asset-service.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -47,7 +67,7 @@ import {
   type BoundedProcessMessages,
   type ProcessResult,
 } from "../process-utils.js";
-import type { CouncilConfig, CouncilHttpConfig, WorkItem } from "../types.js";
+import type { AssetConfig, CouncilConfig, CouncilHttpConfig, WorkItem, WorkItemKind } from "../types.js";
 import {
   WorkItemDelegationStore,
   type DelegationExecutionPermission,
@@ -70,16 +90,22 @@ interface RuntimeResult {
 }
 
 export interface StartWorkItemDelegationInput {
-  topicId: string;
+  /** 议题入口传入时校验任务归属；直接任务入口省略。 */
+  topicId?: string;
   workItemId: string;
   expectedVersion: number;
-  supervisorAgentId: string;
+  /** code 必填；image 可省略，默认取启用的 Claude CLI Agent（优先 @claude）。 */
+  supervisorAgentId?: string;
   executorAgentId: string;
   requestedPermission: DelegationExecutionPermission;
   /** 只有无 HEAD 的全新仓库允许；显式确认后建立经过敏感扫描的初始提交。 */
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   createInitialBaseline?: boolean;
+  /** code 或 image；缺省视为 code，且须与任务 kind 一致。 */
+  kind?: WorkItemKind;
+  /** code 只接受空数组；image 为参考图资产 id（最多 8 个，同项目、kind=image）。 */
+  inputAssetIds?: readonly string[];
 }
 
 export interface StartWorkItemDelegationBatchInput {
@@ -122,6 +148,11 @@ interface DelegationManagerConfig {
   executionMaxTurns?: number;
   maxExecutionSegments?: number;
   executionTimeoutMs?: number;
+  /** 图像委派：Codex 默认产物目录（兜底收集）、单次超时与入库张数上限、资产库配置；缺省按默认值回落。 */
+  codexHome?: string;
+  imageTimeoutMs?: number;
+  imageMaxOutputs?: number;
+  assets?: AssetConfig;
 }
 
 function compact(value: string, maximum: number): string {
@@ -137,7 +168,7 @@ function publicFailure(error: unknown): string {
   const controlled = [
     "任务", "Agent", "Provider", "Git", "worktree", "项目", "执行", "审核",
     "权限", "改动", "提交", "服务", "实施项", "只有", "当前", "找不到",
-    "安全", "批量", "Claude", "Codex", "恢复", "原工作区",
+    "安全", "批量", "Claude", "Codex", "恢复", "原工作区", "图像", "生图",
   ];
   return controlled.some((prefix) => message.startsWith(prefix))
     ? compact(message, 500)
@@ -148,6 +179,7 @@ export class WorkItemDelegationManager {
   readonly #audit: RuntimeAuditStore;
   readonly #store: WorkItemDelegationStore;
   readonly #database: CouncilDatabase;
+  readonly #assets: AssetService;
   readonly #controllers = new Map<string, AbortController>();
   readonly #tasks = new Map<string, Promise<void>>();
   /** 只允许回写本次派发/认领所得版本，不覆盖执行期间的人工作答。 */
@@ -165,6 +197,10 @@ export class WorkItemDelegationManager {
       config.sqliteBusyTimeoutMs,
     );
     this.#database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+    this.#assets = new AssetService(
+      this.#database,
+      config.assets ?? loadAssetConfig({}, path.dirname(config.databasePath)),
+    );
   }
 
   static fromConfig(
@@ -189,6 +225,10 @@ export class WorkItemDelegationManager {
       executionMaxTurns: councilConfig.claudeExecutionMaxTurns,
       maxExecutionSegments: councilConfig.delegationMaxExecutionSegments,
       executionTimeoutMs: councilConfig.delegationExecutionTimeoutMs,
+      ...(councilConfig.codexHome ? { codexHome: councilConfig.codexHome } : {}),
+      ...(councilConfig.codexImageTimeoutMs ? { imageTimeoutMs: councilConfig.codexImageTimeoutMs } : {}),
+      ...(councilConfig.codexImageMaxOutputs ? { imageMaxOutputs: councilConfig.codexImageMaxOutputs } : {}),
+      ...(councilConfig.assets ? { assets: councilConfig.assets } : {}),
     }, modelRouter, claudeRuntime, codexRuntime);
   }
 
@@ -203,40 +243,68 @@ export class WorkItemDelegationManager {
     return this.#store.list(topicId);
   }
 
+  /** 任务入口：列出单个任务（含无议题任务）的全部委派，新者在前。 */
+  listForWorkItem(workItemId: string): WorkItemDelegation[] {
+    this.#database.getWorkItem(workItemId);
+    return this.#store.listForWorkItem(workItemId);
+  }
+
+  listForProject(projectPath: string): WorkItemDelegation[] {
+    return this.#store.listForProject(projectPath);
+  }
+
   get activeTaskCount(): number { return this.#tasks.size; }
 
+  /** 单条委派公开快照；流水线启动对账用。 */
+  get(id: string): WorkItemDelegation | undefined {
+    return this.#store.get(id);
+  }
+
+  /** 委派进入终态（approved/failed/cancelled）时异步通知一次；返回取消订阅函数。 */
+  onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void {
+    return this.#store.onSettled(listener);
+  }
+
+  /**
+   * 流水线 brief/review 阶段：把资产拷进 `<root>/.council/in/` 并尽量写 exclude（非 Git 目录跳过）；
+   * 返回相对 root 的 posix 路径。复用本管理器持有的资产服务与 Git 执行器，不另起一套。
+   */
+  async stageProjectInputs(
+    root: string,
+    assetIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<Array<{ assetId: string; relativePath: string }>> {
+    if (assetIds.length === 0) return [];
+    const inputDir = path.join(root, COUNCIL_INPUT_DIR);
+    await mkdir(inputDir, { recursive: true });
+    await excludeCouncilDir(async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout, root, signal)
+      .catch(() => undefined);
+    const copied = await copyInputAssets(this.#assets, inputDir, assetIds);
+    return copied.map((item) => ({ assetId: item.assetId, relativePath: item.relativePath }));
+  }
+
   start(input: StartWorkItemDelegationInput): WorkItemDelegation {
-    const detail = this.#database.getTopicDetail(
-      input.topicId,
-      this.config.defaultMessageLimit,
-    );
-    const item = detail.workItems.find((candidate) => candidate.id === input.workItemId);
-    if (!item) {
-      throw new CouncilNotFoundError("实施项不存在。");
-    }
-    if (item.version !== input.expectedVersion) {
-      throw new CouncilConflictError("实施项已被更新，请刷新后重试。");
-    }
-    if (detail.topic.status === "closed" || item.status === "completed"
-      || detail.workItems.some((candidate) => candidate.parentId === item.id)) {
-      throw new CouncilConflictError("只能委派未关闭议题中的未完成叶子任务。");
-    }
-    if (!detail.topic.projectPath) {
-      throw new CouncilValidationError("项目尚未绑定本地路径，不能执行代码任务。");
-    }
-    delegationTaskContext(detail, item, this.config.maxContextChars);
-    const { supervisor, executor, permission } = this.#resolveAssignment(input);
+    const { item, topicId, projectPath } = assertDelegableTask(this.#database, input, this.#taskLimits);
+    const kind = input.kind ?? "code";
+    const inputAssetIds = [...(input.inputAssetIds ?? [])];
+    if (kind === "image") validateImageDelegationRequest(this.#database, { item, projectPath, inputAssetIds });
+    const { supervisor, executor, permission } = kind === "image"
+      ? this.#resolveImageAssignment(input)
+      : this.#resolveAssignment({ ...input, supervisorAgentId: input.supervisorAgentId ?? "" });
     const now = new Date().toISOString();
     let delegation: WorkItemDelegation;
     try {
       delegation = this.#store.create({
         id: `delegation-${randomUUID()}`,
-        topicId: input.topicId,
+        ...(topicId ? { topicId } : {}),
         workItemId: input.workItemId,
+        kind,
+        inputAssetIds,
         supervisorAgentId: supervisor.id,
         executorAgentId: executor.id,
         permissionProfile: permission,
-        completionPolicy: input.completionPolicy ?? "human",
+        // 图像产物不经审核，必须由人验收。
+        completionPolicy: kind === "image" ? "human" : input.completionPolicy ?? "human",
         acceptanceCriteria: this.#acceptanceCriteria(input.acceptanceCriteria, item),
         maxAttempts: this.config.maxAttempts,
         now,
@@ -355,7 +423,8 @@ export class WorkItemDelegationManager {
     if (!["failed", "cancelled"].includes(previous.status) || this.#controllers.has(id)) {
       throw new CouncilConflictError("原委派尚未停止，不能恢复。");
     }
-    const task = this.#taskContext(previous.topicId, previous.workItemId);
+    if (previous.kind === "image") throw new CouncilConflictError("图像委派不支持接续，请重新委派。");
+    const task = this.#taskContext(previous.workItemId);
     if (task.item.version !== expectedVersion || task.item.status === "completed") {
       throw new CouncilConflictError("实施项已更新或完成，请刷新后检查。");
     }
@@ -373,10 +442,10 @@ export class WorkItemDelegationManager {
       maxFileChars: this.config.gitMaxOutputChars,
       git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
     }) : undefined;
-    if (this.#taskContext(previous.topicId, previous.workItemId).item.version !== expectedVersion) {
+    if (this.#taskContext(previous.workItemId).item.version !== expectedVersion) {
       throw new CouncilConflictError("实施项在恢复检查期间已变化，请刷新后重试。");
     }
-    const latest = this.#store.list(previous.topicId).find((entry) => entry.workItemId === previous.workItemId);
+    const latest = this.#store.listForWorkItem(previous.workItemId)[0];
     if (latest?.id !== id) throw new CouncilConflictError("已有更新的委派，请从最新记录继续。");
     // 工作区检查会让出执行权，创建运行前重新核对当前权限上限。
     if (this.#resolveAssignment({ ...previous, requestedPermission: desiredPermission }).permission !== desiredPermission) {
@@ -384,8 +453,10 @@ export class WorkItemDelegationManager {
     }
     let created: WorkItemDelegation;
     try {
+      // 接续沿用原委派的产出类型与输入图：P3 原型委派靠输入图（选定终稿）进入 `.council/in/`，丢了就等于换题。
       created = this.#store.create({
-        id: `delegation-${randomUUID()}`, topicId: previous.topicId, workItemId: previous.workItemId,
+        id: `delegation-${randomUUID()}`, ...(previous.topicId ? { topicId: previous.topicId } : {}), workItemId: previous.workItemId,
+        kind: previous.kind, inputAssetIds: [...previous.inputAssetIds],
         supervisorAgentId: previous.supervisorAgentId, executorAgentId: previous.executorAgentId,
         permissionProfile: assignment.permission, completionPolicy: previous.completionPolicy,
         acceptanceCriteria: previous.acceptanceCriteria, maxAttempts: this.config.maxAttempts,
@@ -486,10 +557,11 @@ export class WorkItemDelegationManager {
     return provider;
   }
 
-  #resolveAssignment(input: Pick<
-    StartWorkItemDelegationInput,
-    "supervisorAgentId" | "executorAgentId" | "requestedPermission"
-  >): DelegationAssignment {
+  #resolveAssignment(input: {
+    supervisorAgentId: string;
+    executorAgentId: string;
+    requestedPermission: DelegationExecutionPermission;
+  }): DelegationAssignment {
     const supervisor = this.#requireAgent(input.supervisorAgentId, "审核");
     const executor = this.#requireAgent(input.executorAgentId, "执行");
     if (supervisor.id === executor.id) {
@@ -511,6 +583,23 @@ export class WorkItemDelegationManager {
     this.#requireNativeProvider(supervisor);
     this.#requireNativeProvider(executor);
     return { supervisor, executor, permission };
+  }
+
+  /** 图像委派：执行者必须是 Codex CLI（image_generate 能力由服务层探针校验）；监督者可省略并取默认 Claude。 */
+  #resolveImageAssignment(input: Pick<
+    StartWorkItemDelegationInput,
+    "supervisorAgentId" | "executorAgentId" | "requestedPermission"
+  >): DelegationAssignment {
+    const executor = this.#requireAgent(input.executorAgentId, "执行");
+    if (this.modelRouter.getProvider(executor.providerId)?.protocol !== "codex-cli") {
+      throw new CouncilValidationError(IMAGE_EXECUTOR_REQUIRED_MESSAGE);
+    }
+    const supervisorId = input.supervisorAgentId ?? defaultImageSupervisor(
+      this.modelRouter.listAgents(),
+      (providerId) => this.modelRouter.getProvider(providerId),
+      executor.id,
+    ).id;
+    return this.#resolveAssignment({ ...input, supervisorAgentId: supervisorId });
   }
 
   async #runtimeGenerate(input: DelegationRuntimeInput): Promise<RuntimeResult> {
@@ -663,21 +752,13 @@ export class WorkItemDelegationManager {
     };
   }
 
-  #taskContext(topicId: string, workItemId: string): { item: WorkItem; context: string; contextFingerprint: string; projectPath: string } {
-    const detail = this.#database.getTopicDetail(
-      topicId,
-      this.config.defaultMessageLimit,
-    );
-    const item = detail.workItems.find((candidate) => candidate.id === workItemId);
-    if (detail.topic.status === "closed") throw new CouncilConflictError("已关闭议题不能继续执行任务。");
-    if (!item || !detail.topic.projectPath) {
-      throw new Error("任务或项目路径已失效。");
-    }
-    return {
-      item,
-      ...delegationTaskContext(detail, item, this.config.maxContextChars),
-      projectPath: detail.topic.projectPath,
-    };
+  get #taskLimits(): { messageLimit: number; maxContextChars: number } {
+    return { messageLimit: this.config.defaultMessageLimit, maxContextChars: this.config.maxContextChars };
+  }
+
+  /** 按任务 id 解析上下文：有议题沿用议题约束与已接受决策，无议题只用任务本身。 */
+  #taskContext(workItemId: string): ResolvedDelegationTask {
+    return resolveDelegationTask(this.#database, workItemId, this.#taskLimits);
   }
 
   async #runSingle(
@@ -688,18 +769,57 @@ export class WorkItemDelegationManager {
     try {
       const delegation = this.#store.get(id);
       if (!delegation) throw new Error("任务委派不存在。");
-      const task = this.#taskContext(delegation.topicId, delegation.workItemId);
+      const task = this.#taskContext(delegation.workItemId);
       const workspace = await this.#prepareWorktree(
         delegation,
         task.projectPath,
         createInitialBaseline,
         signal,
       );
-      await this.#executeInWorkspace(id, workspace, signal);
+      if (delegation.kind === "image") {
+        await this.#executeImage(id, workspace, signal);
+      } else {
+        await this.#executeInWorkspace(id, workspace, signal);
+      }
     } catch (error) {
       this.#recordFailure(id, error, true);
       throw error;
     }
+  }
+
+  /** 代码委派输入图：写 exclude 后拷贝，返回提示词段落（相对 cwd 路径）；无输入时不碰工作区。 */
+  async #prepareCodeInputAssets(
+    assetIds: readonly string[],
+    workspace: PreparedWorkspace,
+    signal: AbortSignal,
+  ): Promise<string[]> {
+    if (assetIds.length === 0) return [];
+    const inputDir = path.join(workspace.root, COUNCIL_INPUT_DIR);
+    await mkdir(inputDir, { recursive: true });
+    await excludeCouncilDir(async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout, workspace.root, signal);
+    const copied = await copyInputAssets(this.#assets, inputDir, assetIds);
+    return delegationInputAssetsContext(copied.map((item) =>
+      path.relative(workspace.cwd, item.absolutePath).split(path.sep).join("/")));
+  }
+
+  async #executeImage(id: string, workspace: PreparedWorkspace, signal: AbortSignal): Promise<string> {
+    return executeImageDelegation({
+      store: this.#store,
+      database: this.#database,
+      assets: this.#assets,
+      codex: this.codexRuntime,
+      git: async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout,
+      record: (kind, data) => this.#recordAudit(id, kind, data),
+      requireAgent: (agentId, action) => this.#requireAgent(agentId, action),
+      taskContext: (workItemId) => this.#taskContext(workItemId),
+      workItemVersion: () => this.#workItemVersions.get(id),
+      setWorkItemVersion: (version) => this.#workItemVersions.set(id, version),
+      config: {
+        ...(this.config.codexHome ? { codexHome: this.config.codexHome } : {}),
+        timeoutMs: this.config.imageTimeoutMs ?? DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+        maxOutputs: this.config.imageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+      },
+    }, id, { root: workspace.root, baseCommit: workspace.baseCommit }, signal);
   }
 
   async #runBatch(
@@ -713,7 +833,7 @@ export class WorkItemDelegationManager {
     }
     let activeId: string | undefined;
     try {
-      const firstTask = this.#taskContext(first.topicId, first.workItemId);
+      const firstTask = this.#taskContext(first.workItemId);
       const workspace = await this.#prepareWorktree(
         first,
         firstTask.projectPath,
@@ -747,7 +867,7 @@ export class WorkItemDelegationManager {
     if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
     let delegation = this.#store.get(id);
     if (!delegation) throw new Error("任务委派不存在。");
-    const task = this.#taskContext(delegation.topicId, delegation.workItemId);
+    const task = this.#taskContext(delegation.workItemId);
     const supervisor = this.#requireAgent(delegation.supervisorAgentId, "审核");
     const executor = this.#requireAgent(delegation.executorAgentId, "执行");
     this.#store.update(id, {
@@ -769,6 +889,8 @@ export class WorkItemDelegationManager {
       status: "executing",
       now: new Date().toISOString(),
     });
+    // 代码委派的输入图（原型任务的终稿等）拷进不被提交的 .council/in/，提示词里只给相对 cwd 的路径。
+    const inputContext = await this.#prepareCodeInputAssets(delegation.inputAssetIds, workspace, signal);
     const fingerprint = createHash("sha256").update(JSON.stringify({
       criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
       permission: delegation.permissionProfile,
@@ -786,13 +908,14 @@ export class WorkItemDelegationManager {
       permissionProfile: "read_only",
       signal,
       prompt: [
-        "你是本次代码任务的 supervisor。只讨论当前议题，不读取或总结历史议题。",
+        "你是本次代码任务的 supervisor。只讨论当前任务及其所属议题，不读取或总结历史议题。",
         "请给执行 Agent 一份精确、可验证的实施指令：明确范围、必须保留的不变量、测试与验收标准。",
         "不要修改文件，不要运行写操作。",
         ...(workspace.restoredWork ? ["当前隔离工作区已接回上次中断的未提交代码。先检查现有实现与缺口，指示执行者接续完成；草稿不代表已通过验证。"] : []),
         "",
         `验收标准：${delegation!.acceptanceCriteria}`,
         task.context,
+        ...inputContext,
         ...continuation,
       ].join("\n"),
     });
@@ -832,7 +955,7 @@ export class WorkItemDelegationManager {
             git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
           })).tree,
           validate: () => {
-            const current = this.#taskContext(executionAssignment.topicId, executionAssignment.workItemId);
+            const current = this.#taskContext(executionAssignment.workItemId);
             if (current.item.version !== claimed.version || current.contextFingerprint !== task.contextFingerprint) {
               throw new CouncilConflictError("任务在执行期间已变化，已停止接续，请检查最新范围。");
             }
@@ -864,6 +987,7 @@ export class WorkItemDelegationManager {
               "当前实施项原文：",
               `验收标准：${executionAssignment.acceptanceCriteria}`,
               task.context,
+              ...inputContext,
               ...continuation,
               ...correction,
               segmentContinuation,
@@ -922,6 +1046,7 @@ export class WorkItemDelegationManager {
           "只返回一个 JSON 对象，不要 Markdown：",
           '{"verdict":"approved|changes_requested|blocked","summary":"结论","findings":["可执行问题"],"inspectedFiles":["已只读补查完整变更的相对路径"]}',
           "无法读取或补查必要证据时返回 blocked；changes_requested 仅用于已核实的实现问题。",
+          "approved 时 findings 必须为空：findings 里出现任何条目都会按 changes_requested 处理。非阻断建议、顺手可做的小改进，以及只能由人工或在有浏览器、能起服务的环境里验证的项目都不是 findings，逐条写进 summary 留给人工验收；执行环境限制（沙箱不能监听端口、起浏览器）本身不是实现缺陷。",
           "",
           `验收标准：${delegation!.acceptanceCriteria}`,
           `当前任务与约束（不能依赖旧会话是否仍在）：\n${task.context}`,
@@ -990,14 +1115,14 @@ export class WorkItemDelegationManager {
       now: new Date().toISOString(),
     });
     if (!markWorkItem) return;
-    const item = this.#database.listWorkItems({ topicId: current.topicId })
-      .find((candidate) => candidate.id === current.workItemId);
+    let item: WorkItem | undefined;
+    try { item = this.#database.getWorkItem(current.workItemId); } catch { item = undefined; }
     const executor = this.modelRouter.getAgent(current.executorAgentId);
     const expectedVersion = this.#workItemVersions.get(id);
     if (item && item.status !== "completed" && executor && expectedVersion === item.version) {
       try {
         this.#database.updateWorkItemAsActor({
-          topicId: current.topicId,
+          ...(current.topicId ? { topicId: current.topicId } : {}),
           workItemId: current.workItemId,
           status: "blocked",
           expectedVersion,

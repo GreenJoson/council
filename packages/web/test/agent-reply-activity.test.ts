@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { selectAgentReplyActivity } from "../src/components/AgentReplyActivity";
+import { selectAgentReplyActivity } from "../src/features/discussion/AgentReplyActivity";
 import type {
   OrchestrationRun,
   OrchestrationSnapshot,

@@ -178,6 +178,9 @@ function createOrchestrationFixture(): OrchestrationFixture {
     if (/^\/api\/v1\/topics\/[^/]+\/cycle\/latest$/u.test(url.pathname)) {
       return success(null);
     }
+    if (/^\/api\/v1\/topics\/[^/]+\/activity$/u.test(url.pathname)) {
+      return success({ activeAgents: 0, attention: 0 });
+    }
     if (url.pathname === "/api/v1/orchestration/cycle-metrics") {
       return success({
         cycles: { total: 0, converged: 0, abandoned: 0, active: 0, awaitingUser: 0 },
@@ -260,7 +263,7 @@ describe("HttpOrchestrationRepository", () => {
     const delegation: WorkItemDelegation = {
       id: "delegation-new", topicId: "topic-test", workItemId: "item-test",
       supervisorAgentId: "reviewer", executorAgentId: "executor", permissionProfile: "workspace_write",
-      status: "queued", attempt: 0, maxAttempts: 2,
+      status: "queued", attempt: 0, maxAttempts: 2, kind: "code", inputAssetIds: [],
       createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
     };
     const repository = new HttpOrchestrationRepository({ ...OPTIONS, fetcher: async (input, init) => {

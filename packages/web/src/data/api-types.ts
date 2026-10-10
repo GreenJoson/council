@@ -1,10 +1,18 @@
 /**
  * @input  依赖：Council REST API 返回的未知 JSON 值
- * @output 导出：含动态 Actor 快照、完整 decisions[] 与实施项的后端协议类型及严格运行时解析函数
+ * @output 导出：含动态 Actor 快照、完整 decisions[] 与实施项（v18 任务字段：kind/source/priority/
+ *         projectPath/brief、可选 topicId）的后端协议类型及严格运行时解析函数
  * @pos    HTTP 边界的唯一数据校验入口，禁止未验证数据进入 UI
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
+
+import {
+  WORK_ITEM_KINDS,
+  WORK_ITEM_SOURCES,
+  type WorkItemKind,
+  type WorkItemSource,
+} from "../types/council";
 
 export type ApiTopicStatus = "open" | "decided" | "closed";
 export type ApiMessageKind =
@@ -77,7 +85,13 @@ export interface ApiDecision {
 
 export interface ApiWorkItem {
   id: string;
-  topicId: string;
+  /** v18 起直接任务没有议题；议题内接口返回的实施项仍总是带 topicId。 */
+  topicId?: string;
+  kind: WorkItemKind;
+  source: WorkItemSource;
+  priority: number;
+  projectPath?: string;
+  brief?: Record<string, unknown>;
   decisionId?: string;
   parentId?: string;
   title: string;
@@ -184,6 +198,25 @@ function readBoolean(record: Record<string, unknown>, key: string): boolean {
   const value = record[key];
   if (typeof value !== "boolean") {
     throw new Error(`${key} 必须是布尔值`);
+  }
+  return value;
+}
+
+function readOptionalRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  return readRecord(value, key);
+}
+
+function readSafeInteger(record: Record<string, unknown>, key: string): number {
+  const value = readNumber(record, key);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${key} 必须是安全整数`);
   }
   return value;
 }
@@ -384,13 +417,21 @@ export function parseApiWorkItem(value: unknown): ApiWorkItem {
   const fixCommit = readOptionalString(record, "fixCommit");
   const assigneeActorId = readOptionalString(record, "assigneeActorId");
   const claimedAt = readOptionalString(record, "claimedAt");
+  const topicId = readOptionalString(record, "topicId");
+  const projectPath = readOptionalString(record, "projectPath");
+  const brief = readOptionalRecord(record, "brief");
   const version = readNumber(record, "version");
   if (!Number.isSafeInteger(version) || version < 1) {
     throw new Error("work item version 必须是正整数");
   }
   return {
     id: readString(record, "id"),
-    topicId: readString(record, "topicId"),
+    ...(topicId ? { topicId } : {}),
+    kind: readEnum(record, "kind", WORK_ITEM_KINDS),
+    source: readEnum(record, "source", WORK_ITEM_SOURCES),
+    priority: readSafeInteger(record, "priority"),
+    ...(projectPath ? { projectPath } : {}),
+    ...(brief ? { brief } : {}),
     ...(decisionId ? { decisionId } : {}),
     ...(parentId ? { parentId } : {}),
     title: readString(record, "title"),

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流与委派 Git 检查预算的 CouncilConfig 与绑定调用者身份的 McpCouncilConfig
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算、流水线阶段/修订上限与原型权限档、Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,16 +8,26 @@
  */
 
 import { mkdirSync } from "node:fs";
+import { isIP } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
-import { MAX_LIST_LIMIT } from "./constants.js";
-import type { CouncilConfig, McpCouncilConfig } from "./types.js";
+import { ASSET_SNIFFABLE_MIMES, MAX_LIST_LIMIT } from "./constants.js";
+import type { AssetConfig, CouncilConfig, McpCouncilConfig, PipelinePrototypePermission } from "./types.js";
 
 const MAX_NODE_TIMER_MS = 2_147_483_647;
 const REQUIRED_PERMISSION_MODE = "plan";
 const REQUIRED_CODEX_SANDBOX_MODE = "read-only";
 const DEFAULT_CODEX_COMMAND = "codex";
+/** MCP 转发本机 HTTP 服务的缺省地址与超时；与 .env.example 的 COUNCIL_HTTP_* 缺省一致，可由环境覆盖。 */
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+const DEFAULT_HTTP_PORT = 4317;
+const DEFAULT_MCP_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
+/** Codex 生图沙箱独立于讨论沙箱：只允许 workspace-write，避免一个开关放宽所有 Codex 调用。 */
+const REQUIRED_CODEX_IMAGE_SANDBOX_MODE = "workspace-write";
+export const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 900_000;
+export const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
 const DEFAULT_GEMINI_ACP_COMMAND = "gemini";
 const DEFAULT_GROK_ACP_COMMAND = "grok";
@@ -177,6 +187,33 @@ function parseAliasedOptionalPositiveInteger(
   return raw ? parsePositiveIntegerValue(primary, raw) : fallback;
 }
 
+/** 布尔开关只接受 true/false，拼写错误直接拒绝启动而不是静默按默认值处理。 */
+function parseOptionalBoolean(name: string, env: NodeJS.ProcessEnv, fallback: boolean): boolean {
+  const raw = env[name]?.trim().toLowerCase();
+  if (!raw) {
+    return fallback;
+  }
+  if (raw !== "true" && raw !== "false") {
+    throw new Error(`环境变量 ${name} 必须为 true 或 false。`);
+  }
+  return raw === "true";
+}
+
+const PIPELINE_PROTOTYPE_PERMISSIONS: readonly PipelinePrototypePermission[] = ["workspace_write", "danger_full_access"];
+
+/** 原型委派权限档：只认两档，read_only 做不了原型、其它值直接报错，避免拼错后静默回落。 */
+function parsePipelinePrototypePermission(name: string, env: NodeJS.ProcessEnv): PipelinePrototypePermission {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return "workspace_write";
+  }
+  const match = PIPELINE_PROTOTYPE_PERMISSIONS.find((item) => item === raw);
+  if (!match) {
+    throw new Error(`环境变量 ${name} 必须为 ${PIPELINE_PROTOTYPE_PERMISSIONS.join(" 或 ")}。`);
+  }
+  return match;
+}
+
 function isForbiddenArg(value: string, forbidden: ReadonlySet<string>): boolean {
   const flag = value.split("=", 1)[0]?.toLowerCase() ?? "";
   return forbidden.has(flag);
@@ -206,10 +243,84 @@ function parseArgsJson(
   return parsed;
 }
 
+// ---------------------------------------------------------------------------
+// v19 资产库：MCP 与 HTTP 两个入口共用同一个加载函数，assets/ 领域只读结果。
+// ---------------------------------------------------------------------------
+const DEFAULT_ASSET_MAX_BYTES = 26_214_400;
+const DEFAULT_ASSET_MAX_TOTAL_BYTES = 5_368_709_120;
+const DEFAULT_ASSET_MIME_ALLOWLIST = [
+  "image/png", "image/jpeg", "image/webp", "image/svg+xml", "model/gltf-binary", "application/pdf",
+] as const;
+const DEFAULT_ASSET_THUMBNAIL_MAX_EDGE = 512;
+const DEFAULT_ASSET_THUMBNAIL_COMMAND = "sips";
+const DEFAULT_ASSET_THUMBNAIL_TIMEOUT_MS = 10_000;
+/** 缩略图最长边上限：再大就不是缩略图了，也会让外部命令长时间占用 CPU。 */
+const MAX_ASSET_THUMBNAIL_EDGE = 4_096;
+
+export function loadAssetConfig(env: NodeJS.ProcessEnv, dataDir: string): AssetConfig {
+  const rootDir = env.COUNCIL_ASSET_DIR?.trim() || path.join(dataDir, "assets");
+  if (!path.isAbsolute(rootDir)) {
+    throw new Error("COUNCIL_ASSET_DIR 必须是绝对路径。");
+  }
+  const maxBytes = parseOptionalPositiveInteger("COUNCIL_ASSET_MAX_BYTES", env, DEFAULT_ASSET_MAX_BYTES);
+  const maxTotalBytes = parseOptionalPositiveInteger(
+    "COUNCIL_ASSET_MAX_TOTAL_BYTES",
+    env,
+    DEFAULT_ASSET_MAX_TOTAL_BYTES,
+  );
+  if (maxBytes > maxTotalBytes) {
+    throw new Error("COUNCIL_ASSET_MAX_BYTES 不能大于 COUNCIL_ASSET_MAX_TOTAL_BYTES。");
+  }
+  const rawAllowlist = env.COUNCIL_ASSET_MIME_ALLOWLIST?.trim();
+  const mimeAllowlist = rawAllowlist
+    ? [...new Set(rawAllowlist.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean))]
+    : [...DEFAULT_ASSET_MIME_ALLOWLIST];
+  const sniffable: readonly string[] = ASSET_SNIFFABLE_MIMES;
+  if (mimeAllowlist.length === 0 || mimeAllowlist.some((mime) => !sniffable.includes(mime))) {
+    throw new Error(`COUNCIL_ASSET_MIME_ALLOWLIST 只能取 ${sniffable.join(", ")} 的非空子集。`);
+  }
+  const thumbnailMaxEdge = parseOptionalPositiveInteger(
+    "COUNCIL_ASSET_THUMBNAIL_MAX_EDGE",
+    env,
+    DEFAULT_ASSET_THUMBNAIL_MAX_EDGE,
+  );
+  if (thumbnailMaxEdge > MAX_ASSET_THUMBNAIL_EDGE) {
+    throw new Error(`COUNCIL_ASSET_THUMBNAIL_MAX_EDGE 不能超过 ${String(MAX_ASSET_THUMBNAIL_EDGE)}。`);
+  }
+  return {
+    rootDir,
+    maxBytes,
+    maxTotalBytes,
+    mimeAllowlist,
+    thumbnailMaxEdge,
+    thumbnailCommand: env.COUNCIL_ASSET_THUMBNAIL_COMMAND?.trim() || DEFAULT_ASSET_THUMBNAIL_COMMAND,
+    thumbnailTimeoutMs: parseOptionalTimer(
+      "COUNCIL_ASSET_THUMBNAIL_TIMEOUT_MS",
+      env,
+      DEFAULT_ASSET_THUMBNAIL_TIMEOUT_MS,
+    ),
+  };
+}
+
 export const EXECUTION_DEFAULTS = {
   workerHeartbeatMs: 5_000, workerIdleTimeoutMs: 300_000,
   maxSegments: 4, timeoutMs: 7_200_000,
 } as const;
+
+/**
+ * Codex 自身的数据目录（<codex-home>）：图像委派兜底扫描 `generated_images/<threadId>/`。
+ * 优先 COUNCIL_CODEX_HOME，留空回退进程 CODEX_HOME，再回退 `~/.codex`；只做本地读，不进 DTO/日志。
+ */
+function resolveCodexHome(env: NodeJS.ProcessEnv): string {
+  const configured = env.COUNCIL_CODEX_HOME?.trim() || env.CODEX_HOME?.trim();
+  if (configured) {
+    if (!path.isAbsolute(configured)) {
+      throw new Error("COUNCIL_CODEX_HOME 必须是绝对路径。");
+    }
+    return path.resolve(configured);
+  }
+  return path.join(homedir(), ".codex");
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig {
   const dataDir = requireEnv("COUNCIL_DATA_DIR", env);
@@ -239,6 +350,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
   if (codexSandboxMode !== REQUIRED_CODEX_SANDBOX_MODE) {
     throw new Error("COUNCIL_CODEX_SANDBOX_MODE 必须为 read-only。");
   }
+  const codexImageSandboxMode = env.COUNCIL_CODEX_IMAGE_SANDBOX_MODE?.trim()
+    || REQUIRED_CODEX_IMAGE_SANDBOX_MODE;
+  if (codexImageSandboxMode !== REQUIRED_CODEX_IMAGE_SANDBOX_MODE) {
+    throw new Error("COUNCIL_CODEX_IMAGE_SANDBOX_MODE 必须为 workspace-write。");
+  }
   return {
     dataDir,
     databasePath: path.join(dataDir, "council.sqlite3"),
@@ -259,6 +375,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_CODEX_KILL_GRACE_MS,
     ),
+    codexImageEnabled: parseOptionalBoolean("COUNCIL_CODEX_IMAGE_ENABLED", env, true),
+    codexImageSandboxMode,
+    codexImageTimeoutMs: parseOptionalTimer(
+      "COUNCIL_CODEX_IMAGE_TIMEOUT_MS",
+      env,
+      DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+    ),
+    codexImageMaxOutputs: parseOptionalPositiveInteger(
+      "COUNCIL_CODEX_IMAGE_MAX_OUTPUTS",
+      env,
+      DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+    ),
+    codexHome: resolveCodexHome(env),
     kimiAcpCommand:
       env.COUNCIL_KIMI_ACP_COMMAND?.trim()
       || env.COUNCIL_KIMI_COMMAND?.trim()
@@ -345,6 +474,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     workerIdleTimeoutMs: parseOptionalTimer("COUNCIL_WORKER_IDLE_TIMEOUT_MS", env, EXECUTION_DEFAULTS.workerIdleTimeoutMs),
     delegationMaxExecutionSegments: parseOptionalPositiveInteger("COUNCIL_DELEGATION_MAX_EXECUTION_SEGMENTS", env, EXECUTION_DEFAULTS.maxSegments),
     delegationExecutionTimeoutMs: parseOptionalTimer("COUNCIL_DELEGATION_EXECUTION_TIMEOUT_MS", env, EXECUTION_DEFAULTS.timeoutMs),
+    pipelineMaxStages: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_STAGES", env, 6),
+    pipelineMaxRevisions: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_REVISIONS", env, 3),
+    pipelinePrototypePermission: parsePipelinePrototypePermission("COUNCIL_PIPELINE_PROTOTYPE_PERMISSION", env),
     claudeReviewMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_REVIEW_MAX_TURNS", env, 48),
     delegationWorktreeRoot,
     delegationGitMaxOutputChars: parseOptionalPositiveInteger(
@@ -365,12 +497,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       DEFAULT_CLI_MAX_STREAM_CHARS,
     ),
     defaultMessageLimit,
+    assets: loadAssetConfig(env, dataDir),
   };
+}
+
+/** HTTP 服务与 MCP 转发共用：只允许本机回环地址，防止任务委派被转发到外部主机。 */
+export function isLoopbackHost(value: string): boolean {
+  const host = value.toLowerCase();
+  if (host === "localhost" || host === "::1") {
+    return true;
+  }
+  return isIP(host) === 4 && host.split(".")[0] === "127";
+}
+
+/** stdio MCP 进程不持有委派管理器；需要执行的工具转发到同机 HTTP 服务。 */
+function loadHttpServiceUrl(env: NodeJS.ProcessEnv): string {
+  const host = env.COUNCIL_HTTP_HOST?.trim() || DEFAULT_HTTP_HOST;
+  if (!isLoopbackHost(host)) {
+    throw new Error("COUNCIL_HTTP_HOST 只允许 loopback 主机。");
+  }
+  const port = parseOptionalPositiveInteger("COUNCIL_HTTP_PORT", env, DEFAULT_HTTP_PORT);
+  if (port > 65_535) {
+    throw new Error("环境变量 COUNCIL_HTTP_PORT 超出端口范围。");
+  }
+  return `http://${host.includes(":") ? `[${host}]` : host}:${String(port)}`;
 }
 
 export function loadMcpConfig(env: NodeJS.ProcessEnv = process.env): McpCouncilConfig {
   return {
     ...loadConfig(env),
     callerActorAlias: requireEnv("COUNCIL_CALLER_ACTOR_ALIAS", env),
+    httpServiceUrl: loadHttpServiceUrl(env),
+    httpForwardTimeoutMs: parseOptionalTimer("COUNCIL_MCP_HTTP_TIMEOUT_MS", env, DEFAULT_MCP_HTTP_TIMEOUT_MS),
   };
 }

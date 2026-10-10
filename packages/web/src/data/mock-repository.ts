@@ -2,7 +2,7 @@
  * @input  依赖：mock 工作区、CouncilRepository 与浏览器结构化克隆
  * @output 导出：写入时冻结 Mock Actor 快照、议题关闭、决策包按 ID 接受、人工 Accepted 与实施项流转的同构数据实现
  * @pos    UI 原型阶段模拟选题、共享发布、议题创建、批量决策接受（同时写入 decidedAt 供架构档案
- *         ADR 编号排序）与只读议题详情加载
+ *         ADR 编号排序）与只读议题详情加载；新增实施项按 v18 写入 topicId/kind=code/source=topic/priority=0
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -225,6 +225,10 @@ export class MockCouncilRepository implements CouncilRepository {
       }
       topic.workItems.push({
         id: `work_item_${crypto.randomUUID()}`,
+        topicId: topic.id,
+        kind: "code",
+        source: "topic",
+        priority: 0,
         // 子任务继承父任务的决策锚点，一棵树不横跨两个 ADR。
         ...(parent
           ? parent.decisionId ? { decisionId: parent.decisionId } : {}

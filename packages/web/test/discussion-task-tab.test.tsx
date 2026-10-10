@@ -8,7 +8,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DiscussionPanel } from "../src/components/DiscussionPanel";
+import { DiscussionPanel } from "../src/features/discussion/DiscussionPanel";
 import type { ActorSnapshot, CouncilWorkItem, TopicDetail } from "../src/types/council";
 
 const ACTOR: ActorSnapshot = {

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已构建的 Council API/Web、显式迁移/RuntimeBinding 配置、Playwright 与 Agent 替身
- * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、带命名空间工作簿预览、本机/远程 Agent 调用及 mock 布局的浏览器验收
+ * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、带命名空间工作簿预览、本机/远程 Agent 调用、图像委派闭环（隔离 codex-home）、P3 流水线闭环及 mock 布局的浏览器验收（限流上限按多段轮询放宽）
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -192,6 +192,9 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CODEX_COMMAND: process.execPath,
     COUNCIL_CODEX_ARGS_JSON: JSON.stringify([path.join(ROOT, "packages/mcp-server/test/fake-claude.mjs")]),
     COUNCIL_CODEX_TIMEOUT_MS: "5000",
+    // 生图产物兜底目录指向隔离数据目录，绝不读取真实 <codex-home>。
+    COUNCIL_CODEX_HOME: path.join(dataDirectory, "codex-home"),
+    COUNCIL_CODEX_IMAGE_TIMEOUT_MS: "20000",
     COUNCIL_CLAUDE_PERMISSION_MODE: "plan",
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",
@@ -222,7 +225,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_HTTP_CORS_ORIGINS_JSON: JSON.stringify([webOrigin]),
     COUNCIL_HTTP_CORS_MAX_AGE_SECONDS: "600",
     COUNCIL_HTTP_RATE_LIMIT_WINDOW_MS: "60000",
-    COUNCIL_HTTP_RATE_LIMIT_MAX: "1000",
+    COUNCIL_HTTP_RATE_LIMIT_MAX: "5000", // 单条浏览器验收含多段轮询（委派、流水线），1000/分钟会在一分钟内被打满
     COUNCIL_HTTP_BODY_LIMIT_BYTES: "65536",
     COUNCIL_HTTP_EVENT_POLL_MS: "100",
     COUNCIL_HTTP_EVENT_RETRY_MS: "300",

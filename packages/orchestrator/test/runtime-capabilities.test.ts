@@ -164,7 +164,7 @@ for (const transportKind of [
 ] as const) {
   test(`${transportKind} 的声明与 Council policy 独立，新增副作用能力不会自动获权`, () => {
     const declared = [
-      ...declaredCapabilitiesForTransport(transportKind),
+      ...declaredCapabilitiesForTransport(transportKind, { imageGeneration: true }),
       ...SIDE_EFFECT_CAPABILITIES,
     ];
     const policy = defaultPolicyCapabilitiesForTransport(transportKind);

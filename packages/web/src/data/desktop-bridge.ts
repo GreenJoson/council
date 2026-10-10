@@ -1,6 +1,7 @@
 /**
  * @input  依赖：Tauri invoke、event 与原生目录对话框
- * @output 导出：可注入测试的 DesktopBridge（含议题关闭/决策包接受/实施项写入）、设置类型与本地 Agent 服务配置/健康解析
+ * @output 导出：可注入测试的 DesktopBridge（含议题关闭/决策包接受/实施项写入、任务只读查询
+ *         list_tasks/get_task 与资产只读查询 list_assets/get_asset 的严格解析）、设置类型与本地 Agent 服务配置/健康解析
  * @pos    浏览器领域代码进入 Tauri IPC 的唯一低层边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +10,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { parseApiWorkItem, parseApiWorkItems, type ApiWorkItem } from "./api-types";
+import { parseAssetPage, parseOptionalAsset } from "./assets/asset-api";
+import type { Asset, AssetKind, AssetPage } from "../types/assets";
+import type { WorkItemKind, WorkItemStatus } from "../types/council";
 
 export interface DesktopSettings {
   logLibrary: string | null;
@@ -24,6 +29,24 @@ export interface DesktopOrchestrationConfig {
 export interface DesktopOrchestrationHealth {
   baseUrl: string;
   reachable: boolean;
+}
+
+/** Rust list_tasks 只支持按状态与类型过滤；来源过滤由仓储在前端完成。 */
+export interface DesktopListTasksArgs {
+  projectPath: string;
+  status?: WorkItemStatus;
+  kind?: WorkItemKind;
+}
+
+/** Rust list_assets 的参数；target 用与 REST 相同的 `<targetKind>:<targetId>` 编码。 */
+export interface DesktopListAssetsArgs {
+  projectPath: string;
+  kind?: AssetKind;
+  target?: string;
+  /** 只看未挂任何目标的资产；省略即不过滤。 */
+  unlinked?: boolean;
+  limit: number;
+  offset: number;
 }
 
 export interface DesktopRuntime {
@@ -48,6 +71,14 @@ export interface DesktopBridge {
   updateWorkItem(input: Record<string, unknown>): Promise<unknown>;
   claimWorkItem(input: Record<string, unknown>): Promise<unknown>;
   getStatus(): Promise<unknown>;
+  /** Rust 返回的任务仍是未经信任的裸对象，这里先严格解析再交给仓储。 */
+  listTasks(args: DesktopListTasksArgs): Promise<ApiWorkItem[]>;
+  /** 不存在时为 null。 */
+  getTask(id: string): Promise<ApiWorkItem | null>;
+  /** 资产只读查询；返回分页对象或裸数组都接受，统一解析为 AssetPage。 */
+  listAssets(args: DesktopListAssetsArgs): Promise<AssetPage>;
+  /** 不存在时为 null。 */
+  getAsset(id: string): Promise<Asset | null>;
   listenChanged(handler: (payload: unknown) => void): Promise<UnlistenFn>;
   getOrchestrationConfig(): Promise<DesktopOrchestrationConfig>;
   checkOrchestrationService(): Promise<DesktopOrchestrationHealth>;
@@ -169,6 +200,24 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
     updateWorkItem: (input) => runtime.invoke("update_work_item", { input }),
     claimWorkItem: (input) => runtime.invoke("claim_work_item", { input }),
     getStatus: () => runtime.invoke("get_status"),
+    listTasks: async (args) => parseApiWorkItems(await runtime.invoke("list_tasks", {
+      projectPath: args.projectPath,
+      ...(args.status ? { status: args.status } : {}),
+      ...(args.kind ? { kind: args.kind } : {}),
+    })),
+    getTask: async (id) => {
+      const raw = await runtime.invoke<unknown>("get_task", { id });
+      return raw === null ? null : parseApiWorkItem(raw);
+    },
+    listAssets: async (args) => parseAssetPage(await runtime.invoke("list_assets", {
+      projectPath: args.projectPath,
+      ...(args.kind ? { kind: args.kind } : {}),
+      ...(args.target ? { target: args.target } : {}),
+      ...(args.unlinked ? { unlinked: true } : {}),
+      limit: args.limit,
+      offset: args.offset,
+    })),
+    getAsset: async (id) => parseOptionalAsset(await runtime.invoke<unknown>("get_asset", { id })),
     listenChanged: (handler) => runtime.listen("council://changed", handler),
     getOrchestrationConfig: async () =>
       parseOrchestrationConfig(await runtime.invoke("get_orchestration_config")),

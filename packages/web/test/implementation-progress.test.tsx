@@ -1,5 +1,5 @@
 /**
- * @input  依赖：ImplementationProgress/ImplementationSummary、服务端静态 React 渲染与实施项夹具
+ * @input  依赖：ImplementationProgress/ImplementationSummary、WorkItemDelegationPanel（委派门禁）、服务端静态 React 渲染与实施项夹具
  * @output 导出：中英界面下的派生完成度、只数叶子的分母、父任务只读状态、审核发现徽标、
  *         认领态与 AI 拆分入口的 UI 回归测试
  * @pos    决策执行账本不退化为手填百分比的前端验收证据
@@ -13,6 +13,7 @@ import {
   ImplementationProgress,
   ImplementationSummary,
 } from "../src/components/ImplementationProgress";
+import { WorkItemDelegationPanel } from "../src/components/WorkItemDelegationPanel";
 import { I18nProvider } from "../src/i18n/I18nProvider";
 import type {
   ActorSnapshot,
@@ -276,16 +277,14 @@ describe("ImplementationProgress", () => {
       permissionProfile: "read_only",
       executionRole: "reviewer",
     };
+    // 单项委派面板已从讨论页迁到任务详情；门禁规则在面板内部，直接渲染面板守护同一条规则。
     const renderWithAgents = (delegationAgents: OrchestrationAdapter[]) => renderToStaticMarkup(
-      <ImplementationProgress
-        topic={topicWith([item])}
-        participants={participants}
+      <WorkItemDelegationPanel
+        item={item}
+        adapters={delegationAgents}
         busyAction={null}
-        onGenerate={async () => undefined}
-        onAdd={async () => true}
-        onUpdate={async () => undefined}
-        onClaim={async () => undefined}
-        delegationAgents={delegationAgents}
+        onStart={async () => undefined}
+        onCancel={async () => undefined}
       />,
     );
 

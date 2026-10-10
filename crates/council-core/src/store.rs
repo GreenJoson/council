@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v17 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v17 schema、议题关闭、内容与实施项查询写入和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v19 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v19 schema（v18 任务一等化 + v19 资产库 assets/asset_links）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）、只读资产查询（list_assets/get_asset，见 store/asset_queries.rs）和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,15 +15,17 @@ use rusqlite::{
 use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
+
+mod asset_queries;
 use crate::types::{
     AcceptDecisionsInput, ActorSnapshot, ClaimWorkItemInput, CloseTopicInput, CouncilMessage,
     CouncilRevisions, CreateTopicInput, CreateWorkItemsInput, Decision, DecisionStatus,
     MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic, TopicDetail,
-    TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemOrigin, WorkItemProgress, WorkItemSeverity,
-    WorkItemStatus,
+    TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemKind, WorkItemOrigin, WorkItemProgress,
+    WorkItemSeverity, WorkItemSource, WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 17;
+const SUPPORTED_SCHEMA_VERSION: i64 = 19;
 const REQUIRED_TABLES: &[&str] = &[
     "runtime_audit_events",
     "topics",
@@ -44,6 +46,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "discussion_cycles",
     "blocking_questions",
     "work_item_delegations",
+    "assets",
+    "asset_links",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -54,6 +58,7 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_work_items_topic_status",
     "idx_work_items_parent_title",
     "idx_work_items_parent_order",
+    "idx_work_items_project_status",
     "idx_actor_identities_status_slug",
     "idx_actor_aliases_actor",
     "idx_agent_sessions_current",
@@ -74,6 +79,8 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_work_item_delegations_topic_updated",
     "idx_work_item_delegations_work_item",
     "idx_work_item_delegations_one_active",
+    "idx_assets_project_kind",
+    "idx_asset_links_target",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_runtime_audit_immutable",
@@ -107,7 +114,29 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_work_item_delegations_revision_insert",
     "trg_work_item_delegations_revision_update",
     "trg_work_item_delegations_revision_delete",
+    "trg_assets_revision_insert",
+    "trg_assets_revision_update",
+    "trg_assets_revision_delete",
+    "trg_asset_links_revision_insert",
+    "trg_asset_links_revision_delete",
 ];
+const ASSET_COLUMNS: &[&str] = &[
+    "id",
+    "project_path",
+    "kind",
+    "mime",
+    "byte_size",
+    "sha256",
+    "storage_rel_path",
+    "width",
+    "height",
+    "origin_delegation_id",
+    "origin_actor_id",
+    "prompt",
+    "created_at",
+    "deleted_at",
+];
+const ASSET_LINK_COLUMNS: &[&str] = &["asset_id", "target_kind", "target_id", "role", "created_at"];
 const TOPIC_COLUMNS: &[&str] = &[
     "id",
     "title",
@@ -172,6 +201,12 @@ const WORK_ITEM_COLUMNS: &[&str] = &[
     "fix_commit",
     "assignee_actor_id",
     "claimed_at",
+    // v18 任务一等化追加列；scope_key 是 VIRTUAL 生成列，table_info 看不到。
+    "kind",
+    "source",
+    "priority",
+    "project_path",
+    "brief_json",
 ];
 const SESSION_COLUMNS: &[&str] = &[
     "id",
@@ -325,6 +360,10 @@ const WORK_ITEM_DELEGATION_COLUMNS: &[&str] = &[
     "resumed_from_id",
     "failure_code",
     "execution_state_json",
+    // v18 追加：委派类型与输入/产出资产。
+    "kind",
+    "input_asset_ids_json",
+    "output_manifest_json",
 ];
 
 fn assert_schema_objects(
@@ -575,7 +614,19 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "council_identity",
         &["singleton", "instance_id"],
     )?;
+    assert_table_columns(connection, "assets", ASSET_COLUMNS)?;
+    assert_table_columns(connection, "asset_links", ASSET_LINK_COLUMNS)?;
     assert_foreign_key(connection, "messages", "topic_id", "topics", "id")?;
+    // v19：资产是独立产物，来源委派被级联删除时只置空来源，不连带删除资产。
+    assert_foreign_key_action(
+        connection,
+        "assets",
+        "origin_delegation_id",
+        "work_item_delegations",
+        "id",
+        "SET NULL",
+    )?;
+    assert_foreign_key(connection, "asset_links", "asset_id", "assets", "id")?;
     assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "decision_id", "decisions", "id")?;
@@ -659,16 +710,23 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         &["topic_id", "status", "created_at"],
     )?;
     // v12 起唯一性按父级判定：同决策不同父级的同名子任务是树的正常形态。
-    // parent_key 是生成列，PRAGMA table_info 看不到它，这条索引断言就是它没有漂移的凭据。
+    // v18 起作用域从 topic_id 换成 scope_key = COALESCE(topic_id, project_path, '')，
+    // 让不挂议题的直接任务也能按项目去重。parent_key/scope_key 都是生成列，
+    // PRAGMA table_info 看不到，这两条索引断言就是它们没有漂移的凭据。
     assert_index_columns(
         connection,
         "idx_work_items_parent_title",
-        &["topic_id", "parent_key", "title"],
+        &["scope_key", "parent_key", "title"],
     )?;
     assert_index_columns(
         connection,
         "idx_work_items_parent_order",
-        &["topic_id", "parent_key", "sort_order", "created_at"],
+        &["scope_key", "parent_key", "sort_order", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_work_items_project_status",
+        &["project_path", "status", "updated_at"],
     )?;
     assert_index_columns(
         connection,
@@ -715,6 +773,16 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "idx_work_item_delegations_one_active",
         &["work_item_id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_assets_project_kind",
+        &["project_path", "kind", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_asset_links_target",
+        &["target_kind", "target_id"],
     )?;
     assert_index_sql_contains(
         connection,
@@ -773,6 +841,14 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
             "origin IN ('manual', 'review_finding')",
             "severity IS NULL OR severity IN ('blocking', 'non_blocking')",
             "CHECK (parent_id IS NULL OR parent_id <> id)",
+            // v18：topic_id 可空、任务类型/来源约束与项目作用域生成列。
+            "topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE",
+            "kind IN ('code', 'image', 'prototype', 'research', 'pipeline')",
+            "source IN ('topic', 'direct', 'pipeline')",
+            "json_valid(brief_json) AND json_type(brief_json) = 'object'",
+            "scope_key TEXT GENERATED ALWAYS AS (COALESCE(topic_id, project_path, '')) VIRTUAL",
+            "CHECK ((source = 'topic') = (topic_id IS NOT NULL))",
+            "CHECK (source = 'topic' OR project_path IS NOT NULL)",
         ],
     )?;
     assert_table_sql_contains(
@@ -811,7 +887,17 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
             "status IN ( 'queued', 'executing', 'reviewing', 'changes_requested', 'approved', 'failed', 'cancelled' )",
             "CHECK (supervisor_agent_id <> executor_agent_id)",
             "(status IN ('approved', 'failed', 'cancelled') AND completed_at IS NOT NULL)",
+            // v18：topic_id 可空，新增委派类型与资产 JSON 约束。
+            "topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE",
+            "kind IN ('code', 'image', 'prototype', 'research', 'pipeline')",
+            "json_valid(input_asset_ids_json) AND json_type(input_asset_ids_json) = 'array'",
+            "json_valid(output_manifest_json) AND json_type(output_manifest_json) = 'object'",
         ],
+    )?;
+    assert_table_sql_contains(
+        connection,
+        "runtime_audit_events",
+        &["topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE"],
     )?;
     assert_table_sql_contains(
         connection,
@@ -892,12 +978,13 @@ const WORK_ITEM_SELECT_COLUMNS: &str = "id, topic_id, decision_id, title, detail
      status_note, version, created_by_actor_id, created_by_snapshot_json, \
      updated_by_actor_id, updated_by_snapshot_json, created_at, updated_at, completed_at, \
      parent_id, sort_order, origin, severity, source_message_id, source_cycle_id, \
-     review_round, fix_commit, assignee_actor_id, claimed_at";
+     review_round, fix_commit, assignee_actor_id, claimed_at, \
+     kind, source, priority, project_path, brief_json";
 
 #[derive(Debug)]
 struct WorkItemRow {
     id: String,
-    topic_id: String,
+    topic_id: Option<String>,
     decision_id: Option<String>,
     title: String,
     details: String,
@@ -921,6 +1008,11 @@ struct WorkItemRow {
     fix_commit: Option<String>,
     assignee_actor_id: Option<String>,
     claimed_at: Option<String>,
+    kind: String,
+    source: String,
+    priority: i64,
+    project_path: Option<String>,
+    brief_json: Option<String>,
 }
 
 struct ResolvedActor {
@@ -1147,6 +1239,54 @@ impl CouncilStore {
             has_more_messages,
             next_message_offset: has_more_messages.then_some(next_message_offset),
         })
+    }
+
+    /// 按项目列任务：议题派生项的 project_path 已在 v18 从议题拷贝，
+    /// 所以这里一条查询同时覆盖议题项与直接任务，不需要再 JOIN topics。
+    /// 过滤列顺序贴合 idx_work_items_project_status(project_path, status, updated_at)。
+    pub fn list_tasks(
+        &self,
+        project_path: &str,
+        status: Option<WorkItemStatus>,
+        kind: Option<WorkItemKind>,
+    ) -> CouncilResult<Vec<WorkItem>> {
+        let project_path = project_path.trim();
+        if project_path.is_empty() {
+            return Err(CouncilError::InvalidData("任务项目路径不能为空。".into()));
+        }
+        // 按实际传入的过滤条件拼 WHERE：status 作为等值条件出现时，
+        // 索引 (project_path, status, updated_at) 可直接给出 updated_at 顺序；
+        // 用「?2 IS NULL OR status = ?2」占位会让规划器放弃 status 列。
+        let mut sql =
+            format!("SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items WHERE project_path = ?1");
+        let mut values: Vec<&str> = vec![project_path];
+        if let Some(status) = status {
+            values.push(status.as_db());
+            sql.push_str(&format!(" AND status = ?{}", values.len()));
+        }
+        if let Some(kind) = kind {
+            values.push(kind.as_db());
+            sql.push_str(&format!(" AND kind = ?{}", values.len()));
+        }
+        sql.push_str(" ORDER BY updated_at DESC, created_at DESC, rowid DESC");
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values), read_work_item_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(work_item_from_row).collect()
+    }
+
+    /// 按 id 取单个任务，不要求挂议题；不存在返回 None，由调用方决定是否算错误。
+    pub fn get_task(&self, id: &str) -> CouncilResult<Option<WorkItem>> {
+        let row = self
+            .connection
+            .query_row(
+                &format!("SELECT {WORK_ITEM_SELECT_COLUMNS} FROM work_items WHERE id = ?1"),
+                params![id],
+                read_work_item_row,
+            )
+            .optional()?;
+        row.map(work_item_from_row).transpose()
     }
 
     pub fn create_topic(&mut self, input: CreateTopicInput) -> CouncilResult<Topic> {
@@ -1490,16 +1630,19 @@ impl CouncilStore {
             }
             let id = format!("work_item_{}", Uuid::new_v4());
             transaction.execute(
+                // 桌面端只建议题内任务：kind/source/priority 走列默认值（code/topic/0），
+                // project_path 跟随议题，与 v18 迁移回填旧行的口径一致。
                 "INSERT INTO work_items (
                    id, topic_id, decision_id, parent_id, title, details, status, status_note,
                    version, sort_order, origin, severity,
                    created_by_actor_id, created_by_snapshot_json,
                    updated_by_actor_id, updated_by_snapshot_json,
-                   created_at, updated_at, completed_at
+                   created_at, updated_at, completed_at, project_path
                  ) VALUES (
                    ?1, ?2, ?3, ?4, ?5, ?6, 'pending', NULL,
                    1, ?7, ?8, NULL,
-                   ?9, ?10, ?11, ?12, ?13, ?14, NULL
+                   ?9, ?10, ?11, ?12, ?13, ?14, NULL,
+                   (SELECT project_path FROM topics WHERE id = ?2)
                  )",
                 params![
                     id,
@@ -1888,6 +2031,11 @@ fn read_work_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItemRow> 
         fix_commit: row.get(22)?,
         assignee_actor_id: row.get(23)?,
         claimed_at: row.get(24)?,
+        kind: row.get(25)?,
+        source: row.get(26)?,
+        priority: row.get(27)?,
+        project_path: row.get(28)?,
+        brief_json: row.get(29)?,
     })
 }
 
@@ -2147,9 +2295,28 @@ fn work_item_from_row(row: WorkItemRow) -> CouncilResult<WorkItem> {
         })?),
         None => None,
     };
+    let kind = WorkItemKind::from_db(&row.kind)
+        .ok_or_else(|| CouncilError::InvalidData(format!("未知 WorkItem kind：{}", row.kind)))?;
+    let source = WorkItemSource::from_db(&row.source).ok_or_else(|| {
+        CouncilError::InvalidData(format!("未知 WorkItem source：{}", row.source))
+    })?;
+    // 列约束已保证是 JSON object 或 NULL；这里仍失败关闭，防止绕过约束的写入悄悄变成空简报。
+    let brief = match row.brief_json.as_deref() {
+        Some(raw) => {
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|_| CouncilError::InvalidData("实施项 brief_json 无效。".into()))?;
+            if !value.is_object() {
+                return Err(CouncilError::InvalidData(
+                    "实施项 brief_json 必须是 JSON 对象。".into(),
+                ));
+            }
+            Some(value)
+        }
+        None => None,
+    };
     Ok(WorkItem {
         id: row.id,
-        topic_id: row.topic_id,
+        topic_id: row.topic_id.filter(|value| !value.is_empty()),
         decision_id: row.decision_id.filter(|value| !value.is_empty()),
         parent_id: row.parent_id.filter(|value| !value.is_empty()),
         title: row.title,
@@ -2168,6 +2335,11 @@ fn work_item_from_row(row: WorkItemRow) -> CouncilResult<WorkItem> {
         fix_commit: row.fix_commit.filter(|value| !value.is_empty()),
         assignee_actor_id: row.assignee_actor_id.filter(|value| !value.is_empty()),
         claimed_at: row.claimed_at.filter(|value| !value.is_empty()),
+        kind,
+        source,
+        priority: row.priority,
+        project_path: row.project_path.filter(|value| !value.is_empty()),
+        brief,
         created_by_actor_id: row.created_by_actor_id,
         created_by_snapshot,
         updated_by_actor_id: row.updated_by_actor_id,

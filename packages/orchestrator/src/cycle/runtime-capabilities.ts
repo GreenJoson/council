@@ -1,6 +1,7 @@
 /**
  * @input  依赖：圆桌阶段与开局冻结的 Agent/Provider/Runtime 版本证据
- * @output 导出：最小 Runtime 能力词表、cycle 类型、需求推导、能力交集与 fail-fast 诊断
+ * @output 导出：最小 Runtime 能力词表（含图像生成/参考图输入）、cycle 类型、需求推导、能力交集与 fail-fast 诊断；
+ *         Claude 本机 CLI 声明并放行 image_input（P3 流水线 brief/review 读取 `.council/in/` 参考图与产物）
  * @pos    Agent / Provider / Runtime 三层在圆桌开局时的纯契约；不访问数据库或进程
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -22,6 +23,9 @@ export const RUNTIME_CAPABILITY_KEYS = [
   "media_read",
   "vision",
   "session_resume",
+  // P2：图像生成与参考图输入。只由显式图像委派消费，讨论 cycle 从不要求。
+  "image_generate",
+  "image_input",
 ] as const;
 
 export type DiscussionCycleKind = (typeof DISCUSSION_CYCLE_KINDS)[number];
@@ -93,6 +97,30 @@ const READ_ONLY_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
   "session_resume",
 ];
 
+/** 图像能力组：Runtime 只有在探针确认后才声明，policy 只对 Codex 本机 CLI 放行。 */
+export const IMAGE_RUNTIME_CAPABILITIES: readonly RuntimeCapabilityKey[] = [
+  "image_generate",
+  "image_input",
+];
+
+/*
+ * Codex 本机 CLI 的 policy = 只读讨论能力 + 图像能力组。图像能力不放宽讨论沙箱：
+ * 它只在显式图像委派里经独立的 workspace-write 生图沙箱执行，讨论需求从不包含它。
+ */
+const CODEX_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
+  ...READ_ONLY_LOCAL_POLICY,
+  ...IMAGE_RUNTIME_CAPABILITIES,
+];
+
+/*
+ * Claude 本机 CLI 的 policy = 只读讨论能力 + image_input。Claude Code 能直接读取工作目录里的图片，
+ * P3 流水线的 brief/review 阶段靠它看参考图与产物；不放行 image_generate（生图只走 Codex）。
+ */
+const CLAUDE_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
+  ...READ_ONLY_LOCAL_POLICY,
+  "image_input",
+];
+
 const READ_ONLY_ACP_POLICY: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
@@ -151,12 +179,28 @@ function requirementsForRole(
   ]);
 }
 
-/** 由 transport 得到当前真实 Runtime 声明；纯 sessionless 兼容接口保持文本-only。 */
+export interface DeclaredCapabilityOptions {
+  /** Codex 生图探针通过（features 稳定启用且未覆盖 model_provider）；其他 transport 忽略。 */
+  imageGeneration?: boolean;
+}
+
+/**
+ * 由 transport 得到当前真实 Runtime 声明；纯 sessionless 兼容接口保持文本-only。
+ * Claude 本机 CLI 声明 image_input（读取工作目录图片）；ACP/兼容 API 不声明图像能力；
+ * Codex 只有探针通过才追加图像能力组。
+ */
 export function declaredCapabilitiesForTransport(
   transportKind: string,
+  options: DeclaredCapabilityOptions = {},
 ): RuntimeCapabilityKey[] {
-  if (transportKind === "claude-resume" || transportKind === "codex-resume") {
-    return [...LOCAL_CLI_DECLARED_CAPABILITIES];
+  if (transportKind === "codex-resume") {
+    return uniqueCapabilities([
+      ...LOCAL_CLI_DECLARED_CAPABILITIES,
+      ...(options.imageGeneration ? IMAGE_RUNTIME_CAPABILITIES : []),
+    ]);
+  }
+  if (transportKind === "claude-resume") {
+    return uniqueCapabilities([...LOCAL_CLI_DECLARED_CAPABILITIES, "image_input"]);
   }
   if (transportKind === "acp") {
     return ["text", "repository_read", "git_diff", "session_resume"];
@@ -182,8 +226,11 @@ export function grantRuntimeCapabilities(
 export function defaultPolicyCapabilitiesForTransport(
   transportKind: string,
 ): RuntimeCapabilityKey[] {
-  if (transportKind === "claude-resume" || transportKind === "codex-resume") {
-    return [...READ_ONLY_LOCAL_POLICY];
+  if (transportKind === "codex-resume") {
+    return [...CODEX_LOCAL_POLICY];
+  }
+  if (transportKind === "claude-resume") {
+    return [...CLAUDE_LOCAL_POLICY];
   }
   if (transportKind === "acp") {
     return [...READ_ONLY_ACP_POLICY];

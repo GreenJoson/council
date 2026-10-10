@@ -1,7 +1,7 @@
 /**
  * @input  依赖：临时 v1/v2/v4/v5/v10/fresh SQLite、Node online backup 与 schema 迁移故障注入
  * @output 验证：动态 Actor、Provider/Agent 路由、v5→v6 RuntimeBinding、v10→v11 实施项、
- *         v11→v12 实施项树、v12→v13 决策包、v13→v14 Agent 委派、备份、回滚和 revision
+ *         v11→v12 实施项树、v12→v13 决策包、v13→v14 Agent 委派、v19 资产库账本、备份、回滚和 revision
  * @pos    Node 唯一生产迁移器的安全主验收
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -292,6 +292,8 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TABLE IF EXISTS asset_links;
+      DROP TABLE IF EXISTS assets;
       DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
       DROP TABLE IF EXISTS runtime_audit_events;
       DROP TABLE work_item_delegations;
@@ -376,9 +378,11 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   }
 }
 
-/** 当前库机械回退到 v13 以前时，必须连同委派表和 Agent 新列一起移除。 */
+/** 当前库机械回退到 v13 以前时，必须连同委派表和 Agent 新列一起移除；v19 资产表外键指向委派表，先删。 */
 function downgradeAgentDefinitionsBeforeVersionFourteen(database: DatabaseSync): void {
   database.exec(`
+    DROP TABLE IF EXISTS asset_links;
+    DROP TABLE IF EXISTS assets;
     DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
     DROP TABLE IF EXISTS runtime_audit_events;
     DROP TABLE IF EXISTS work_item_delegations;
@@ -898,6 +902,8 @@ test("v10 起链式升级到当前版本且保留既有议题与决策", async (
           { version: 15, name: "delegation-acceptance" },
           { version: 16, name: "runtime-audit-and-recovery" },
           { version: 17, name: "delegation-runtime-checkpoints" },
+          { version: 18, name: "task-first-class" },
+          { version: 19, name: "asset-library" },
         ],
       );
     } finally {
@@ -1927,8 +1933,10 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (15, 'delegation-acceptance', '2026-01-15T00:00:00.000Z'),
         (16, 'runtime-audit-and-recovery', '2026-01-16T00:00:00.000Z'),
         (17, 'delegation-runtime-checkpoints', '2026-01-17T00:00:00.000Z'),
-        (18, 'future', '2026-01-18T00:00:00.000Z');
-      PRAGMA user_version = 18;
+        (18, 'task-first-class', '2026-01-18T00:00:00.000Z'),
+        (19, 'asset-library', '2026-01-19T00:00:00.000Z'),
+        (20, 'future', '2026-01-20T00:00:00.000Z');
+      PRAGMA user_version = 20;
     `);
     futureDatabase.close();
     await assert.rejects(

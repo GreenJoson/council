@@ -1,6 +1,7 @@
 /**
  * @input  依赖：无
- * @output 导出：Council Web 的动态 Actor、含关闭态的 Topic/Message/Decision/实施项行快照、
+ * @output 导出：Council Web 的动态 Actor、含关闭态的 Topic/Message/Decision/实施项（v18 任务：
+ *         kind/source/priority/brief、可选 topicId）行快照、任务类型与来源常量、
  *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
  *         同时供讨论面板、决策包、决策记录与架构档案四处消费
@@ -23,6 +24,16 @@ export type DecisionStatus = "proposed" | "accepted" | "rejected" | "superseded"
 export type WorkItemStatus = "pending" | "in_progress" | "blocked" | "completed";
 export type WorkItemOrigin = "manual" | "review_finding";
 export type WorkItemSeverity = "blocking" | "non_blocking";
+
+/**
+ * v18 任务产出类型与来源。Web 是独立包，不能 import mcp-server 的常量，
+ * 所以这里保留一份与服务端 WORK_ITEM_KINDS / WORK_ITEM_SOURCES 同值的副本；
+ * 服务端增删取值时必须同步这里，否则严格 parser 会拒绝新值。
+ */
+export const WORK_ITEM_KINDS = ["code", "image", "prototype", "research", "pipeline"] as const;
+export type WorkItemKind = (typeof WORK_ITEM_KINDS)[number];
+export const WORK_ITEM_SOURCES = ["topic", "direct", "pipeline"] as const;
+export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
 
 /**
  * 议题实施完成度。分母只数叶子节点——父任务状态由子任务派生，
@@ -121,6 +132,15 @@ export interface CouncilDecision {
 
 export interface CouncilWorkItem {
   id: string;
+  /** v18 起直接任务不挂议题；议题内实施项总是带它。 */
+  topicId?: string;
+  kind: WorkItemKind;
+  source: WorkItemSource;
+  /** 看板排序用的整数优先级，越大越靠前；服务端默认 0。 */
+  priority: number;
+  projectPath?: string;
+  /** 任务简报：结构由任务类型决定，前端只做 record 校验、不解释内部字段。 */
+  brief?: Record<string, unknown>;
   /** 审核发现可以先于决策存在，因此锚点是可选的。 */
   decisionId?: string;
   parentId?: string;

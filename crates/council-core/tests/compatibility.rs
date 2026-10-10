@@ -1,5 +1,5 @@
 //! @input 依赖：临时 SQLite 文件、CouncilStore 和真实 Node schema 迁移器
-//! @output 导出：Node fresh/v2/v3/v5/v10→v16、议题关闭、Agent 委派/决策包/实施项树、RuntimeBinding schema、分页、revision 与版本拒绝测试
+//! @output 导出：Node fresh/v2/v3/v5/v10→v19、议题关闭、Agent 委派/决策包/实施项树、按项目只读任务查询、RuntimeBinding schema、分页、revision 与版本拒绝测试
 //! @pos Rust 内容核心只消费 Node 实际迁移 council.sqlite3 的跨语言回归证据
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,7 +8,7 @@ use council_core::{
     AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
     CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, DecisionStatus,
     MessageKind, PostMessageInput, RecordDecisionInput, TopicStatus, UpdateWorkItemInput,
-    WorkItemProgress, WorkItemStatus,
+    WorkItemKind, WorkItemProgress, WorkItemSource, WorkItemStatus,
 };
 use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
@@ -195,6 +195,44 @@ fn preserves_content_pagination_decision_and_revision_semantics() {
             .work_items
             .len(),
         2
+    );
+
+    // ---- v18 任务只读查询：议题派生项按议题路径即可列出，不必经议题 ----
+    let tasks = store
+        .list_tasks(" /workspace/project-alpha ", None, None)
+        .expect("tasks by project");
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks.iter().all(|task| {
+        task.project_path.as_deref() == Some("/workspace/project-alpha")
+            && task.source == WorkItemSource::Topic
+            && task.kind == WorkItemKind::Code
+            && task.topic_id.as_deref() == Some(topic.id.as_str())
+    }));
+    let completed_tasks = store
+        .list_tasks(
+            "/workspace/project-alpha",
+            Some(WorkItemStatus::Completed),
+            Some(WorkItemKind::Code),
+        )
+        .expect("filtered tasks");
+    assert_eq!(completed_tasks, vec![completed.clone()]);
+    assert!(
+        store
+            .list_tasks("/workspace/project-alpha", None, Some(WorkItemKind::Image))
+            .expect("image tasks")
+            .is_empty()
+    );
+    assert!(matches!(
+        store.list_tasks("   ", None, None),
+        Err(CouncilError::InvalidData(_))
+    ));
+    assert_eq!(
+        store.get_task(&completed.id).expect("task by id"),
+        Some(completed.clone())
+    );
+    assert_eq!(
+        store.get_task("work_item_missing").expect("missing task"),
+        None
     );
 
     // ---- 实施项树：父状态只能由子任务派生 ----
@@ -475,7 +513,7 @@ fn opens_node_current_schema_and_preserves_cross_language_identity() {
         )
         .expect("binding triggers"),
     );
-    assert_eq!(user_version, 17);
+    assert_eq!(user_version, 19);
     assert_eq!(binding_tables, 3);
     assert_eq!(binding_triggers, 7); // 含审计追加 revision 与禁止覆盖触发器。
     drop(raw);
@@ -720,8 +758,9 @@ fn reopens_node_migrated_fields_without_rewriting_orchestration_revision() {
             |row| row.get(0),
         )
         .expect("trigger count");
-    // v7 为 cycle/question 各加 3 个，v11 为实施项、v14 为 Agent 委派各增加 3 个 revision 触发器。
-    assert_eq!(trigger_count, 28);
+    // v7 为 cycle/question 各加 3 个，v11 为实施项、v14 为 Agent 委派各增加 3 个 revision 触发器；
+    // v19 为 assets 加 3 个、asset_links 加 2 个（链接只增删）。
+    assert_eq!(trigger_count, 33);
 }
 
 #[test]
@@ -901,8 +940,8 @@ fn rejects_unmigrated_and_future_schema_versions() {
         .expect("future database")
         .execute_batch(
             "INSERT INTO schema_migrations (version, name, applied_at)
-             VALUES (18, 'future-schema', '2026-01-01T00:00:00.000Z');
-             PRAGMA user_version = 18;",
+             VALUES (20, 'future-schema', '2026-01-01T00:00:00.000Z');
+             PRAGMA user_version = 20;",
         )
         .expect("future schema fixture");
     assert!(matches!(

@@ -62,7 +62,17 @@ npm run build:desktop
 
 日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
 
-桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用；存在调用或持久会话时，右栏才显示紧凑运行状态、取消、恢复和历史。直召依赖本地 Agent 服务；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
+工作区按视图切换，地址栏 hash 即入口：`#/discussion/<topicId>` 讨论、`#/tasks` 与 `#/tasks/<taskId>` 任务、`#/assets` 与 `#/assets/<assetId>` 资产、`#/pipelines` 与 `#/pipelines/<pipelineId>` 流水线、`#/decisions` 决策、`#/architecture` 架构、`#/attention` 关注。刷新或从外部链接打开都能回到同一视图。
+
+界面是三栏壳（截图见 `docs/designs/council-v2-*.png`）：最左侧图标栏自上而下是会话、需要我处理、资产、架构档案、决策记录五个入口，底部是「偏好」与「模型与 Provider 设置」；会话入口上的徽标是当前项目运行中的 Agent 数，需要我处理入口上的徽标是待处理议题数，为 0 不显示。中间是会话列表：顶部切换项目与新建议题，⌘K 聚焦搜索，「全部 / 议题 / 任务 / 流水线」筛选同一条流里的三类条目。打开议题后右侧是「上下文」栏：圆桌、决策包、实施进度、自动轮次、状态与参与者，以及默认只露标题和数量的约束 / 证据 / 备选方案（点标题展开，展开状态跨会话记住）；桌面端可从讨论头部收起整栏，窄屏作为抽屉打开。底部状态条左侧是同步状态与活动 Agent 计数（运行中的调用加执行 / 审核中的委派），右侧是构建身份。编辑器顶部的「讨论 / 派任务 / 起流水线」分段决定当前输入去向：后两者把草稿带进新建任务或新建流水线对话框。「偏好」里设置主题、界面语言与圆桌轮次上限，发起圆桌时不再逐次填写轮数。
+
+“任务”页是不经议题的工作入口：列表按状态分组，可按类型和来源筛选；“新建任务”只需标题和可选说明，当前开放代码与图像任务（原型任务由流水线的原型阶段生成，调研任务在后续阶段接入；流水线在“流水线”页创建，不走“新建任务”）；图像任务可在创建时附带 `council-brief` 简报（目标、交付物尺寸与数量、是否透明、配色、风格约束、验收条目），也可以创建后在详情页编写，表单和 JSON 两种编辑方式会按服务端规则校验。任务详情里更新状态（完成或受阻必须填写证据）、查看所属议题、发起或取消 Agent 委派并查看委派历史；单条委派的入口已从讨论页迁到这里，讨论页的“实施进度”只显示最近一次委派的状态与执行段，并提供“在任务页管理委派”跳转。议题派生的实施项也会出现在同一项目的任务列表中。
+
+“资产”页是当前项目的资产库：图像、3D 模型、文档、归档包按类型筛选、分页浏览；“从项目导入”填写相对项目根目录的路径即可入库，绝对路径、越出项目目录的路径和符号链接会被拒绝，同一文件重复导入返回已有资产。资产详情显示缩略图、尺寸、SHA-256、生成者、来源委派与挂接关系；挂为任务产物的资产可以设为最终稿；删除是软删除，原文件保留在资产目录但不再可读。勾选「只看未引用」只列出没有挂到任何任务、消息或决策的资产；「清理未引用」先统计数量并弹窗确认，再逐个软删除这些资产，总量配额只计未删除资产，因此清理会释放配额但不会动资产目录里的文件。图像委派生成的图片会自动入库并出现在任务详情的“产物”区。
+
+“流水线”页把“写简报 → 出图 → 复盘 → 选定（→ 原型）”串成一条可追踪的链路，只需要一句话目标：模板有“应用视觉稿”（出图后再把选定的图交给 Agent 做可点击原型）、“游戏素材包”（至少 6 张透明 sprite）与“概念设定图”；新建时可附约束与最多 8 张参考图，Agent 不选则按已启用的 Claude（写简报、复盘）与通过生图探针的 Codex（出图、原型）自动选择。列表按“等待我处理 / 进行中 / 失败 / 已完成”分组；详情页的阶段轨道显示每段状态，只有两个节点需要你动手：确认 Agent 起草的简报（可先改再确认），以及在并排对比里勾选最终稿。复盘由 Claude 看图给出通过或修订意见，修订会自动重跑出图，轮数受 `COUNCIL_PIPELINE_MAX_REVISIONS` 限制；失败的阶段可“恢复”重跑，进行中的流水线可“取消”。流水线本身是一条 `kind=pipeline` 的任务，各阶段生成的图像/原型子任务会出现在“任务”页，选定的最终稿同时挂到资产库；“应用视觉稿”的原型委派通过后流水线即归入“已完成”，原型任务本身仍在“任务”页等你验收。流水线依赖本地 Agent 服务，离线时列表为空并禁用新建。
+
+桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用；存在调用或持久会话时，右侧「上下文」栏的自动轮次区块才显示紧凑运行状态、取消、恢复和历史。直召依赖本地 Agent 服务；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
 `@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。Claude/Codex 每轮仍启动一个可取消的独立 OS 进程。
 
@@ -83,6 +93,20 @@ Grok    → grok agent stdio
 Codex   → codex-acp
 Claude  → claude-agent-acp
 ```
+
+### 从首次运行到跑通「应用视觉稿」
+
+只靠桌面应用就能走完一条「一句话目标 → 简报 → 出图 → 复盘 → 选定 → 原型」的流水线，不需要先配 MCP：
+
+1. 首次启动按上面的提示选好日志库和当前项目，进入会话列表。
+2. 点图标栏底部的「模型与 Provider 设置」：Claude 一侧启用并填写 Agent 模型（留空不算可用）；Codex 一侧启用后点「测试」确认 CLI 已登录。生图探针随可用性检查自动运行，本机已用 ChatGPT 登录并开启生图才会通过；是否通过在第 3 步的「出图 Agent」下拉里能看出来，只有通过探针的 Codex 会出现在列表里。
+3. 在任意议题的编辑器里切到「起流水线」并输入一句话目标，或从会话列表筛选「流水线」后点「新建流水线」。模板选「应用视觉稿」，可附约束与最多 8 张参考图；Agent 留空会按第 2 步的结果自动选择。
+4. 打开新建的流水线，阶段轨道停在「简报」：看一遍 Claude 起草的简报，需要就直接改，然后点「确认简报」。
+5. 「出图」与「复盘」自动进行：Codex 出图、Claude 看图给意见，修订会自动重跑出图，轮数受 `COUNCIL_PIPELINE_MAX_REVISIONS` 限制。中途不需要操作，底部状态条的活动 Agent 计数会随之变化。
+6. 轨道到「选定」时在并排对比里勾选最终稿并点「选定」；最终稿同时挂到资产库，资产卡上带「最终稿」标记。
+7. 「原型」阶段由 Codex 在隔离工作区做可点击原型并经 Agent 审核；审核通过后流水线归入「已完成」，原型任务本身仍在「任务」页等你验收：在任务状态中填写验收证据并完成。
+
+任一阶段显示「失败」时先看阶段错误码，按 [故障排查](#故障排查) 的「流水线创建返回 409 或 503」条目处理；多数情况点「恢复」即可接续而不必重来。
 
 ## 圆桌能力与周期类型
 
@@ -124,13 +148,13 @@ Council 会停止继续提供工具并要求 Agent 直接收尾，并在回复�
 `blocking` 覆盖保护；Agent 必须列出待重读的 commit、文件或行范围，不能据此放行。只有议题与可信本轮指令本身已经大到
 连必要收尾指令都放不下时，运行才会以 `tool_context_limit` 失败关闭。
 
-轮次预算耗尽时，界面会显示结构化的阻断分歧与停止原因。新发言如果缺少
+轮次预算耗尽时，界面会显示结构化的阻断分歧与停止原因，并给出两个出口：「我来裁决」打开人工决策直接结束议题，「再给 1 轮」按同一名册与范围续一轮。轮次上限在「偏好」里统一设置。新发言如果缺少
 `council-verdict` 尾块，会按阻断处理并计入“缺少 verdict”度量，避免协议失效却继续显示
 为已收敛。
 
 ## 模型与 Provider 设置
 
-点击顶栏齿轮打开 Model Router。设置明确分为两层：
+点击图标栏底部的「模型与 Provider 设置」打开 Model Router。设置明确分为两层：
 
 - Provider 连接：保存协议、API Base URL、Keychain 凭据、品牌和启用状态；Claude Code、
   Codex CLI 与本机 ACP Agent 复用各自登录，远程连接使用兼容 Chat Completions API。
@@ -190,6 +214,24 @@ Agent 身份伪装成用户并写入 `accepted`；桌面/HTTP 用户入口确认
 Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
 `council_update_work_item` 更新为 `in_progress`、`blocked` 或 `completed`。每次更新必须携带
 最新 `expected_version`，过期写入会被拒绝。标记完成时应在 `status_note` 写明测试、构建或交付证据。
+
+不需要讨论的工作可以直接建任务，不必先建议题和决策：界面在“任务”页点“新建任务”，MCP 用 `council_create_task`（必填项目路径与标题）、
+`council_list_tasks`、`council_get_task`，HTTP 对应 `/api/v1/tasks`。直接任务同样可以委派给 Agent
+（`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），支持 `kind=code` 的代码任务与 `kind=image` 的生图任务；
+生图任务先写 council-brief（新建时带 `brief`、`PUT /api/v1/tasks/:taskId` 或 MCP `council_submit_brief`），
+执行者必须是本机已用 ChatGPT 登录且开启生图的 Codex，监督者可省略（默认 Claude），可带最多 8 个同项目图像资产作参考图；
+产物去重入库并挂到任务，任务停在进行中等你在资产库/任务页人工验收；
+MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 或 `start:http` 需要在运行。
+议题实施项也会出现在同一项目的任务列表中。
+
+资产库对 Agent 开放同样的能力：MCP 用 `council_list_assets`（`unlinked=true` 只看未挂任何目标的资产，不能与 target 过滤同用）、`council_get_asset`、`council_import_asset`（项目内相对路径）、
+`council_attach_asset`（把资产挂到任务、消息或决策，角色为 reference/output/final/brief）；HTTP 对应 `/api/v1/assets`（`?unlinked=true` 同义）、
+`POST /api/v1/assets/import`、`/api/v1/assets/:assetId`（`/content` 取原文件、`/thumbnail` 取缩略图、`/links` 管理挂接，`DELETE` 软删除）。
+入库按文件头嗅探类型，只接受 `COUNCIL_ASSET_MIME_ALLOWLIST` 内的类型，单文件与总量受 `COUNCIL_ASSET_MAX_BYTES`、
+`COUNCIL_ASSET_MAX_TOTAL_BYTES` 限制；文件按内容哈希存放在 `COUNCIL_ASSET_DIR`（留空为日志库下的 `assets` 子目录），
+缩略图由 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 生成并缓存。资产只属于一个项目，跨项目不可见。
+
+流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）与原型委派权限档 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`（默认 `workspace_write`）可在 `.env` 调整。
 
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
@@ -255,7 +297,7 @@ cp packages/web/.env.example packages/web/.env.local
 npm run dev
 ```
 
-浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。顶栏齿轮管理模型和 Provider；单次 Agent 调用统一从 Composer 输入 `@Agent` 发起，多 Agent 自动互审从“圆桌讨论”发起。存在调用或持久会话时，右侧“运行状态”提供取消、失败恢复、历史和会话关闭；没有调用时该面板不占空间。
+浏览器打开终端输出的 Web 地址。页面可以搜索和切换议题、发布消息、创建议题及确认决策。图标栏底部的「模型与 Provider 设置」管理模型和 Provider，「偏好」管理主题、语言与圆桌轮次上限；单次 Agent 调用统一从 Composer 输入 `@Agent` 发起，多 Agent 自动互审从右侧「上下文」栏的“圆桌讨论”发起。存在调用或持久会话时，「上下文」栏的自动轮次区块提供取消、失败恢复、历史和会话关闭；没有调用时该区块不占空间。
 
 启动、恢复和批准只完成原子状态转换后就返回，Agent 在后台继续执行；浏览器刷新或 HTTP 连接断开不会取消任务。显式取消会使持有 lease 的执行者终止 CLI，版本 CAS 会拒绝迟到回复。进程重启时，`running` 可以安全续跑；中断在 `waiting_agent` 的调用不会自动重放，而会转成需要人工恢复的失败状态。
 
@@ -391,7 +433,23 @@ codex login status
 
 如果失败卡片提供“恢复”，表示故障被判定为临时失败，可直接恢复。兼容 Provider 会显示脱敏后的 HTTP 原因：401/403 表示认证或模型权限，402 表示 API 额度，429 表示请求速率、Token 速率、并发或账户限制，5xx 表示服务暂时不可用；其他 4xx 应检查模型 ID、API 地址和参数兼容性。登录、模型权限或最终正文超限等确定性错误需要先修正配置。
 
-远程 Provider 则在顶栏齿轮中确认模型、API Base URL、API Key 和“启用”状态，然后执行连接测试。连接测试不会回显上游响应正文或 API Key。
+远程 Provider 则在「模型与 Provider 设置」中确认模型、API Base URL、API Key 和“启用”状态，然后执行连接测试。连接测试不会回显上游响应正文或 API Key。
+
+### 资产导入被拒绝
+
+`415` 表示文件头不是允许的类型（扩展名不算数，改名的文本文件仍会被拒）；`413` 表示超出单文件或总量配额，
+调大 `COUNCIL_ASSET_MAX_BYTES` / `COUNCIL_ASSET_MAX_TOTAL_BYTES` 后重启服务；`403` 表示路径越出项目目录或是符号链接，
+把文件复制进项目后再导入。缩略图返回 `404` 多半是 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 不可用或超时，原文件仍可经 `/content` 读取。
+
+### 图像任务的简报被拒绝
+
+新建图像任务、`PUT /api/v1/tasks/:taskId` 或 `council_submit_brief` 返回 `400 council-brief 无效：<字段路径>: <原因>` 时按字段路径改简报：
+`style.palette` 是一段文字而不是数组，交付物的 `size` 写成 `宽x高`、`id` 不能重复、`count` 不超过 16。委派时报“图像任务需要先提交 council-brief”
+说明任务还没有通过校验的简报，先补简报再委派；代码任务的简报不做协议校验，只限制是 JSON 对象且不超长。
+
+### 流水线创建返回 409 或 503
+
+`503 流水线需要本地 Agent 服务，当前未启用。` 表示桌面 app 或 `start:http` 没有在运行，先启动再试。`409` 带 Agent 提示时按文案处理：写简报与复盘需要已启用、已填写模型且可用的 Claude CLI（Claude Agent 模型留空时不算可用，先在“模型与 Provider 设置”里填写），出图需要通过生图探针（本机 ChatGPT 登录）的 Codex，可在“模型与 Provider 设置”里启用后重试，或在新建对话框里显式指定。确认简报返回 `400` 时按字段路径修改简报（规则同图像任务；交付物 count 合计不能超过 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`，默认 16 张，Claude 写的草稿超限会直接让 brief 阶段失败，“恢复”即重写）；阶段显示“失败”时先看阶段错误码：`image_unavailable` 带 Codex 侧原因，其中“生图超时”按每张约 1 分钟估算，交付物多时调大 `COUNCIL_CODEX_IMAGE_TIMEOUT_MS`（默认 15 分钟）或在简报里减张数，`outputs_missing` 多为 Codex 只给了清单没写文件，`manifest_invalid` 是清单损坏或答非所问（已找到的图仍会入库挂在出图子任务上，但复盘只看重跑后那一次的产物，之前的图只出现在并排对比里），`interrupted` 是服务重启时该阶段正在跑，三者都可直接“恢复”；原型阶段的 `execution_checkpoint`（以及 `execution_no_progress` 等交接类错误）表示 Agent 已把代码存在隔离工作区并停下，常见原因是沙箱不允许起服务或浏览器做验证，“恢复”会从交接点接续而不是重做（`review_revision_limit`：Agent 审核在修订轮次内没通过，提交与审核意见都保留，“恢复”同样接续原工作区按上次审核继续改）；原型任务说明已要求 Agent 遇到沙箱拒绝时不停下等放行、把未验证项写进收尾说明交人工验收，要让 Agent 自己起服务和浏览器验证，可把 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION` 设为 `danger_full_access`（Codex 将不带沙箱运行，执行 Agent 的权限档也得是该档，只建议在隔离机器上开）；复盘轮数用尽会停在“选定”等你定夺。
 
 ### `@claude` 已识别但运行失败
 

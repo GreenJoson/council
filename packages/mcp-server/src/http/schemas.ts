@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划与实施项）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库与 P3 流水线）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,13 +17,19 @@ import {
 } from "council-orchestrator";
 import { z } from "zod/v4";
 import {
+  ASSET_KINDS,
+  ASSET_LINK_ROLES,
+  ASSET_LINK_TARGET_KINDS,
   DECISION_STATUSES,
+  DEFAULT_ASSET_PAGE_LIMIT,
+  MAX_ASSET_PAGE_LIMIT,
   MAX_ALTERNATIVE_COUNT,
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
   MAX_DECISION_BATCH,
   MAX_CYCLE_ROUND_BUDGET,
   MAX_ID_CHARS,
+  MAX_IMAGE_INPUT_ASSETS,
   MAX_INSTRUCTION_CHARS,
   MAX_LIST_LIMIT,
   MAX_MESSAGE_CHARS,
@@ -36,12 +42,16 @@ import {
   MAX_WORK_ITEM_STATUS_NOTE_CHARS,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_KINDS,
+  WORK_ITEM_SOURCES,
   WORK_ITEM_STATUSES,
 } from "../constants.js";
 import {
   AGENT_EXECUTION_ROLES,
   AGENT_PERMISSION_PROFILES,
 } from "../agent-execution-policy.js";
+import { PIPELINE_DOCUMENT_LIMITS } from "../pipelines/pipeline-document.js";
+import { PIPELINE_TEMPLATE_IDS } from "../pipelines/templates.js";
 
 const nonBlankString = (maximum: number) =>
   z.string().min(1).max(maximum).refine((value) => value.trim().length > 0, {
@@ -335,6 +345,180 @@ export const startWorkItemDelegationBatchBodySchema = z
     completionPolicy: z.enum(["review", "human"]).optional(),
     acceptanceCriteria: nonBlankString(4_000).optional(),
     createInitialBaseline: z.boolean().optional(),
+  })
+  .strict();
+
+// ---- 任务入口（/api/v1/tasks）：语义归一化在 tasks/task-intake.ts，这里只校验形状 ----
+
+const taskProjectPathSchema = z
+  .string()
+  .min(1)
+  .max(MAX_PATH_CHARS)
+  .refine((value) => path.isAbsolute(value), "projectPath 必须是绝对路径");
+
+export const taskParamsSchema = z.object({ taskId: workItemIdSchema }).strict();
+
+export const createTaskBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    title: nonBlankString(MAX_TITLE_CHARS),
+    details: z.string().max(MAX_WORK_ITEM_DETAILS_CHARS).optional(),
+    kind: z.enum(WORK_ITEM_KINDS).optional(),
+    priority: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+    brief: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const listTasksQuerySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    status: z.enum(WORK_ITEM_STATUSES).optional(),
+    kind: z.enum(WORK_ITEM_KINDS).optional(),
+    source: z.enum(WORK_ITEM_SOURCES).optional(),
+  })
+  .strict();
+
+/**
+ * 任务入口单项委派：在议题内委派形状上增加 kind 与 inputAssetIds。
+ * image 允许省略 supervisorAgentId（服务层选默认 Claude），code 仍必填；参考图最多 MAX_IMAGE_INPUT_ASSETS 个，
+ * code 只接受空数组的规则与资产归属校验在服务层。
+ */
+export const startTaskDelegationBodySchema = startWorkItemDelegationBodySchema.extend({
+  supervisorAgentId: routerIdSchema.optional(),
+  kind: z.enum(WORK_ITEM_KINDS).default("code"),
+  inputAssetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_IMAGE_INPUT_ASSETS).default([]),
+}).strict().superRefine((value, context) => {
+  if (value.kind === "code" && !value.supervisorAgentId) {
+    context.addIssue({ code: "custom", path: ["supervisorAgentId"], message: "代码委派必须指定监督 Agent" });
+  }
+});
+
+/** 任务入口的乐观更新：在议题内更新形状上增加可选 brief（仅 image 任务，服务层按 council-brief 严格校验）。 */
+export const updateTaskBodySchema = updateWorkItemBodySchema.extend({
+  brief: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+// ---- P3 流水线（/api/v1/pipelines）：阶段语义、brief 模板约束与 Agent 选择在 pipelines/，这里只校验形状 ----
+
+const pipelineAgentIdSchema = routerIdSchema.min(1);
+
+export const pipelineParamsSchema = z.object({ pipelineId: workItemIdSchema }).strict();
+
+export const listPipelinesQuerySchema = z.object({ project: taskProjectPathSchema }).strict();
+
+export const createPipelineBodySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    template: z.enum(PIPELINE_TEMPLATE_IDS),
+    goal: nonBlankString(PIPELINE_DOCUMENT_LIMITS.maxGoal),
+    constraints: z
+      .array(nonBlankString(PIPELINE_DOCUMENT_LIMITS.maxConstraint))
+      .max(PIPELINE_DOCUMENT_LIMITS.maxConstraints)
+      .optional(),
+    referenceAssetIds: z
+      .array(z.string().min(1).max(MAX_ID_CHARS))
+      .max(PIPELINE_DOCUMENT_LIMITS.maxReferences)
+      .optional(),
+    agents: z
+      .object({
+        brief: pipelineAgentIdSchema.optional(),
+        image: pipelineAgentIdSchema.optional(),
+        prototype: z
+          .object({
+            executor: pipelineAgentIdSchema.optional(),
+            supervisor: pipelineAgentIdSchema.optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** brief 只校验为对象；council-brief 结构与模板约束（kind、数量、透明背景）由服务层严格校验并返回 400。 */
+export const confirmPipelineBriefBodySchema = z
+  .object({
+    brief: z.record(z.string(), z.unknown()),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export const selectPipelineFinalBodySchema = z
+  .object({
+    assetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).min(1).max(64),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export const pipelineVersionBodySchema = z
+  .object({ expectedVersion: z.number().int().positive() })
+  .strict();
+
+// ---- 资产库（/api/v1/assets）：入库规则在 assets/，这里只校验形状 ----
+
+export const assetIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "assetId 过长")
+  .regex(/^asset_[A-Za-z0-9-]+$/, "assetId 格式无效");
+
+const assetTargetIdSchema = z
+  .string()
+  .min(1)
+  .max(MAX_ID_CHARS)
+  .regex(/^[A-Za-z0-9_-]+$/, "targetId 格式无效");
+
+export const assetParamsSchema = z.object({ assetId: assetIdSchema }).strict();
+
+export const assetLinkParamsSchema = z
+  .object({
+    assetId: assetIdSchema,
+    targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
+    targetId: assetTargetIdSchema,
+    role: z.enum(ASSET_LINK_ROLES),
+  })
+  .strict();
+
+/** target 形如 work_item:<id>；拆成结构化字段后再交给仓储。unlinked=true 只看未挂任何目标的资产。 */
+export const listAssetsQuerySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    kind: z.enum(ASSET_KINDS).optional(),
+    unlinked: z
+      .enum(["true", "false"])
+      .transform((value) => value === "true")
+      .optional(),
+    target: z
+      .string()
+      .max(MAX_ID_CHARS + 16)
+      .transform((value, context) => {
+        const separator = value.indexOf(":");
+        const kind = ASSET_LINK_TARGET_KINDS.find((item) => item === value.slice(0, separator));
+        const id = value.slice(separator + 1);
+        if (separator <= 0 || !kind || !/^[A-Za-z0-9_-]+$/.test(id) || id.length > MAX_ID_CHARS) {
+          context.addIssue({ code: "custom", message: "target 必须形如 work_item|message|decision:<id>" });
+          return z.NEVER;
+        }
+        return { kind, id };
+      })
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_ASSET_PAGE_LIMIT).default(DEFAULT_ASSET_PAGE_LIMIT),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+
+export const importAssetBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    relativePath: nonBlankString(MAX_PATH_CHARS),
+  })
+  .strict();
+
+export const addAssetLinkBodySchema = z
+  .object({
+    targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
+    targetId: assetTargetIdSchema,
+    role: z.enum(ASSET_LINK_ROLES),
   })
   .strict();
 

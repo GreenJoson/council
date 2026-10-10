@@ -27,6 +27,7 @@ interface ImportMetaEnv {
   readonly VITE_COUNCIL_ORCHESTRATION_PAGE_SIZE?: string;
   readonly VITE_COUNCIL_ORCHESTRATION_RECOVERY_DELAY_MS?: string;
   readonly VITE_COUNCIL_DESKTOP_HEALTH_INTERVAL_MS?: string;
+  readonly VITE_COUNCIL_ASSET_PAGE_SIZE?: string;
 }
 
 interface ImportMeta {

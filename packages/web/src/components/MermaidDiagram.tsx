@@ -44,7 +44,7 @@ export function MermaidDiagram({ code, onOpen }: MermaidDiagramProps) {
   const [themeName, setThemeName] = useState(resolveMermaidTheme);
   const [state, setState] = useState<RenderState>({ status: "loading" });
 
-  // 主题切换（HeaderBar 循环按钮 / 跟随系统）通过 data-theme 属性生效，
+  // 主题切换（偏好对话框选择 / 跟随系统）通过 data-theme 属性生效，
   // MutationObserver 是唯一能感知"根节点属性被改写"的通用方式；组件卸载时断开。
   useEffect(() => {
     const target = document.documentElement;

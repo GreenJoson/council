@@ -1,6 +1,7 @@
 /**
  * @input  依赖：严格解析后的 API Actor 快照、议题详情和 Web 领域模型
- * @output 导出：动态参与者、实施项、Topic 摘要、TopicDetail 与 WorkspaceSnapshot 映射函数
+ * @output 导出：动态参与者、实施项（含 v18 任务字段，mapWorkItem 供任务仓储复用）、Topic 摘要、
+ *         TopicDetail 与 WorkspaceSnapshot 映射函数
  * @pos    后端 ActorIdentity 协议和 Operator Console 展示模型之间的纯转换层；
  *         决策数组与 proposed/accepted/rejected/superseded 四态原样透传
  *
@@ -116,9 +117,15 @@ function mapMessage(message: ApiMessage): CouncilMessage {
   };
 }
 
-function mapWorkItem(item: ApiWorkItem): CouncilWorkItem {
+export function mapWorkItem(item: ApiWorkItem): CouncilWorkItem {
   return {
     id: item.id,
+    ...(item.topicId ? { topicId: item.topicId } : {}),
+    kind: item.kind,
+    source: item.source,
+    priority: item.priority,
+    ...(item.projectPath ? { projectPath: item.projectPath } : {}),
+    ...(item.brief ? { brief: structuredClone(item.brief) } : {}),
     ...(item.decisionId ? { decisionId: item.decisionId } : {}),
     ...(item.parentId ? { parentId: item.parentId } : {}),
     title: item.title,

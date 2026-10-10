@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限与原型权限档、v19 资产库的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,11 +8,16 @@
  */
 
 import type {
+  ASSET_KINDS,
+  ASSET_LINK_ROLES,
+  ASSET_LINK_TARGET_KINDS,
   DECISION_STATUSES,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
+  WORK_ITEM_KINDS,
   WORK_ITEM_ORIGINS,
   WORK_ITEM_SEVERITIES,
+  WORK_ITEM_SOURCES,
   WORK_ITEM_STATUSES,
 } from "./constants.js";
 import type { ActorId, ActorSnapshot } from "./actor-identity.js";
@@ -23,6 +28,16 @@ export type DecisionStatus = (typeof DECISION_STATUSES)[number];
 export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 export type WorkItemOrigin = (typeof WORK_ITEM_ORIGINS)[number];
 export type WorkItemSeverity = (typeof WORK_ITEM_SEVERITIES)[number];
+/** v18 起实施项（任务）的产出类型；与 work_items.kind 的 CHECK 枚举一致。 */
+export type WorkItemKind = (typeof WORK_ITEM_KINDS)[number];
+/** v18 起实施项来源：议题拆解、直接创建或流水线生成；只有 topic 来源挂议题。 */
+export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
+/** v19 资产类型、链接目标与角色；与 assets / asset_links 的 CHECK 一致。 */
+export type AssetKind = (typeof ASSET_KINDS)[number];
+export type AssetLinkTargetKind = (typeof ASSET_LINK_TARGET_KINDS)[number];
+export type AssetLinkRole = (typeof ASSET_LINK_ROLES)[number];
+/** 流水线原型委派可请求的权限档：默认沙箱写盘；danger_full_access 让 Codex 不带沙箱运行以便自行起服务与浏览器验证。 */
+export type PipelinePrototypePermission = "workspace_write" | "danger_full_access";
 
 export interface CouncilConfig {
   dataDir: string;
@@ -41,12 +56,27 @@ export interface CouncilConfig {
   workerIdleTimeoutMs?: number;
   delegationMaxExecutionSegments?: number;
   delegationExecutionTimeoutMs?: number;
+  /** P3 流水线：模板阶段数上限与复盘后自动修订轮数上限。 */
+  pipelineMaxStages?: number;
+  pipelineMaxRevisions?: number;
+  /** P3 原型代码委派请求的权限档（默认 workspace_write）；实际权限仍与执行 Agent 的权限档取交集。 */
+  pipelinePrototypePermission?: PipelinePrototypePermission;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;
   codexSandboxMode: "read-only";
   codexTimeoutMs: number;
   codexKillGraceMs: number;
+  /**
+   * Codex 生图配置；loadConfig 总会提供。可选是为了兼容直接嵌入旧 Runtime 的调用方，
+   * 缺省按「未启用」处理：探针不声明图像能力，generateImages 拒绝执行。
+   */
+  codexImageEnabled?: boolean;
+  codexImageSandboxMode?: "workspace-write";
+  codexImageTimeoutMs?: number;
+  codexImageMaxOutputs?: number;
+  /** Codex 数据目录（<codex-home>），图像委派兜底收集产物用；缺省时跳过该路收集。 */
+  codexHome?: string;
   kimiAcpCommand: string;
   geminiAcpCommand: string;
   grokAcpCommand: string;
@@ -76,13 +106,32 @@ export interface CouncilConfig {
   maxOutputChars: number;
   cliMaxStreamChars: number;
   defaultMessageLimit: number;
+  /** loadConfig 总会提供；手工构造配置的旧调用方缺省时按 <data-dir>/assets 与默认预算回落。 */
+  assets?: AssetConfig;
+}
+
+/** v19 资产库配置：由 config.ts 的 loadAssetConfig 集中加载校验，assets/ 领域只读这里。 */
+export interface AssetConfig {
+  /** 资产根目录（绝对路径）；COUNCIL_ASSET_DIR 留空时为 <data-dir>/assets。 */
+  rootDir: string;
+  maxBytes: number;
+  maxTotalBytes: number;
+  mimeAllowlist: readonly string[];
+  thumbnailMaxEdge: number;
+  thumbnailCommand: string;
+  thumbnailTimeoutMs: number;
 }
 
 export interface McpCouncilConfig extends CouncilConfig {
   callerActorAlias: string;
+  /** 同机 HTTP 服务基址（仅回环）；任务委派等需要后台执行的 MCP 工具经它转发。 */
+  httpServiceUrl: string;
+  httpForwardTimeoutMs: number;
 }
 
 export interface CouncilHttpConfig {
+  /** loadHttpConfig 总会提供；测试夹具手工构造时缺省，由 app 按数据库目录回落。 */
+  assets?: AssetConfig;
   filePreview?: import("./project-file-preview-config.js").ProjectFilePreviewConfig;
   databasePath: string;
   sqliteBusyTimeoutMs: number;
@@ -160,7 +209,15 @@ export interface Decision {
 
 export interface WorkItem {
   id: string;
-  topicId: string;
+  /** v18 起可空：直接任务与流水线任务不挂议题，靠 projectPath 定位项目。 */
+  topicId?: string;
+  kind: WorkItemKind;
+  source: WorkItemSource;
+  priority: number;
+  /** 议题实施项迁移/创建时从议题拷贝；非议题任务必填。 */
+  projectPath?: string;
+  /** 任务简报（结构化输入），NULL 映射为缺省。 */
+  brief?: Record<string, unknown>;
   /** 审核发现可以在议题还没有 Accepted 决策时就落库，因此锚点放宽为可选。 */
   decisionId?: string;
   /** 顶层任务没有父级；子任务随父级级联删除。 */
@@ -231,4 +288,38 @@ export interface ClaudeResponse {
 export interface CodexResponse {
   content: string;
   sessionId?: string;
+}
+
+export interface AssetLink {
+  targetKind: AssetLinkTargetKind;
+  targetId: string;
+  role: AssetLinkRole;
+  createdAt: string;
+}
+
+/**
+ * 公开资产 DTO（REST / MCP / Tauri 共用形状）。刻意不含 project_path 与 storage_rel_path：
+ * 客户端只经 /assets/:id/content 取字节，不应知道文件落在哪里。
+ */
+export interface Asset {
+  id: string;
+  kind: AssetKind;
+  mime: string;
+  byteSize: number;
+  sha256: string;
+  width?: number;
+  height?: number;
+  prompt?: string;
+  origin: { delegationId?: string; actorId?: string };
+  createdAt: string;
+  deletedAt?: string;
+  links: AssetLink[];
+}
+
+export interface PaginatedAssets {
+  items: Asset[];
+  total: number;
+  count: number;
+  offset: number;
+  hasMore: boolean;
 }

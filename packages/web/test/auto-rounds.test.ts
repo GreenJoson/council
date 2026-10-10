@@ -13,7 +13,7 @@ import {
   isRecoveryBudgetExhausted,
   latestRuntimeBindings,
   partitionRunsForDisplay,
-} from "../src/components/AutoRoundsPanel";
+} from "../src/features/discussion/AutoRoundsPanel";
 import type {
   OrchestrationRun,
   RuntimeBinding,

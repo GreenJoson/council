@@ -1,44 +1,51 @@
 /**
- * @input  依赖：Council Operator Console 视觉方向
- * @output 导出：颜色（深/浅双主题）、字体、阴影、讨论列、议题折叠高度、
- *         时间线尾部阅读空间、Agent 活动周期、媒体预览尺寸和层级语义变量
- * @pos    WebUI 唯一视觉常量来源，组件禁止硬编码颜色
+ * @input  依赖：IBM Plex Sans / JetBrains Mono 变量字体与根节点 data-theme
+ * @output 导出：浅色磨砂玻璃灰（默认）与深色两套语义变量、玻璃面板/卡片/控件 token、已知 Actor 语义色、
+ *         壳层宽度（图标栏/会话列表/上下文栏）、字体、流体讨论列、议题折叠高度、媒体预览尺寸、阴影和层级变量
+ * @pos    Council 视觉常量唯一真源；组件样式只引用这里的变量，不写字面颜色
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-/* ============================================================
- * 跨主题共享 token（字体、圆角、尺寸、层级）
- * ============================================================ */
 :root {
-  font-family: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  font-family: "IBM Plex Sans Variable", "PingFang SC", "Helvetica Neue", sans-serif;
 
-  --font-body: "IBM Plex Sans Variable", "PingFang SC", sans-serif;
-  --font-mono: "JetBrains Mono Variable", "SFMono-Regular", monospace;
+  --font-body: "IBM Plex Sans Variable", "PingFang SC", "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "SFMono-Regular", Menlo, monospace;
 
-  --radius-small: 7px;
+  --radius-small: 8px;
   --radius-medium: 11px;
+  --radius-card: 14px;
   --radius-large: 16px;
-  --header-height: 64px;
-  --status-bar-height: 24px;
-  --sidebar-width: 296px;
-  /* 下限保持 340px：窄屏不挤讨论区；宽屏按视口增长，概要里的长值不再折行。 */
-  --inspector-width: clamp(340px, 26vw, 440px);
+  --radius-pill: 999px;
+
+  /* 壳层：页面四周留白、面板间距、图标栏 / 会话列表 / 上下文栏宽度 */
+  --shell-gutter: 12px;
+  --shell-gap: 12px;
+  --rail-width: 56px;
+  --list-width: 272px;
+  --sidebar-width: var(--list-width);
+  --inspector-width: clamp(300px, 24vw, 360px);
+  --center-header-height: 52px;
+  --status-bar-height: 22px;
+
+  /* 中央讨论列：大屏释放表格/代码空间，正文行长仍由 Markdown 约束 */
   --discussion-column-min: 940px;
   --discussion-column-fluid: 86cqi;
   --discussion-column-max: 1280px;
   --discussion-column-gutter: 48px;
   --topic-question-collapse-height: 152px;
-  /* 输入框：默认两行起，随草稿长高到八行封顶，再长就自己滚 */
   --composer-input-min-height: 44px;
   --composer-input-max-height: 176px;
+
   --media-preview-max-width: 640px;
   --image-preview-max-height: 280px;
   --diagram-preview-max-height: 340px;
   --lightbox-width: 94vw;
   --lightbox-height: 90vh;
+
+  --glass-blur: 26px;
+
   --transition-fast: 160ms ease;
   --transition-medium: 240ms ease;
   --agent-activity-cycle: 1.25s;
@@ -50,111 +57,167 @@
   --z-toast: 70;
 }
 
-/* ============================================================
- * 深色主题（data-theme="dark"，也是未标记时的回退值）
- * ============================================================ */
+/* ============================== */
+/* 浅色（默认）：淡灰画布 + 磨砂玻璃面板 + 近黑强调色 */
+/* ============================== */
+
 :root,
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --color-canvas: #07101c;
-  --color-canvas-deep: #050b14;
-  --color-surface: #0b1624;
-  --color-surface-raised: #101d2d;
-  --color-surface-hover: #14243a;
-  --color-surface-selected: #102a46;
-  --color-overlay: #030812;
-  --color-border: #213247;
-  --color-border-strong: #314760;
-  --color-divider: #17283b;
-
-  --color-text: #edf4ff;
-  --color-text-secondary: #aab8ca;
-  --color-text-muted: #74869b;
-  --color-text-inverse: #06101b;
-  --color-text-on-primary: #ffffff;
-
-  --color-primary: #2388ff;
-  --color-primary-strong: #0b6ee5;
-  --color-primary-soft: #12365a;
-  --color-focus: #5cb3ff;
-
-  --color-positive: #55d79a;
-  --color-positive-soft: #123b30;
-  --color-warning: #ffbd58;
-  --color-warning-soft: #453015;
-  --color-danger: #ff7f82;
-  --color-danger-soft: #481f28;
-  --color-violet: #b59aff;
-  --color-violet-soft: #2d2650;
-  --color-cyan: #36d7e6;
-  --color-cyan-soft: #0d3d48;
-
-  --color-agent-claude: #32d5df;
-  --color-agent-claude-soft: #0b3942;
-  --color-agent-codex: #f7b43f;
-  --color-agent-codex-soft: #46310c;
-  --color-agent-human: #c4d0df;
-  --color-agent-human-soft: #2d3b4b;
-  --color-agent-council: #7caeff;
-  --color-agent-council-soft: #19375f;
-  --color-agent-legacy: #b9a5c9;
-  --color-agent-legacy-soft: #352c40;
-
-  --shadow-small: 0 10px 26px color-mix(in srgb, var(--color-overlay) 48%, transparent);
-  --shadow-large: 0 28px 80px color-mix(in srgb, var(--color-overlay) 72%, transparent);
-}
-
-/* ============================================================
- * 浅色主题（data-theme="light"，桌面端默认）
- * ============================================================ */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --color-canvas: #eef1f6;
-  --color-canvas-deep: #e6ebf3;
+  --color-canvas: #e9ebef;
+  --color-canvas-deep: #dfe3ea;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-surface-hover: #eff3f9;
-  --color-surface-selected: #e1edfc;
-  --color-overlay: #16283f;
-  --color-border: #d5dce6;
-  --color-border-strong: #b7c2d1;
-  --color-divider: #e3e8f0;
+  --color-surface-subtle: rgba(16, 20, 28, 0.04);
+  --color-surface-muted: rgba(16, 20, 28, 0.06);
+  --color-surface-hover: rgba(16, 20, 28, 0.05);
+  --color-surface-selected: rgba(255, 255, 255, 0.92);
+  --color-overlay: #10141c;
 
-  --color-text: #1a2432;
-  --color-text-secondary: #46566a;
-  --color-text-muted: #6e7f93;
+  --color-border: rgba(16, 20, 28, 0.08);
+  --color-border-strong: rgba(16, 20, 28, 0.14);
+  --color-divider: rgba(16, 20, 28, 0.06);
+  --hairline: rgba(16, 20, 28, 0.07);
+
+  --color-text: #1c1f26;
+  --color-text-secondary: #4b5563;
+  --color-text-muted: #8a93a1;
   --color-text-inverse: #ffffff;
   --color-text-on-primary: #ffffff;
 
-  --color-primary: #1769d6;
-  --color-primary-strong: #0f56b3;
-  --color-primary-soft: #dbe9fb;
-  --color-focus: #1e7ff2;
+  --color-primary: #1c1f26;
+  --color-primary-strong: #0b0d12;
+  --color-primary-soft: #e3e7ee;
+  --color-focus: #5b6b8c;
 
-  --color-positive: #178a55;
-  --color-positive-soft: #d7f2e4;
-  --color-warning: #a36a08;
-  --color-warning-soft: #fbecc9;
-  --color-danger: #ce3a45;
-  --color-danger-soft: #fbdfe1;
-  --color-violet: #6d4fe0;
-  --color-violet-soft: #e9e3fb;
-  --color-cyan: #0e93a6;
-  --color-cyan-soft: #d4f1f6;
+  --color-positive: #2e7d5b;
+  --color-positive-soft: #dcefe6;
+  --color-warning: #b07d1f;
+  --color-warning-soft: #f6ecd5;
+  --color-danger: #b84a4a;
+  --color-danger-soft: #f6dede;
+  --color-violet: #6b5fb5;
+  --color-violet-soft: #e8e5f5;
+  --color-cyan: #3a7f8c;
+  --color-cyan-soft: #dcedf0;
 
-  --color-agent-claude: #0c8898;
-  --color-agent-claude-soft: #d2eef2;
-  --color-agent-codex: #9c6d05;
-  --color-agent-codex-soft: #f7e8c6;
-  --color-agent-human: #4c5d72;
-  --color-agent-human-soft: #e2e8f0;
-  --color-agent-council: #2360c2;
-  --color-agent-council-soft: #dce8fa;
-  --color-agent-legacy: #6f5590;
-  --color-agent-legacy-soft: #e9e1f4;
+  --color-agent-claude: #2f6f6b;
+  --color-agent-claude-soft: #d9edeb;
+  --color-agent-codex: #8a6420;
+  --color-agent-codex-soft: #f1e6d0;
+  --color-agent-human: #4b5563;
+  --color-agent-human-soft: #e3e7ee;
+  --color-agent-council: #3f4c66;
+  --color-agent-council-soft: #e1e5ee;
+  --color-agent-legacy: #7a6f8a;
+  --color-agent-legacy-soft: #ebe7f0;
 
-  --shadow-small: 0 6px 18px color-mix(in srgb, var(--color-overlay) 10%, transparent);
-  --shadow-large: 0 22px 60px color-mix(in srgb, var(--color-overlay) 16%, transparent);
+  /* 玻璃面板（图标栏 / 会话列表 / 中央 / 上下文栏） */
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.8);
+  --glass-shadow: 0 1px 1px rgba(16, 20, 28, 0.03), 0 10px 30px rgba(16, 20, 28, 0.06);
+
+  /* 面板内的卡片（消息、决策、圆桌） */
+  --card-bg: rgba(255, 255, 255, 0.78);
+  --card-border: rgba(255, 255, 255, 0.9);
+  --card-shadow: 0 1px 2px rgba(16, 20, 28, 0.04);
+
+  /* 轻量控件：幽灵按钮、分段控件、图标栏激活态 */
+  --control-bg: rgba(255, 255, 255, 0.6);
+  --control-border: rgba(16, 20, 28, 0.1);
+  --segment-bg: rgba(16, 20, 28, 0.05);
+  --segment-active-bg: #ffffff;
+  --segment-active-shadow: 0 1px 2px rgba(16, 20, 28, 0.08);
+  --rail-active-bg: #ffffff;
+
+  /* 画布上的三团柔光，让玻璃有东西可以「磨」 */
+  --blob-a: #f8f9fb;
+  --blob-b: #dfe3ea;
+  --blob-c: #f1f2f5;
+
+  --shadow-small: 0 1px 2px rgba(16, 20, 28, 0.04);
+  --shadow-medium: 0 10px 30px rgba(16, 20, 28, 0.06);
+  --shadow-large: 0 24px 64px rgba(16, 20, 28, 0.14);
+}
+
+/* ============================== */
+/* 深色：同一套结构，换成深灰玻璃 */
+/* ============================== */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #14171c;
+  --color-canvas-deep: #0f1115;
+  --color-surface: #1d2127;
+  --color-surface-raised: #23282f;
+  --color-surface-subtle: rgba(255, 255, 255, 0.04);
+  --color-surface-muted: rgba(255, 255, 255, 0.06);
+  --color-surface-hover: rgba(255, 255, 255, 0.06);
+  --color-surface-selected: rgba(255, 255, 255, 0.1);
+  --color-overlay: #000000;
+
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-divider: rgba(255, 255, 255, 0.06);
+  --hairline: rgba(255, 255, 255, 0.07);
+
+  --color-text: #eceef2;
+  --color-text-secondary: #b4bac4;
+  --color-text-muted: #7d8591;
+  --color-text-inverse: #14171c;
+  --color-text-on-primary: #14171c;
+
+  --color-primary: #eceef2;
+  --color-primary-strong: #ffffff;
+  --color-primary-soft: rgba(255, 255, 255, 0.1);
+  --color-focus: #8fa3c8;
+
+  --color-positive: #6cc49a;
+  --color-positive-soft: rgba(108, 196, 154, 0.16);
+  --color-warning: #d9a84a;
+  --color-warning-soft: rgba(217, 168, 74, 0.16);
+  --color-danger: #e07a7a;
+  --color-danger-soft: rgba(224, 122, 122, 0.16);
+  --color-violet: #a99ae0;
+  --color-violet-soft: rgba(169, 154, 224, 0.16);
+  --color-cyan: #6fb8c6;
+  --color-cyan-soft: rgba(111, 184, 198, 0.16);
+
+  --color-agent-claude: #6fc0bb;
+  --color-agent-claude-soft: rgba(111, 192, 187, 0.16);
+  --color-agent-codex: #d8b15c;
+  --color-agent-codex-soft: rgba(216, 177, 92, 0.16);
+  --color-agent-human: #b4bac4;
+  --color-agent-human-soft: rgba(180, 186, 196, 0.14);
+  --color-agent-council: #9fb0d4;
+  --color-agent-council-soft: rgba(159, 176, 212, 0.16);
+  --color-agent-legacy: #b5a8c9;
+  --color-agent-legacy-soft: rgba(181, 168, 201, 0.16);
+
+  --glass-bg: rgba(30, 34, 41, 0.6);
+  --glass-bg-strong: rgba(30, 34, 41, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 1px 1px rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.3);
+
+  --card-bg: rgba(38, 42, 50, 0.78);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+
+  --control-bg: rgba(255, 255, 255, 0.05);
+  --control-border: rgba(255, 255, 255, 0.12);
+  --segment-bg: rgba(255, 255, 255, 0.06);
+  --segment-active-bg: #2b3039;
+  --segment-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --rail-active-bg: #2b3039;
+
+  --blob-a: #1c2026;
+  --blob-b: #0e1014;
+  --blob-c: #181b21;
+
+  --shadow-small: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-medium: 0 10px 30px rgba(0, 0, 0, 0.3);
+  --shadow-large: 0 24px 64px rgba(0, 0, 0, 0.5);
 }

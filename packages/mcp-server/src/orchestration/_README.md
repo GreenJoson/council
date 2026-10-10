@@ -6,7 +6,7 @@
 |---|---|---|
 | `delegation-checkpoint.ts` | 检查点协议 | 私有指令与进度、公开白名单投影 |
 | `delegation-runtime-stage.ts` | 阶段执行 | 独立预算、早期会话与进度持久化，仅只读瞬态故障有界重试 |
-| `delegation-task-context.ts` | 任务上下文 | 完整保留任务、约束与已接受结论，只节选背景；关键材料超限在派发前拒绝，完整内容参与指纹 |
+| `delegation-task-context.ts` | 任务上下文 | 完整保留任务、约束与已接受结论，只节选背景；关键材料超限在派发前拒绝，完整内容参与指纹；代码委派输入图段落只列相对路径 |
 | `delegation-execution-result.ts` | 阶段交接 | 识别说明和 Markdown 包装中的交接，损坏交接不能成为完成摘要 |
 | `delegation-execution-segments.ts` | 有界接续 | CLI 调用终态与任务终态分离，按已校验的交接、真实文件变化和冻结预算继续 |
 | `runtime-audit-store.ts` | 执行证据 | 持久化脱敏阶段/工具事件，提供不可覆盖的游标分页记录，不存私有草稿与未知用量 |
@@ -19,10 +19,18 @@
 | `acp-delegated-agent-adapter.ts` | Delegated 适配 | 将注册表选定的 ACP session、只读工具/审批和公开文本映射到统一 RuntimeEvent，禁止写操作越过 Council policy |
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
-| `service.ts` | 聚合 | 固定浏览器身份/策略、冻结周期的 Agent/Provider/Runtime 修订与授权能力、模型调用前 fail-fast，并组装生产依赖 |
+| `service.ts` | 装配与生命周期 | 组装 store、注册表、attention/audit、编排器、执行管理器、CycleDriver 与产品服务；持有配置锁、决策写入器/审核账本挂载、initialize/shutdown 与空闲绑定回收，对外以同名同签名转发注册表与产品服务；`createProductionOrchestrationService` 在此；工厂另建独立数据库连接装配 P3 `PipelineService`（`attachPipelines`/`pipelines`），一次性调用与委派均经本服务转发，`initialize` 在委派恢复后启动流水线对账，shutdown/close 同步停止；Claude CLI 可用性检查返回声明能力（含 `image_input`） |
+| `agent-registry.ts` | Agent 注册表 | 固定 Actor 与适配器注册（重复注册即关闭 store 并拒绝）、capabilities 快照与 TTL 刷新、动态 Agent 同步、冻结周期的 Agent/Provider/Runtime 修订与授权能力；可用性检查可返回 `{ available, runtimeCapabilities }`，探针声明随 TTL/指纹缓存覆盖并重算授权（Codex 生图能力由此生效）；`transportKindForProtocol` 在此导出 |
+| `product-service.ts` | 产品用例 | 圆桌周期开始/读取/作答/提交修复/放弃、Run 创建/启动/批准/取消/恢复（模型调用前 fail-fast）、实施计划生成、RuntimeBinding 列表/关闭/重开、Provider/Agent 设置变更与委派单项/批量/接续/取消（图像委派启动前强制刷新探针，执行者 granted 须含 `image_generate`）；`invokeOneShot` 是单次只读 Agent 调用骨架（任务规划与流水线 brief/review 共用，不建 Run），`listAgentCandidates` 给流水线挑默认 Agent；Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单，自由 instruction 不能自行扩大授权 |
+| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
+| `project-activity.ts` | 度量 | 同项目活动 Agent 计数：running/waiting_agent 的 Run + executing/reviewing 的委派；queued/waiting_user/changes_requested 在等别人，不算 |
+| `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
+| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
 | `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |
-| `work-item-delegation-store.ts` | 委派账本 | 持久化 supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
-| `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；只传当前议题/任务/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
+| `delegation-task-resolver.ts` | 任务解析 | 按任务 id 读取任务与可选议题（无议题时决策为空、项目路径取任务自身），并集中执行委派前置校验：kind 为 code/image 且与任务一致（kind=prototype 任务按 code 委派）、输入图校验 `validateInputImageAssets`（≤8、不重复、同项目图像，代码与图像委派共用）、版本、议题归属、未完成、叶子任务与上下文预算 |
+| `work-item-delegation-store.ts` | 委派账本 | 持久化可选议题、委派 kind 与输入资产、supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；`onSettled` 在非终态→终态时异步通知一次（流水线据此推进）；公开 DTO 不泄露本机 worktree 路径 |
+| `delegation-image-execution.ts` | 图像委派 | 单段生图闭环：校验 brief 与参考图（≤8、同项目图像），参考图拷入 `.council/in/` 并写 exclude，经 `CodexRuntime.generateImages` 生图（失败即 `image_unavailable`，文案沿用运行时原因，生图超时点名 `COUNCIL_CODEX_IMAGE_TIMEOUT_MS`，审计带 diagnosticCode）；清单 path 与 `.council/out/` 收集，两路都为空时才兜底扫 `<codex-home>/generated_images/<threadId>`（并集会把模型缩放前的原图一并收进来），sha256 去重入库并以 output 角色挂到任务（受 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS` 限制）；完成后委派 approved（headCommit=baseCommit）、工作项停在 in_progress 等人工验收，`outputManifest` 存脱敏清单加本次入库的 `assetIds` 与逐张 `assetId`（`readImageOutputManifest` 供流水线复盘只看本次产物，失败尝试已入库的图不混进下一次复盘）；清单里超出 brief 的产物（修订轮常见）只丢弃并记 `image.manifest_outputs_dropped`，不让整轮失败；失败分 `image_unavailable`/`outputs_missing`/`manifest_invalid`（文案带协议定位原因）；审计只记数量、字节、去重数与耗时。导出 `excludeCouncilDir`/`copyInputAssets`/`COUNCIL_INPUT_DIR` 供代码委派输入图与流水线复用。依赖全部显式注入，不 import 管理器 |
+| `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；image 委派只做校验与默认监督者解析后按 kind 分流到 `delegation-image-execution.ts`，不支持接续；代码委派的输入图拷进 worktree 的 `.council/in/`（写 exclude）并以相对路径进入提示词；`get`/`resume`/`onSettled`/`stageProjectInputs` 供流水线对账、原型交接接续、终态订阅与 brief/review 资产拷入；任务可不属于任何议题（单项委派），批量委派仍按议题；只传当前任务/所属议题/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派（接续沿用原 kind 与输入图） |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立
 Actor 与 `@mentionAlias`；同一 Kimi、DeepSeek 或其他 Provider 下可以创建多个 Agent，
@@ -89,10 +97,8 @@ AgentLoop 负责“模型请求 → 工具执行 → 结果回传 → 继续推�
 绑定；accepted 决策会 fencing 并关闭全部绑定，已决议题必须新建议题后才能继续通用 Run。
 已决议题仍允许显式实施计划和委派。一次性实施计划不恢复旧 session、不创建 RuntimeBinding/Run，也不给模型 Council
 写权限；服务端只接收结构化草案并通过 canonical `work_items` 写入。显式委派使用独立账本与隔离工作区，完成条件和恢复规则见 [执行交付](../../../../docs/execution-delivery.md)。
-| `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
-| `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
-| `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
-| `service.ts` | 产品聚合 | Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单；自由 instruction 不能自行扩大授权 |
+
+`service.ts` 的初始化顺序固定为 store → 回退路由存储 → `AgentRegistry`（注册循环先于其余 SQLite 句柄，重复注册以原文案拒绝）→ attention → audit → orchestrator → 执行管理器 → CycleDriver → `CouncilProductService`；指向产品服务的回调（`onRunSettled`、CycleRunner、注册表关闭绑定）都是闭包，只在 `initialize()` 或显式调用后解引用。注册表与产品服务之间只有一条边：注册表同步动态 Agent 时通过注入的 `closeRuntimeBinding` 关闭失效绑定。
 
 委派从派发与认领时保存任务版本，成功/失败回写均不能覆盖后续人工作答；已提交检查点在后续模型调用之前保存。活动委派占用的 Agent/Provider 禁止修改配置，Node 与 Rust 同时禁止关闭仍有活动委派的议题。
 

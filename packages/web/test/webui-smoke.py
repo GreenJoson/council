@@ -1,7 +1,8 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
 @output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、Agent 动态、大屏流体讨论列、
-         媒体缩略/大图浏览、卡片底部折叠、移动端布局和控制台错误的浏览器验收
+         媒体缩略/大图浏览、卡片底部折叠、P3 流水线页（分组、选定 final、失败恢复、新建确认 brief）、
+         移动端布局（含 #/pipelines 无横向溢出）和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -346,6 +347,72 @@ def verify_media_preview_and_lightbox(page) -> None:
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
 
 
+def stage_status(page, stage_id: str) -> str | None:
+    return page.locator(f".pipeline-track [data-stage-id='{stage_id}']").get_attribute("data-stage-status")
+
+
+def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 10000) -> None:
+    page.wait_for_function(
+        "([id, statuses]) => statuses.includes("
+        "document.querySelector(`.pipeline-track [data-stage-id='${id}']`)?.dataset.stageStatus)",
+        arg=[stage_id, list(statuses)],
+        timeout=timeout,
+    )
+
+
+def verify_pipeline_page(page) -> None:
+    """P3 流水线：mock 预置三条（等人选 final / 图像失败 / 已完成），走通选定、恢复与新建确认 brief。"""
+    page.get_by_role("button", name="流水线", exact=True).click()
+    page.wait_for_function("location.hash === '#/pipelines'")
+    page.get_by_role("heading", name="流水线", exact=True).wait_for()
+    for group, goal in (("waiting", "结算页改版视觉稿"), ("failed", "会员权益页概念图"), ("done", "像素风道具图标包")):
+        page.locator(f"[data-pipeline-group='{group}'] .pipeline-row", has_text=goal).wait_for()
+
+    # select 等人：前三段已完成，并排对比 3 张，勾 2 张选定 → 进入原型并最终完成
+    page.locator(".pipeline-row", has_text="结算页改版视觉稿").click()
+    page.locator("[data-pipeline-detail]").wait_for()
+    for stage_id in ("brief", "image", "review"):
+        assert stage_status(page, stage_id) == "completed", stage_id
+    assert stage_status(page, "select") == "waiting_human"
+    compare = page.locator(".pipeline-compare")
+    compare.wait_for()
+    assert compare.get_attribute("data-columns") == "3"
+    compare.locator(".pipeline-compare-preview").first.click()
+    page.get_by_role("button", name="关闭大图", exact=True).click()
+    checkboxes = compare.get_by_role("checkbox", name="选为最终稿")
+    assert checkboxes.count() == 3
+    checkboxes.nth(0).check()
+    checkboxes.nth(1).check()
+    page.get_by_role("button", name="选定", exact=True).click()
+    wait_stage(page, "select", ("completed",))
+    wait_stage(page, "prototype", ("running", "completed"))
+    wait_stage(page, "prototype", ("completed",))
+    page.locator("[data-pipeline-final] code").nth(1).wait_for()
+
+    # 图像阶段失败：恢复后离开 failed
+    page.get_by_role("link", name="返回流水线列表").click()
+    page.locator("[data-pipeline-group='failed'] .pipeline-row", has_text="会员权益页概念图").click()
+    page.locator("[data-pipeline-detail]").wait_for()
+    assert stage_status(page, "image") == "failed"
+    page.get_by_role("button", name="恢复", exact=True).click()
+    wait_stage(page, "image", ("running", "completed"))
+
+    # 新建：brief 起草后等人确认，确认后进入出图
+    page.get_by_role("link", name="返回流水线列表").click()
+    page.get_by_role("button", name="新建流水线", exact=True).click()
+    dialog = page.locator("dialog.pipeline-create-dialog")
+    dialog.get_by_role("radio", name="概念设定图").check()
+    dialog.get_by_role("textbox", name="目标").fill("冒烟流水线首页插画")
+    dialog.get_by_role("button", name="创建流水线", exact=True).click()
+    page.wait_for_function("location.hash.startsWith('#/pipelines/')")
+    wait_stage(page, "brief", ("waiting_human",))
+    control = page.locator("[data-pipeline-control='brief']")
+    control.locator(".brief-editor").wait_for()
+    control.get_by_role("button", name="确认简报", exact=True).click()
+    wait_stage(page, "brief", ("completed",))
+    wait_stage(page, "image", ("running",))
+
+
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
@@ -457,6 +524,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("heading", name="本地事件同步策略", exact=True).wait_for()
     verify_topic_question_collapse_control(page)
     verify_manual_decision_without_agent_run(page)
+    verify_pipeline_page(page)
 
     page.close()
     return errors
@@ -475,6 +543,12 @@ def verify_mobile(browser) -> None:
     page.get_by_role("button", name="打开议题导航", exact=True).click()
     assert page.locator(".topic-sidebar.panel-open").is_visible()
     page.get_by_role("button", name="关闭议题导航", exact=True).click()
+    page.set_viewport_size({"width": 375, "height": 812})
+    page.goto(f"{WEB_URL}#/pipelines")
+    page.locator("[data-pipeline-group='waiting'] .pipeline-row").first.wait_for()
+    assert not page.evaluate(
+        "document.documentElement.scrollWidth > document.documentElement.clientWidth"
+    ), "#/pipelines 在手机宽度出现横向滚动"
     page.close()
 
 

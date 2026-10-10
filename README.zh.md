@@ -64,7 +64,7 @@ npm run install:all
 npm run dev:web
 ```
 
-打开 Vite 输出的本地地址。默认 `mock` 模式使用示例数据，不连接真实项目、不调用模型，也不持久化真实工作。
+打开 Vite 输出的本地地址。默认 `mock` 模式使用示例数据，不连接真实项目、不调用模型，也不持久化真实工作。界面是图标栏 + 会话流 + 上下文栏的三栏壳，议题讨论、任务、资产库与流水线的截图见 [`docs/designs/`](docs/designs)。
 
 ### 构建 macOS 桌面应用
 
@@ -144,7 +144,7 @@ flowchart TB
 
 | 模块 | 职责 |
 |---|---|
-| [`packages/web`](packages/web) | React 界面、仓储适配、运行状态、决策、任务与待处理视图。 |
+| [`packages/web`](packages/web) | React 界面（图标栏 + 会话流 + 上下文栏三栏壳）、仓储适配、议题讨论、任务 / 资产 / 流水线、决策与待处理视图。 |
 | [`packages/desktop`](packages/desktop) | Tauri 壳、原生目录选择、本机设置和后台 Worker 连接。 |
 | [`crates/council-core`](crates/council-core) | Rust 内容读写，以及共享 SQLite schema 的验证。 |
 | [`packages/mcp-server`](packages/mcp-server) | MCP/HTTP 边界、唯一 schema 迁移器、Provider 路由、凭据、运行时适配和任务委派。 |

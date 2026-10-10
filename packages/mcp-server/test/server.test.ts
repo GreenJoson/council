@@ -108,6 +108,8 @@ test("MCP 客户端可发现并组合 Council 工具", async () => {
     cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "codex",
+    httpServiceUrl: "http://127.0.0.1:4317",
+    httpForwardTimeoutMs: 10_000,
   };
   const bundle = await createCouncilServer(config);
   const client = new Client({ name: "council-test-client", version: "1.0.0" });
@@ -336,6 +338,8 @@ test("MCP 调用者冻结 actorId，运行中 alias 重绑或同名 alias 不能
     cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "caller-a",
+    httpServiceUrl: "http://127.0.0.1:4317",
+    httpForwardTimeoutMs: 10_000,
   };
   const bundle = await createCouncilServer(config);
   const client = new Client({ name: "caller-identity-client", version: "1.0.0" });
@@ -475,6 +479,8 @@ test("MCP 取消 council_ask_claude 会终止进程且不写共享数据库", as
     cliMaxStreamChars: 32_000_000,
     defaultMessageLimit: 20,
     callerActorAlias: "codex",
+    httpServiceUrl: "http://127.0.0.1:4317",
+    httpForwardTimeoutMs: 10_000,
   };
   const bundle = await createCouncilServer(config);
   const client = new Client({ name: "council-abort-client", version: "1.0.0" });
