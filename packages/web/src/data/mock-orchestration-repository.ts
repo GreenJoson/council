@@ -1,7 +1,8 @@
 /**
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
  * @output 导出：MockOrchestrationRepository 运行、AI 实施计划与持久会话交互原型
- * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复
+ * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复；
+ *         议题内委派固定写入 v18 的 kind=code 与空 inputAssetIds
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -702,6 +703,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       supervisorAgentId: input.supervisorAgentId,
       executorAgentId: input.executorAgentId,
       permissionProfile: input.requestedPermission,
+      kind: "code",
+      inputAssetIds: [],
       completionPolicy: input.completionPolicy ?? "human",
       acceptanceCriteria: input.acceptanceCriteria ?? "",
       status: "queued",
@@ -727,6 +730,8 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
       supervisorAgentId: input.supervisorAgentId,
       executorAgentId: input.executorAgentId,
       permissionProfile: input.requestedPermission,
+      kind: "code",
+      inputAssetIds: [],
       completionPolicy: input.completionPolicy ?? "human",
       acceptanceCriteria: input.acceptanceCriteria ?? "",
       status: "queued",

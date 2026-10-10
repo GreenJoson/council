@@ -1,6 +1,7 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
- * @output 导出：含动态 actorId 的 Capabilities、Run、持久会话与 Agent 增量事件严格解析函数
+ * @output 导出：含动态 actorId 的 Capabilities、Run、持久会话、委派（v18：可选 topicId、kind、
+ *         inputAssetIds、outputManifest）与 Agent 增量事件严格解析函数
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -30,6 +31,7 @@ import type {
   RuntimeTransportKind,
   WorkItemDelegation,
 } from "../types/orchestration";
+import { WORK_ITEM_KINDS } from "../types/council";
 
 export type AgentOutputOperation =
   | "snapshot"
@@ -303,11 +305,22 @@ export function parseWorkItemDelegation(value: unknown): WorkItemDelegation {
   const policy = optionalString(record, "completionPolicy");
   if (policy !== undefined && policy !== "review" && policy !== "human") throw new Error("完成条件无效");
   const optional = (key: string): string | undefined => optionalString(record, key);
+  const topicId = optional("topicId");
   return {
     ...(record.execution !== undefined ? { execution: parseDelegationExecution(record.execution) } : {}),
     id: stringValue(record, "id"),
-    topicId: stringValue(record, "topicId"),
+    ...(topicId ? { topicId } : {}),
     workItemId: stringValue(record, "workItemId"),
+    kind: enumValue(record, "kind", WORK_ITEM_KINDS),
+    inputAssetIds: arrayValue(record, "inputAssetIds", (item, index) => {
+      if (typeof item !== "string" || item.length === 0) {
+        throw new Error(`inputAssetIds[${String(index)}] 必须是非空字符串`);
+      }
+      return item;
+    }),
+    ...(record.outputManifest !== undefined
+      ? { outputManifest: recordValue(record.outputManifest, "workItemDelegation.outputManifest") }
+      : {}),
     supervisorAgentId: stringValue(record, "supervisorAgentId"),
     executorAgentId: stringValue(record, "executorAgentId"),
     permissionProfile,

@@ -26,7 +26,7 @@ function render(topics: TopicSummary[]): string {
       selectedTopicId={topics[0]?.id ?? ""}
       isOpen
       statusFilter="all"
-      activeView="topics"
+      activeView="discussion"
       onSelectView={() => undefined}
       onStatusFilterChange={() => undefined}
       onSelectTopic={() => undefined}

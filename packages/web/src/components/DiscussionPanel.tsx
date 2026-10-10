@@ -2,7 +2,7 @@
  * @input  依赖：界面语言上下文、当前项目名、含 owner/完整决策包/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
  * @output 导出：支持本地文件预览链接的DiscussionPanel 中央工作区（讨论/完整决策包、单条/批量接受、任务/元数据、
- *         议题关闭、人工签署、阶梯导航与引用回复）
+ *         议题关闭、人工签署、阶梯导航与引用回复）；单条实施项委派已迁到任务页，任务 tab 只给摘要与跳转
  * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
@@ -62,20 +62,10 @@ export interface DiscussionPanelProps {
   delegationAgents?: OrchestrationAdapter[];
   delegations?: WorkItemDelegation[];
   delegationBusyAction?: string | null;
-  onDelegateWorkItem?: (
-    item: CouncilWorkItem,
-    input: {
-      supervisorAgentId: string;
-      executorAgentId: string;
-      requestedPermission: "workspace_write" | "danger_full_access";
-      createInitialBaseline?: boolean;
-    },
-  ) => Promise<void>;
   onDelegateWorkItems?: (
     items: CouncilWorkItem[],
     input: BatchDelegationOptions,
   ) => Promise<void>;
-  onCancelDelegation?: (delegationId: string) => Promise<void>;
   isAccepting: boolean;
   onAccept: (decisionIds: string[]) => Promise<void> | void;
   isRecordingManualDecision: boolean;
@@ -124,9 +114,7 @@ export function DiscussionPanel({
   delegationAgents = [],
   delegations = [],
   delegationBusyAction = null,
-  onDelegateWorkItem = async () => undefined,
   onDelegateWorkItems = async () => undefined,
-  onCancelDelegation = async () => undefined,
   isAccepting,
   onAccept,
   isRecordingManualDecision,
@@ -656,9 +644,7 @@ export function DiscussionPanel({
             delegationAgents={delegationAgents}
             delegations={delegations}
             delegationBusyAction={delegationBusyAction}
-            onDelegate={onDelegateWorkItem}
             onDelegateBatch={onDelegateWorkItems}
-            onCancelDelegation={onCancelDelegation}
           />
         </section>
       ) : (

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 中文界面源文案
- * @output 导出：英文界面词典，含文件预览、提交恢复与草稿接续；占位符使用 {name} 形式
+ * @output 导出：英文界面词典，含文件预览、提交恢复、草稿接续与任务视图（列表/详情/新建/委派历史）；占位符使用 {name} 形式
  * @pos    中英双语的英文单一真源，用户内容不经过本词典
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -668,8 +668,6 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "跳过 CLI 权限确认与沙箱": "Skip CLI permission prompts and sandboxing",
   "当前只有 Claude CLI 与 Codex CLI 支持代码执行。": "Only Claude CLI and Codex CLI currently support code execution.",
   "完全控制可访问 worktree 之外的主机文件；只应给可信 Agent。": "Full control can access host files outside the worktree; grant it only to trusted agents.",
-  "Agent 协作已开始：执行后自动交给另一位 Agent 审核": "Agent collaboration started; another agent will review automatically after execution",
-  "Agent 委派已取消": "Agent delegation cancelled",
   "委派": "Delegate",
   "重新委派": "Delegate again",
   "取消委派": "Cancel delegation",
@@ -789,4 +787,40 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "架构图与业务解析图": "Architecture and business diagrams",
   "架构图 / 业务解析图": "Architecture / business diagrams",
   "还没有架构图。在方案、综合消息或已接受决策里用 ```mermaid 围栏画图，会集中展示在这里。": "No architecture diagrams yet. Mermaid diagrams in proposals, synthesis messages, or accepted decisions are collected here.",
+  // 任务视图（features/tasks）
+  "在任务页管理委派": "Manage delegation on the task page",
+  "失败分类：{code}": "Failure code: {code}",
+  "新建任务": "New task",
+  "创建一条可委派的任务": "Create a task that can be delegated",
+  "任务标题": "Task title",
+  "例如：退款回调补齐签名校验": "For example: Add signature verification to refund callbacks",
+  "任务说明": "Task details",
+  "任务类型": "Task type",
+  "任务来源": "Task source",
+  "当前仅支持代码任务；图片、原型、调研与流水线将在 P2 接入。": "Only code tasks are supported for now. Image, prototype, research and pipeline tasks arrive in P2.",
+  "优先级": "Priority",
+  "越大越靠前": "Higher comes first",
+  "创建任务": "Create task",
+  "返回任务列表": "Back to tasks",
+  "无法打开这条任务": "Unable to open this task",
+  "优先级 {priority}": "Priority {priority}",
+  "任务内容": "Task content",
+  "没有补充说明。": "No details provided.",
+  "更新状态": "Update status",
+  "保存失败：{message}。已重新读取最新任务，请确认后再提交。": "Save failed: {message}. The latest task has been reloaded; review it and submit again.",
+  "Agent 委派": "Agent delegation",
+  "委派操作失败：{message}": "Delegation action failed: {message}",
+  "任务已完成，没有委派记录。": "This task is completed and has no delegations.",
+  "没有符合筛选条件的任务。": "No tasks match the filters.",
+  "还没有任务。可以直接新建，或在议题中拆分实施项。": "No tasks yet. Create one directly, or split implementation items in a topic.",
+  "任务状态": "Task status",
+  "说明": "Note",
+  "修复提交（可选）": "Fix commit (optional)",
+  "代码": "Code",
+  "原型": "Prototype",
+  "调研": "Research",
+  "流水线": "Pipeline",
+  "议题派生": "From topic",
+  "直接创建": "Direct",
+  "流水线产出": "From pipeline",
 };

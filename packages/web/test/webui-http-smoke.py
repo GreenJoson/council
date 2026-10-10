@@ -643,11 +643,14 @@ with sync_playwright() as playwright:
         "mentionAlias": "acceptance-reviewer", "enabled": True,
         "permissionProfile": "read_only", "executionRole": "reviewer",
     })
-    api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+    created = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
         "items": [{"title": "验证交付表单", "details": "检查提交与验收证据"}],
     })
+    item_id = created[0]["id"]
+    # 单条委派入口已迁到任务详情页，直接按任务 id 打开；只改 hash 不会重新加载页面，
+    # 需 reload 才能取到刚配置的 Agent 能力。
+    page.goto(f"{WEB_URL}#/tasks/{item_id}", wait_until="domcontentloaded")
     page.reload(wait_until="domcontentloaded")
-    page.get_by_role("tab", name="任务", exact=False).click()
     page.get_by_role("button", name="委派", exact=True).click()
     delegation_form = page.locator(".work-item-delegation-form")
     delegation_form.wait_for()
@@ -697,8 +700,7 @@ with sync_playwright() as playwright:
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
     page.on("console", lambda message: collect_console_error(message, console_errors))
     page.on("pageerror", lambda error: console_errors.append(str(error)))
-    page.goto(WEB_URL, wait_until="domcontentloaded")
-    page.get_by_role("tab", name="任务", exact=False).click()
+    page.goto(f"{WEB_URL}#/tasks/{completed['workItemId']}", wait_until="domcontentloaded")
     page.get_by_text("执行段：2/4", exact=True).wait_for()
     page.get_by_text("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。", exact=True).wait_for()
     if SCREENSHOT_PATH:
@@ -717,6 +719,7 @@ with sync_playwright() as playwright:
     paused = wait_delegation("failed")
     assert paused["failureCode"] == "execution_no_progress", paused
     assert paused["execution"]["segmentsUsed"] == 2 and not paused.get("headCommit"), paused
+    page.goto(f"{WEB_URL}#/tasks/{blocked_item['id']}", wait_until="domcontentloaded")
     page.get_by_text("已暂停，等待接续", exact=True).wait_for()
 
     # 对应实际故障：CLI 回合上限中断后，有安全文件进展和会话才能自动接续。

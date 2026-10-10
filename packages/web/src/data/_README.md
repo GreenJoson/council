@@ -17,13 +17,13 @@
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
 | `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
-| `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected） |
+| `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected）；导出 `mapWorkItem` 供任务域复用 v18 字段映射 |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，归档议题、提交用户绑定的 accepted 人工决策，并提供不改状态的只读议题详情加载 |
 | `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，生成 AI 实施计划，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、关闭、发帖、同步、Human / Accepted 人工结束（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束 |
-| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器与本地 Agent 服务配置/健康命令 |
+| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task` |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，归档静止议题、提交用户绑定的 accepted 人工决策，并提供不参与设置世代的只读议题详情加载 |
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储及 AI 实施计划，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
@@ -34,6 +34,7 @@
 | `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |
 | `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 | `decision-package.ts` | 查询 | 计算议题 proposed/accepted 决策包状态，支持逐条或批量接受而不把列表压成单条结论 |
+| `tasks/` | 任务域 | v18 任务（直接任务 + 议题实施项）仓储接口、协议解析、http/desktop/mock 三实现与选择入口，详见 `tasks/_README.md` |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。
 
@@ -58,5 +59,7 @@ recovery 配置持续校准；EventSource 再次 open 也会立即重试失败�
 委派协议解析包含持久阶段、实际回合/工具计数；拒绝非法阶段与负数，并忽略私有检查点。
 
 HTTP 和桌面仓储透传可选接续权限；未选择时不发送覆盖值。
+
+任务域（`tasks/`）不新增 SSE 事件，也不在 `TaskRepository` 上提供 subscribe：任务写入递增 content revision，由内容仓储发布新快照；委派写入递增 orchestration revision，体现在编排快照 `revision`。任务视图的 hook 监听这两个既有信号后重读任务，写操作直接返回最新行，避免第三条 EventSource 或轮询。桌面模式读走 Tauri `list_tasks`/`get_task`（离线可用），委派列表与所有写入走本地 Agent 服务 HTTP；离线时 `getTask` 返回空委派加 `limitation`，写入抛出与编排面板一致的离线指引；项目路径每次从 Rust 设置读取并在读后复核，不另建设置世代。
 
 | `project-files.ts` | 文件引用 | 从 Markdown AST 聚合项目附件；本地链接分类、预览协议校验与 HTTP/桌面文件服务接入 |

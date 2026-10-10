@@ -117,7 +117,8 @@ export function WorkItemDelegationPanel({
           <code><GitBranch size={12} />{delegation.branchName} · {delegation.headCommit.slice(0, 12)}</code>
         ) : null}
         {item.status !== "completed" ? <DelegationRecoveryActions key={delegation.id} delegation={delegation} expectedVersion={item.version} allowFullControl={executing?.permissionProfile === "danger_full_access"} /> : null}
-        <RuntimeAuditDetails topicId={delegation.topicId} sourceKind="delegation" sourceId={delegation.id} />
+        {/* 审计查询按议题分页；直接任务（无 topicId）的委派在 P1 没有审计入口，不发空 topicId 的无效查询。 */}
+        {delegation.topicId ? <RuntimeAuditDetails topicId={delegation.topicId} sourceKind="delegation" sourceId={delegation.id} /> : null}
         {active ? (
           <button
             type="button"

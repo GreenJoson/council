@@ -1,11 +1,14 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派、AI 计划、会话和独立快照类型
+ * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
+ *         inputAssetIds、outputManifest）、议题/任务两条委派入参、AI 计划、会话和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 委派公开阶段进度和可选预算指标
  */
+
+import type { WorkItemKind } from "./council";
 
 export type OrchestrationStatus =
   | "idle"
@@ -85,12 +88,18 @@ export interface WorkItemDelegation {
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   id: string;
-  topicId: string;
+  /** v18 起直接任务的委派不属于任何议题。 */
+  topicId?: string;
   workItemId: string;
   supervisorAgentId: string;
   executorAgentId: string;
   permissionProfile: "workspace_write" | "danger_full_access";
   status: WorkItemDelegationStatus;
+  /** 委派产出类型；议题委派与 P1 任务委派均为 code。 */
+  kind: WorkItemKind;
+  inputAssetIds: string[];
+  /** 产出清单：结构由 kind 决定，前端只做 record 校验。 */
+  outputManifest?: Record<string, unknown>;
   attempt: number;
   maxAttempts: number;
   baseCommit?: string;
@@ -114,6 +123,22 @@ export interface StartWorkItemDelegationInput {
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   createInitialBaseline?: boolean;
+}
+
+/**
+ * 任务入口（/api/v1/tasks/:taskId/delegations）的委派入参：任务 id 走路径参数，
+ * 不需要 topicId；kind 缺省 code、inputAssetIds 缺省 []，与服务端 schema 默认值一致。
+ */
+export interface StartTaskDelegationInput {
+  expectedVersion: number;
+  supervisorAgentId: string;
+  executorAgentId: string;
+  requestedPermission: "workspace_write" | "danger_full_access";
+  completionPolicy?: "review" | "human";
+  acceptanceCriteria?: string;
+  createInitialBaseline?: boolean;
+  kind?: WorkItemKind;
+  inputAssetIds?: string[];
 }
 
 export interface StartWorkItemDelegationBatchInput {

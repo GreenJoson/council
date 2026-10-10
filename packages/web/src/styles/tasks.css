@@ -1,0 +1,437 @@
+/*
+ * 任务视图（features/tasks）：#/tasks 列表、#/tasks/<id> 详情、新建任务对话框差异样式，
+ * 以及讨论页实施项卡片内的委派摘要。只用 theme.css 语义 token。
+ */
+
+/* ============================== */
+/* 单栏容器：沿用 work-attention-view 的留白与滚动方式 */
+/* ============================== */
+
+.tasks-view {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+  overflow: auto;
+  padding: 28px;
+  color: var(--color-text);
+}
+
+.tasks-view > * {
+  width: 100%;
+  max-width: 960px;
+}
+
+.tasks-view-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tasks-view h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.tasks-view-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tasks-view-actions > button:not(.primary-button),
+.tasks-placeholder button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.tasks-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tasks-filters label,
+.task-status-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.tasks-filters select,
+.task-status-form select,
+.task-status-form input,
+.task-status-form textarea {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.tasks-placeholder {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  color: var(--color-text-muted);
+}
+
+.tasks-placeholder h1 {
+  color: var(--color-text);
+}
+
+/* ============================== */
+/* 列表：按状态分组 */
+/* ============================== */
+
+.tasks-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.tasks-group h2 span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tasks-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tasks-group li {
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.tasks-row {
+  display: grid;
+  gap: 5px;
+  padding: 12px 6px;
+  color: var(--color-text);
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+
+.tasks-row:hover,
+.tasks-row:focus-visible {
+  background: var(--color-surface-hover);
+}
+
+.tasks-row.is-completed strong {
+  color: var(--color-text-secondary);
+}
+
+.tasks-row-meta {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.tasks-row-delegation {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.tasks-row-delegation.is-paused,
+.tasks-row-delegation.is-changes_requested {
+  background: var(--color-warning-soft);
+}
+
+.tasks-row-delegation.is-failed {
+  background: var(--color-danger-soft);
+}
+
+.tasks-row-delegation.is-approved {
+  background: var(--color-positive-soft);
+}
+
+/* ============================== */
+/* 详情 */
+/* ============================== */
+
+.tasks-back-link,
+.task-topic-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  width: auto;
+  color: var(--color-primary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.tasks-back-link:hover,
+.task-topic-link:hover {
+  text-decoration: underline;
+}
+
+.task-topic-link small {
+  color: var(--color-text-muted);
+}
+
+.task-detail-header {
+  display: grid;
+  gap: 10px;
+}
+
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-meta span {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.task-status-pill.is-in_progress { border-color: var(--color-primary); }
+.task-status-pill.is-blocked { border-color: var(--color-warning); }
+.task-status-pill.is-completed { border-color: var(--color-positive); }
+
+.task-detail-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.task-detail-section h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.task-details-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-muted {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.task-detail-section blockquote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+}
+
+.task-commit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.task-brief {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.task-brief > div {
+  display: grid;
+  grid-template-columns: minmax(80px, 160px) minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+}
+
+.task-brief dt {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.task-brief dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  font-size: 12px;
+}
+
+.task-notice.is-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.task-notice.is-danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.task-status-form {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.task-status-form .task-status-note,
+.task-status-form .task-status-actions {
+  grid-column: 1 / -1;
+}
+
+.task-status-form textarea {
+  resize: vertical;
+}
+
+.task-status-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 未展开的「委派」按钮按内容宽度显示，不被 grid 拉满 */
+.task-detail-section > .work-item-delegate-button {
+  justify-self: start;
+}
+
+/* 委派面板原本缩进对齐实施项正文；任务详情里没有层级，取消缩进占满宽度 */
+.task-detail .work-item-delegation-state,
+.task-detail .work-item-delegation-form {
+  margin-left: 0;
+}
+
+.task-delegation-timeline h3 {
+  margin: 0 0 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.task-delegation-timeline ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-delegation-timeline li {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-small);
+  font-size: 12px;
+}
+
+.task-delegation-timeline li header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-delegation-timeline time,
+.task-delegation-timeline small {
+  color: var(--color-text-muted);
+}
+
+.task-delegation-timeline code,
+.task-delegation-timeline p {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ============================== */
+/* 新建对话框差异 */
+/* ============================== */
+
+.task-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 160px);
+  gap: 14px;
+}
+
+/* ============================== */
+/* 讨论页实施项：委派摘要 + 跳转入口（面板已迁入任务详情） */
+/* ============================== */
+
+.work-item-delegation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0 28px;
+  font-size: 12px;
+}
+
+.work-item-delegation-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.work-item-delegation-summary a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.work-item-delegation-summary a:hover {
+  text-decoration: underline;
+}
+
+.work-item-delegation-summary.is-paused > span,
+.work-item-delegation-summary.is-changes_requested > span {
+  color: var(--color-warning);
+}
+
+.work-item-delegation-summary.is-failed > span {
+  color: var(--color-danger);
+}
+
+@media (max-width: 720px) {
+  .tasks-view {
+    padding: 18px 16px;
+  }
+
+  .task-status-form,
+  .task-create-row,
+  .task-brief > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
