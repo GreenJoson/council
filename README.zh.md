@@ -115,7 +115,7 @@ npm run dev
 
 ### 通过 MCP 接入已有 Agent 客户端
 
-构建 MCP 服务，让各客户端指向同一日志库，并分别绑定 `codex`、`claude` 调用者身份。可复制的配置见 [MCP 接入 / MCP setup](docs/mcp-setup.md)。可选的 [Council Skill](skills/council/SKILL.md) 提供协作协议，单独使用桌面应用不需要安装它。
+构建 MCP 服务后，打开「设置 → 客户端接入」，对 Claude Code 和/或 Codex 点「写入」：Council 会以同一日志库、各自的 `claude`/`codex` 调用者身份注册自己并安装 Council Skill，写入前备份原文件，可随时还原。文件位置、漂移处理与手动备用配置见 [MCP 接入 / MCP setup](docs/mcp-setup.md)。可选的 [Council Skill](skills/council/SKILL.md) 提供协作协议，单独使用桌面应用不需要安装它。
 
 示例提示词：
 

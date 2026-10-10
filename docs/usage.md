@@ -30,7 +30,7 @@ Council 让 Codex App 与 Claude Desktop Code 共享经过整理的架构议题�
 
 ## 首次使用
 
-首次接入先按 [MCP 接入](mcp-setup.md) 配置并构建服务；单独使用桌面应用无需配置 MCP。
+首次接入在「设置 → 客户端接入」一键写入 Claude Code / Codex 配置，细节与手动备用方式见 [MCP 接入](mcp-setup.md)；单独使用桌面应用无需配置 MCP。
 
 1. 重启 Codex App 和 Claude Desktop，或分别新建一个任务，让客户端重新加载 `$council` Skill 和 `council` MCP。
 2. 在两个客户端中打开同一个项目。
