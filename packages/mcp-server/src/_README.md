@@ -39,7 +39,8 @@
 | `project-path-policy.ts` | 路径策略 | 为文件工具与 Git diff 提供同一敏感目录/文件判定，防止入口间规则漂移 |
 | `runtime-stream.ts` | 流式基础 | 定义公开文本增量事件并对任意 stdout 分片做 JSONL 解码 |
 | `claude-runtime.ts` | 核心 | 隔离 MCP 并按委派权限执行；事件流与最终回复独立限额，单独提取最终结果，仅有监听时请求逐字预览 |
-| `codex-runtime.ts` | 核心 | 按结构化权限执行并隔离 MCP；保留 CLI 认证，独立限制 JSONL/最终正文并报告具体超限计数 |
+| `codex-runtime.ts` | 核心 | 按结构化权限执行并隔离 MCP；保留 CLI 认证，独立限制 JSONL/最终正文并报告具体超限计数；可用性检查在已登录时附带生图探针（`imageGeneration`，诊断码不含 CLI 原文），`generateImages` 以 workspace-write 跑 `exec --enable image_generation --output-schema -o [-i]` 并返回 `{ threadId, lastMessage }`。实测（codex-cli 0.162.0）：`-i` 生效、`-o` 清单可严格解析、`<codex-home>/generated_images/<threadId>/` 存在可兜底，详见 `pipelines/_README.md` |
+| `codex-image-runtime.ts` | 纯函数 | Codex 生图的 features 判定、Provider 覆盖检测、输入校验与固定参数拼装（`-i` 可变参数前置，避免吞掉 stdin `-`） |
 | `acp-runtime-registry.ts` | Runtime 注册 | 声明 Kimi、Gemini、Grok、Codex、Claude Agent 到 ACP 命令、模型选择协议、启动参数和 Runtime 能力的受控映射；实际授权再与独立 Council policy 取交集 |
 | `acp-delegated-runtime.ts` | DelegatedRuntime | 通过 ACP 管理每 RuntimeBinding 常驻进程/session、当前及已关联仓库的只读文件、单工具 Git MCP、审批拒绝、取消与恢复 |
 | `openai-compatible-model-client.ts` | ModelClient | 有界调用流式 OpenAI Chat Completions 兼容 Provider，解析公开文本与 Tool Call，并分类脱敏错误 |
@@ -54,7 +55,7 @@
 | `model-router-store.ts` | 数据 | 事务管理 Provider、Agent、单调 configRevision、Actor/alias 与 BrandAsset；支持已删除 Provider 原行复活，并阻止系统身份修改与活动 Run 下的危险变更 |
 | `model-router-service.ts` | 应用 | 校验 Provider/Agent 命令、补偿 Keychain 写入/轮换、组合公开快照并执行连接测试；重建同模板 Provider 时复活旧行而非制造重复配置 |
 | `keychain-secret-store.ts` | 安全边界 | 将远程 Provider API Key 隔离到 macOS Keychain，并区分凭据不存在与命令故障 |
-| `config.ts` | 配置 | 集中校验通用运行参数、独立 CLI 事件流和委派 Git 检查预算，并导出 loopback 判定；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，并持有本机 HTTP 服务地址（仅 loopback）与转发超时，HTTP 不受该必填项影响 |
+| `config.ts` | 配置 | 集中校验通用运行参数、独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/产物上限（`COUNCIL_CODEX_IMAGE_*`，沙箱只接受 workspace-write），并导出 loopback 判定；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，并持有本机 HTTP 服务地址（仅 loopback）与转发超时，HTTP 不受该必填项影响 |
 | `constants.ts` | 常量 | 定义协议枚举（含任务 kind/source）和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型与 RuntimeBinding HTTP 配置 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |
@@ -62,6 +63,7 @@
 | `database/` | 领域仓储 | 议题/消息/决策/实施项仓储与行映射，`database.ts` 通过 `DatabaseContext` 闭包注入连接、事务与 Actor 解析 |
 | `http/` | 协议 | 提供 WebUI 使用的 REST、安全基线与跨进程 SSE |
 | `tasks/` | 任务领域 | 直接任务与议题派生任务两个入口、任务读写/委派用例；任务存储仍由 `database/work-item-repository.ts` 承担，见 `tasks/_README.md` |
+| `pipelines/` | 图像/原型协议 | P2 `council-brief` 与 `council-asset-manifest` 的严格解析、给 `--output-schema` 的 JSON Schema 与生图提示词渲染；模板与驱动留给 P3，见 `pipelines/_README.md` |
 | `orchestration/` | 编排 | 接入本机/远程纯 Agent、显式传递安全失败原因、后台 lease 执行、周期恢复与浏览器安全策略 |
 
 ## Schema 迁移纪律
