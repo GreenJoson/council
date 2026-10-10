@@ -1,6 +1,6 @@
 /**
  * @input  依赖：http-client 统一请求/URL 构造、task-api 与 orchestration-api 严格解析器
- * @output 导出：HttpTaskRepository（/api/v1/tasks 全量 REST 实现）与其构造参数类型
+ * @output 导出：HttpTaskRepository（/api/v1/tasks 全量 REST 实现，PUT 可带 brief，委派可带 kind=image 与 inputAssetIds）与其构造参数类型
  * @pos    http 模式的任务仓储；桌面模式也用它承接写操作和委派列表（每次按当前项目路径构造）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -89,6 +89,7 @@ export class HttpTaskRepository implements TaskRepository {
         expectedVersion: input.expectedVersion,
         ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
         ...(input.fixCommit !== undefined ? { fixCommit: input.fixCommit } : {}),
+        ...(input.brief !== undefined ? { brief: input.brief } : {}),
       }, "PUT"),
     );
   }
@@ -111,7 +112,8 @@ export class HttpTaskRepository implements TaskRepository {
       parseWorkItemDelegation,
       jsonRequest({
         expectedVersion: input.expectedVersion,
-        supervisorAgentId: input.supervisorAgentId,
+        // 图像委派无审核者，不发 supervisorAgentId。
+        ...(input.supervisorAgentId ? { supervisorAgentId: input.supervisorAgentId } : {}),
         executorAgentId: input.executorAgentId,
         requestedPermission: input.requestedPermission,
         // 与议题入口一致：未选择时按人工验收提交，避免服务端默认值悄悄变化。

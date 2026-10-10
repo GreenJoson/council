@@ -1,7 +1,8 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
- *         inputAssetIds、outputManifest）、议题/任务两条委派入参、AI 计划、会话和独立快照类型
+ * @output 导出：含权限/职责的 Capabilities（能力键含 P2 的 image_generate/image_input）、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
+ *         inputAssetIds、outputManifest）、议题/任务两条委派入参（任务入参的 supervisorAgentId 对图像委派可省略）、
+ *         AI 计划、会话和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -38,7 +39,10 @@ export type RuntimeCapabilityKey =
   | "git_commit"
   | "media_read"
   | "vision"
-  | "session_resume";
+  | "session_resume"
+  /** P2：Codex 生图探针通过后声明；图像委派只列 granted 含它的执行者。 */
+  | "image_generate"
+  | "image_input";
 
 export interface OrchestrationAdapter {
   id: string;
@@ -131,7 +135,8 @@ export interface StartWorkItemDelegationInput {
  */
 export interface StartTaskDelegationInput {
   expectedVersion: number;
-  supervisorAgentId: string;
+  /** 代码委派必填；图像委派不进审核三角，省略不发。 */
+  supervisorAgentId?: string;
   executorAgentId: string;
   requestedPermission: "workspace_write" | "danger_full_access";
   completionPolicy?: "review" | "human";

@@ -2,7 +2,7 @@
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
  * @output 导出：MockOrchestrationRepository 运行、AI 实施计划与持久会话交互原型
  * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复；
- *         议题内委派固定写入 v18 的 kind=code 与空 inputAssetIds
+ *         议题内委派固定写入 v18 的 kind=code 与空 inputAssetIds；夹具含一个 granted image_generate 的执行者（P2 图像委派）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -76,6 +76,22 @@ const CAPABILITIES: OrchestrationCapabilities = {
         "session_resume",
       ],
       limitation: "当前仅自动共享回帖，不会从 Web 主动唤醒。",
+    },
+    {
+      // P2：唯一可写、且 granted 含 image_generate 的执行者，供任务页图像委派走查
+      id: "codex-image",
+      actorId: "codex",
+      label: "Codex Image",
+      available: true,
+      permissionProfile: "workspace_write",
+      executionRole: "executor",
+      runtimeCapabilities: [
+        "text",
+        "repository_read",
+        "repository_write",
+        "image_generate",
+        "image_input",
+      ],
     },
   ],
   defaultPolicy: {
