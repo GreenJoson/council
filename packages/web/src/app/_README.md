@@ -7,10 +7,10 @@
 | 文件名 | 地位 | 功能 |
 |---|---|---|
 | `App.tsx` | 入口 | 应用壳：创建内容/编排仓储，串起各控制器，处理桌面首次设置/致命错误/加载中前置态，渲染头部、侧栏、主区、对话框、错误条、toast 与状态栏 |
-| `routes.ts` | 路由 | `WorkspaceView` 类型、`WORKSPACE_VIEWS` 常量与 `parseRoute`/`buildHash` 纯函数；`#/discussion[/<topicId>]`、`#/tasks[/<taskId>]`、`#/assets[/<assetId>]`、`#/decisions`、`#/architecture`、`#/attention`，未知或空 hash 回落 discussion |
+| `routes.ts` | 路由 | `WorkspaceView` 类型、`WORKSPACE_VIEWS` 常量与 `parseRoute`/`buildHash` 纯函数；`#/discussion[/<topicId>]`、`#/tasks[/<taskId>]`、`#/assets[/<assetId>]`、`#/pipelines[/<pipelineId>]`、`#/decisions`、`#/architecture`、`#/attention`，未知或空 hash 回落 discussion |
 | `use-workspace-route.ts` | 路由 | 订阅 `hashchange`、规范化初始 hash，并提供 `navigate(route, { replace })` |
 | `use-topic-route-sync.ts` | 路由 | 选中议题与 `#/discussion/<topicId>` 双向同步；hash 指向不存在的议题时回落默认选题并改写 hash |
-| `WorkspaceMain.tsx` | 视图分发 | 按路由渲染待处理、架构档案、决策记录、任务视图（`features/tasks/TasksView`，按项目 id 重挂载）、资产库（`features/assets/AssetsView`，按项目 id 重挂载）、议题讨论（含右栏检查器）或空工作区 |
+| `WorkspaceMain.tsx` | 视图分发 | 按路由渲染待处理、架构档案、决策记录、任务视图（`features/tasks/TasksView`，按项目 id 重挂载）、资产库（`features/assets/AssetsView`，按项目 id 重挂载）、流水线（`features/pipelines/PipelinesView`，传内容与编排 revision，按项目 id 重挂载）、议题讨论（含右栏检查器）或空工作区 |
 | `app-states.tsx` | 展示 | 可恢复错误条、致命加载失败页与加载中页 |
 | `use-workspace-content.ts` | 控制器 | 内容仓储加载与 SSE 订阅、选题、接受决策、关闭议题、人工决策、新建议题 |
 | `use-orchestration-state.ts` | 控制器 | 编排快照与能力/运行错误、实施项委派状态、@ 召唤 run、圆桌、自动轮次与持久会话写操作 |

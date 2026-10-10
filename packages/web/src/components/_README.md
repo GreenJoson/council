@@ -13,7 +13,7 @@
 | `ModelRouterEditor.tsx` | 设置 | 右侧一次只编辑一个 Provider 连接或 Agent 身份；可设置顾问/执行/审核职责与显式委派的权限上限，普通 `@` 讨论始终只读 |
 | `BrandGlyph.tsx` | 品牌 | 离线渲染受控 glyph、供应商名称和语义色；未知品牌使用通用网络图形，不写成 Other |
 | `DesktopSetup.tsx` | 启动门 | 首次运行时依次选择日志库和当前项目 |
-| `TopicSidebar.tsx` | 导航 | 使用 `app/routes` 的 WorkspaceView 作为 activeView；展示轻量议题列表、状态筛选 chips 和议题/任务/需要我处理/架构档案/决策记录五个导航项，切换只回调由 App 壳写 hash；议题行的时间与实施完成度左右分列，未拆分实施项时不渲染徽标 |
+| `TopicSidebar.tsx` | 导航 | 使用 `app/routes` 的 WorkspaceView 作为 activeView；展示轻量议题列表、状态筛选 chips 和议题/任务/资产/流水线/需要我处理/架构档案/决策记录七个导航项，切换只回调由 App 壳写 hash；议题行的时间与实施完成度左右分列，未拆分实施项时不渲染徽标 |
 | `DiscussionPanel.tsx` | 核心 | 组织议题头部、关闭入口、讨论/决策/任务/元数据 tab（任务徽标只数叶子任务的完成数/总数，与侧边栏和实施进度卡共用一套口径；所有者优先使用议题冻结快照）、一卡一节点的阶梯导航、独立时间线、真实 Agent 回复动态、人工决策入口、引用回复和编辑器；过长议题问题默认收起 |
 | `AgentReplyActivity.tsx` | 状态 | 从当前议题真实 `running/waiting_agent` Run 中选择最新活动 Agent，在时间线末尾显示 Provider 品牌、具体名称、阶段与同议题实时草稿；较大输出块逐帧平滑展开，完成后由正式消息接替，不进入阶梯节点计数 |
 | `MessageJumpRail.tsx` | 导航 | 按当前议题实际消息卡数量渲染一一对应的阶梯节点；点击平滑跳转到对应卡片，当前阅读卡跟随滚动高亮 |

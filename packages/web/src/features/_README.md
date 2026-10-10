@@ -7,4 +7,5 @@
 | 目录 | 地位 | 功能 |
 |---|---|---|
 | `assets/` | 资产 | `#/assets` 资产库网格（kind 筛选、分页）、`#/assets/<id>` 资产详情（预览、挂接、final、删除）与导入对话框，见 `assets/_README.md` |
+| `pipelines/` | 流水线 | `#/pipelines` 流水线列表（等待我处理/进行中/失败/已完成分组）、`#/pipelines/<id>` 详情（阶段轨道、确认 brief、并排对比选 final、恢复、取消）与新建流水线对话框，见 `pipelines/_README.md` |
 | `tasks/` | 任务 | `#/tasks` 任务列表（按状态分组、类型/来源筛选）、`#/tasks/<id>` 任务详情（简报、产物、状态更新、代码/图像委派、历史委派）与新建任务对话框，见 `tasks/_README.md` |
