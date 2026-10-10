@@ -1,7 +1,8 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
  * @output 导出：含动态 actorId 的 Capabilities、Run、持久会话、委派（v18：可选 topicId、kind、
- *         inputAssetIds、outputManifest）与 Agent 增量事件严格解析函数
+ *         inputAssetIds、outputManifest）与 Agent 增量事件严格解析函数；
+ *         运行时能力枚举含 P2 生图能力 image_generate/image_input
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -99,6 +100,8 @@ const RUNTIME_CAPABILITY_KEYS: readonly RuntimeCapabilityKey[] = [
   "media_read",
   "vision",
   "session_resume",
+  "image_generate",
+  "image_input",
 ];
 const CYCLE_KINDS: readonly DiscussionCycle["kind"][] = [
   "discussion",

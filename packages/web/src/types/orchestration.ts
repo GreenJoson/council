@@ -1,7 +1,8 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
  * @output 导出：含权限/职责的 Capabilities、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
- *         inputAssetIds、outputManifest）、议题/任务两条委派入参、AI 计划、会话和独立快照类型
+ *         inputAssetIds、outputManifest）、议题/任务两条委派入参、AI 计划、会话和独立快照类型；
+ *         RuntimeCapabilityKey 含 P2 生图能力 image_generate/image_input
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -38,7 +39,9 @@ export type RuntimeCapabilityKey =
   | "git_commit"
   | "media_read"
   | "vision"
-  | "session_resume";
+  | "session_resume"
+  | "image_generate"
+  | "image_input";
 
 export interface OrchestrationAdapter {
   id: string;
