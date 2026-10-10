@@ -28,7 +28,7 @@
 | `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |
 | `delegation-task-resolver.ts` | 任务解析 | 按任务 id 读取任务与可选议题（无议题时决策为空、项目路径取任务自身），并集中执行委派前置校验：kind 为 code/image 且与任务一致、代码委派无输入资产、版本、议题归属、未完成、叶子任务与上下文预算 |
 | `work-item-delegation-store.ts` | 委派账本 | 持久化可选议题、委派 kind 与输入资产、supervisor/executor、有效权限、尝试轮次、隔离分支、审核结论与终态；公开 DTO 不泄露本机 worktree 路径 |
-| `delegation-image-execution.ts` | 图像委派 | 单段生图闭环：校验 brief 与参考图（≤8、同项目图像），参考图拷入 `.council/in/` 并写 exclude，经 `CodexRuntime.generateImages` 生图；清单 path、`.council/out/`、`<codex-home>/generated_images/<threadId>` 三路收集，sha256 去重入库并以 output 角色挂到任务（受 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS` 限制）；完成后委派 approved（headCommit=baseCommit）、工作项停在 in_progress 等人工验收；失败分 `image_unavailable`/`outputs_missing`/`manifest_invalid`；审计只记数量、字节、去重数与耗时。依赖全部显式注入，不 import 管理器 |
+| `delegation-image-execution.ts` | 图像委派 | 单段生图闭环：校验 brief 与参考图（≤8、同项目图像），参考图拷入 `.council/in/` 并写 exclude，经 `CodexRuntime.generateImages` 生图；清单 path 与 `.council/out/` 收集，两路都为空时才兜底扫 `<codex-home>/generated_images/<threadId>`（并集会把模型缩放前的原图一并收进来），sha256 去重入库并以 output 角色挂到任务（受 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS` 限制）；完成后委派 approved（headCommit=baseCommit）、工作项停在 in_progress 等人工验收；失败分 `image_unavailable`/`outputs_missing`/`manifest_invalid`；审计只记数量、字节、去重数与耗时。依赖全部显式注入，不 import 管理器 |
 | `work-item-delegation-manager.ts` | 执行闭环 | 只在显式委派时建立隔离 worktree，按 supervisor→executor→review 推进；image 委派只做校验与默认监督者解析后按 kind 分流到 `delegation-image-execution.ts`，不支持接续；任务可不属于任何议题（单项委派），批量委派仍按议题；只传当前任务/所属议题/diff，扫描敏感内容后由 Council 统一提交；冻结验收标准、限定只读瞬时重试，并从已提交检查点创建新委派 |
 
 生产工厂从 Model Router 的 AgentDefinition 动态注册后台适配器。每个 Agent 都绑定独立

@@ -132,7 +132,7 @@ packages/mcp-server/src/
 - Codex Runtime：
   - 新增 `image_generate` 探针：`codex features list` 含 `image_generation stable true` 且 Provider 为本机登录（无自定义 `model_providers`）时标记可用；否则 `available=false`，提示「生图需要本机 ChatGPT 登录的 Codex」。探针结果随 binding fingerprint 缓存，沿用现有可用性缓存规则。
   - `kind = image` 的调用参数：`exec --sandbox workspace-write --cd <worktree> --skip-git-repo-check --ignore-user-config --enable image_generation --json --output-schema <manifest-schema> -o <last-message> [-i <ref-asset>...]`。`--config` 继续用于锁模型与关闭网络外的其他能力。
-  - 事件流解析不变；新增「产物收集」步骤：优先读 `--output-schema` 产出的清单，其次扫描 worktree 下 `.council/out/`，最后按 `thread.started.thread_id` 兜底扫描 `$CODEX_HOME/generated_images/<thread_id>/`。三处取并集，sha256 去重后入库。
+  - 事件流解析不变；新增「产物收集」步骤：优先读 `--output-schema` 产出的清单，其次扫描 worktree 下 `.council/out/`，前两路为空时才按 `thread.started.thread_id` 兜底扫描 `$CODEX_HOME/generated_images/<thread_id>/`（原设计三处取并集，真实 Codex 验收后改为纯兜底，见 P2 契约偏离 ⑩）。sha256 去重后入库。
 - Claude Runtime：`image_input` 通过把资产复制到 worktree `.council/in/` 并在 prompt 中给出相对路径实现（Claude Code 的 Read 工具可读 PNG/JPG）。P3 需做一次端到端验证再写入 `_README.md`。
 - ACP/兼容 API Runtime：两种新能力默认不声明，不参与图像任务。
 
@@ -459,6 +459,10 @@ VITE_COUNCIL_ASSET_PAGE_SIZE=60                      # web
    > **实现偏离（D 已落地）**：① 任务页图像委派表单不发 `supervisorAgentId`（图像委派无 reviewer，由服务端填默认监督者），代码委派仍必填；② Tauri `list_assets` 入参按 `{ projectPath, kind?, target, limit, offset }` 调用，`target` 是 `<targetKind>:<targetId>` 字符串，与 REST 同形；③ mock 模式资产夹具由 `createMockAssetFixtures()` 构造，刷新即重置，与 mock 任务同一生命周期；④ 新增前端配置 `VITE_COUNCIL_ASSET_PAGE_SIZE`（`.env.example`/`.env.desktop` 皆为 60，上限沿用 API 最大分页），只影响网格每页条数；⑤ `council-brief` 校验在前端镜像服务端 zod 规则（`style` 可选、`palette` 为字符串、尺寸 `WxH` 正整数、各项上限同 `BRIEF_PROTOCOL_LIMITS`），deliverable id 不做 trim，比服务端更严；⑥ 任务 kind 标签在任务页为「图片」、资产库为「图像」，待 P3 统一；⑦ 图像委派参考图选择器只列资产库第一页（按 `pageSize`），超出需先在资产库筛选；⑧ 未新增 webui-smoke 资产用例，资产 http 联调由 C 落地假 Codex 生图路径后一并补。
    >
    > **实现偏离（C 已落地）**：① `image_generate` 的 granted 校验放在 `OrchestrationProductService`（议题入口与任务入口共用），缓存未通过时强制重探一次；管理器只按 kind 分流，图像逻辑在 `delegation-image-execution.ts`，依赖显式注入、不反向 import 管理器；② 委派请求体 `supervisorAgentId` 改为可选，zod `superRefine` 只对 kind=code 强制；image 缺省时取启用的 claude-cli Agent（优先 alias `claude`）；`inputAssetIds` 上限取新增常量 `MAX_IMAGE_INPUT_ASSETS = 8`；图像委派不支持接续（409「图像委派不支持接续，请重新委派。」）；③ 新增配置 `COUNCIL_CODEX_HOME`（留空回退进程 `CODEX_HOME`，再回退 `<home>/.codex`），E2E 指向隔离数据目录；exclude 文件经 `git rev-parse --git-path info/exclude` 定位，兼容 worktree；④ 成功收尾时委派状态记 `approved`、`headCommit = baseCommit`（不产生提交），工作项置 `in_progress` 并写「图像已入库 N 张（去重 M 张），等待人工验收」；超出 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS` 的产物不入库，记 `image.outputs_skipped` 审计；⑤ `output_manifest_json` 与资产 `prompt` 存经 `redactAuditText` 脱敏后的内容（prompt/notes 脱敏，path 仅相对路径）；`<codex-home>` 兜底目录只在 threadId 通过安全正则时读取，清单 path 拒绝符号链接并经 realpath 校验仍在 worktree 内；⑥ 管理器构造配置新增可选 `codexHome`/`imageTimeoutMs`/`imageMaxOutputs`/`assets`，缺省回落代码默认值（为此导出 `DEFAULT_CODEX_IMAGE_*`）；`startWorkItemDelegation` 变为 async；⑦ `PUT /tasks/:id` 用 `updateTaskBodySchema`（在实施项更新体上扩展 `brief`），非 image 任务写 brief 返回 400；`council_submit_brief` 在 stdio 进程直连数据库，保持当前状态只写 brief；⑧ E2E 的 Codex 替身复用 `fake-claude.mjs`，`login status` 现返回已登录；`webui-http-smoke.py` 新增图像闭环（非 Codex 执行者 400、生图入库≥2 张且 content 为 PNG、`.council/` 不污染工作区、PUT 写 brief 后以首轮产物作参考图再委派并按 sha256 去重）。
+   >
+   > **实现偏离（真实 Codex 验收后修正，2026-10-10）**：⑨ 创建任务时（HTTP `POST /tasks` 与 MCP `council_create_task` 共用的 `normalizeDirectTaskInput`）对 image 任务的 `brief` 按 council-brief 协议严格解析并存归一化结果，与 `PUT /tasks/:id`、`council_submit_brief` 同规则——坏简报在创建时就以 400 报出字段路径（如 `style.palette: expected string`），不再先被 201 收下、拖到委派时才报「需要先提交 council-brief」；其他 kind 只校验是对象且序列化长度在上限内；⑩ `<codex-home>/generated_images/<threadId>` 不再与清单、`.council/out/` 取并集，只在前两路一张都没收到时才兜底扫描：真实 Codex 会先把原图落在该目录、再缩放/复制进 worktree，两份字节不同、sha256 去不掉，取并集会让产物翻倍（3 张变 6 张）并混入未定稿原图；兜底文件匹配不到交付物时 prompt 记 brief 的 `goal`，不再冒用首个交付物的描述。
+   >
+   > **P2 验收结果（2026-10-10，真实 Codex）**：① 新建 image 任务（brief 要求 1 张透明 icon + 2 张 hero）→ 委派 145 秒后 `approved`，资产库恰好 3 张 1024×1024 PNG（icon 为 RGBA 透明），缩略图可取、元数据含尺寸与提示词，任务置进行中「图像已入库 3 张（去重 0 张），等待人工验收」；修正 ⑩ 之前同一流程入库 6 张（`<codex-home>` 原图与 worktree 缩放副本各 3 张）；② 执行者选 Claude 时 400「生图需要本机 ChatGPT 登录的 Codex」；③ 参考图 `-i`：以首轮 icon 作 `inputAssetIds` 再委派，Codex 的收尾说明准确描述了参考图内容（深蓝灰椭圆桌与四把椅子）并产出同构图加粗版 RGBA PNG，75 秒 `approved`；9 个参考图被 400 拒绝；④ 委派、任务、资产 DTO 与清单中不含 `<codex-home>`、`/Users/` 或 HOME；⑤ Web http 模式：任务页「保存简报」PUT 200、产物区缩略图 200 image/png、委派卡显示「审核通过…请在产物区挑选最终稿」；⑥ 已知未做：`inputAssetIds` 只复制进 `.council/in/`，不会自动给任务挂 `reference` 链接（需要时用 `council_attach_asset`）；验收第三条（配额超限、符号链接、伪扩展名）本轮未在真实服务器重复，以 A 落地的状态码约定与 mcp-server 测试为准。
 
 ### P3 流水线 + 并排对照（4～5 天）
 
@@ -489,7 +493,7 @@ VITE_COUNCIL_ASSET_PAGE_SIZE=60                      # web
 |---|---|---|
 | Codex 生图只对 OpenAI actor Provider 可用；自建中转会静默没有工具 | 事实（magpie 源码 + 探针） | 能力探针 + 明确不可用提示；不做 CLI/API 回退 |
 | `exec --json` 看不到图像工具调用 | 事实（探针） | 以清单 + 文件产物为准；审计记录「产物数」而非「调用数」 |
-| `-i` 参考图与 Claude 读图未端到端验证 | 未知 | P2/P3 各留一条验证任务，验证前不写进用户文档 |
+| Claude 读图未端到端验证（Codex `-i` 参考图已于 2026-10-10 真实验证通过） | 未知 | P3 留一条验证任务，验证前不写进用户文档 |
 | 3D 生成 | 本机无能力 | v2 只做概念图/贴图层，预留 `model3d` 资产类型与能力键，不承诺 |
 | 破坏性迁移 | 已知风险 | 备份是唯一回滚；桌面必须重装；三次迁移合并发布前各自可独立验证 |
 | 最近一批委派改动刚合入，尚无 v2 之外的回归基线 | 已知 | P0 先跑基线，P1 拆分只搬不改行为 |

@@ -173,7 +173,7 @@ interface CollectedFile {
 
 /**
  * 单段生图：认领任务 → 准备 `.council/in|out` 并写入 Git exclude → 复制参考图 → generateImages →
- * 清单解析 → 三路收集（清单 path、`.council/out`、`<codex-home>/generated_images/<threadId>`）→
+ * 清单解析 → 三路收集（清单 path、`.council/out`；前两路为空时才兜底扫 `<codex-home>/generated_images/<threadId>`）→
  * sha256 去重入库并关联任务 → 置 approved，任务停在 in_progress 等人工验收。
  */
 export async function executeImageDelegation(
@@ -391,10 +391,15 @@ async function manifestOutputPath(root: string, realOutputDir: string, relative:
   return contained && !contained.startsWith("..") && !path.isAbsolute(contained) ? absolutePath : undefined;
 }
 
+/**
+ * 清单漏报或兜底收回的文件没有模型给的逐张 prompt：按文件名前缀对回交付物；
+ * 对不上的退回简报目标，而不是硬套第一个交付物的描述——真实 Codex 的兜底目录里是随机文件名的原图，
+ * 硬套会把 hero 原图标成 icon。
+ */
 function deliverablePrompt(brief: CouncilBrief, filename: string): string {
   const base = path.basename(filename, path.extname(filename));
   const matched = brief.deliverables.find((item) => base === item.id || base.startsWith(`${item.id}-`));
-  return (matched ?? brief.deliverables[0])?.description ?? brief.goal;
+  return matched?.description ?? brief.goal;
 }
 
 async function collectOutputs(input: {
@@ -440,8 +445,10 @@ async function collectOutputs(input: {
     if (claimed.has(absolutePath)) continue;
     await add(absolutePath, deliverablePrompt(input.brief, absolutePath));
   }
-  // ③ Codex 默认产物目录兜底：模型没复制进 worktree 时仍能收回。
-  if (input.codexHome && SAFE_THREAD_ID.test(input.threadId)) {
+  // ③ Codex 默认产物目录兜底：只在清单与 `.council/out` 一张都没收到时才扫。
+  // 真实 Codex 会先把原图落在这里、再缩放/复制进 worktree，两份字节不同、sha256 去不掉；
+  // 与前两路取并集会让产物翻倍并混入未定稿的原图，人工验收反而要自己辨别。
+  if (files.length === 0 && input.codexHome && SAFE_THREAD_ID.test(input.threadId)) {
     const generated = path.join(input.codexHome, "generated_images", input.threadId);
     for (const absolutePath of await listImages(generated)) {
       await add(absolutePath, deliverablePrompt(input.brief, absolutePath));

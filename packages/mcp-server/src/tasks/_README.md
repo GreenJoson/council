@@ -4,7 +4,7 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `task-intake.ts` | 入口 | 两个任务入口：直接任务（校验标题/详情/项目路径/优先级/brief，source=direct、无议题）与议题派生任务（复用议题实施项批量创建，source=topic） |
+| `task-intake.ts` | 入口 | 两个任务入口：直接任务（校验标题/详情/项目路径/优先级/brief，image 任务的 brief 按 council-brief 协议严格校验，source=direct、无议题）与议题派生任务（复用议题实施项批量创建，source=topic） |
 | `task-service.ts` | 用例 | 直接任务创建、按项目列表、详情（所属议题摘要 + 委派列表）、乐观更新（image 任务可同时写 brief）、`submitBrief`（只写 brief、保持状态）与委派启动；委派经 `TaskDelegationPort` 注入 |
 
 ## 职责

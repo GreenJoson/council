@@ -421,6 +421,12 @@ codex login status
 调大 `COUNCIL_ASSET_MAX_BYTES` / `COUNCIL_ASSET_MAX_TOTAL_BYTES` 后重启服务；`403` 表示路径越出项目目录或是符号链接，
 把文件复制进项目后再导入。缩略图返回 `404` 多半是 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 不可用或超时，原文件仍可经 `/content` 读取。
 
+### 图像任务的简报被拒绝
+
+新建图像任务、`PUT /api/v1/tasks/:taskId` 或 `council_submit_brief` 返回 `400 council-brief 无效：<字段路径>: <原因>` 时按字段路径改简报：
+`style.palette` 是一段文字而不是数组，交付物的 `size` 写成 `宽x高`、`id` 不能重复、`count` 不超过 16。委派时报“图像任务需要先提交 council-brief”
+说明任务还没有通过校验的简报，先补简报再委派；代码任务的简报不做协议校验，只限制是 JSON 对象且不超长。
+
 ### `@claude` 已识别但运行失败
 
 先在 Model Router 中确认 Claude Agent 的模型，并点击“测试”。Council 保存的模型优先于 Claude Code 交互会话里的 `/model` 默认值。额度不足、模型无权限等确定性错误不会继续盲目重试；修改模型后可从失败卡片显式恢复。Council 默认连续 5 分钟没有协议、工具或文本活动才判定空闲超时；只要 Agent 仍在工作就可继续，单次调用仍受 60 分钟绝对上限保护。

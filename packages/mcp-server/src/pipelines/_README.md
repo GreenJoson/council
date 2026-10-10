@@ -41,3 +41,4 @@ P3 再加入流水线模板（`templates.ts`）与驱动（`pipeline-driver.ts`�
 - 模型遵守了「不覆盖、变体用 `-v2`」：原图背景色有偏差，它用本机工具校色另存 `app-icon-v2.png` 并填 `variantOf`；
   因此 `.council/out/` 可能多于交付数，入库需按清单 + 上限处理。
 - `<codex-home>/generated_images/<threadId>/` 存在，内有 1 个文件（仅生图工具原始产物，不含本机后处理的变体），可作为兜底来源。
+- 2026-10-10 委派级验收：以资产库内真实 icon 作 `inputAssetIds` 走完整图像委派，模型收尾说明准确描述了参考图内容（深蓝灰椭圆桌与四把椅子），75 秒产出同构图加粗版 RGBA PNG 并入库，`-i` 参考图链路视为已验证。同一轮还发现真实 Codex 会把原图先落在 `<codex-home>` 再缩放进 worktree，两份 sha256 不同，所以该目录只能做兜底、不能与前两路取并集。
