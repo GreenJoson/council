@@ -2,7 +2,8 @@
  * @input  依赖：已由 Node 迁移器准备的 SQLite、database/ 下的领域仓储与行映射、安全错误语义
  * @output 导出：CouncilDatabase（连接与 PRAGMA、BEGIN IMMEDIATE 事务、动态 Actor alias/可信 actorId
  *         解析、无损 Session 历史、计数/revision/圆桌度量）及同名同签名转发到仓储的议题、消息、
- *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表）与 v19 资产行读写；CouncilRevisions
+ *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表；P3 流水线子任务建项与文档写入）
+ *         与 v19 资产行读写；CouncilRevisions
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问入口；领域 SQL 住在 database/ 各仓储，
  *         调用方签名不变；身份漂移或停用时失败关闭
  *
@@ -401,6 +402,16 @@ export class CouncilDatabase {
     return this.#workItems.createDirectAsActor(input);
   }
 
+  /** 流水线子任务（source pipeline，挂在流水线父任务下）。 */
+  createPipelineChildAsActor(input: Parameters<WorkItemRepository["createPipelineChildAsActor"]>[0]): WorkItem {
+    return this.#workItems.createPipelineChildAsActor(input);
+  }
+
+  /** 流水线文档写入：只改父任务 brief_json 与版本，版本冲突 409。 */
+  updatePipelineDocument(input: Parameters<WorkItemRepository["updatePipelineDocument"]>[0]): WorkItem {
+    return this.#workItems.updatePipelineDocument(input);
+  }
+
   listTasks(input: {
     projectPath: string;
     status?: WorkItemStatus;
@@ -408,6 +419,11 @@ export class CouncilDatabase {
     source?: WorkItemSource;
   }): WorkItem[] {
     return this.#workItems.listByProject(input);
+  }
+
+  /** 跨项目的流水线父任务；流水线驱动启动对账用。 */
+  listPipelineParents(): WorkItem[] {
+    return this.#workItems.listPipelineParents();
   }
 
   // ------------------------------------------------------------

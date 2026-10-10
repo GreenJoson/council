@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、v19 资产库的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限、v19 资产库的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -54,6 +54,9 @@ export interface CouncilConfig {
   workerIdleTimeoutMs?: number;
   delegationMaxExecutionSegments?: number;
   delegationExecutionTimeoutMs?: number;
+  /** P3 流水线：模板阶段数上限与复盘后自动修订轮数上限。 */
+  pipelineMaxStages?: number;
+  pipelineMaxRevisions?: number;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;

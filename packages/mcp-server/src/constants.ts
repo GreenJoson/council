@@ -1,6 +1,6 @@
 /**
  * @input  依赖：无
- * @output 导出：协议枚举（含 v18 任务 kind/source、v19 资产 kind/链接目标/角色）、输入边界（含图像委派参考图上限）与服务标识
+ * @output 导出：协议枚举（含 v18 任务 kind/source、v19 资产 kind/链接目标/角色）、输入边界（含图像委派参考图上限、流水线文档上限）与服务标识
  * @pos    MCP 服务的集中式不变量定义
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -42,6 +42,8 @@ export const WORK_ITEM_KINDS = ["code", "image", "prototype", "research", "pipel
 export const WORK_ITEM_SOURCES = ["topic", "direct", "pipeline"] as const;
 /** 任务简报 JSON 序列化后的上限，防止把大文件塞进 brief_json。 */
 export const MAX_TASK_BRIEF_CHARS = 16_000;
+/** 流水线父任务的 council-pipeline 文档（含草稿与确认 brief、复盘记录）序列化上限。 */
+export const MAX_PIPELINE_DOCUMENT_CHARS = 64_000;
 
 /** v19 资产库枚举；与 assets / asset_links 的 CHECK 一致，types.ts、Zod 与 Rust 镜像共用同一组取值。 */
 export const ASSET_KINDS = ["image", "model3d", "document", "archive"] as const;

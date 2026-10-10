@@ -1,6 +1,7 @@
 /**
  * @input  当前议题（v18 起可缺省，非议题任务没有议题）、叶子任务和上下文预算
- * @output 完整任务/约束/已接受结论、可节选背景及完整指纹；委派项目路径解析（议题优先、实施项兜底）
+ * @output 完整任务/约束/已接受结论、可节选背景及完整指纹；委派项目路径解析（议题优先、实施项兜底）；
+ *         代码委派输入图的提示词段落（delegationInputAssetsContext，只含相对路径）
  * @pos    不让长背景挤掉执行范围，关键材料超限时拒绝派发；找不到项目路径时拒绝派发
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -44,4 +45,18 @@ export function delegationTaskContext(detail: DelegationDetail, item: WorkItem, 
   const available = maxChars - required.length - notice.length;
   // 预算不足以放背景时仍保留所有强制要求，不再从末尾截断它们。
   return { context: available >= 2 ? `${required}${notice}\n\n${background.slice(0, available - 2)}` : required, contextFingerprint };
+}
+
+/**
+ * 代码委派的输入图（如流水线选定的终稿）说明：只列相对当前工作目录的路径并说明用途，
+ * 不出现绝对路径；这些文件位于已写入 exclude 的 `.council/in/`，不会被提交。
+ */
+export function delegationInputAssetsContext(relativePaths: readonly string[]): string[] {
+  if (relativePaths.length === 0) return [];
+  return [
+    "",
+    "输入图（视觉参考，只读，位于不会被提交的 .council/in/ 目录）：",
+    ...relativePaths.map((relativePath) => `- ${relativePath}`),
+    "请先查看这些图片，以它们为界面与视觉依据实现；不要修改、移动或提交这些文件。",
+  ];
 }

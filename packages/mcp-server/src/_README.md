@@ -56,7 +56,7 @@
 | `model-router-store.ts` | 数据 | 事务管理 Provider、Agent、单调 configRevision、Actor/alias 与 BrandAsset；支持已删除 Provider 原行复活，并阻止系统身份修改与活动 Run 下的危险变更 |
 | `model-router-service.ts` | 应用 | 校验 Provider/Agent 命令、补偿 Keychain 写入/轮换、组合公开快照并执行连接测试；重建同模板 Provider 时复活旧行而非制造重复配置 |
 | `keychain-secret-store.ts` | 安全边界 | 将远程 Provider API Key 隔离到 macOS Keychain，并区分凭据不存在与命令故障 |
-| `config.ts` | 配置 | 集中校验通用运行参数、独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/产物上限（`COUNCIL_CODEX_IMAGE_*`，沙箱只接受 workspace-write），并导出 loopback 判定；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，并持有本机 HTTP 服务地址（仅 loopback）与转发超时，HTTP 不受该必填项影响 |
+| `config.ts` | 配置 | 集中校验通用运行参数、独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/产物上限（`COUNCIL_CODEX_IMAGE_*`，沙箱只接受 workspace-write）、P3 流水线阶段数与修订轮数上限（`COUNCIL_PIPELINE_MAX_STAGES`/`COUNCIL_PIPELINE_MAX_REVISIONS`），并导出 loopback 判定；stdio MCP 额外要求不可由工具覆盖的调用者 Actor alias，并持有本机 HTTP 服务地址（仅 loopback）与转发超时，HTTP 不受该必填项影响 |
 | `constants.ts` | 常量 | 定义协议枚举（含任务 kind/source）和输入边界 |
 | `types.ts` | 类型 | 定义共享领域模型与 RuntimeBinding HTTP 配置 |
 | `logger.ts` | 基础设施 | 将结构化日志写入 stderr |
@@ -65,7 +65,7 @@
 | `http/` | 协议 | 提供 WebUI 使用的 REST、安全基线与跨进程 SSE |
 | `assets/` | 资产领域 | v19 资产库：入库嗅探/配额/内容寻址落盘、缩略图与 content 出口、链接与软删除用例；SQL 由 `database/asset-repository.ts` 承担，见 `assets/_README.md` |
 | `tasks/` | 任务领域 | 直接任务与议题派生任务两个入口、任务读写/委派用例；任务存储仍由 `database/work-item-repository.ts` 承担，见 `tasks/_README.md` |
-| `pipelines/` | 图像/原型协议 | P2 `council-brief` 与 `council-asset-manifest` 的严格解析、给 `--output-schema` 的 JSON Schema 与生图提示词渲染；模板与驱动留给 P3，见 `pipelines/_README.md` |
+| `pipelines/` | 图像/原型协议与流水线 | P2 `council-brief` 与 `council-asset-manifest` 的严格解析、`--output-schema` JSON Schema 与生图提示词；P3 流水线模板、`council-pipeline` 文档、brief/review 提示词、状态读写、驱动器与用例（父任务 kind=pipeline，状态机由驱动器唯一推进），见 `pipelines/_README.md` |
 | `orchestration/` | 编排 | 接入本机/远程纯 Agent、显式传递安全失败原因、后台 lease 执行、周期恢复与浏览器安全策略 |
 
 ## Schema 迁移纪律

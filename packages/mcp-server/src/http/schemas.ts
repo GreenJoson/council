@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口与资产库）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库与 P3 流水线）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -50,6 +50,8 @@ import {
   AGENT_EXECUTION_ROLES,
   AGENT_PERMISSION_PROFILES,
 } from "../agent-execution-policy.js";
+import { PIPELINE_DOCUMENT_LIMITS } from "../pipelines/pipeline-document.js";
+import { PIPELINE_TEMPLATE_IDS } from "../pipelines/templates.js";
 
 const nonBlankString = (maximum: number) =>
   z.string().min(1).max(maximum).refine((value) => value.trim().length > 0, {
@@ -395,6 +397,63 @@ export const startTaskDelegationBodySchema = startWorkItemDelegationBodySchema.e
 export const updateTaskBodySchema = updateWorkItemBodySchema.extend({
   brief: z.record(z.string(), z.unknown()).optional(),
 }).strict();
+
+// ---- P3 流水线（/api/v1/pipelines）：阶段语义、brief 模板约束与 Agent 选择在 pipelines/，这里只校验形状 ----
+
+const pipelineAgentIdSchema = routerIdSchema.min(1);
+
+export const pipelineParamsSchema = z.object({ pipelineId: workItemIdSchema }).strict();
+
+export const listPipelinesQuerySchema = z.object({ project: taskProjectPathSchema }).strict();
+
+export const createPipelineBodySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    template: z.enum(PIPELINE_TEMPLATE_IDS),
+    goal: nonBlankString(PIPELINE_DOCUMENT_LIMITS.maxGoal),
+    constraints: z
+      .array(nonBlankString(PIPELINE_DOCUMENT_LIMITS.maxConstraint))
+      .max(PIPELINE_DOCUMENT_LIMITS.maxConstraints)
+      .optional(),
+    referenceAssetIds: z
+      .array(z.string().min(1).max(MAX_ID_CHARS))
+      .max(PIPELINE_DOCUMENT_LIMITS.maxReferences)
+      .optional(),
+    agents: z
+      .object({
+        brief: pipelineAgentIdSchema.optional(),
+        image: pipelineAgentIdSchema.optional(),
+        prototype: z
+          .object({
+            executor: pipelineAgentIdSchema.optional(),
+            supervisor: pipelineAgentIdSchema.optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/** brief 只校验为对象；council-brief 结构与模板约束（kind、数量、透明背景）由服务层严格校验并返回 400。 */
+export const confirmPipelineBriefBodySchema = z
+  .object({
+    brief: z.record(z.string(), z.unknown()),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export const selectPipelineFinalBodySchema = z
+  .object({
+    assetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).min(1).max(64),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict();
+
+export const pipelineVersionBodySchema = z
+  .object({ expectedVersion: z.number().int().positive() })
+  .strict();
 
 // ---- 资产库（/api/v1/assets）：入库规则在 assets/，这里只校验形状 ----
 

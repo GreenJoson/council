@@ -1,7 +1,8 @@
 /**
  * @input  依赖：SQLiteCouncilStore、CouncilOrchestrator、RunExecutionManager、CycleDriver、AgentRegistry、
  *         模型路由服务与回退路由仓库、任务委派管理器、HTTP 编排配置、决策写入器取值器与配置互斥回调
- * @output 导出：CouncilProductService —— 圆桌开局/推进/放弃、Run 创建/启动/审批/取消/恢复、只读任务规划、
+ * @output 导出：CouncilProductService —— 圆桌开局/推进/放弃、Run 创建/启动/审批/取消/恢复、
+ *         单次只读 Agent 调用 invokeOneShot（任务规划与 P3 流水线 brief/review 共用）、只读任务规划、
  *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发（议题入口与任务入口；图像委派先经探针确认执行者 granted 含 image_generate）
  * @pos    Composer/@Agent 产品接线的真正实现；CouncilOrchestrationService 以同名同签名方法转发到这里
  *
@@ -27,6 +28,7 @@ import {
   type PaginatedRuns,
   type RuntimeBinding,
   type CycleTaskRequirements,
+  type CouncilTopicContext,
 } from "council-orchestrator";
 import type {
   CreateAgentInput,
@@ -75,6 +77,18 @@ export interface PublicApprovalInput {
 
 function missingRun(error: unknown): boolean {
   return error instanceof RunNotFoundError;
+}
+
+/** 流水线默认 Agent 选择的候选快照；protocol 缺省表示 Provider 未激活。 */
+export interface AgentCandidate {
+  id: string;
+  actorId: string;
+  displayName: string;
+  mentionAlias: string;
+  protocol: string | undefined;
+  executionRole: AgentDefinition["executionRole"];
+  available: boolean;
+  runtimeCapabilities: string[];
 }
 
 export interface CouncilProductServiceDependencies {
@@ -403,6 +417,34 @@ export class CouncilProductService {
     contextMessage: string;
     signal?: AbortSignal;
   }): Promise<{ actorId: string; content: string }> {
+    const context = await this.#store.getTopicContext(input.topicId);
+    return await this.invokeOneShot({
+      adapterId: input.adapterId,
+      instruction: input.instruction,
+      context,
+      contextMessage: input.contextMessage,
+      invocationPrefix: "planner",
+      purpose: "任务规划",
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+  }
+
+  /**
+   * 单次只读 Agent 调用的共同骨架（任务规划与 P3 流水线 brief/review 共用）：
+   * 锁内同步注册表与可用性 → adapter.invoke（上下文末尾追加一条 human note）→ 硬超时 → 关闭一次性会话。
+   * 不创建 Run；context 由调用方给出（流水线用父任务合成的上下文，不需要真实议题）。
+   */
+  async invokeOneShot(input: {
+    adapterId: string;
+    instruction: string;
+    context: CouncilTopicContext;
+    contextMessage: string;
+    /** 一次性 runId 前缀，只用于区分审计来源。 */
+    invocationPrefix: string;
+    /** 出现在错误文案里的用途名，例如「任务规划」。 */
+    purpose: string;
+    signal?: AbortSignal;
+  }): Promise<{ actorId: string; content: string }> {
     const target = await this.#withConfigurationLock(async () => {
       await this.#registry.syncDynamicAgents();
       await this.#registry.ensureFreshAvailability(true);
@@ -410,18 +452,18 @@ export class CouncilProductService {
       const adapter = this.#registry.adapter(input.adapterId);
       const actorId = this.#registry.actorId(input.adapterId);
       if (!capability || !adapter || !actorId) {
-        throw new OrchestrationConfigError("任务规划 Agent 不存在或已停用。");
+        throw new OrchestrationConfigError(`${input.purpose} Agent 不存在或已停用。`);
       }
       if (!capability.available) {
         throw new OrchestrationConfigError(
-          capability.limitation ?? "任务规划 Agent 当前不可用。",
+          capability.limitation ?? `${input.purpose} Agent 当前不可用。`,
         );
       }
       return { adapter, actorId };
     });
 
-    const context = await this.#store.getTopicContext(input.topicId);
-    const invocationId = `planner_${randomUUID()}`;
+    const context = input.context;
+    const invocationId = `${input.invocationPrefix}_${randomUUID()}`;
     const runtimeBindingId = `binding_${randomUUID()}`;
     const controller = new AbortController();
     const abortFromCaller = (): void => controller.abort(input.signal?.reason);
@@ -438,7 +480,7 @@ export class CouncilProductService {
     try {
       const result = await target.adapter.invoke({
         runId: invocationId,
-        topicId: input.topicId,
+        topicId: context.topicId,
         roundNumber: 1,
         attempt: 1,
         adapterId: input.adapterId,
@@ -453,7 +495,7 @@ export class CouncilProductService {
             ...context.messages,
             {
               id: `message_${randomUUID()}`,
-              topicId: input.topicId,
+              topicId: context.topicId,
               actorId: this.#store.resolveActorAlias("human"),
               kind: "note",
               content: input.contextMessage,
@@ -468,17 +510,17 @@ export class CouncilProductService {
       });
       const content = result.content.trim();
       if (!content) {
-        throw new OrchestrationConfigError("AI 返回了空的任务规划结果。");
+        throw new OrchestrationConfigError(`AI 返回了空的${input.purpose}结果。`);
       }
       if (content.length > MAX_MESSAGE_CHARS) {
-        throw new OrchestrationConfigError("AI 返回的任务规划结果超过长度上限。");
+        throw new OrchestrationConfigError(`AI 返回的${input.purpose}结果超过长度上限。`);
       }
       return { actorId: target.actorId, content };
     } finally {
       globalThis.clearTimeout(timeout);
       input.signal?.removeEventListener("abort", abortFromCaller);
       await target.adapter.closeBinding?.(runtimeBindingId).catch((error: unknown) => {
-        logger.warn("work-item-planner", "一次性任务规划会话清理失败", error);
+        logger.warn("one-shot-invocation", `一次性${input.purpose}会话清理失败`, error);
       });
     }
   }
@@ -722,6 +764,35 @@ export class CouncilProductService {
   async listProviderModels(id: string): Promise<ProviderModels> {
     if (!this.#modelRouter) throw new OrchestrationConfigError("模型路由服务未启用。");
     return this.#modelRouter.listModels(id);
+  }
+
+  /**
+   * 流水线默认 Agent 选择用的候选清单：启用未删除的 Agent + Provider 协议 + 当前可用性与已授予能力。
+   * 只读快照，不改注册状态；同步与刷新沿用 invokeOneShot 的锁内顺序。
+   */
+  async listAgentCandidates(): Promise<AgentCandidate[]> {
+    if (!this.#modelRouter) return [];
+    const router = this.#modelRouter;
+    return await this.#withConfigurationLock(async () => {
+      await this.#registry.syncDynamicAgents();
+      await this.#registry.ensureFreshAvailability();
+      return router.listAgents()
+        .filter((agent) => agent.enabled && !agent.deletedAt)
+        .map((agent) => {
+          const provider = router.getProvider(agent.providerId);
+          const capability = this.#registry.capability(agent.id);
+          return {
+            id: agent.id,
+            actorId: agent.actorId,
+            displayName: agent.displayName,
+            mentionAlias: agent.mentionAlias,
+            protocol: provider?.status === "active" ? provider.protocol : undefined,
+            executionRole: agent.executionRole,
+            available: capability?.available === true,
+            runtimeCapabilities: [...(capability?.runtimeCapabilities ?? [])],
+          };
+        });
+    });
   }
 
   // ---- 任务委派转发 ----

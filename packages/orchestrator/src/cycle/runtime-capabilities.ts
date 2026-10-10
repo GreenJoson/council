@@ -1,6 +1,7 @@
 /**
  * @input  依赖：圆桌阶段与开局冻结的 Agent/Provider/Runtime 版本证据
- * @output 导出：最小 Runtime 能力词表（含图像生成/参考图输入）、cycle 类型、需求推导、能力交集与 fail-fast 诊断
+ * @output 导出：最小 Runtime 能力词表（含图像生成/参考图输入）、cycle 类型、需求推导、能力交集与 fail-fast 诊断；
+ *         Claude 本机 CLI 声明并放行 image_input（P3 流水线 brief/review 读取 `.council/in/` 参考图与产物）
  * @pos    Agent / Provider / Runtime 三层在圆桌开局时的纯契约；不访问数据库或进程
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -111,6 +112,15 @@ const CODEX_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
   ...IMAGE_RUNTIME_CAPABILITIES,
 ];
 
+/*
+ * Claude 本机 CLI 的 policy = 只读讨论能力 + image_input。Claude Code 能直接读取工作目录里的图片，
+ * P3 流水线的 brief/review 阶段靠它看参考图与产物；不放行 image_generate（生图只走 Codex）。
+ */
+const CLAUDE_LOCAL_POLICY: readonly RuntimeCapabilityKey[] = [
+  ...READ_ONLY_LOCAL_POLICY,
+  "image_input",
+];
+
 const READ_ONLY_ACP_POLICY: readonly RuntimeCapabilityKey[] = [
   "text",
   "repository_read",
@@ -176,7 +186,8 @@ export interface DeclaredCapabilityOptions {
 
 /**
  * 由 transport 得到当前真实 Runtime 声明；纯 sessionless 兼容接口保持文本-only。
- * Claude/ACP/兼容 API 不声明图像能力；Codex 只有探针通过才追加图像能力组。
+ * Claude 本机 CLI 声明 image_input（读取工作目录图片）；ACP/兼容 API 不声明图像能力；
+ * Codex 只有探针通过才追加图像能力组。
  */
 export function declaredCapabilitiesForTransport(
   transportKind: string,
@@ -189,7 +200,7 @@ export function declaredCapabilitiesForTransport(
     ]);
   }
   if (transportKind === "claude-resume") {
-    return [...LOCAL_CLI_DECLARED_CAPABILITIES];
+    return uniqueCapabilities([...LOCAL_CLI_DECLARED_CAPABILITIES, "image_input"]);
   }
   if (transportKind === "acp") {
     return ["text", "repository_read", "git_diff", "session_resume"];
@@ -219,7 +230,7 @@ export function defaultPolicyCapabilitiesForTransport(
     return [...CODEX_LOCAL_POLICY];
   }
   if (transportKind === "claude-resume") {
-    return [...READ_ONLY_LOCAL_POLICY];
+    return [...CLAUDE_LOCAL_POLICY];
   }
   if (transportKind === "acp") {
     return [...READ_ONLY_ACP_POLICY];

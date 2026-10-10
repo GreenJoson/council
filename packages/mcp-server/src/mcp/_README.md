@@ -11,8 +11,9 @@
 | `tools/work-item-tools.ts` | 工具 | `council_add_work_items`、`council_update_work_item`、`council_list_work_items`、`council_claim_work_item`、`council_submit_fixes` |
 | `tools/task-tools.ts` | 工具 | `council_create_task`、`council_list_tasks`、`council_get_task`、`council_delegate_task`（kind=code/image，image 可省略 supervisor 并带 input_asset_ids；委派经本机 HTTP 服务执行）、`council_submit_brief`（image 任务提交 council-brief，stdio 直连数据库并走乐观版本） |
 | `tools/asset-tools.ts` | 工具 | `council_list_assets`、`council_get_asset`、`council_import_asset`、`council_attach_asset`（stdio 直连数据库，输出不含路径，导入规则与 REST 共用 `assets/`） |
+| `tools/pipeline-tools.ts` | 工具 | `council_start_pipeline`、`council_get_pipeline`（参数 snake_case；stdio 进程不持有驱动器，两者都经 loopback HTTP `/api/v1/pipelines` 转发，4xx 与 503 文案透传、其余 5xx 只给通用说明） |
 | `task-delegation-forwarder.ts` | 适配 | stdio 进程没有委派执行器：委派列表直接读本地账本，启动委派转发到 loopback HTTP 服务的 `/api/v1/tasks/:id/delegations`，连接失败给出可执行提示，5xx 只返回通用文案 |
 | `tools/claude-tools.ts` | 工具 | `council_check_claude`、`council_ask_claude`（可传递请求取消）、`council_reset_claude_session` |
 | `tools/status-tools.ts` | 工具 | `council_get_status`，只返回计数不暴露本地路径 |
 
-注册顺序由 `src/server.ts` 固定为 topic → message → work-item → task → asset → claude → status；task 为 P1 新增、asset 为 P2 新增，其余与拆分前 `tools/list` 的输出顺序一致。
+注册顺序由 `src/server.ts` 固定为 topic → message → work-item → task → asset → pipeline → claude → status；task 为 P1 新增、asset 为 P2 新增、pipeline 为 P3 新增，其余与拆分前 `tools/list` 的输出顺序一致。
