@@ -7,7 +7,7 @@
  *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
  *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
  *         P4 Worker 团队：setTeamHooks 让 Lead 执行阶段注入 Council 团队 MCP 与「团队模式」指令，并在快照/提交前
- *         从仓储同步 Lead headCommit（Worker 合并会移动 Lead HEAD）；startTeamWorker 建 team_worker 子委派并交给
+ *         从仓储同步 Lead headCommit（Worker 合并会移动 Lead HEAD），交付提交经 withLeadWorkspace 排进团队锁；startTeamWorker 建 team_worker 子委派并交给
  *         delegation-worker-execution（不审核、不认领实施项）；setTeamLeadHead / teamLeadWorkspace / projectPathOf 供 TeamService 用
  *         全新仓库的安全基线拆到 delegation-initial-baseline
  *
@@ -128,6 +128,8 @@ export interface StartWorkItemDelegationBatchInput {
 /** TeamService 注入：只有活跃团队的 Lead 委派返回运行时附加项，其余委派返回 undefined。 */
 export interface DelegationTeamHooks {
   leadRuntime(delegationId: string): { mcpServers: RuntimeMcpServers; instructions: readonly string[] } | undefined;
+  /** Lead 交付提交与团队检查点/合并共用同一把团队锁，避免合并移动 HEAD 时被交付提交 reset 掉。 */
+  withLeadWorkspace<T>(delegationId: string, task: () => Promise<T>): Promise<T>;
 }
 
 export interface StartTeamWorkerInput {
@@ -1050,14 +1052,18 @@ export class WorkItemDelegationManager {
         const commitTime = new Date().toISOString();
         this.#store.update(id, { summary: executorSummary, checkpoint: { ...beforeCommit, version: 1,
           progress: { phase: "commit", phaseStartedAt: commitTime, lastActivityAt: commitTime } }, now: commitTime });
-        headCommit = await commitDelegationChanges({
-          root: workspace.root, workItemId: delegation.workItemId,
-          baseCommit: workspace.baseCommit, expectedHead: syncTeamHead(),
-          maxFileChars: this.config.gitMaxOutputChars,
-          git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
-        });
-        // 提交已产生就先保存检查点，后续取消或 diff 读取失败仍可显式恢复。
-        this.#store.update(id, { headCommit, summary: executorSummary, now: new Date().toISOString() });
+        const commitAndSave = async (): Promise<string> => {
+          const committed = await commitDelegationChanges({
+            root: workspace.root, workItemId: executionAssignment.workItemId,
+            baseCommit: workspace.baseCommit, expectedHead: syncTeamHead(),
+            maxFileChars: this.config.gitMaxOutputChars,
+            git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+          });
+          // 提交已产生就先保存检查点，后续取消或 diff 读取失败仍可显式恢复。
+          this.#store.update(id, { headCommit: committed, summary: executorSummary, now: new Date().toISOString() });
+          return committed;
+        };
+        headCommit = await (this.#teamHooks ? this.#teamHooks.withLeadWorkspace(id, commitAndSave) : commitAndSave());
       }
       if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
       this.#recordAudit(id, "commit.created", { baseCommit: workspace.baseCommit, headCommit });

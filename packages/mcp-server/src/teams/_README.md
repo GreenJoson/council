@@ -25,7 +25,7 @@
 
 - REST：`http/routes/team-routes.ts`（`/api/v1/tasks/:taskId/team*`）；编排服务未启用时 503。
 - MCP：`mcp/tools/team-tools.ts`；读（list/wait）直接读库，写经回环 HTTP 转发到上面的 REST。
-- 装配：`orchestration/service.ts` 工厂创建 `TeamService` 并接入 initialize/close；构造时向委派管理器注册 `leadRuntime` 钩子。
+- 装配：`orchestration/service.ts` 工厂创建 `TeamService` 并接入 initialize/close；构造时向委派管理器注册 `leadRuntime`（Lead 执行阶段注入）与 `withLeadWorkspace`（Lead 交付提交排进团队锁，与检查点/合并互斥）钩子。
 
 `http/routes`、`mcp/tools`、`orchestration/service.ts` → `teams/` → `orchestration/work-item-delegation-*`（只用类型与快照扫描）、
 `process-utils.ts`、`errors.ts`。TeamService 对委派管理器只经注入端口，不 import 管理器实现。

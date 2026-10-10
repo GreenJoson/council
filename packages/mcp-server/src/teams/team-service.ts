@@ -8,7 +8,9 @@
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  *
- * 并发：同一团队的派发/合并/中断/归档/结束经 promise 链串行，避免检查点、worktree 分叉与合并互相穿插。
+ * 并发：同一团队的派发/合并/中断/归档/结束经 promise 链串行，避免检查点、worktree 分叉与合并互相穿插；
+ *         Lead 执行段结束后的交付提交也经 withLeadWorkspace 钩子排进同一条链（否则合并刚移动 HEAD、
+ *         尚未回写仓储时，交付提交会按旧 HEAD reset 掉合并提交）。
  * 生命周期：Lead 委派进入终态（approved/failed/cancelled）即自动结束团队并中断仍在运行的 Worker；
  * 服务重启时 initialize 对账 Lead 已不活跃的团队。
  * 已知竞争：检查点/合并与 Lead 自身写文件并发时，Lead 正在写的文件可能被收进检查点（文档已列为已知风险）。
@@ -128,7 +130,14 @@ export class TeamService {
   #unsubscribe: (() => void) | undefined;
 
   constructor(private readonly deps: TeamServiceDeps) {
-    deps.delegations.setTeamHooks({ leadRuntime: (id) => this.#leadRuntime(id) });
+    deps.delegations.setTeamHooks({
+      leadRuntime: (id) => this.#leadRuntime(id),
+      // 非团队 Lead 直接执行；团队 Lead 的交付提交排进团队锁，与检查点/合并互斥。
+      withLeadWorkspace: (id, task) => {
+        const team = this.deps.store.activeForLead(id);
+        return team ? this.#serial(team.id, task) : task();
+      },
+    });
   }
 
   // ---- 生命周期 ----
