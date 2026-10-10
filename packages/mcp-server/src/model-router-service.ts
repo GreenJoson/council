@@ -1,6 +1,6 @@
 /**
  * @input  依赖：ModelRouterStore、Agent 执行策略、系统 SecretStore、Provider catalog 与可注入连接测试器
- * @output 导出：公开模型路由快照、含权限/职责的 Provider/Agent 增删改、配置修订绑定的模型发现/分项诊断和安全凭据操作
+ * @output 导出：公开模型路由快照、未删除 Agent 列表、含权限/职责的 Provider/Agent 增删改、配置修订绑定的模型发现/分项诊断和安全凭据操作
  * @pos    HTTP 设置 API、capabilities 与临时适配器工厂之间的模型路由应用服务
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -316,6 +316,11 @@ export class ModelRouterService {
 
   getProvider(id: string): ProviderProfile | undefined {
     return this.store.getProvider(id);
+  }
+
+  /** 未删除的 Agent 定义；图像委派按此挑选默认监督者。 */
+  listAgents(): AgentDefinition[] {
+    return this.store.listAgents();
   }
 
   async getApiKeyForAgent(agentId: string): Promise<string | undefined> {

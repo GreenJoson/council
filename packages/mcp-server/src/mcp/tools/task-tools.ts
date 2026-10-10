@@ -1,7 +1,9 @@
 /**
  * @input  依赖：McpToolContext、Zod、共享常量、tasks/TaskService、MCP 委派端口（本地账本只读 + HTTP 转发）与 tool-support 共享件
- * @output 导出：registerTaskTools，注册 council_create_task / council_list_tasks / council_get_task / council_delegate_task
- * @pos    任务一等入口的 MCP 工具模块：不依赖议题创建、按项目列出、读取详情与发起代码委派
+ * @output 导出：registerTaskTools，注册 council_create_task / council_list_tasks / council_get_task / council_submit_brief /
+ *         council_delegate_task
+ * @pos    任务一等入口的 MCP 工具模块：不依赖议题创建、按项目列出、读取详情、为 image 任务提交 council-brief（本进程直连数据库）
+ *         与发起代码/图像委派（经 HTTP 转发）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -10,9 +12,9 @@ import path from "node:path";
 import { z } from "zod/v4";
 import {
   MAX_ID_CHARS,
+  MAX_IMAGE_INPUT_ASSETS,
   MAX_PATH_CHARS,
   MAX_TITLE_CHARS,
-  MAX_WORK_ITEM_BATCH,
   MAX_WORK_ITEM_DETAILS_CHARS,
   WORK_ITEM_KINDS,
   WORK_ITEM_SOURCES,
@@ -153,24 +155,59 @@ export function registerTaskTools(context: McpToolContext): void {
   );
 
   server.registerTool(
+    "council_submit_brief",
+    {
+      title: "提交图像任务简报",
+      description:
+        "为 kind=image 的任务写入 council-brief（结构化生图简报），按协议严格校验后整体替换，任务状态不变。"
+        + "图像委派前必须先提交。expected_version 取自 council_get_task 返回的任务版本。",
+      inputSchema: {
+        task_id: taskIdField,
+        expected_version: z.number().int().positive(),
+        brief: z.record(z.string(), z.unknown()).describe("council-brief JSON 对象（goal、deliverables 等）"),
+      },
+      outputSchema: { task: workItemOutput },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ task_id, expected_version, brief }) =>
+      await executeTool("council_submit_brief", () => {
+        const task = tasks.submitBrief({
+          taskId: task_id,
+          expectedVersion: expected_version,
+          brief,
+          actorId: caller.actorId,
+        });
+        return success(["已提交 council-brief。", formatTask(task)].join("\n"), { task });
+      }),
+  );
+
+  server.registerTool(
     "council_delegate_task",
     {
       title: "委派任务给执行 Agent",
       description:
-        "把一条未完成的叶子任务交给 executor Agent 在隔离 worktree 中实现，并由 supervisor Agent 审核。"
-        + "需要本机 Council HTTP 服务在运行（委派由它在后台执行）。当前只支持 kind=code，input_asset_ids 必须为空。"
-        + "expected_version 取自 council_get_task 返回的任务版本。",
+        "把一条未完成的叶子任务交给 executor Agent 在隔离 worktree 中执行。需要本机 Council HTTP 服务在运行（委派由它在后台执行）。"
+        + "kind=code：由 supervisor Agent 审核，supervisor_agent_id 必填，input_asset_ids 必须为空。"
+        + "kind=image：任务须已用 council_submit_brief 提交简报，executor 必须是本机 ChatGPT 登录的 Codex；"
+        + "supervisor_agent_id 可省略（默认启用的 Claude）；input_asset_ids 为同项目图像资产（最多 8 个）；"
+        + "产物入资产库并关联任务，等待人工验收。kind 须与任务一致。expected_version 取自 council_get_task 返回的任务版本。",
       inputSchema: {
         task_id: taskIdField,
         expected_version: z.number().int().positive(),
-        supervisor_agent_id: agentIdField.describe("负责审核的 Agent ID"),
+        supervisor_agent_id: agentIdField.optional().describe("负责审核/监督的 Agent ID；kind=code 必填，kind=image 可省略"),
         executor_agent_id: agentIdField.describe("负责执行的 Agent ID"),
         requested_permission: z.enum(["workspace_write", "danger_full_access"]),
         completion_policy: z.enum(["review", "human"]).optional().describe("缺省 human：审核通过后等待人工验收"),
         acceptance_criteria: z.string().min(1).max(4_000).optional(),
         create_initial_baseline: z.boolean().optional(),
         kind: z.enum(WORK_ITEM_KINDS).default("code"),
-        input_asset_ids: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_WORK_ITEM_BATCH).default([]),
+        input_asset_ids: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_IMAGE_INPUT_ASSETS).default([])
+          .describe("仅 kind=image：参考图资产 ID"),
       },
       outputSchema: { delegation: delegationOutput },
       annotations: {
@@ -184,7 +221,7 @@ export function registerTaskTools(context: McpToolContext): void {
       await executeTool("council_delegate_task", async () => {
         const delegation = await tasks.delegate(input.task_id, {
           expectedVersion: input.expected_version,
-          supervisorAgentId: input.supervisor_agent_id,
+          ...(input.supervisor_agent_id ? { supervisorAgentId: input.supervisor_agent_id } : {}),
           executorAgentId: input.executor_agent_id,
           requestedPermission: input.requested_permission,
           kind: input.kind,

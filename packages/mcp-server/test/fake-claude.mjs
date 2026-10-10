@@ -1,16 +1,39 @@
 /**
- * @input  依赖：ClaudeRuntime 传入的版本、认证或生成参数与 stdin prompt
- * @output 导出：可用性检查、长上下文与 Markdown 交接边界的子进程 E2E 协议响应
- * @pos    测试专用的 Claude Code CLI 最小协议替身
+ * @input  依赖：ClaudeRuntime / CodexRuntime 传入的版本、认证、特性列表或生成参数与 stdin prompt
+ * @output 导出：可用性检查、长上下文与 Markdown 交接边界的子进程 E2E 协议响应；
+ *         Codex 侧另有 `login status`、`features list`（image_generation stable true）与
+ *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单）
+ * @pos    测试专用的 Claude Code / Codex CLI 最小协议替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 const args = process.argv.slice(2);
+
+// 2x2 最小合法 PNG：一张 RGB、一张带 alpha（RGBA），内容不同以免被 sha256 去重。
+const PNG_RGB = "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd49a73000000104944415478da63d0cabf06440c100a00258205bd8c994e360000000049454e44ae426082";
+const PNG_RGBA = "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d24000000114944415478da637810a5dd00c20c30060046e40795e9ff745a0000000049454e44ae426082";
+
+function optionValue(name) {
+  const index = args.indexOf(name);
+  return index >= 0 ? args[index + 1] : undefined;
+}
 
 if (args.includes("--version")) {
   process.stdout.write("fake-claude 1.0.0\n", () => process.exit(0));
+}
+
+if (args[0] === "login" && args[1] === "status") {
+  process.stderr.write("Logged in using ChatGPT\n", () => process.exit(0));
+}
+
+if (args[0] === "features" && args[1] === "list") {
+  process.stdout.write(
+    ["undo                 stable  false", "image_generation     stable  true", "web_search_request   stable  true", ""].join("\n"),
+    () => process.exit(0),
+  );
 }
 
 if (args[0] === "auth" && args[1] === "status") {
@@ -26,6 +49,10 @@ process.stdin.on("data", (chunk) => {
   prompt += chunk;
 });
 process.stdin.on("end", () => {
+  if (args[0] === "exec" && args[args.indexOf("--enable") + 1] === "image_generation") {
+    fakeImageGeneration(prompt);
+    return;
+  }
   if (prompt.includes("COUNCIL_MODEL_PROBE") && args.includes("--print")) {
     process.stdout.write(JSON.stringify({ type: "result", result: readFileSync("council-probe.txt", "utf8"), model: "fake-probe-model" }));
     return;
@@ -73,3 +100,49 @@ process.stdin.on("end", () => {
     model: "fake-e2e-model",
   }));
 });
+
+/** Codex 生图替身：按 brief 提示词中的 deliverableId 写产物与清单；参考图必须真实存在。 */
+function fakeImageGeneration(text) {
+  const cwd = optionValue("--cd");
+  const lastMessagePath = optionValue("-o");
+  if (!cwd || !lastMessagePath || !optionValue("--output-schema")) {
+    process.stderr.write("生图参数缺失\n");
+    process.exitCode = 2;
+    return;
+  }
+  const inputs = args.flatMap((value, index) => (value === "-i" ? [args[index + 1]] : []));
+  if (inputs.some((item) => !item || !existsSync(item))) {
+    process.stderr.write("参考图不存在\n");
+    process.exitCode = 2;
+    return;
+  }
+  const ids = [...text.matchAll(/deliverableId: ([a-z0-9][a-z0-9-]*)/gu)].map((match) => match[1]);
+  const deliverableId = ids[0] ?? "image";
+  const outDir = path.join(cwd, ".council", "out");
+  mkdirSync(outDir, { recursive: true });
+  const files = [
+    { name: `${deliverableId}.png`, hex: PNG_RGB },
+    { name: `${deliverableId}-2.png`, hex: PNG_RGBA },
+  ];
+  for (const file of files) writeFileSync(path.join(outDir, file.name), Buffer.from(file.hex, "hex"));
+  const manifest = {
+    schemaVersion: 1,
+    outputs: files.map((file, index) => ({
+      deliverableId: ids[index] ?? deliverableId,
+      path: `.council/out/${file.name}`,
+      mime: "image/png",
+      width: 2,
+      height: 2,
+      prompt: `fake image ${String(index + 1)}${inputs.length > 0 ? " with reference" : ""}`,
+      variantOf: null,
+    })),
+    notes: `生成 ${String(files.length)} 张占位图，参考图 ${String(inputs.length)} 张。`,
+  };
+  const message = JSON.stringify(manifest);
+  writeFileSync(lastMessagePath, message);
+  process.stdout.write([
+    JSON.stringify({ type: "thread.started", thread_id: "fake-image-thread" }),
+    JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: message } }),
+    "",
+  ].join("\n"));
+}

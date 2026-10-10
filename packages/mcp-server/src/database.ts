@@ -352,6 +352,8 @@ export class CouncilDatabase {
     expectedVersion: number;
     statusNote?: string;
     fixCommit?: string;
+    /** 仅图像任务；调用方须先经 parseCouncilBrief 校验。 */
+    brief?: Record<string, unknown>;
     actorId: string;
   }): WorkItem {
     return this.#workItems.updateAsActor(input);

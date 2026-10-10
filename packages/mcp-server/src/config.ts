@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +9,7 @@
 
 import { mkdirSync } from "node:fs";
 import { isIP } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
 import { ASSET_SNIFFABLE_MIMES, MAX_LIST_LIMIT } from "./constants.js";
 import type { AssetConfig, CouncilConfig, McpCouncilConfig } from "./types.js";
@@ -25,8 +26,8 @@ const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
 /** Codex 生图沙箱独立于讨论沙箱：只允许 workspace-write，避免一个开关放宽所有 Codex 调用。 */
 const REQUIRED_CODEX_IMAGE_SANDBOX_MODE = "workspace-write";
-const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 900_000;
-const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
+export const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 900_000;
+export const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
 const DEFAULT_GEMINI_ACP_COMMAND = "gemini";
 const DEFAULT_GROK_ACP_COMMAND = "grok";
@@ -291,6 +292,21 @@ export const EXECUTION_DEFAULTS = {
   maxSegments: 4, timeoutMs: 7_200_000,
 } as const;
 
+/**
+ * Codex 自身的数据目录（<codex-home>）：图像委派兜底扫描 `generated_images/<threadId>/`。
+ * 优先 COUNCIL_CODEX_HOME，留空回退进程 CODEX_HOME，再回退 `~/.codex`；只做本地读，不进 DTO/日志。
+ */
+function resolveCodexHome(env: NodeJS.ProcessEnv): string {
+  const configured = env.COUNCIL_CODEX_HOME?.trim() || env.CODEX_HOME?.trim();
+  if (configured) {
+    if (!path.isAbsolute(configured)) {
+      throw new Error("COUNCIL_CODEX_HOME 必须是绝对路径。");
+    }
+    return path.resolve(configured);
+  }
+  return path.join(homedir(), ".codex");
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig {
   const dataDir = requireEnv("COUNCIL_DATA_DIR", env);
   if (!path.isAbsolute(dataDir)) {
@@ -356,6 +372,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       env,
       DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     ),
+    codexHome: resolveCodexHome(env),
     kimiAcpCommand:
       env.COUNCIL_KIMI_ACP_COMMAND?.trim()
       || env.COUNCIL_KIMI_COMMAND?.trim()

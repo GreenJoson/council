@@ -68,6 +68,8 @@ export interface CouncilConfig {
   codexImageSandboxMode?: "workspace-write";
   codexImageTimeoutMs?: number;
   codexImageMaxOutputs?: number;
+  /** Codex 数据目录（<codex-home>），图像委派兜底收集产物用；缺省时跳过该路收集。 */
+  codexHome?: string;
   kimiAcpCommand: string;
   geminiAcpCommand: string;
   grokAcpCommand: string;

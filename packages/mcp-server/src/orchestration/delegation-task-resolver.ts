@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase（按 id 取实施项、读议题详情）、delegation-task-context
- * @output 导出：resolveDelegationTask（运行期取任务上下文）、assertDelegableTask（派发前校验）
+ * @output 导出：resolveDelegationTask（运行期取任务上下文）、assertDelegableTask（派发前校验，code/image 两种 kind）
  * @pos    委派任务上下文解析：议题任务沿用议题约束与已接受决策，无议题任务只用任务本身与其项目路径
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -67,25 +67,26 @@ export interface DelegableTaskInput {
   inputAssetIds?: readonly string[];
 }
 
-/** 派发前校验：版本、叶子、未完成、议题未关闭、项目路径与 P1 只支持 code 委派。 */
+/** 派发前校验：版本、叶子、未完成、议题未关闭、项目路径；委派 kind 只开放 code/image 且须与任务 kind 一致。 */
 export function assertDelegableTask(
   database: CouncilDatabase,
   input: DelegableTaskInput,
   limits: DelegationTaskLimits,
 ): { item: WorkItem; topicId?: string; projectPath: string } {
-  // P1 只开放代码委派；资产输入要等 P2 资产库落地后才有意义。
-  if ((input.kind ?? "code") !== "code") {
-    throw new CouncilValidationError("当前只支持 kind 为 code 的代码委派。");
+  const kind = input.kind ?? "code";
+  if (kind !== "code" && kind !== "image") {
+    throw new CouncilValidationError("当前只支持 kind 为 code 或 image 的委派。");
   }
-  if ((input.inputAssetIds ?? []).length > 0) {
-    throw new CouncilValidationError("当前版本的委派不支持输入资产，inputAssetIds 必须为空数组。");
+  // 参考图只对图像委派有意义；图像侧的资产存在性与归属由 delegation-image-execution 校验。
+  if (kind === "code" && (input.inputAssetIds ?? []).length > 0) {
+    throw new CouncilValidationError("代码委派不支持输入资产，inputAssetIds 必须为空数组。");
   }
   const { item, detail } = loadTask(database, input.workItemId, limits);
   if (input.topicId !== undefined && item.topicId !== input.topicId) {
     throw new CouncilNotFoundError("实施项不存在。");
   }
-  if (item.kind !== "code") {
-    throw new CouncilValidationError("当前只能委派 kind 为 code 的任务。");
+  if (item.kind !== kind) {
+    throw new CouncilValidationError(`任务 kind 为 ${item.kind}，不能按 ${kind} 委派。`);
   }
   if (item.version !== input.expectedVersion) {
     throw new CouncilConflictError("实施项已被更新，请刷新后重试。");

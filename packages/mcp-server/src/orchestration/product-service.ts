@@ -2,7 +2,7 @@
  * @input  依赖：SQLiteCouncilStore、CouncilOrchestrator、RunExecutionManager、CycleDriver、AgentRegistry、
  *         模型路由服务与回退路由仓库、任务委派管理器、HTTP 编排配置、决策写入器取值器与配置互斥回调
  * @output 导出：CouncilProductService —— 圆桌开局/推进/放弃、Run 创建/启动/审批/取消/恢复、只读任务规划、
- *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发（议题入口与任务入口）
+ *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发（议题入口与任务入口；图像委派先经探针确认执行者 granted 含 image_generate）
  * @pos    Composer/@Agent 产品接线的真正实现；CouncilOrchestrationService 以同名同签名方法转发到这里
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -40,7 +40,7 @@ import type {
 } from "../model-router-service.js";
 import type { AgentDefinition, ModelRouterStore } from "../model-router-store.js";
 import { MAX_MESSAGE_CHARS } from "../constants.js";
-import { CouncilNotFoundError } from "../errors.js";
+import { CouncilNotFoundError, CouncilValidationError } from "../errors.js";
 import { logger } from "../logger.js";
 import type { ProviderModels } from "../model-diagnostics.js";
 import type { CouncilHttpConfig } from "../types.js";
@@ -54,6 +54,7 @@ import type {
   WorkItemDelegationManager,
 } from "./work-item-delegation-manager.js";
 import type { WorkItemDelegation } from "./work-item-delegation-store.js";
+import { IMAGE_EXECUTOR_REQUIRED_MESSAGE } from "./delegation-image-execution.js";
 
 export interface PublicRoundInput {
   adapterId: string;
@@ -738,11 +739,26 @@ export class CouncilProductService {
     return this.#delegationManager.listForWorkItem(workItemId);
   }
 
-  startWorkItemDelegation(input: StartWorkItemDelegationInput): WorkItemDelegation {
+  async startWorkItemDelegation(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation> {
     if (!this.#delegationManager) {
       throw new OrchestrationConfigError("任务委派服务未启用。");
     }
+    if (input.kind === "image") await this.#assertImageExecutor(input.executorAgentId);
     return this.#delegationManager.start(input);
+  }
+
+  /** 生图执行者必须经探针确认 granted 含 image_generate；缓存未命中时强制重探一次。 */
+  async #assertImageExecutor(executorAgentId: string): Promise<void> {
+    const granted = (): boolean => {
+      const capability = this.#registry.capability(executorAgentId);
+      return capability?.available === true
+        && capability.runtimeCapabilities?.includes("image_generate") === true;
+    };
+    await this.#registry.syncDynamicAgents();
+    await this.#registry.ensureFreshAvailability();
+    if (granted()) return;
+    await this.#registry.ensureFreshAvailability(true);
+    if (!granted()) throw new CouncilValidationError(IMAGE_EXECUTOR_REQUIRED_MESSAGE);
   }
 
   startWorkItemDelegationBatch(

@@ -4,7 +4,7 @@
  *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点，
  *         project_path 从议题拷贝，kind/source/priority 走 v18 DEFAULT）、
  *         直接任务建项（topic_id NULL、source direct、project_path 必填）、按 id 读取、
- *         以 id 为准的乐观版本更新/认领（给了 topicId 时仍校验议题归属）、祖先状态派生、
+ *         以 id 为准的乐观版本更新/认领（给了 topicId 时仍校验议题归属；更新可选写入已校验的 brief_json）、祖先状态派生、
  *         议题内过滤列表与按项目列表（走 idx_work_items_project_status，含议题派生项）
  * @pos    实施项（任务）领域仓储，work_items 表唯一数据访问所有者；父任务状态只由子任务派生，
  *         任何写入路径都不接受手动设置
@@ -462,6 +462,8 @@ export class WorkItemRepository {
     expectedVersion: number;
     statusNote?: string;
     fixCommit?: string;
+    /** 已经过 parseCouncilBrief 校验的 council-brief；省略时保留原值。 */
+    brief?: Record<string, unknown>;
     actorId: string;
   }): WorkItem {
     const now = new Date().toISOString();
@@ -499,7 +501,7 @@ export class WorkItemRepository {
         UPDATE work_items
         SET status = ?, status_note = ?, fix_commit = ?, version = version + 1,
             updated_by_actor_id = ?, updated_by_snapshot_json = ?,
-            updated_at = ?, completed_at = ?
+            updated_at = ?, completed_at = ?, brief_json = COALESCE(?, brief_json)
         WHERE id = ? AND version = ?
       `).run(
         input.status,
@@ -509,6 +511,7 @@ export class WorkItemRepository {
         actorSnapshotJson,
         now,
         completedAt,
+        input.brief ? JSON.stringify(input.brief) : null,
         input.workItemId,
         input.expectedVersion,
       );

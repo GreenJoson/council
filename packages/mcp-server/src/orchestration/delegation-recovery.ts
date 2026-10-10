@@ -1,6 +1,6 @@
 /**
  * @input  依赖：原委派检查点、当前项目与受控 Git 执行器
- * @output 导出：失败分类，以及提交、草稿、审核修正中断的恢复前工作区验证
+ * @output 导出：失败分类（含图像委派 image_unavailable / outputs_missing / manifest_invalid），以及提交、草稿、审核修正中断的恢复前工作区验证
  * @pos    仅显式恢复；保留原目录与历史，HEAD 必须匹配最近已记录提交或基线
  */
 import path from "node:path";
@@ -11,9 +11,11 @@ import { CouncilConflictError } from "../errors.js";
 import type { DelegationPrivateState } from "./work-item-delegation-store.js";
 import { DelegationReviewError } from "./delegation-review.js";
 import { DelegationExecutionCheckpointError } from "./delegation-execution-result.js";
+import { DelegationImageError } from "./delegation-image-execution.js";
 
 export function delegationFailureCode(error: unknown): string {
   if (error instanceof DelegationReviewError) return error.code;
+  if (error instanceof DelegationImageError) return error.code;
   if (error instanceof DelegationExecutionCheckpointError) return error.code;
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   if (error instanceof ClaudeRuntimeError || error instanceof CodexRuntimeError) {

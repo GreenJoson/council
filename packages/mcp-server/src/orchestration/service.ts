@@ -390,7 +390,7 @@ export class CouncilOrchestrationService {
     return this.#product.listTaskDelegations(workItemId);
   }
 
-  startWorkItemDelegation(input: StartWorkItemDelegationInput): WorkItemDelegation {
+  startWorkItemDelegation(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation> {
     return this.#product.startWorkItemDelegation(input);
   }
 

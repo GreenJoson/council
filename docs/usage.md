@@ -199,7 +199,10 @@ Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
 
 不需要讨论的工作可以直接建任务，不必先建议题和决策：界面在“任务”页点“新建任务”，MCP 用 `council_create_task`（必填项目路径与标题）、
 `council_list_tasks`、`council_get_task`，HTTP 对应 `/api/v1/tasks`。直接任务同样可以委派给 Agent
-（`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），当前只支持 `kind=code` 的代码任务；
+（`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），支持 `kind=code` 的代码任务与 `kind=image` 的生图任务；
+生图任务先写 council-brief（新建时带 `brief`、`PUT /api/v1/tasks/:taskId` 或 MCP `council_submit_brief`），
+执行者必须是本机已用 ChatGPT 登录且开启生图的 Codex，监督者可省略（默认 Claude），可带最多 8 个同项目图像资产作参考图；
+产物去重入库并挂到任务，任务停在进行中等你在资产库/任务页人工验收；
 MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 或 `start:http` 需要在运行。
 议题实施项也会出现在同一项目的任务列表中。
 

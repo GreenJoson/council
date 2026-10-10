@@ -1,6 +1,7 @@
 /**
  * @input  依赖：HttpRouteContext（CouncilDatabase、可选编排服务）、tasks/TaskService、Zod schema 与统一响应
- * @output 导出：注册任务入口 REST（创建直接任务、按项目列表、详情、乐观更新、委派列表与发起委派）的 registerTaskRoutes
+ * @output 导出：注册任务入口 REST（创建直接任务、按项目列表、详情、乐观更新（image 任务可写 council-brief）、
+ *         委派列表与发起委派（code/image；image 可省略监督者并携带参考图））的 registerTaskRoutes
  * @pos    /api/v1/tasks：不依赖议题的任务一等入口；议题派生任务同样可经此读取、更新与委派
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,7 +15,7 @@ import {
   listTasksQuerySchema,
   startTaskDelegationBodySchema,
   taskParamsSchema,
-  updateWorkItemBodySchema,
+  updateTaskBodySchema,
 } from "../schemas.js";
 import { parse, type HttpRouteContext } from "./context.js";
 
@@ -64,13 +65,14 @@ export function registerTaskRoutes(app: Express, context: HttpRouteContext): voi
 
   app.put("/api/v1/tasks/:taskId", (request, response) => {
     const { taskId } = parse(taskParamsSchema, request.params);
-    const input = parse(updateWorkItemBodySchema, request.body);
+    const input = parse(updateTaskBodySchema, request.body);
     const task = tasks.update({
       taskId,
       status: input.status,
       expectedVersion: input.expectedVersion,
       ...(input.statusNote !== undefined ? { statusNote: input.statusNote } : {}),
       ...(input.fixCommit !== undefined ? { fixCommit: input.fixCommit } : {}),
+      ...(input.brief ? { brief: input.brief } : {}),
       actorId: "human",
     });
     sendSuccess(response, task, "任务已更新。");
@@ -88,7 +90,7 @@ export function registerTaskRoutes(app: Express, context: HttpRouteContext): voi
     const input = parse(startTaskDelegationBodySchema, request.body);
     const delegation = await tasks.delegate(taskId, {
       expectedVersion: input.expectedVersion,
-      supervisorAgentId: input.supervisorAgentId,
+      ...(input.supervisorAgentId ? { supervisorAgentId: input.supervisorAgentId } : {}),
       executorAgentId: input.executorAgentId,
       requestedPermission: input.requestedPermission,
       kind: input.kind,
