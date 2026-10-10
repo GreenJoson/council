@@ -1,6 +1,7 @@
 /**
- * @input  依赖：界面语言、打开状态、TaskRepository.createTask、kind 文案与 P1 可建 kind 列表
- * @output 导出：TaskCreateDialog —— 原生 <dialog> 新建任务表单（标题必填、说明、kind、优先级）
+ * @input  依赖：界面语言、打开状态、TaskRepository.createTask、kind 文案与可建 kind 列表、BriefEditor 与 brief-form
+ * @output 导出：TaskCreateDialog —— 原生 <dialog> 新建任务表单（标题必填、说明、kind、优先级；
+ *         image 任务可勾选「附带简报」用 BriefEditor 编写 council-brief，本地校验通过才提交）
  * @pos    任务列表的直接任务入口；创建成功把新行交给调用方（负责导航到 #/tasks/<id>），失败（含同项目重名 409）留在表单内显示
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,7 +13,10 @@ import { getErrorMessage } from "../../data/error-message";
 import type { TaskRepository } from "../../data/tasks/task-repository";
 import { useI18n } from "../../i18n/I18nProvider";
 import { WORK_ITEM_KINDS, type CouncilWorkItem, type WorkItemKind } from "../../types/council";
-import { KIND_LABELS, P1_CREATABLE_KINDS } from "./task-labels";
+import { BriefEditor } from "./BriefEditor";
+import { createBriefDraft, resolveBriefDraft, type BriefDraft } from "./brief-form";
+import type { BriefIssue } from "../../data/tasks/council-brief";
+import { CREATABLE_KINDS, KIND_LABELS } from "./task-labels";
 
 export interface TaskCreateDialogProps {
   isOpen: boolean;
@@ -28,6 +32,10 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
   const [details, setDetails] = useState("");
   const [kind, setKind] = useState<WorkItemKind>("code");
   const [priority, setPriority] = useState("0");
+  // 简报只对 image 任务开放；草稿在切走 kind 时保留，提交时只在 image + 勾选时带上。
+  const [withBrief, setWithBrief] = useState(false);
+  const [briefDraft, setBriefDraft] = useState<BriefDraft>(() => createBriefDraft());
+  const [briefIssues, setBriefIssues] = useState<BriefIssue[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +58,13 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canCreate) return;
+    let brief: Record<string, unknown> | undefined;
+    if (kind === "image" && withBrief) {
+      const resolved = resolveBriefDraft(briefDraft);
+      setBriefIssues(resolved.issues);
+      if (!resolved.brief) return;
+      brief = resolved.brief as unknown as Record<string, unknown>;
+    }
     setIsCreating(true);
     setError(null);
     try {
@@ -58,11 +73,15 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
         ...(details.trim() ? { details: details.trim() } : {}),
         kind,
         priority: parsedPriority,
+        ...(brief ? { brief } : {}),
       });
       setTitle("");
       setDetails("");
       setKind("code");
       setPriority("0");
+      setWithBrief(false);
+      setBriefDraft(createBriefDraft());
+      setBriefIssues([]);
       onCreated(created);
     } catch (reason: unknown) {
       setError(getErrorMessage(reason));
@@ -118,12 +137,12 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
             <span>{t("任务类型")}</span>
             <select value={kind} onChange={(event) => setKind(event.target.value as WorkItemKind)}>
               {WORK_ITEM_KINDS.map((value) => (
-                <option key={value} value={value} disabled={!P1_CREATABLE_KINDS.includes(value)}>
+                <option key={value} value={value} disabled={!CREATABLE_KINDS.includes(value)}>
                   {t(KIND_LABELS[value])}
                 </option>
               ))}
             </select>
-            <small>{t("当前仅支持代码任务；图片、原型、调研与流水线将在 P2 接入。")}</small>
+            <small>{t("当前支持代码与图像任务；原型、调研与流水线将在后续阶段接入。")}</small>
           </label>
           <label>
             <span>{t("优先级")} <small>{t("越大越靠前")}</small></span>
@@ -135,6 +154,15 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
             />
           </label>
         </div>
+        {kind === "image" ? (
+          <label className="brief-checkbox">
+            <input type="checkbox" checked={withBrief} onChange={(event) => setWithBrief(event.target.checked)} />
+            <span>{t("附带简报")} <small>{t("可选，也可创建后在详情页编写")}</small></span>
+          </label>
+        ) : null}
+        {kind === "image" && withBrief ? (
+          <BriefEditor draft={briefDraft} onChange={setBriefDraft} issues={briefIssues} disabled={isCreating} />
+        ) : null}
         {error ? <p className="task-notice is-danger" role="alert">{t(error)}</p> : null}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose}>{t("取消")}</button>

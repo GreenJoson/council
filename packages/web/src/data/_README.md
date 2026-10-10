@@ -11,7 +11,7 @@
 | `orchestration-repository.ts` | 边界 | 定义 `@Agent` 单次调用、仅由用户显式触发的 AI 实施计划、任务委派/恢复、审计与待处理查询、三范围圆桌开局/作答、RuntimeBinding 关闭/重开和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
-| `orchestration-api.ts` | 协议 | 严格解析 Capabilities、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
+| `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
@@ -23,7 +23,7 @@
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、关闭、发帖、同步、Human / Accepted 人工结束（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束 |
-| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task` |
+| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task`/`list_assets`/`get_asset` |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，归档静止议题、提交用户绑定的 accepted 人工决策，并提供不参与设置世代的只读议题详情加载 |
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储及 AI 实施计划，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
@@ -34,6 +34,7 @@
 | `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |
 | `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 | `decision-package.ts` | 查询 | 计算议题 proposed/accepted 决策包状态，支持逐条或批量接受而不把列表压成单条结论 |
+| `assets/` | 资产域 | P2 资产库仓储接口、协议解析、http/desktop/mock 三实现与选择入口（页大小 `VITE_COUNCIL_ASSET_PAGE_SIZE`），详见 `assets/_README.md` |
 | `tasks/` | 任务域 | v18 任务（直接任务 + 议题实施项）仓储接口、协议解析、http/desktop/mock 三实现与选择入口，详见 `tasks/_README.md` |
 
 `HttpCouncilRepository` 与 `HttpOrchestrationRepository` 只从构造参数接收 API origin；应用入口只允许由 `VITE_COUNCIL_API_URL` 提供该值。http 模式还必须通过 `VITE_COUNCIL_PROJECT_PATH` 提供跨平台绝对项目路径，每个新议题都会携带该路径，使 Agent Adapter 获得可信工作目录。无结构化证据时映射结果保持空数组，不从消息文本猜测证据。普通 Topic、Message 和 Decision 写请求不发送 Actor 身份，服务端固定为 `human`；Agent 产出只通过 orchestration 协议进入共享时间线。

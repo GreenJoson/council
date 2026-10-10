@@ -2,7 +2,7 @@
  * @input  依赖：API 任务行与委派协议类型、mock-data 的 Actor 快照
  * @output 导出：MOCK_TASK_PROJECT_PATH 与 createMockTaskFixtures()（任务行 + 委派的深拷贝夹具）
  * @pos    任务看板与详情的脱敏 mock 数据源：6 条直接任务覆盖四种状态与 image/research/prototype
- *         类型，2 条挂 topic-idempotency 的议题任务，2 条委派（reviewing 与 approved）
+ *         类型（image 任务的 brief 是 council-brief v1），2 条挂 topic-idempotency 的议题任务，2 条委派（reviewing 与 approved）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -98,7 +98,19 @@ const TASKS: ApiWorkItem[] = [
     kind: "image",
     status: "pending",
     priority: 3,
-    brief: { style: "扁平线稿", sizes: ["320x240", "640x480"], themes: ["light", "dark"] },
+    // council-brief v1：任务详情按结构化方式展示，产物区挂有 mock 资产库里的三张输出图
+    brief: {
+      schemaVersion: 1,
+      kind: "concept-sheet",
+      goal: "结算列表为空时的插画，浅色与深色各一版，另出一张透明底图标。",
+      deliverables: [
+        { id: "empty-light", description: "浅色主题空状态插画", size: "640x480" },
+        { id: "empty-dark", description: "深色主题空状态插画", size: "640x480" },
+        { id: "empty-icon", description: "透明底小图标", size: "256x256", transparent: true },
+      ],
+      style: { constraints: ["扁平线稿", "不出现文字"], references: ["asset_mock_brand_palette"] },
+      acceptance: ["两版主题色与设计 token 一致", "图标背景透明"],
+    },
     updatedAt: "2026-10-09T03:00:00.000Z",
   }),
   task({

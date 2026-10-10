@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council.ts 的任务行快照与 kind/source/status 联合类型、orchestration.ts 的委派类型
- * @output 导出：任务列表筛选、任务详情（含可选议题摘要、委派与桌面离线提示）、创建/更新任务入参
+ * @output 导出：任务列表筛选、任务详情（含可选议题摘要、委派与桌面离线提示）、创建/更新任务入参（更新可带 brief）
  * @pos    任务领域（/api/v1/tasks 与 Tauri list_tasks/get_task）在 Web 端的稳定领域模型；
  *         任务本体复用 CouncilWorkItem，不另起一套行类型
  *
@@ -55,4 +55,6 @@ export interface UpdateTaskInput {
   expectedVersion: number;
   statusNote?: string;
   fixCommit?: string;
+  /** 只在编辑简报时携带；服务端按 council-brief 严格校验。status 仍需原样带上（PUT 的必填项）。 */
+  brief?: Record<string, unknown>;
 }

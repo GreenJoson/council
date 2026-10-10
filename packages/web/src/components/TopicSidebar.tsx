@@ -1,7 +1,7 @@
 /**
  * @input  依赖：界面语言上下文、议题列表（含实施完成度）、选中状态、状态筛选、app/routes 的 WorkspaceView 与关闭回调
  * @output 导出：TopicSidebar 项目和议题导航（时间与完成度左右分列），activeView 直接取 WorkspaceView
- * @pos    Operator Console 左侧高密度导航区域，五个工作区视图共用；视图切换只回调，由 App 壳写入 hash 路由
+ * @pos    Operator Console 左侧高密度导航区域，六个工作区视图共用；视图切换只回调，由 App 壳写入 hash 路由
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,6 +12,7 @@ import {
   Check,
   FileCheck2,
   GitBranch,
+  Images,
   ListTodo,
   SearchX,
   X,
@@ -32,6 +33,7 @@ const statusFilterOptions: { id: TopicStatusFilter; label: string }[] = [
 const workspaceViewOptions: { id: WorkspaceView; label: string; Icon: ComponentType<{ size?: number }> }[] = [
   { id: "discussion", label: "议题", Icon: Boxes },
   { id: "tasks", label: "任务", Icon: ListTodo },
+  { id: "assets", label: "资产", Icon: Images },
   { id: "attention", label: "需要我处理", Icon: Inbox },
   { id: "architecture", label: "架构档案", Icon: GitBranch },
   { id: "decisions", label: "决策记录", Icon: FileCheck2 },

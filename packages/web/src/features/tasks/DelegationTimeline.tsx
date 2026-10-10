@@ -1,7 +1,7 @@
 /**
  * @input  依赖：界面语言、某任务的历史委派（不含当前由 WorkItemDelegationPanel 展示的最近一次）、可用 Agent 列表、
  *         components 的 delegationStatusLabel/isDelegationPaused 与 RuntimeAuditDetails
- * @output 导出：DelegationTimeline —— 按 createdAt 倒序的历史委派列表（状态、执行者→审核者、分支/提交、失败分类、审计入口）
+ * @output 导出：DelegationTimeline —— 按 createdAt 倒序的历史委派列表（状态、执行者→审核者（图像委派只显示执行者）、分支/提交、失败分类、审计入口）
  * @pos    任务详情委派区的下半部分；只读展示，不提供操作（接续/取消都作用于最近一次委派，由面板负责）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -40,7 +40,7 @@ export function DelegationTimeline({ delegations, adapters }: DelegationTimeline
                 </time>
               </header>
               <small>
-                {labelOf(entry.executorAgentId)} → {labelOf(entry.supervisorAgentId)}
+                {labelOf(entry.executorAgentId)}{entry.kind === "image" ? null : <> → {labelOf(entry.supervisorAgentId)}</>}
                 {entry.attempt > 0 ? ` · ${t("审核轮次：{used}/{limit}", { used: entry.attempt, limit: entry.maxAttempts })}` : ""}
               </small>
               {entry.headCommit || entry.branchName ? (

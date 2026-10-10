@@ -2,15 +2,16 @@
  * @input  依赖：无（纯函数，不读 window）
  * @output 导出：WorkspaceView 视图类型、WORKSPACE_VIEWS 常量、WorkspaceRoute 路由模型、parseRoute/buildHash 纯函数
  * @pos    工作区视图与 URL hash 的唯一映射：#/discussion[/<topicId>]、#/tasks[/<taskId>]、
- *         #/decisions、#/architecture、#/attention；未知或空 hash 一律回落到 discussion
+ *         #/assets[/<assetId>]、#/decisions、#/architecture、#/attention；未知或空 hash 一律回落到 discussion
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-/** Operator Console 工作区视图：议题讨论、任务、决策归档、架构档案、待处理聚合 */
+/** Operator Console 工作区视图：议题讨论、任务、资产库、决策归档、架构档案、待处理聚合 */
 export const WORKSPACE_VIEWS = [
   "discussion",
   "tasks",
+  "assets",
   "decisions",
   "architecture",
   "attention",
@@ -19,12 +20,13 @@ export const WORKSPACE_VIEWS = [
 export type WorkspaceView = (typeof WORKSPACE_VIEWS)[number];
 
 /**
- * 路由模型。只有 discussion 和 tasks 可带实体 id，其余视图是项目级聚合，没有下钻 id。
+ * 路由模型。只有 discussion、tasks 和 assets 可带实体 id，其余视图是项目级聚合，没有下钻 id。
  * id 可选：缺省时由各视图自行决定默认选中项（议题回落到默认选题逻辑）。
  */
 export type WorkspaceRoute =
   | { view: "discussion"; topicId?: string }
   | { view: "tasks"; taskId?: string }
+  | { view: "assets"; assetId?: string }
   | { view: "decisions" }
   | { view: "architecture" }
   | { view: "attention" };
@@ -60,6 +62,8 @@ export function parseRoute(hash: string): WorkspaceRoute {
       return id ? { view: "discussion", topicId: id } : { view: "discussion" };
     case "tasks":
       return id ? { view: "tasks", taskId: id } : { view: "tasks" };
+    case "assets":
+      return id ? { view: "assets", assetId: id } : { view: "assets" };
     default:
       return { view: head };
   }
@@ -71,6 +75,8 @@ export function buildHash(route: WorkspaceRoute): string {
     ? route.topicId
     : route.view === "tasks"
       ? route.taskId
-      : undefined;
+      : route.view === "assets"
+        ? route.assetId
+        : undefined;
   return id ? `#/${route.view}/${encodeURIComponent(id)}` : `#/${route.view}`;
 }

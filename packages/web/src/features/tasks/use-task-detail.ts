@@ -1,6 +1,6 @@
 /**
  * @input  依赖：TaskRepository（由 TasksView 注入）、路由中的 taskId、内容 revision 与编排 revision
- * @output 导出：useTaskDetail —— 任务详情读取、加载/错误态、手动重读，以及状态更新、发起/取消委派写操作与忙碌标记
+ * @output 导出：useTaskDetail —— 任务详情读取、加载/错误态、手动重读，以及状态更新、简报保存、发起（代码/图像）/取消委派写操作与忙碌标记
  * @pos    任务详情的状态与副作用层；调用方按 taskId 作 key 重挂载，切换任务不残留旧详情；
  *         写操作返回的最新行就地合并，随后仍以 revision 驱动的重读为准
  *
@@ -13,8 +13,8 @@ import type { TaskRepository } from "../../data/tasks/task-repository";
 import type { StartTaskDelegationInput, WorkItemDelegation } from "../../types/orchestration";
 import type { TaskDetail, UpdateTaskInput } from "../../types/tasks";
 
-/** WorkItemDelegationPanel 发起时提交的字段；expectedVersion 由 hook 用当前任务版本补齐。 */
-export type TaskDelegationStartInput = Omit<StartTaskDelegationInput, "expectedVersion" | "kind" | "inputAssetIds">;
+/** 委派面板（代码 / 图像）发起时提交的字段；expectedVersion 由 hook 用当前任务版本补齐。 */
+export type TaskDelegationStartInput = Omit<StartTaskDelegationInput, "expectedVersion">;
 
 export interface TaskDetailState {
   detail: TaskDetail | null;
@@ -22,11 +22,13 @@ export interface TaskDetailState {
   /** 读取失败（含任务不存在）；视图据此显示占位与返回列表入口。 */
   loadError: string | null;
   /** 写操作失败；与读取错误分开，避免一次保存失败把整页换成占位。kind=update 时已自动重读最新版本。 */
-  actionError: { kind: "update" | "delegate" | "cancel"; message: string } | null;
-  /** 与 WorkItemDelegationPanel 约定的忙碌键：update、delegate:<id>、cancel-delegation:<id>。 */
+  actionError: { kind: "update" | "brief" | "delegate" | "cancel"; message: string } | null;
+  /** 与 WorkItemDelegationPanel 约定的忙碌键：update、brief、delegate:<id>、cancel-delegation:<id>。 */
   busyAction: string | null;
   reload: () => void;
   updateStatus: (input: Omit<UpdateTaskInput, "taskId" | "expectedVersion">) => Promise<boolean>;
+  /** 经 PUT 保存简报：status 原样带上，只改 brief。 */
+  saveBrief: (brief: Record<string, unknown>) => Promise<boolean>;
   startDelegation: (input: TaskDelegationStartInput) => Promise<void>;
   cancelDelegation: (delegationId: string) => Promise<void>;
 }
@@ -83,6 +85,28 @@ export function useTaskDetail(
     }
   }
 
+  async function saveBrief(brief: Record<string, unknown>): Promise<boolean> {
+    if (!task) return false;
+    setBusyAction("brief");
+    setActionError(null);
+    try {
+      const updated = await repository.updateTask({
+        taskId: task.id,
+        status: task.status,
+        expectedVersion: task.version,
+        brief,
+      });
+      setDetail((current) => current && current.task.id === updated.id ? { ...current, task: updated } : current);
+      return true;
+    } catch (reason: unknown) {
+      setActionError({ kind: "brief", message: getErrorMessage(reason) });
+      reload();
+      return false;
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function startDelegation(input: TaskDelegationStartInput): Promise<void> {
     if (!task) return;
     setBusyAction(`delegate:${task.id}`);
@@ -117,5 +141,5 @@ export function useTaskDetail(
     }
   }
 
-  return { detail, isLoading, loadError, actionError, busyAction, reload, updateStatus, startDelegation, cancelDelegation };
+  return { detail, isLoading, loadError, actionError, busyAction, reload, updateStatus, saveBrief, startDelegation, cancelDelegation };
 }
