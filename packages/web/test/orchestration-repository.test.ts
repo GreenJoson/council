@@ -178,6 +178,9 @@ function createOrchestrationFixture(): OrchestrationFixture {
     if (/^\/api\/v1\/topics\/[^/]+\/cycle\/latest$/u.test(url.pathname)) {
       return success(null);
     }
+    if (/^\/api\/v1\/topics\/[^/]+\/activity$/u.test(url.pathname)) {
+      return success({ activeAgents: 0, attention: 0 });
+    }
     if (url.pathname === "/api/v1/orchestration/cycle-metrics") {
       return success({
         cycles: { total: 0, converged: 0, abandoned: 0, active: 0, awaitingUser: 0 },

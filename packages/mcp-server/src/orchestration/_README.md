@@ -23,6 +23,7 @@
 | `agent-registry.ts` | Agent 注册表 | 固定 Actor 与适配器注册（重复注册即关闭 store 并拒绝）、capabilities 快照与 TTL 刷新、动态 Agent 同步、冻结周期的 Agent/Provider/Runtime 修订与授权能力；可用性检查可返回 `{ available, runtimeCapabilities }`，探针声明随 TTL/指纹缓存覆盖并重算授权（Codex 生图能力由此生效）；`transportKindForProtocol` 在此导出 |
 | `product-service.ts` | 产品用例 | 圆桌周期开始/读取/作答/提交修复/放弃、Run 创建/启动/批准/取消/恢复（模型调用前 fail-fast）、实施计划生成、RuntimeBinding 列表/关闭/重开、Provider/Agent 设置变更与委派单项/批量/接续/取消（图像委派启动前强制刷新探针，执行者 granted 须含 `image_generate`）；`invokeOneShot` 是单次只读 Agent 调用骨架（任务规划与流水线 brief/review 共用，不建 Run），`listAgentCandidates` 给流水线挑默认 Agent；Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单，自由 instruction 不能自行扩大授权 |
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
+| `project-activity.ts` | 度量 | 同项目活动 Agent 计数：running/waiting_agent 的 Run + executing/reviewing 的委派；queued/waiting_user/changes_requested 在等别人，不算 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |
 | `cycle-driver.ts` | 自动交接 | 发起人入选时把议题正文冻结为首轮提案并直接召唤其他评审；发起人未入选时按规则复用或召唤首位提案人；Commit 互审读取议题后续 Note 关联的多仓库提交并传给评审，提问处停住，收敛时写 proposed 决策 |
 | `work-item-planner.ts` | 结构化边界 | 仅在用户显式选择规划 Agent 后，把 Accepted 决策作为非可信上下文交给该 Agent，严格解析 `council-work-plan` 并过滤重复任务；接受决策本身绝不触发规划 |

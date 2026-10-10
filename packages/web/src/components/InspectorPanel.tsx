@@ -3,6 +3,7 @@
  *         参与者回退、自动轮次与决策入口
  * @output 导出：InspectorPanel「上下文」右栏：圆桌（含轮次耗尽后的人工裁决出口）、决策包摘要卡与
  *         人工签署入口、紧凑实施进度、按需运行状态、议题摘要表，以及约束/证据/备选三个只读区块
+ *         （默认收起只露标题与数量，整行标题即开关；展开集合与切换回调由上层 useInspectorSections 提供并跨会话记住）
  * @pos    Operator Console 右侧上下文栏；自上而下按「正在发生 → 结论 → 执行 → 元信息 → 背景」排列。
  *         决策这里只放状态、数量/待办状态和「查看全部」入口；接受动作必须在能看见具体决策的主列完成
  *
@@ -13,6 +14,7 @@ import {
   ArrowRight,
   BookOpen,
   Check,
+  ChevronDown,
   FileText,
   ShieldCheck,
   TriangleAlert,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 import type { Participant, TopicDetail } from "../types/council";
 import { selectDecisionPackageLead, summarizeDecisionPackage } from "../data/decision-package";
+import type { InspectorSectionId } from "../data/section-collapse";
 import type {
   CycleReviewScope,
   OrchestrationRun,
@@ -64,6 +67,9 @@ export interface InspectorPanelProps {
   onRecoverRun: (runId: string) => Promise<void>;
   onCloseRuntimeBinding: (bindingId: string) => Promise<void>;
   onReopenRuntimeBinding: (bindingId: string) => Promise<void>;
+  /** 约束/证据/备选三个背景区块的展开集合，默认全部收起；状态由 hooks/useInspectorSections 持有 */
+  expandedSections: ReadonlySet<InspectorSectionId>;
+  onToggleSection: (id: InspectorSectionId) => void;
 }
 
 export function InspectorPanel({
@@ -86,6 +92,8 @@ export function InspectorPanel({
   onRecoverRun,
   onCloseRuntimeBinding,
   onReopenRuntimeBinding,
+  expandedSections,
+  onToggleSection,
 }: InspectorPanelProps) {
   const { t } = useI18n();
   const owner = participantFromActorSnapshot(
@@ -227,7 +235,7 @@ export function InspectorPanel({
         </div>
       </dl>
 
-      <InspectorSection title="约束条件" count={topic.constraints.length}>
+      <InspectorSection id="constraints" title="约束条件" isExpanded={expandedSections.has("constraints")} onToggle={onToggleSection} count={topic.constraints.length}>
         <ul className="inspector-list constraint-list">
           {topic.constraints.map((constraint) => (
             <li key={constraint.id}>
@@ -242,7 +250,7 @@ export function InspectorPanel({
         </ul>
       </InspectorSection>
 
-      <InspectorSection title="关键证据" count={topic.evidence.length}>
+      <InspectorSection id="evidence" title="关键证据" isExpanded={expandedSections.has("evidence")} onToggle={onToggleSection} count={topic.evidence.length}>
         {topic.evidence.length > 0 ? (
           <ul className="inspector-list evidence-list">
             {topic.evidence.map((evidence) => (
@@ -260,7 +268,7 @@ export function InspectorPanel({
         )}
       </InspectorSection>
 
-      <InspectorSection title="备选方案" count={topic.alternatives.length}>
+      <InspectorSection id="alternatives" title="备选方案" isExpanded={expandedSections.has("alternatives")} onToggle={onToggleSection} count={topic.alternatives.length}>
         {topic.alternatives.length > 0 ? (
           <ol className="alternative-list">
             {topic.alternatives.map((alternative, index) => {
@@ -292,22 +300,42 @@ export function InspectorPanel({
 }
 
 interface InspectorSectionProps {
+  id: InspectorSectionId;
   title: string;
   count: number;
+  isExpanded: boolean;
+  onToggle: (id: InspectorSectionId) => void;
   children: React.ReactNode;
 }
 
-function InspectorSection({ title, count, children }: InspectorSectionProps) {
+/**
+ * 背景区块默认收起：上下文栏先让人看见正在发生的事和结论，约束/证据/备选按需展开。
+ * 收起时仍显示数量，知道「有 3 条约束」通常就够了，不必每次都把清单撑开。
+ */
+function InspectorSection({ id, title, count, isExpanded, onToggle, children }: InspectorSectionProps) {
   const { t } = useI18n();
+  const label = t(title);
+  const bodyId = `inspector-section-${id}`;
   return (
-    <section className="inspector-section">
-      <header>
-        <div>
-          <h3>{t(title)}</h3>
+    <section
+      className={`inspector-section inspector-section-collapsible ${isExpanded ? "" : "inspector-section-collapsed"}`}
+    >
+      {/* 按钮放在 h3 里：h3 只能装 phrasing content，反过来会生成非法 HTML；这也是 ARIA accordion 的标准结构。 */}
+      <h3>
+        <button
+          className="inspector-section-toggle"
+          type="button"
+          aria-expanded={isExpanded}
+          aria-controls={bodyId}
+          title={isExpanded ? t("收起{title}", { title: label }) : t("展开{title}", { title: label })}
+          onClick={() => onToggle(id)}
+        >
+          <span className="inspector-section-title">{label}</span>
           <span className="count-pill">{count}</span>
-        </div>
-      </header>
-      {children}
+          <ChevronDown className="inspector-section-chevron" size={15} aria-hidden="true" />
+        </button>
+      </h3>
+      {isExpanded ? <div className="inspector-section-body" id={bodyId}>{children}</div> : null}
     </section>
   );
 }

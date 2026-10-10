@@ -10,7 +10,7 @@
 | `routes.ts` | 路由 | `WorkspaceView` 类型、`WORKSPACE_VIEWS` 常量与 `parseRoute`/`buildHash` 纯函数；`#/discussion[/<topicId>]`、`#/tasks[/<taskId>]`、`#/assets[/<assetId>]`、`#/pipelines[/<pipelineId>]`、`#/decisions`、`#/architecture`、`#/attention`，未知或空 hash 回落 discussion |
 | `use-workspace-route.ts` | 路由 | 订阅 `hashchange`、规范化初始 hash，并提供 `navigate(route, { replace })` |
 | `use-topic-route-sync.ts` | 路由 | 选中议题与 `#/discussion/<topicId>` 双向同步；hash 指向不存在的议题时回落默认选题并改写 hash |
-| `WorkspaceMain.tsx` | 视图分发 | 按路由渲染待处理、架构档案、决策记录、任务视图（`features/tasks/TasksView`，按项目 id 重挂载）、资产库（`features/assets/AssetsView`，按项目 id 重挂载）、流水线（`features/pipelines/PipelinesView`，传内容与编排 revision，按项目 id 重挂载）、议题讨论（含右栏「上下文」检查器，桌面端收起后不渲染）或空工作区；讨论头部与编辑器的派任务/起流水线只回传草稿 |
+| `WorkspaceMain.tsx` | 视图分发 | 按路由渲染待处理、架构档案、决策记录、任务视图（`features/tasks/TasksView`，按项目 id 重挂载）、资产库（`features/assets/AssetsView`，按项目 id 重挂载）、流水线（`features/pipelines/PipelinesView`，传内容与编排 revision，按项目 id 重挂载）、议题讨论（含右栏「上下文」检查器，桌面端收起后不渲染；背景区块展开状态由 `hooks/useInspectorSections` 持有并作为受控 props 下传）或空工作区；讨论头部与编辑器的派任务/起流水线只回传草稿 |
 | `app-states.tsx` | 展示 | 可恢复错误条、致命加载失败页与加载中页 |
 | `use-workspace-content.ts` | 控制器 | 内容仓储加载与 SSE 订阅、选题、接受决策、关闭议题、人工决策、新建议题 |
 | `use-orchestration-state.ts` | 控制器 | 编排快照与能力/运行错误、实施项委派状态、@ 召唤 run、圆桌、自动轮次与持久会话写操作 |

@@ -849,6 +849,7 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
   #publish(): OrchestrationSnapshot {
     this.#syncVisibleRuns();
     this.#syncVisibleBindings();
+    this.#syncActivity();
     const snapshot = cloneSnapshot(this.#snapshot);
     for (const listener of this.#listeners) {
       listener(cloneSnapshot(snapshot));
@@ -868,5 +869,16 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
     this.#snapshot.runtimeBindings = topicId
       ? this.#bindings.filter((binding) => binding.topicId === topicId)
       : [];
+  }
+
+  /** Mock 只有一个项目：活动 Agent 数直接按全部运行中的 Run 与执行/审核中的委派算，待处理与 listWorkAttention 一样为 0。 */
+  #syncActivity(): void {
+    const activeRuns = this.#runs.filter(
+      (run) => run.status === "running" || run.status === "waiting_agent",
+    ).length;
+    const activeDelegations = this.#delegations.filter(
+      (delegation) => delegation.status === "executing" || delegation.status === "reviewing",
+    ).length;
+    this.#snapshot.activity = { activeAgents: activeRuns + activeDelegations, attention: 0 };
   }
 }

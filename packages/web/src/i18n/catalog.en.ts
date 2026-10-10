@@ -1054,4 +1054,7 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "收起议题摘要": "Collapse context",
   "展开议题摘要": "Expand context",
   "编辑器模式": "Composer mode",
+  "{count} 个 Agent 运行中": "{count} agents running",
+  "{count} 个议题需要处理": "{count} topics need attention",
+  "没有 Agent 在运行": "No agents running",
 };

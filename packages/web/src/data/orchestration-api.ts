@@ -1,7 +1,7 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
  * @output 导出：含动态 actorId 的 Capabilities（能力词表含 P2 的 image_generate/image_input）、Run、持久会话、委派（v18：可选 topicId、kind、
- *         inputAssetIds、outputManifest）与 Agent 增量事件严格解析函数
+ *         inputAssetIds、outputManifest）、项目活动计数与 Agent 增量事件严格解析函数
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,6 +11,7 @@
 import type {
   CycleActionKind,
   CycleMetrics,
+  ProjectActivity,
   CycleReviewScope,
   CycleStage,
   CycleTurn,
@@ -642,6 +643,14 @@ function parseDistribution(value: unknown, path: string): CycleMetrics["rounds"]
     mean: integerValue(record, "mean"),
     median: integerValue(record, "median"),
     max: integerValue(record, "max"),
+  };
+}
+
+export function parseProjectActivity(value: unknown): ProjectActivity {
+  const record = recordValue(value, "project activity");
+  return {
+    activeAgents: integerValue(record, "activeAgents"),
+    attention: integerValue(record, "attention"),
   };
 }
 

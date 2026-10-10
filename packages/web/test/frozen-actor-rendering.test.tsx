@@ -96,6 +96,8 @@ describe("冻结 Actor 快照渲染", () => {
         onApproveRun={async () => undefined}
         onCancelRun={async () => undefined}
         onRecoverRun={async () => undefined}
+        expandedSections={new Set(["alternatives"])}
+        onToggleSection={() => undefined}
       />,
     );
 

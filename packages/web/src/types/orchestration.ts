@@ -421,6 +421,12 @@ export interface CycleMetrics {
   decisionConsistency: { checked: number; divergedCycleIds: string[] };
 }
 
+/** 当前项目范围的活动计数：activeAgents 只数正在跑的 Run 与执行/审核中的委派，attention 是需要人处理的议题数。 */
+export interface ProjectActivity {
+  activeAgents: number;
+  attention: number;
+}
+
 export interface OrchestrationSnapshot {
   /** 已应用的数据库编排版本；草稿文本更新不推进它。 */
   revision?: number;
@@ -433,6 +439,8 @@ export interface OrchestrationSnapshot {
   cycleMetrics?: CycleMetrics;
   runtimeBindings?: RuntimeBinding[];
   agentOutputs?: OrchestrationAgentOutput[];
+  /** 当前议题所在项目的活动计数；离线或尚未选题时为空，徽标与状态条据此隐藏。 */
+  activity?: ProjectActivity;
   sync: {
     status: "connected" | "syncing" | "offline";
     label: string;

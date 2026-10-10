@@ -2,7 +2,8 @@
  * @input  依赖：界面语言、当前 WorkspaceRoute、内容/编排/议题写操作控制器、各工作区视图组件与 features/tasks 的 TasksView、
  *         features/assets 的 AssetsView、features/pipelines 的 PipelinesView
  * @output 导出：WorkspaceMain —— 会话列表右侧的主区域，按路由渲染待处理/架构档案/决策记录/任务（列表或详情，传入内容与编排 revision）/资产库（网格或详情，传入内容 revision）/流水线（列表或详情，传入内容与编排 revision）/
- *         议题讨论（含右栏「上下文」检查器：桌面端可由讨论头部收起，收起后不渲染；≤1260px 由讨论头部按钮作为抽屉打开）或空工作区；
+ *         议题讨论（含右栏「上下文」检查器：桌面端可由讨论头部收起，收起后不渲染；≤1260px 由讨论头部按钮作为抽屉打开；
+ *         约束/证据/备选区块的展开状态由 hooks/useInspectorSections 持有并透传）或空工作区；
  *         讨论头部与编辑器的派任务/起流水线入口只回调草稿，由 App 壳打开对话框
  * @pos    App 壳的视图分发层，只做路由 → 组件与 props 接线，不持有业务状态
  *
@@ -19,6 +20,7 @@ import { AssetsView } from "../features/assets/AssetsView";
 import { PipelinesView } from "../features/pipelines/PipelinesView";
 import { TasksView } from "../features/tasks/TasksView";
 import type { CouncilRepository } from "../data/repository";
+import { useInspectorSections } from "../hooks/useInspectorSections";
 import { useI18n } from "../i18n/I18nProvider";
 import type { WorkspaceSnapshot } from "../types/council";
 import type { WorkspaceRoute } from "./routes";
@@ -74,6 +76,7 @@ export function WorkspaceMain({
   onOpenPipelineCreate,
 }: WorkspaceMainProps) {
   const { t } = useI18n();
+  const inspectorSections = useInspectorSections();
   const { participants, selectedTopic } = content;
   const loadDetail = (topicId: string) => repository.loadTopicDetail(topicId);
 
@@ -194,6 +197,8 @@ export function WorkspaceMain({
         onRecoverRun={(runId) => orch.runAction("recover", runId)}
         onCloseRuntimeBinding={(bindingId) => orch.runtimeBindingAction("close", bindingId)}
         onReopenRuntimeBinding={(bindingId) => orch.runtimeBindingAction("reopen", bindingId)}
+        expandedSections={inspectorSections.expandedSections}
+        onToggleSection={inspectorSections.onToggleSection}
       />
       ) : null}
     </>

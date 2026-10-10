@@ -1,7 +1,7 @@
 /**
  * @input  依赖：已由 Node 迁移器准备的 SQLite、database/ 下的领域仓储与行映射、安全错误语义
  * @output 导出：CouncilDatabase（连接与 PRAGMA、BEGIN IMMEDIATE 事务、动态 Actor alias/可信 actorId
- *         解析、无损 Session 历史、计数/revision/圆桌度量）及同名同签名转发到仓储的议题、消息、
+ *         解析、无损 Session 历史、计数/revision/圆桌度量/项目活动 Agent 计数）及同名同签名转发到仓储的议题、消息、
  *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表；P3 流水线子任务建项与文档写入）
  *         与 v19 资产行读写；CouncilRevisions
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问入口；领域 SQL 住在 database/ 各仓储，
@@ -17,6 +17,10 @@ import {
   computeCycleMetrics,
   type CycleMetrics,
 } from "./orchestration/cycle-metrics.js";
+import {
+  computeProjectActivity,
+  type ProjectActivity,
+} from "./orchestration/project-activity.js";
 import type { ActorIdentity } from "./actor-identity.js";
 import {
   assertCouncilSchema,
@@ -541,6 +545,11 @@ export class CouncilDatabase {
   /** 圆桌运行度量；SQL 细节在 orchestration/cycle-metrics.ts，这里只借出连接。 */
   getCycleMetrics(): CycleMetrics {
     return computeCycleMetrics(this.#database);
+  }
+
+  /** 同项目活动 Agent 计数；口径在 orchestration/project-activity.ts。 */
+  getProjectActivity(projectPath: string | undefined): ProjectActivity {
+    return computeProjectActivity(this.#database, projectPath);
   }
 
   getRevisions(): CouncilRevisions {

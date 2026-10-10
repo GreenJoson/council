@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpRouteContext（HTTP 配置、CouncilDatabase、可选编排服务）、tasks 议题入口、AI 实施计划规划器、Zod schema 与统一响应
- * @output 导出：注册实施项创建/AI 生成/更新/认领、项目待处理、运行审计与跨 Agent 任务委派（单项、批量、接续、取消）REST 的 registerWorkItemRoutes
+ * @output 导出：注册实施项创建/AI 生成/更新/认领、项目待处理与活动计数、运行审计与跨 Agent 任务委派（单项、批量、接续、取消）REST 的 registerWorkItemRoutes
  * @pos    WebUI 推进决策落地：实施项生命周期与委派执行的 HTTP 路由模块
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -150,6 +150,17 @@ export function registerWorkItemRoutes(app: Express, context: HttpRouteContext):
     if (!orchestration) throw new HttpError(503, "待处理服务未启用。");
     const { topicId } = parse(topicParamsSchema, request.params);
     sendSuccess(response, orchestration.attention.list(database.getTopic(topicId).projectPath));
+  });
+
+  // 图标栏徽标与状态条共用：按议题所在项目汇总活动 Agent 数与需要人处理的议题数
+  app.get("/api/v1/topics/:topicId/activity", (request, response) => {
+    if (!orchestration) throw new HttpError(503, "待处理服务未启用。");
+    const { topicId } = parse(topicParamsSchema, request.params);
+    const { projectPath } = database.getTopic(topicId);
+    sendSuccess(response, {
+      ...database.getProjectActivity(projectPath),
+      attention: orchestration.attention.list(projectPath).length,
+    });
   });
 
   app.get("/api/v1/topics/:topicId/runtime-audit", (request, response) => {

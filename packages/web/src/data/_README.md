@@ -12,7 +12,7 @@
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
 | `cycle-preferences.ts` | 偏好 | 圆桌轮次上限的 localStorage 读写与订阅（`useCycleRoundBudget`），默认 3、夹取 1–10 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
-| `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
+| `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页、`agent.output` 草稿事件与项目活动计数（`activeAgents`/`attention`） |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
@@ -20,16 +20,16 @@
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
 | `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected）；导出 `mapWorkItem` 供任务域复用 v18 字段映射 |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，归档议题、提交用户绑定的 accepted 人工决策，并提供不改状态的只读议题详情加载 |
-| `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，生成 AI 实施计划，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API |
+| `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，生成 AI 实施计划，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API；选中议题与每次 SSE 总修订刷新都拉一次 `GET /api/v1/topics/:id/activity`，供图标栏徽标与状态条计数 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、关闭、发帖、同步、Human / Accepted 人工结束（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
-| `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束 |
+| `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束；每次发布快照时按活动 Run 与执行/审核中委派数同步 `activity` |
 | `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task`/`list_assets`/`get_asset` |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，归档静止议题、提交用户绑定的 accepted 人工决策，并提供不参与设置世代的只读议题详情加载 |
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储及 AI 实施计划，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
-| `section-collapse.ts` | 偏好 | 架构档案区块折叠状态的读写边界；`parseCollapsedSections` 是纯函数，只认已知区块 id，值损坏时回落到全展开 |
+| `section-collapse.ts` | 偏好 | 区块折叠状态的 localStorage 读写边界（通用 `createSectionSetStore`）：架构档案存「已收起」集合、默认全展开；上下文栏约束/证据/备选存「已展开」集合、默认全收起；只认已知区块 id，值损坏时回落默认 |
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
 | `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
 | `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |

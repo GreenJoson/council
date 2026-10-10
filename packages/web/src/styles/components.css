@@ -2081,6 +2081,64 @@
   font-weight: 600;
 }
 
+/*
+ * 上下文栏背景区块（约束/证据/备选）：整行标题就是折叠开关，默认收起。
+ * 正在发生的事和结论已经占了上半栏，三段长清单常开只会把它们顶出视口。
+ */
+.inspector-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-section-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.inspector-section-toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.inspector-section-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-section-chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  transition: transform 140ms ease;
+}
+
+/* 收起时箭头指向右侧：方向本身就是「还有内容藏在这后面」的提示。 */
+.inspector-section-collapsed .inspector-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.inspector-section-body {
+  margin-top: 10px;
+}
+
+/* 收起后只剩一行标题：缩小竖向内边距，让它读起来是一条窄条而不是空卡片。 */
+.inspector-section-collapsible.inspector-section-collapsed {
+  padding: 12px 0;
+}
+
 .inspector-list,
 .alternative-list {
   display: grid;

@@ -145,16 +145,35 @@ textarea:focus-visible {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   padding: 0 6px;
+}
+
+/* 活动 Agent 计数紧跟同步状态；有 Agent 在跑时用正文色提一档，静止时和构建身份一样退到次要 */
+.status-agents {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-agents-active {
+  color: var(--color-text-secondary);
+}
+
+.status-agents-active svg {
+  color: var(--color-positive);
 }
 
 .status-build {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  margin-left: auto;
   color: var(--color-text-muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -584,6 +603,7 @@ button.sync-offline:hover {
 }
 
 .nav-rail-item {
+  position: relative;
   display: grid;
   place-items: center;
   width: 40px;
@@ -592,6 +612,31 @@ button.sync-offline:hover {
   border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-secondary);
+}
+
+/* 图标右上角的计数徽标：会话 = 活动 Agent 数，需要我处理 = 待处理议题数；只在大于 0 时渲染 */
+.nav-rail-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: var(--color-primary);
+  color: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+
+.nav-rail-badge-attention {
+  background: var(--color-warning);
 }
 
 .nav-rail-item:hover {

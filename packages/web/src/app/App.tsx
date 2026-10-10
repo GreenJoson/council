@@ -157,6 +157,8 @@ export default function App() {
     <ProjectFilesProvider projectKey={`${desktopSettings?.logLibrary ?? ""}:${desktopSettings?.currentProjectPath ?? workspace.project.id}`}>
     <div className="app-shell">
       <NavRail activeView={route.view} activeTopicId={content.activeTopicId || undefined}
+        activeAgentCount={orch.orchestration?.activity?.activeAgents}
+        attentionCount={orch.orchestration?.activity?.attention}
         onNavigate={navigate} onOpenTopics={() => setIsTopicsOpen(true)}
         onOpenPreferences={() => setIsPreferencesOpen(true)}
         onOpenSettings={() => setIsModelRouterOpen(true)} />
@@ -220,7 +222,8 @@ export default function App() {
           onClose={() => { content.setErrorMessage(null); orch.clearErrors(); }} />
       ) : null}
       {toastMessage ? <div className="toast" role="status">{toastMessage}</div> : null}
-      <StatusBar sync={workspace.sync} onRetrySync={content.retrySync} />
+      <StatusBar sync={workspace.sync} onRetrySync={content.retrySync}
+        activeAgents={orch.orchestration?.activity?.activeAgents} />
     </div>
     </ProjectFilesProvider>
     </ExecutionRepositoryContext.Provider>
