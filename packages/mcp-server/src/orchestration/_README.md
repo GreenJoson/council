@@ -20,7 +20,7 @@
 | `openai-compatible-agent-adapter.ts` | ToolLoop 适配 | 将公开上下文交给只读 AgentLoop，把文本和 Council 工具事件转成统一 RuntimeEvent，并仅公开脱敏原因 |
 | `execution-manager.ts` | 执行 | 快速响应后执行 claim/drive，同时续租 Run 与 RuntimeBinding，并周期扫描活动运行和有界关闭 |
 | `service.ts` | 装配与生命周期 | 组装 store、注册表、attention/audit、编排器、执行管理器、CycleDriver 与产品服务；持有配置锁、决策写入器/审核账本挂载、initialize/shutdown 与空闲绑定回收，对外以同名同签名转发注册表与产品服务；`createProductionOrchestrationService` 在此 |
-| `agent-registry.ts` | Agent 注册表 | 固定 Actor 与适配器注册（重复注册即关闭 store 并拒绝）、capabilities 快照与 TTL 刷新、动态 Agent 同步、冻结周期的 Agent/Provider/Runtime 修订与授权能力；`transportKindForProtocol` 在此导出 |
+| `agent-registry.ts` | Agent 注册表 | 固定 Actor 与适配器注册（重复注册即关闭 store 并拒绝）、capabilities 快照与 TTL 刷新、动态 Agent 同步、冻结周期的 Agent/Provider/Runtime 修订与授权能力；可用性检查可返回 `{ available, runtimeCapabilities }`，探针声明随 TTL/指纹缓存覆盖并重算授权（Codex 生图能力由此生效）；`transportKindForProtocol` 在此导出 |
 | `product-service.ts` | 产品用例 | 圆桌周期开始/读取/作答/提交修复/放弃、Run 创建/启动/批准/取消/恢复（模型调用前 fail-fast）、实施计划生成、RuntimeBinding 列表/关闭/重开、Provider/Agent 设置变更与委派单项/批量/接续/取消；Composer 手动 @Agent 从议题最新结构化提交记录继承跨仓库白名单，自由 instruction 不能自行扩大授权 |
 | `cycle-metrics.ts` | 度量 | 从既有落库状态推算轮次、墙钟耗时、提问次数、缺失 verdict 与「决策正文 == 最终 synthesis」一致性核对 |
 | `cycle-decisions.ts` | 决策同步 | 把最终 synthesis 正文逐字落成 proposed 决策；accepted 仍只能由用户写 |

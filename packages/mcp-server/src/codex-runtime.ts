@@ -1,7 +1,8 @@
 /**
- * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输与可选 AbortSignal
- * @output 导出：CodexRuntime、独立事件流/最终回复限额、公开消息增量、会话/工具进度和脱敏失败分类
- * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写的 Codex 运行边界
+ * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输、可选 AbortSignal 与 Codex 生图配置
+ * @output 导出：CodexRuntime（讨论/委派 generate、可用性与生图探针 checkAvailability、生图 generateImages）、
+ *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类
+ * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 早期会话和去重工具进度回调，不依赖保留输出窗口
@@ -9,6 +10,15 @@
 
 import { NativeRuntimeProgressTracker, type NativeRuntimeProgressListener } from "./native-runtime-progress.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  buildCodexImageArgs,
+  evaluateCodexImageFeature,
+  overridesModelProvider,
+  validateCodexImageInput,
+  type CodexImageCapability,
+  type CodexImageGenerationInput,
+  type CodexImageGenerationResult,
+} from "./codex-image-runtime.js";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -26,6 +36,13 @@ import {
 } from "./runtime-stream.js";
 import type { CodexResponse, CouncilConfig } from "./types.js";
 import type { AgentPermissionProfile } from "./agent-execution-policy.js";
+import { logger } from "./logger.js";
+
+export type {
+  CodexImageCapability,
+  CodexImageGenerationInput,
+  CodexImageGenerationResult,
+} from "./codex-image-runtime.js";
 
 type CodexRuntimeConfig = Pick<
   CouncilConfig,
@@ -36,6 +53,8 @@ type CodexRuntimeConfig = Pick<
   | "codexKillGraceMs"
   | "maxOutputChars"
   | "cliMaxStreamChars"
+  | "codexImageEnabled"
+  | "codexImageSandboxMode"
 >;
 
 export interface CodexRuntimeInput {
@@ -57,6 +76,8 @@ export interface CodexAvailability {
   version?: string;
   authMethod?: string;
   error?: string;
+  /** 生图探针结论；随可用性检查一起缓存，失败只给诊断码不抛出。 */
+  imageGeneration: CodexImageCapability;
 }
 
 export class CodexRuntimeError extends Error {
@@ -252,6 +273,8 @@ export class CodexRuntime {
     );
   }
 
+  #lastImageDiagnostic: string | undefined;
+
   async #run(
     args: string[],
     input: string,
@@ -259,6 +282,7 @@ export class CodexRuntime {
     signal?: AbortSignal,
     onStdoutChunk?: (chunk: string) => void,
     maxTotalOutputChars?: number,
+    timeoutMs: number = this.config.codexTimeoutMs,
   ): Promise<ProcessResult> {
     try {
       return await runBoundedProcess({
@@ -267,7 +291,7 @@ export class CodexRuntime {
         input,
         ...(cwd ? { cwd } : {}),
         ...(signal ? { signal } : {}),
-        timeoutMs: this.config.codexTimeoutMs,
+        timeoutMs,
         killGraceMs: this.config.codexKillGraceMs,
         maxOutputChars: this.config.maxOutputChars,
         stdoutOverflow: "truncate",
@@ -300,9 +324,14 @@ export class CodexRuntime {
       const authMethod = /logged in using (.+)/i
         .exec(`${loginResult.stdout}\n${loginResult.stderr}`)?.[1]
         ?.trim();
+      const imageGeneration = authenticated
+        ? await this.#probeImageGeneration()
+        : { available: false, diagnosticCode: "not_authenticated" };
+      this.#recordImageDiagnostic(imageGeneration);
       return {
         available: true,
         authenticated,
+        imageGeneration,
         version: versionResult.stdout.trim() || "unknown",
         ...(authenticated && authMethod ? { authMethod } : {}),
         ...(!authenticated
@@ -313,9 +342,135 @@ export class CodexRuntime {
       return {
         available: false,
         authenticated: false,
+        imageGeneration: { available: false, diagnosticCode: "runtime_unavailable" },
         error: error instanceof Error ? error.message : "Codex 可用性检查失败。",
       };
     }
+  }
+
+  /**
+   * 生图探针：配置开关 → Council 传参是否改写 Provider → `codex features list`。
+   * 只有本机登录的 OpenAI Provider 才挂 image 工具，指向自建中转时生图会静默消失，
+   * 所以宁可判不可用也不假设可用。任何异常都折叠成诊断码，绝不影响讨论可用性。
+   */
+  async #probeImageGeneration(): Promise<CodexImageCapability> {
+    if (this.config.codexImageEnabled !== true) {
+      return { available: false, diagnosticCode: "disabled" };
+    }
+    if (overridesModelProvider(this.config.codexArgs)) {
+      return { available: false, diagnosticCode: "provider_overridden" };
+    }
+    try {
+      const result = await this.#run(["features", "list"], "");
+      if (result.exitCode !== 0) {
+        return { available: false, diagnosticCode: "features_failed" };
+      }
+      return evaluateCodexImageFeature(result.stdout);
+    } catch {
+      return { available: false, diagnosticCode: "features_failed" };
+    }
+  }
+
+  /** 探针结论按 TTL 反复刷新；只在结论变化时记一条诊断，避免日志被轮询刷屏。 */
+  #recordImageDiagnostic(capability: CodexImageCapability): void {
+    const code = capability.available ? "available" : capability.diagnosticCode ?? "unknown";
+    if (code === this.#lastImageDiagnostic) {
+      return;
+    }
+    this.#lastImageDiagnostic = code;
+    logger.info("codex-runtime", `Codex 生图探针：image_generate=${code}`);
+  }
+
+  /**
+   * 生图调用：独立 workspace-write 沙箱、显式 `--enable image_generation`、`--output-schema`
+   * 约束最终清单、`-o` 落最终消息、`-i` 附参考图。调用方（图像委派）负责准备 worktree、
+   * schema 文件与参考图拷贝，并在调用前确认执行者 granted 含 image_generate。
+   */
+  async generateImages(input: CodexImageGenerationInput): Promise<CodexImageGenerationResult> {
+    if (this.config.codexImageEnabled !== true) {
+      throw new CodexRuntimeError(
+        "Codex 生图已被 COUNCIL_CODEX_IMAGE_ENABLED 关闭。",
+        false,
+        "image_disabled",
+      );
+    }
+    if (this.config.codexImageSandboxMode !== "workspace-write") {
+      throw new CodexRuntimeError(
+        "Codex 生图沙箱必须为 workspace-write。",
+        false,
+        "image_sandbox_invalid",
+      );
+    }
+    try {
+      validateCodexImageInput(input);
+    } catch (error) {
+      throw new CodexRuntimeError(
+        error instanceof Error ? error.message : "Codex 生图输入无效。",
+        false,
+        "image_input_invalid",
+      );
+    }
+    const model = normalizeModel(input.model);
+    const args = buildCodexImageArgs({ ...input, ...(model ? { model } : {}) });
+    let threadId: string | undefined;
+    const progress = new NativeRuntimeProgressTracker("codex", input.onEvent);
+    const decoder = new JsonLineDecoder((value) => {
+      // thread_id 在流里直接捕获：stdout 只保留首尾窗口，长事件流里首行可能被截掉。
+      if (
+        !threadId
+        && isRecord(value)
+        && value.type === "thread.started"
+        && typeof value.thread_id === "string"
+        && /^[A-Za-z0-9._:-]{1,200}$/.test(value.thread_id)
+      ) {
+        threadId = value.thread_id;
+      }
+      progress.observe(value);
+      input.onActivity?.();
+    });
+    const result = await this.#run(
+      args,
+      input.prompt,
+      input.worktreeDir,
+      input.signal,
+      (chunk) => decoder.push(chunk),
+      this.config.cliMaxStreamChars,
+      input.timeoutMs,
+    );
+    decoder.flush();
+    if (input.signal?.aborted) {
+      throw makeAbortError(ABORT_MESSAGE);
+    }
+    if (result.exitCode !== 0) {
+      throw classifyProcessFailure(result);
+    }
+    const events = parseEvents(result.stdout);
+    threadId ??= extractSessionId(events);
+    if (!threadId) {
+      throw new CodexRuntimeError(
+        "Codex 生图没有返回会话标识，无法定位产物，可使用“恢复”重试。",
+        true,
+        "missing_thread_id",
+      );
+    }
+    const lastMessage =
+      (await readFile(input.lastMessagePath, "utf8").catch(() => "")).trim()
+      || extractLastAgentMessage(events);
+    if (!lastMessage) {
+      throw new CodexRuntimeError(
+        "Codex 生图没有返回最终清单，可使用“恢复”重试。",
+        true,
+        "empty_response",
+      );
+    }
+    if (lastMessage.length > this.config.maxOutputChars) {
+      throw new CodexRuntimeError(
+        `Codex 生图清单超过 ${this.config.maxOutputChars} 字符，请减少单次交付数量或调整 COUNCIL_MAX_OUTPUT_CHARS。`,
+        false,
+        "final_output_limit",
+      );
+    }
+    return { threadId, lastMessage };
   }
 
   async generate(input: CodexRuntimeInput): Promise<CodexResponse> {

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流与委派 Git 检查预算的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -23,6 +23,10 @@ const DEFAULT_HTTP_PORT = 4317;
 const DEFAULT_MCP_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
+/** Codex 生图沙箱独立于讨论沙箱：只允许 workspace-write，避免一个开关放宽所有 Codex 调用。 */
+const REQUIRED_CODEX_IMAGE_SANDBOX_MODE = "workspace-write";
+const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 900_000;
+const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
 const DEFAULT_GEMINI_ACP_COMMAND = "gemini";
 const DEFAULT_GROK_ACP_COMMAND = "grok";
@@ -182,6 +186,18 @@ function parseAliasedOptionalPositiveInteger(
   return raw ? parsePositiveIntegerValue(primary, raw) : fallback;
 }
 
+/** 布尔开关只接受 true/false，拼写错误直接拒绝启动而不是静默按默认值处理。 */
+function parseOptionalBoolean(name: string, env: NodeJS.ProcessEnv, fallback: boolean): boolean {
+  const raw = env[name]?.trim().toLowerCase();
+  if (!raw) {
+    return fallback;
+  }
+  if (raw !== "true" && raw !== "false") {
+    throw new Error(`环境变量 ${name} 必须为 true 或 false。`);
+  }
+  return raw === "true";
+}
+
 function isForbiddenArg(value: string, forbidden: ReadonlySet<string>): boolean {
   const flag = value.split("=", 1)[0]?.toLowerCase() ?? "";
   return forbidden.has(flag);
@@ -244,6 +260,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
   if (codexSandboxMode !== REQUIRED_CODEX_SANDBOX_MODE) {
     throw new Error("COUNCIL_CODEX_SANDBOX_MODE 必须为 read-only。");
   }
+  const codexImageSandboxMode = env.COUNCIL_CODEX_IMAGE_SANDBOX_MODE?.trim()
+    || REQUIRED_CODEX_IMAGE_SANDBOX_MODE;
+  if (codexImageSandboxMode !== REQUIRED_CODEX_IMAGE_SANDBOX_MODE) {
+    throw new Error("COUNCIL_CODEX_IMAGE_SANDBOX_MODE 必须为 workspace-write。");
+  }
   return {
     dataDir,
     databasePath: path.join(dataDir, "council.sqlite3"),
@@ -263,6 +284,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       "COUNCIL_CODEX_KILL_GRACE_MS",
       env,
       DEFAULT_CODEX_KILL_GRACE_MS,
+    ),
+    codexImageEnabled: parseOptionalBoolean("COUNCIL_CODEX_IMAGE_ENABLED", env, true),
+    codexImageSandboxMode,
+    codexImageTimeoutMs: parseOptionalTimer(
+      "COUNCIL_CODEX_IMAGE_TIMEOUT_MS",
+      env,
+      DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+    ),
+    codexImageMaxOutputs: parseOptionalPositiveInteger(
+      "COUNCIL_CODEX_IMAGE_MAX_OUTPUTS",
+      env,
+      DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     ),
     kimiAcpCommand:
       env.COUNCIL_KIMI_ACP_COMMAND?.trim()

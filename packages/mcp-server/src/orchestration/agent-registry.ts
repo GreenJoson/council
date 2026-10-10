@@ -1,7 +1,7 @@
 /**
  * @input  依赖：SQLiteCouncilStore（Actor 别名解析）、CouncilOrchestrator（适配器注册与绑定修订）、
  *         模型路由服务与回退路由仓库、Agent 临时工厂、HTTP 编排默认策略配置
- * @output 导出：AgentRegistry —— 静态/动态 Agent 名册、按 TTL 复检的可用性缓存、Runtime 能力冻结快照、
+ * @output 导出：AgentRegistry —— 静态/动态 Agent 名册、按 TTL 复检的可用性缓存（可顺带刷新探针得出的 Runtime 声明）、Runtime 能力冻结快照、
  *         capabilities 公开视图；以及注册类型、AVAILABILITY_TTL_MS 与 Provider 协议到传输类型的映射
  * @pos    编排服务的 Agent 注册与可用性单一真源；不创建 Run、不直接关闭持久会话（关闭经产品服务回调）
  *
@@ -29,6 +29,17 @@ import type {
 } from "../model-router-store.js";
 import type { CouncilHttpConfig } from "../types.js";
 
+/**
+ * 可用性检查可顺带返回探针得出的 Runtime 声明（如 Codex 生图）。声明随可用性 TTL 与
+ * binding fingerprint 一起缓存；省略 runtimeCapabilities 时沿用注册时的声明。
+ */
+export interface AvailabilityCheckResult {
+  available: boolean;
+  runtimeCapabilities?: readonly RuntimeCapabilityKey[];
+}
+
+export type AvailabilityCheck = () => Promise<boolean | AvailabilityCheckResult>;
+
 export interface RegisteredAgentAdapter {
   adapter: AgentAdapter;
   actorAlias: string;
@@ -37,14 +48,14 @@ export interface RegisteredAgentAdapter {
   limitation?: string;
   /** 可用性检查失败时展示的可执行提示；未提供则回退到通用不可用说明。 */
   limitationWhenUnavailable?: string;
-  checkAvailability?: () => Promise<boolean>;
+  checkAvailability?: AvailabilityCheck;
   /** Runtime 自述能力；外部静态适配器未提供时保守降为纯文本。 */
   runtimeCapabilities?: readonly RuntimeCapabilityKey[];
 }
 
 export interface EphemeralAgentBinding {
   adapter: AgentAdapter;
-  checkAvailability: () => Promise<boolean>;
+  checkAvailability: AvailabilityCheck;
   limitationWhenUnavailable?: string;
   runtimeCapabilities?: readonly RuntimeCapabilityKey[];
 }
@@ -115,7 +126,9 @@ export class AgentRegistry {
   readonly #actors = new Map<string, string>();
   readonly #agentAdapters = new Map<string, AgentAdapter>();
   readonly #capabilities: PublicAgentCapability[] = [];
-  readonly #availabilityChecks = new Map<string, () => Promise<boolean>>();
+  readonly #availabilityChecks = new Map<string, AvailabilityCheck>();
+  /** 动态 Agent 的传输类型；探针刷新声明后据此重算 granted。 */
+  readonly #transportKinds = new Map<string, RuntimeTransportKind>();
   readonly #unavailableLimitations = new Map<string, string>();
   readonly #baseLimitations = new Map<string, string | undefined>();
   readonly #staticAdapterIds = new Set<string>();
@@ -299,7 +312,15 @@ export class AgentRegistry {
         return;
       }
       try {
-        capability.available = await check();
+        const result = await check();
+        if (typeof result === "boolean") {
+          capability.available = result;
+        } else {
+          capability.available = result.available;
+          if (result.runtimeCapabilities) {
+            this.#applyProbedCapabilities(capability, result.runtimeCapabilities);
+          }
+        }
       } catch {
         capability.available = false;
       }
@@ -318,6 +339,18 @@ export class AgentRegistry {
       }
     }));
     this.#availabilityCheckedAt = Date.now();
+  }
+
+  /** 探针声明写回覆盖表，并按 Council policy 重算公开 granted；policy 始终独立于声明。 */
+  #applyProbedCapabilities(
+    capability: PublicAgentCapability,
+    declared: readonly RuntimeCapabilityKey[],
+  ): void {
+    this.#runtimeCapabilityOverrides.set(capability.id, [...declared]);
+    const transportKind = this.#transportKinds.get(capability.id);
+    capability.runtimeCapabilities = transportKind
+      ? grantRuntimeCapabilities(declared, defaultPolicyCapabilitiesForTransport(transportKind))
+      : [...declared];
   }
 
   // ---- 动态 Agent 同步 ----
@@ -383,6 +416,7 @@ export class AgentRegistry {
         this.#availabilityCheckedAt = 0;
       }
       this.#actors.set(agent.id, agent.actorId);
+      this.#transportKinds.set(agent.id, transportKindForProtocol(provider.protocol));
       const existing = this.#capabilities.find((item) => item.id === agent.id);
       const brand = snapshot.brands.find((item) => item.id === provider.brandAssetId);
       const next = {
@@ -435,6 +469,7 @@ export class AgentRegistry {
       this.#baseLimitations.delete(capability.id);
       this.#unavailableLimitations.delete(capability.id);
       this.#runtimeCapabilityOverrides.delete(capability.id);
+      this.#transportKinds.delete(capability.id);
     }
   }
 

@@ -5,6 +5,7 @@
  *         并以同名同签名方法转发到 AgentRegistry 与 CouncilProductService）、生产依赖工厂，
  *         以及从两个协作模块再导出的注册/Run/审批类型与 AVAILABILITY_TTL_MS
  * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
+ *         （Codex 绑定的可用性检查顺带刷新生图探针声明）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,6 +22,7 @@ import {
   type DiscussionCycleView,
   type DiscussionCycleKind,
   type CycleReviewScope,
+  declaredCapabilitiesForTransport,
   grantRuntimeCapabilities,
   type OrchestrationRun,
   type PaginatedRuns,
@@ -535,11 +537,17 @@ export function createProductionOrchestrationService(
           maxContextChars: councilConfig.maxContextChars,
           getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.codexModel,
         }),
+        // 生图探针随可用性一起刷新：只有探针通过才声明 image_generate/image_input。
         checkAvailability: async () => {
           const availability = await codexRuntime.checkAvailability();
-          return await modelRouter.isAgentReady(agent.id)
-            && availability.available
-            && availability.authenticated;
+          return {
+            available: await modelRouter.isAgentReady(agent.id)
+              && availability.available
+              && availability.authenticated,
+            runtimeCapabilities: declaredCapabilitiesForTransport("codex-resume", {
+              imageGeneration: availability.imageGeneration.available,
+            }),
+          };
         },
         limitationWhenUnavailable:
           "Codex CLI 当前不可用或未登录；请检查本机安装和登录状态。",

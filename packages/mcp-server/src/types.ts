@@ -53,6 +53,14 @@ export interface CouncilConfig {
   codexSandboxMode: "read-only";
   codexTimeoutMs: number;
   codexKillGraceMs: number;
+  /**
+   * Codex 生图配置；loadConfig 总会提供。可选是为了兼容直接嵌入旧 Runtime 的调用方，
+   * 缺省按「未启用」处理：探针不声明图像能力，generateImages 拒绝执行。
+   */
+  codexImageEnabled?: boolean;
+  codexImageSandboxMode?: "workspace-write";
+  codexImageTimeoutMs?: number;
+  codexImageMaxOutputs?: number;
   kimiAcpCommand: string;
   geminiAcpCommand: string;
   grokAcpCommand: string;
