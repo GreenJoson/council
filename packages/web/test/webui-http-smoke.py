@@ -106,7 +106,7 @@ def verify_client_config() -> None:
     assert (claude_skills / "SKILL.md").is_file() and (codex_skills / "SKILL.md").is_file()
     ledger = data_dir / "client-config"
     applied_records = json.loads((ledger / "applied.json").read_text(encoding="utf-8"))
-    assert set(applied_records) >= {"claude", "codex"}, applied_records
+    assert set(applied_records["clients"]) == {"claude", "codex"}, applied_records
     for client in ("claude", "codex"):
         assert any((ledger / "stash" / client).iterdir()), client
 
