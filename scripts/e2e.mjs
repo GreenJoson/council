@@ -302,6 +302,8 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
   writeFileSync(path.join(docs, "design.md"), '# 设计文档\n\n[参数配置](model.json)\n');
   writeFileSync(path.join(docs, "results.csv"), '名称,备注\n示例,"含逗号,和换行\n第二行"\n');
   writeFileSync(path.join(docs, "bad.xlsx"), 'invalid workbook');
+  // 1×1 真 PNG：消息里 `![架构草图](docs/logo.png)` 经议题只读图片接口出站。
+  writeFileSync(path.join(docs, "logo.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
   writeFileSync(path.join(projectPath, ".gitignore"), '.env\n');
   writeFileSync(path.join(projectPath, ".env"), 'COUNCIL_E2E_PRIVATE=placeholder\n');
   const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" };

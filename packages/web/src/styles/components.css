@@ -753,7 +753,8 @@
 }
 
 .commit-add-button,
-.commit-association-toggle {
+.commit-association-toggle,
+.composer-tool-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -771,13 +772,20 @@
   padding: 3px 8px;
 }
 
-.commit-association-toggle {
+.commit-association-toggle,
+.composer-tool-button {
   min-height: 28px;
   padding: 4px 9px;
 }
 
+.composer-tool-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .commit-add-button:hover:not(:disabled),
 .commit-association-toggle:hover,
+.composer-tool-button:hover:not(:disabled),
 .commit-association-toggle.is-active {
   border-color: var(--color-focus);
   color: var(--color-focus);

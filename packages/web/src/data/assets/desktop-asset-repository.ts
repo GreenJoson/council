@@ -3,7 +3,7 @@
  *         HttpAssetRepository（写操作与内容 URL）、离线指引 buildOfflineLimitation
  * @output 导出：DesktopAssetRepository、其桥接子接口与构造参数类型
  * @pos    桌面模式资产仓储：列表/详情走 Tauri list_assets/get_asset 直读 Rust core；
- *         导入、挂接、删除走本地 Agent 服务 HTTP，离线时抛诚实指引；
+ *         导入、图片上传/本机图片入库、挂接、删除走本地 Agent 服务 HTTP，离线时抛诚实指引；
  *         缩略图/原文 URL 指向 sidecar，地址未知时返回 undefined，由 UI 显示占位而不是坏图
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -82,6 +82,14 @@ export class DesktopAssetRepository implements AssetRepository {
 
   async importAsset(relativePath: string): Promise<Asset> {
     return (await this.#requireLive()).importAsset(relativePath);
+  }
+
+  async uploadImage(file: File): Promise<Asset> {
+    return (await this.#requireLive()).uploadImage(file);
+  }
+
+  async ingestLocalFile(sourcePath: string): Promise<Asset> {
+    return (await this.#requireLive()).ingestLocalFile(sourcePath);
   }
 
   async addLink(assetId: string, link: AssetLinkTarget): Promise<Asset> {

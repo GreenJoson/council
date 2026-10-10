@@ -1,8 +1,9 @@
 /**
  * @input  依赖：界面语言上下文、当前项目名、消息类型、议题开放状态、同步/发布状态、提交回调、关联 commit、引用种子与自动轮次快照
  *         （用于 @claude/@codex 召唤自动补全、可用性与"每议题一个活动 run"冲突判断）
- * @output 导出：Composer 公开回复编辑器、结构化关联提交与已决议题 @Agent 禁用边界
+ * @output 导出：Composer 公开回复编辑器、结构化关联提交、「引用图片」/粘贴图片（use-composer-images）与已决议题 @Agent 禁用边界
  * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
+ *         图片以 `![说明](council-asset:<id>)` 插在光标处，字节只进 Council 资产库；
  *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次单轮自动 run
  *         （召唤解析见 data/mention-parser.ts，冲突判断复用 AutoRoundsPanel 的
  *         getCreateRunBlockedReason，保持与自动轮次面板同一套互斥规则）；
@@ -12,7 +13,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Bot, FolderGit2, GitCommitHorizontal, Link2, ListTodo, MessagesSquare, Plus, Send, TriangleAlert, Workflow, X } from "lucide-react";
+import { Bot, FolderGit2, GitCommitHorizontal, ImagePlus, Link2, ListTodo, MessagesSquare, Plus, Send, TriangleAlert, Workflow, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
@@ -35,6 +36,7 @@ import {
   getTopicAgentCallBlockedReason,
 } from "./AutoRoundsPanel";
 import { messageKindLabels } from "../../components/presentation";
+import { COMPOSER_IMAGE_ACCEPT, useComposerImages } from "./use-composer-images";
 
 const composerKinds: MessageKind[] = ["proposal", "critique", "rebuttal", "synthesis"];
 
@@ -234,6 +236,29 @@ export function Composer({
     setCommitDrafts((current) => current.filter((_target, targetIndex) => targetIndex !== index));
   }
 
+  /** 在光标处插入独立一行的片段（图片引用）；用函数式更新，上传期间用户继续输入也不会被覆盖。 */
+  function insertAtCursor(snippet: string): void {
+    const textarea = textareaRef.current;
+    let nextCursor = 0;
+    setContent((current) => {
+      const start = Math.min(textarea?.selectionStart ?? current.length, current.length);
+      const end = Math.min(Math.max(textarea?.selectionEnd ?? start, start), current.length);
+      const before = current.slice(0, start);
+      const after = current.slice(end);
+      const prefix = before && !before.endsWith("\n") ? "\n" : "";
+      const suffix = after && !after.startsWith("\n") ? "\n" : "";
+      const inserted = `${prefix}${snippet}${suffix}`;
+      nextCursor = before.length + inserted.length;
+      return `${before}${inserted}${after}`;
+    });
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      textarea?.setSelectionRange(nextCursor, nextCursor);
+    });
+  }
+
+  const images = useComposerImages({ onInsert: insertAtCursor });
+
   function applyMentionCandidate(candidate: OrchestrationAdapter): void {
     if (mentionStart === null || !candidate.available) {
       return;
@@ -384,6 +409,7 @@ export function Composer({
           value={content}
           onChange={handleContentChange}
           onKeyDown={handleTextareaKeyDown}
+          onPaste={images.handlePaste}
           placeholder={t("写下公开结论、证据或回应…输入 @ 可召唤 Agent 直接回应")}
           rows={2}
         />
@@ -542,9 +568,35 @@ export function Composer({
           {mentionStatus.reason}
         </p>
       ) : null}
+      {images.error ? (
+        <p className="composer-mention-blocked composer-image-error" role="alert">
+          <TriangleAlert size={13} />
+          {images.error}
+        </p>
+      ) : null}
 
       <div className="composer-toolbar">
         <div className="composer-tools">
+          <button
+            className="composer-tool-button"
+            type="button"
+            onClick={images.pick}
+            disabled={images.isBusy}
+            aria-busy={images.isBusy}
+          >
+            <ImagePlus size={15} />
+            {images.isBusy ? t("正在加入图片…") : t("引用图片")}
+          </button>
+          {images.isDesktop ? null : (
+            <input
+              ref={images.fileInputRef}
+              type="file"
+              accept={COMPOSER_IMAGE_ACCEPT}
+              hidden
+              aria-label={t("选择要引用的图片")}
+              onChange={images.handleFileInput}
+            />
+          )}
           <button
             className={`commit-association-toggle ${isCommitEditorOpen ? "is-active" : ""}`}
             type="button"

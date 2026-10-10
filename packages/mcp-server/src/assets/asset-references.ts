@@ -15,7 +15,8 @@ import type { AssetLinkTargetKind } from "../types.js";
 export const COUNCIL_ASSET_SCHEME = "council-asset:";
 
 // 与 http/schemas.ts 的 assetIdSchema 同一形状；Markdown 里引用形如 ![说明](council-asset:asset_xxx)。
-const ASSET_REFERENCE_PATTERN = /council-asset:(asset_[A-Za-z0-9-]+)/gu;
+// 与前端 markdown-images.ts 的字符集保持一致（含下划线）；未知 ID 在挂接时跳过，宽一点不会误挂。
+const ASSET_REFERENCE_PATTERN = /council-asset:(asset_[A-Za-z0-9_-]+)/gu;
 
 export function extractAssetReferences(content: string): string[] {
   const ids = new Set<string>();

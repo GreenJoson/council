@@ -1063,4 +1063,10 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "{count} 个 Agent 运行中": "{count} agents running",
   "{count} 个议题需要处理": "{count} topics need attention",
   "没有 Agent 在运行": "No agents running",
+  "引用图片": "Attach image",
+  "正在加入图片…": "Adding image…",
+  "选择要引用的图片": "Choose an image to attach",
+  "只能引用图片文件": "Only image files can be attached",
+  "图片需连接项目后查看": "Connect the project to view this image",
+  "{alt}（需连接项目后查看）": "{alt} (connect the project to view)",
 };
