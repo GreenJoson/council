@@ -47,7 +47,13 @@ export function TaskStatusForm({ task, latestDelegation, isSaving, disabled, onS
     >
       <label>
         <span>{t("任务状态")}</span>
-        <select value={status} disabled={disabled || isSaving} onChange={(event) => setStatus(event.target.value as WorkItemStatus)}>
+        {/* 与委派面板同一做法：显式 aria-label，避免 select 的可访问名把选项文本一起带上。 */}
+        <select
+          aria-label={t("任务状态")}
+          value={status}
+          disabled={disabled || isSaving}
+          onChange={(event) => setStatus(event.target.value as WorkItemStatus)}
+        >
           {Object.entries(WORK_ITEM_STATUS_LABELS).map(([value, label]) => (
             <option key={value} value={value}>{t(label)}</option>
           ))}
@@ -56,6 +62,7 @@ export function TaskStatusForm({ task, latestDelegation, isSaving, disabled, onS
       <label className="task-status-note">
         <span>{t("说明")}</span>
         <textarea
+          aria-label={t("说明")}
           maxLength={4000}
           rows={3}
           disabled={disabled || isSaving}

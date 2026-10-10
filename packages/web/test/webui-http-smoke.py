@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文与人工验收边界检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界与直接任务闭环检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -786,6 +786,67 @@ with sync_playwright() as playwright:
         "acceptanceCriteria": "保留全部约束", "completionPolicy": "human",
     })
     assert api_request("GET", f"/api/v1/topics/{oversized_topic['id']}/work-item-delegations") == []
+
+    # 直接任务闭环：不经议题，从浏览器新建 -> REST 委派 -> Agent 执行审核 -> 人工在任务页验收完成；
+    # 全程议题数量不变，证明任务已是一等入口而不是议题的附属。
+    topics_before = api_request("GET", "/api/v1/topics", None)["total"]
+    page.goto(f"{WEB_URL}#/tasks", wait_until="domcontentloaded")
+    page.get_by_role("button", name="新建任务", exact=True).click()
+    page.get_by_label("任务标题", exact=True).fill("直接任务闭环")
+    page.get_by_label("任务说明", exact=False).fill("COUNCIL_SEGMENT_E2E：直接任务两段交付")
+    page.get_by_role("button", name="创建任务", exact=True).click()
+    page.get_by_role("heading", name="直接任务闭环", exact=True).wait_for()
+    direct_tasks = api_request("GET", f"/api/v1/tasks?project={PROJECT_PATH}&source=direct")
+    direct_task = next(task for task in direct_tasks if task["title"] == "直接任务闭环")
+    assert direct_task.get("topicId") is None and direct_task["kind"] == "code", direct_task
+    direct_detail = api_request("GET", f"/api/v1/tasks/{direct_task['id']}")
+    assert direct_detail.get("topic") is None and direct_detail["delegations"] == [], direct_detail
+    api_request("POST", f"/api/v1/tasks/{direct_task['id']}/delegations", {
+        "expectedVersion": direct_task["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_SEGMENT_E2E：直接任务两段交付", "completionPolicy": "human",
+        "kind": "code", "inputAssetIds": [],
+    })
+
+    def wait_task_delegation(task_id, expected, timeout=20):
+        deadline = time.monotonic() + timeout
+        latest = None
+        while time.monotonic() < deadline:
+            runs = api_request("GET", f"/api/v1/tasks/{task_id}/delegations")
+            latest = runs[0] if runs else None
+            if latest and latest["status"] == expected:
+                return latest
+            if latest and latest["status"] in {"failed", "cancelled", "approved"}:
+                break
+            time.sleep(0.1)
+        raise AssertionError(f"任务委派没有达到 {expected}：{latest}")
+
+    direct_done = wait_task_delegation(direct_task["id"], "approved")
+    assert direct_done.get("topicId") is None and direct_done["kind"] == "code", direct_done
+    assert direct_done["execution"]["segmentsUsed"] == 2 and direct_done.get("headCommit"), direct_done
+    for filename in ["stage-one.txt", "stage-two.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{direct_done['headCommit']}:{filename}"]).strip()
+    # 人工验收在任务页完成：证据必填，保存后状态落库。
+    page.goto(f"{WEB_URL}#/tasks/{direct_task['id']}", wait_until="domcontentloaded")
+    page.get_by_text("Agent 审核通过，等待人工验收；请在任务状态中填写验收证据并完成。", exact=True).wait_for()
+    status_form = page.locator(".task-status-form")
+    status_form.get_by_label("任务状态", exact=True).select_option("completed")
+    assert status_form.get_by_role("button", name="保存进度", exact=True).is_disabled()
+    status_form.get_by_label("说明", exact=True).fill("已核对两段交付提交")
+    status_form.get_by_role("button", name="保存进度", exact=True).click()
+    page.locator(".task-status-form").get_by_role("button", name="保存进度", exact=True).wait_for()
+    deadline = time.monotonic() + 10
+    while True:
+        finished_task = api_request("GET", f"/api/v1/tasks/{direct_task['id']}")["task"]
+        if finished_task["status"] == "completed":
+            break
+        assert time.monotonic() < deadline, finished_task
+        time.sleep(0.1)
+    assert finished_task["statusNote"] == "已核对两段交付提交", finished_task
+    assert api_request("GET", "/api/v1/topics", None)["total"] == topics_before
+    if SCREENSHOT_PATH:
+        page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("direct-task-completed.png")), full_page=True)
+    page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 
     second_topic = api_request(
         "POST",

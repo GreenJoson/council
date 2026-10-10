@@ -62,6 +62,10 @@ npm run build:desktop
 
 日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
 
+工作区按视图切换，地址栏 hash 即入口：`#/discussion/<topicId>` 讨论、`#/tasks` 与 `#/tasks/<taskId>` 任务、`#/decisions` 决策、`#/architecture` 架构、`#/attention` 关注。刷新或从外部链接打开都能回到同一视图。
+
+“任务”页是不经议题的工作入口：列表按状态分组，可按类型和来源筛选；“新建任务”只需标题和可选说明，当前仅开放代码任务（图片、原型、调研、流水线在后续阶段接入）。任务详情里更新状态（完成或受阻必须填写证据）、查看所属议题、发起或取消 Agent 委派并查看委派历史；单条委派的入口已从讨论页迁到这里，讨论页的“实施进度”只显示最近一次委派的状态与执行段，并提供“在任务页管理委派”跳转。议题派生的实施项也会出现在同一项目的任务列表中。
+
 桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用；存在调用或持久会话时，右栏才显示紧凑运行状态、取消、恢复和历史。直召依赖本地 Agent 服务；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
 `@codex` 调用的是本机 Codex CLI，不是当前 Codex App 里的私有任务；`@claude` 同理调用 Claude Code CLI。两者只接收当前议题的公开上下文和项目目录，并按“议题 + Agent”复用逻辑 session：首次调用发送完整公开上下文，后续调用通过 `codex exec resume` 或 `claude -p --resume` 恢复，同时只补充上次成功回复后的公开增量。Claude/Codex 每轮仍启动一个可取消的独立 OS 进程。
@@ -191,7 +195,7 @@ Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
 `council_update_work_item` 更新为 `in_progress`、`blocked` 或 `completed`。每次更新必须携带
 最新 `expected_version`，过期写入会被拒绝。标记完成时应在 `status_note` 写明测试、构建或交付证据。
 
-不需要讨论的工作可以直接建任务，不必先建议题和决策：MCP 用 `council_create_task`（必填项目路径与标题）、
+不需要讨论的工作可以直接建任务，不必先建议题和决策：界面在“任务”页点“新建任务”，MCP 用 `council_create_task`（必填项目路径与标题）、
 `council_list_tasks`、`council_get_task`，HTTP 对应 `/api/v1/tasks`。直接任务同样可以委派给 Agent
 （`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），当前只支持 `kind=code` 的代码任务；
 MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 或 `start:http` 需要在运行。

@@ -310,6 +310,8 @@ packages/web/src/
 
 `http-orchestration-repository.ts`（1,038 行）按领域拆为 `data/http/{topics,orchestration,tasks,assets,pipelines}.ts`，mock 同步补任务/资产夹具，让 `council-web-mock` 预览能走通新页面。
 
+> P1 落地注记（Web 侧）：`app/` 落为 `App.tsx`（180 行壳）+ `routes.ts`（hash 解析/生成）+ 按职责拆分的 hooks（路由、工作区内容、编排状态、议题动作、桌面设置、主题、toast），没有另建 `providers/` 目录，I18n/主题沿用既有 Provider。`features/` 目前只有 `tasks/`（TaskList 按状态分组列表而非看板、TaskDetail、TaskStatusForm、TaskCreateDialog、DelegationTimeline）；讨论、决策、架构仍在 `components/`，迁入 `features/` 留到 P5 UI 收口。数据层新增 `data/tasks/`（TaskRepository + http/desktop/mock 三实现），`http-orchestration-repository.ts` 未按领域拆分（1,038 行，P1 未触碰），留到 P2 新增资产仓储时一并处理。样式新增 `styles/tasks.css`。
+
 ### 5.3 样式
 
 沿用现有 14 个 CSS 文件的语义 token（`styles/`），新增 `tasks.css`、`assets.css`、`pipelines.css`，不引入组件库。缩略图尺寸、对照列宽、看板列宽全部走 token。
@@ -369,6 +371,8 @@ VITE_COUNCIL_ASSET_PAGE_SIZE=60                      # web
    - 既有「议题 → 决策 → 规划 → 委派」链路 E2E 不回归。
    - `App.tsx` < 200 行，`service.ts` < 600 行，无文件超过 1,200 行。
    - 桌面 app 重装后能打开 v18 库。
+
+   > P1 验收结果（2026-10-10）：直接任务闭环与议题链路均由 `scripts/e2e.mjs` 覆盖（`webui-http-smoke.py` 新增“直接任务闭环”用例：浏览器新建任务 → REST 委派 → 两段交付提交 → reviewer 通过 → 任务页填证据完成，`topics` 总数不变）。`App.tsx` 180 行；原 `service.ts` 拆为 `service.ts` 601 行 + `product-service.ts` 768 行，比 600 的目标多 1 行，未为凑数再搬代码。“无文件超过 1,200 行”未达成，但超限的都是 P1 之前就存在且本阶段未重构的文件：`crates/council-core/src/store.rs` 2,406（v18 镜像 +135 行）、`packages/orchestrator/src/orchestrator.ts` 1,414（未动）、`packages/mcp-server/src/schema-migrator.ts` 1,384（+10 行）、`packages/web/src/styles/components.css` 3,580（样式，未动）；测试文件不计。这些拆分不属于 P1“只搬不改行为”的范围，列入 P5 UI 收口前的单独整理项。
 
 ### P2 资产通道 + Codex 生图委派（schema v19，4～5 天）
 
