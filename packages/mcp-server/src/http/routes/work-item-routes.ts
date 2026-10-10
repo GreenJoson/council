@@ -168,13 +168,13 @@ export function registerWorkItemRoutes(app: Express, context: HttpRouteContext):
     sendSuccess(response, orchestration.listWorkItemDelegations(params.topicId));
   });
 
-  app.post("/api/v1/topics/:topicId/work-items/:workItemId/delegations", (request, response) => {
+  app.post("/api/v1/topics/:topicId/work-items/:workItemId/delegations", async (request, response) => {
     if (!orchestration) {
       throw new HttpError(503, "任务委派服务未启用。");
     }
     const params = parse(workItemParamsSchema, request.params);
     const input = parse(startWorkItemDelegationBodySchema, request.body);
-    const delegation = orchestration.startWorkItemDelegation({
+    const delegation = await orchestration.startWorkItemDelegation({
       topicId: params.topicId,
       workItemId: params.workItemId,
       expectedVersion: input.expectedVersion,

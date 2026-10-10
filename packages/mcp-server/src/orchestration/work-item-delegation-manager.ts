@@ -1,13 +1,19 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git、委派账本与任务上下文解析
  * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
- * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层；P1 只接受 kind=code 且无输入资产的委派
+ * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
+ *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
  */
 
-import { EXECUTION_DEFAULTS } from "../config.js";
+import {
+  DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+  DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+  EXECUTION_DEFAULTS,
+  loadAssetConfig,
+} from "../config.js";
 import { runExecutionSegments } from "./delegation-execution-segments.js";
 import { delegationTaskContext } from "./delegation-task-context.js";
 import { assertDelegableTask, resolveDelegationTask, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
@@ -19,6 +25,13 @@ import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
+import {
+  defaultImageSupervisor,
+  executeImageDelegation,
+  IMAGE_EXECUTOR_REQUIRED_MESSAGE,
+  validateImageDelegationRequest,
+} from "./delegation-image-execution.js";
+import { AssetService } from "../assets/asset-service.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -48,7 +61,7 @@ import {
   type BoundedProcessMessages,
   type ProcessResult,
 } from "../process-utils.js";
-import type { CouncilConfig, CouncilHttpConfig, WorkItem, WorkItemKind } from "../types.js";
+import type { AssetConfig, CouncilConfig, CouncilHttpConfig, WorkItem, WorkItemKind } from "../types.js";
 import {
   WorkItemDelegationStore,
   type DelegationExecutionPermission,
@@ -75,16 +88,17 @@ export interface StartWorkItemDelegationInput {
   topicId?: string;
   workItemId: string;
   expectedVersion: number;
-  supervisorAgentId: string;
+  /** code 必填；image 可省略，默认取启用的 Claude CLI Agent（优先 @claude）。 */
+  supervisorAgentId?: string;
   executorAgentId: string;
   requestedPermission: DelegationExecutionPermission;
   /** 只有无 HEAD 的全新仓库允许；显式确认后建立经过敏感扫描的初始提交。 */
   completionPolicy?: "review" | "human";
   acceptanceCriteria?: string;
   createInitialBaseline?: boolean;
-  /** P1 只允许 code；缺省视为 code。 */
+  /** code 或 image；缺省视为 code，且须与任务 kind 一致。 */
   kind?: WorkItemKind;
-  /** P1 只接受空数组。 */
+  /** code 只接受空数组；image 为参考图资产 id（最多 8 个，同项目、kind=image）。 */
   inputAssetIds?: readonly string[];
 }
 
@@ -128,6 +142,11 @@ interface DelegationManagerConfig {
   executionMaxTurns?: number;
   maxExecutionSegments?: number;
   executionTimeoutMs?: number;
+  /** 图像委派：Codex 默认产物目录（兜底收集）、单次超时与入库张数上限、资产库配置；缺省按默认值回落。 */
+  codexHome?: string;
+  imageTimeoutMs?: number;
+  imageMaxOutputs?: number;
+  assets?: AssetConfig;
 }
 
 function compact(value: string, maximum: number): string {
@@ -143,7 +162,7 @@ function publicFailure(error: unknown): string {
   const controlled = [
     "任务", "Agent", "Provider", "Git", "worktree", "项目", "执行", "审核",
     "权限", "改动", "提交", "服务", "实施项", "只有", "当前", "找不到",
-    "安全", "批量", "Claude", "Codex", "恢复", "原工作区",
+    "安全", "批量", "Claude", "Codex", "恢复", "原工作区", "图像", "生图",
   ];
   return controlled.some((prefix) => message.startsWith(prefix))
     ? compact(message, 500)
@@ -154,6 +173,7 @@ export class WorkItemDelegationManager {
   readonly #audit: RuntimeAuditStore;
   readonly #store: WorkItemDelegationStore;
   readonly #database: CouncilDatabase;
+  readonly #assets: AssetService;
   readonly #controllers = new Map<string, AbortController>();
   readonly #tasks = new Map<string, Promise<void>>();
   /** 只允许回写本次派发/认领所得版本，不覆盖执行期间的人工作答。 */
@@ -171,6 +191,10 @@ export class WorkItemDelegationManager {
       config.sqliteBusyTimeoutMs,
     );
     this.#database = new CouncilDatabase(config.databasePath, config.sqliteBusyTimeoutMs);
+    this.#assets = new AssetService(
+      this.#database,
+      config.assets ?? loadAssetConfig({}, path.dirname(config.databasePath)),
+    );
   }
 
   static fromConfig(
@@ -195,6 +219,10 @@ export class WorkItemDelegationManager {
       executionMaxTurns: councilConfig.claudeExecutionMaxTurns,
       maxExecutionSegments: councilConfig.delegationMaxExecutionSegments,
       executionTimeoutMs: councilConfig.delegationExecutionTimeoutMs,
+      ...(councilConfig.codexHome ? { codexHome: councilConfig.codexHome } : {}),
+      ...(councilConfig.codexImageTimeoutMs ? { imageTimeoutMs: councilConfig.codexImageTimeoutMs } : {}),
+      ...(councilConfig.codexImageMaxOutputs ? { imageMaxOutputs: councilConfig.codexImageMaxOutputs } : {}),
+      ...(councilConfig.assets ? { assets: councilConfig.assets } : {}),
     }, modelRouter, claudeRuntime, codexRuntime);
   }
 
@@ -222,8 +250,13 @@ export class WorkItemDelegationManager {
   get activeTaskCount(): number { return this.#tasks.size; }
 
   start(input: StartWorkItemDelegationInput): WorkItemDelegation {
-    const { item, topicId } = assertDelegableTask(this.#database, input, this.#taskLimits);
-    const { supervisor, executor, permission } = this.#resolveAssignment(input);
+    const { item, topicId, projectPath } = assertDelegableTask(this.#database, input, this.#taskLimits);
+    const kind = input.kind ?? "code";
+    const inputAssetIds = [...(input.inputAssetIds ?? [])];
+    if (kind === "image") validateImageDelegationRequest(this.#database, { item, projectPath, inputAssetIds });
+    const { supervisor, executor, permission } = kind === "image"
+      ? this.#resolveImageAssignment(input)
+      : this.#resolveAssignment({ ...input, supervisorAgentId: input.supervisorAgentId ?? "" });
     const now = new Date().toISOString();
     let delegation: WorkItemDelegation;
     try {
@@ -231,12 +264,13 @@ export class WorkItemDelegationManager {
         id: `delegation-${randomUUID()}`,
         ...(topicId ? { topicId } : {}),
         workItemId: input.workItemId,
-        kind: "code",
-        inputAssetIds: [],
+        kind,
+        inputAssetIds,
         supervisorAgentId: supervisor.id,
         executorAgentId: executor.id,
         permissionProfile: permission,
-        completionPolicy: input.completionPolicy ?? "human",
+        // 图像产物不经审核，必须由人验收。
+        completionPolicy: kind === "image" ? "human" : input.completionPolicy ?? "human",
         acceptanceCriteria: this.#acceptanceCriteria(input.acceptanceCriteria, item),
         maxAttempts: this.config.maxAttempts,
         now,
@@ -355,6 +389,7 @@ export class WorkItemDelegationManager {
     if (!["failed", "cancelled"].includes(previous.status) || this.#controllers.has(id)) {
       throw new CouncilConflictError("原委派尚未停止，不能恢复。");
     }
+    if (previous.kind === "image") throw new CouncilConflictError("图像委派不支持接续，请重新委派。");
     const task = this.#taskContext(previous.workItemId);
     if (task.item.version !== expectedVersion || task.item.status === "completed") {
       throw new CouncilConflictError("实施项已更新或完成，请刷新后检查。");
@@ -486,10 +521,11 @@ export class WorkItemDelegationManager {
     return provider;
   }
 
-  #resolveAssignment(input: Pick<
-    StartWorkItemDelegationInput,
-    "supervisorAgentId" | "executorAgentId" | "requestedPermission"
-  >): DelegationAssignment {
+  #resolveAssignment(input: {
+    supervisorAgentId: string;
+    executorAgentId: string;
+    requestedPermission: DelegationExecutionPermission;
+  }): DelegationAssignment {
     const supervisor = this.#requireAgent(input.supervisorAgentId, "审核");
     const executor = this.#requireAgent(input.executorAgentId, "执行");
     if (supervisor.id === executor.id) {
@@ -511,6 +547,23 @@ export class WorkItemDelegationManager {
     this.#requireNativeProvider(supervisor);
     this.#requireNativeProvider(executor);
     return { supervisor, executor, permission };
+  }
+
+  /** 图像委派：执行者必须是 Codex CLI（image_generate 能力由服务层探针校验）；监督者可省略并取默认 Claude。 */
+  #resolveImageAssignment(input: Pick<
+    StartWorkItemDelegationInput,
+    "supervisorAgentId" | "executorAgentId" | "requestedPermission"
+  >): DelegationAssignment {
+    const executor = this.#requireAgent(input.executorAgentId, "执行");
+    if (this.modelRouter.getProvider(executor.providerId)?.protocol !== "codex-cli") {
+      throw new CouncilValidationError(IMAGE_EXECUTOR_REQUIRED_MESSAGE);
+    }
+    const supervisorId = input.supervisorAgentId ?? defaultImageSupervisor(
+      this.modelRouter.listAgents(),
+      (providerId) => this.modelRouter.getProvider(providerId),
+      executor.id,
+    ).id;
+    return this.#resolveAssignment({ ...input, supervisorAgentId: supervisorId });
   }
 
   async #runtimeGenerate(input: DelegationRuntimeInput): Promise<RuntimeResult> {
@@ -687,11 +740,35 @@ export class WorkItemDelegationManager {
         createInitialBaseline,
         signal,
       );
-      await this.#executeInWorkspace(id, workspace, signal);
+      if (delegation.kind === "image") {
+        await this.#executeImage(id, workspace, signal);
+      } else {
+        await this.#executeInWorkspace(id, workspace, signal);
+      }
     } catch (error) {
       this.#recordFailure(id, error, true);
       throw error;
     }
+  }
+
+  async #executeImage(id: string, workspace: PreparedWorkspace, signal: AbortSignal): Promise<string> {
+    return executeImageDelegation({
+      store: this.#store,
+      database: this.#database,
+      assets: this.#assets,
+      codex: this.codexRuntime,
+      git: async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout,
+      record: (kind, data) => this.#recordAudit(id, kind, data),
+      requireAgent: (agentId, action) => this.#requireAgent(agentId, action),
+      taskContext: (workItemId) => this.#taskContext(workItemId),
+      workItemVersion: () => this.#workItemVersions.get(id),
+      setWorkItemVersion: (version) => this.#workItemVersions.set(id, version),
+      config: {
+        ...(this.config.codexHome ? { codexHome: this.config.codexHome } : {}),
+        timeoutMs: this.config.imageTimeoutMs ?? DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+        maxOutputs: this.config.imageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+      },
+    }, id, { root: workspace.root, baseCommit: workspace.baseCommit }, signal);
   }
 
   async #runBatch(

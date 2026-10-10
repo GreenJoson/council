@@ -29,6 +29,7 @@ import {
   MAX_DECISION_BATCH,
   MAX_CYCLE_ROUND_BUDGET,
   MAX_ID_CHARS,
+  MAX_IMAGE_INPUT_ASSETS,
   MAX_INSTRUCTION_CHARS,
   MAX_LIST_LIMIT,
   MAX_MESSAGE_CHARS,
@@ -375,10 +376,24 @@ export const listTasksQuerySchema = z
   })
   .strict();
 
-/** 与议题内单项委派同形，另加 P1 只接受 code 的 kind 与只接受空数组的 inputAssetIds。 */
+/**
+ * 任务入口单项委派：在议题内委派形状上增加 kind 与 inputAssetIds。
+ * image 允许省略 supervisorAgentId（服务层选默认 Claude），code 仍必填；参考图最多 MAX_IMAGE_INPUT_ASSETS 个，
+ * code 只接受空数组的规则与资产归属校验在服务层。
+ */
 export const startTaskDelegationBodySchema = startWorkItemDelegationBodySchema.extend({
+  supervisorAgentId: routerIdSchema.optional(),
   kind: z.enum(WORK_ITEM_KINDS).default("code"),
-  inputAssetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_WORK_ITEM_BATCH).default([]),
+  inputAssetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_IMAGE_INPUT_ASSETS).default([]),
+}).strict().superRefine((value, context) => {
+  if (value.kind === "code" && !value.supervisorAgentId) {
+    context.addIssue({ code: "custom", path: ["supervisorAgentId"], message: "代码委派必须指定监督 Agent" });
+  }
+});
+
+/** 任务入口的乐观更新：在议题内更新形状上增加可选 brief（仅 image 任务，服务层按 council-brief 严格校验）。 */
+export const updateTaskBodySchema = updateWorkItemBodySchema.extend({
+  brief: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 // ---- 资产库（/api/v1/assets）：入库规则在 assets/，这里只校验形状 ----

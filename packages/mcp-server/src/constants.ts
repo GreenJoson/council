@@ -1,6 +1,6 @@
 /**
  * @input  依赖：无
- * @output 导出：协议枚举（含 v18 任务 kind/source、v19 资产 kind/链接目标/角色）、输入边界与服务标识
+ * @output 导出：协议枚举（含 v18 任务 kind/source、v19 资产 kind/链接目标/角色）、输入边界（含图像委派参考图上限）与服务标识
  * @pos    MCP 服务的集中式不变量定义
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -76,6 +76,8 @@ export const MAX_ORCHESTRATION_PLAN_ROUNDS = 50;
 /** 单次人工确认允许处理的决策项数量；批量入口必须有界。 */
 export const MAX_DECISION_BATCH = 100;
 export const MAX_WORK_ITEM_BATCH = 50;
+/** 单次图像委派可带的参考图上限（另受 brief 协议 maxInputs 约束，取较小值）。 */
+export const MAX_IMAGE_INPUT_ASSETS = 8;
 export const MAX_WORK_ITEM_DETAILS_CHARS = 8_000;
 export const MAX_WORK_ITEM_STATUS_NOTE_CHARS = 4_000;
 /** 单个圆桌的轮次预算上限：再多说明分歧不该由 Agent 自己吵出结果。 */

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
  * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单，topicId 对非议题任务缺省）、
- *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新
+ *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新（含图像产物清单写入）
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -274,6 +274,8 @@ export class WorkItemDelegationStore {
     error?: string;
     completedAt?: string;
     failureCode?: string;
+    /** 图像委派产物清单（已经过协议校验，不含绝对路径）。 */
+    outputManifest?: Record<string, unknown>;
     now: string;
   }): WorkItemDelegation {
     const current = this.getPrivate(id);
@@ -287,7 +289,8 @@ export class WorkItemDelegationStore {
       UPDATE work_item_delegations
       SET status = ?, attempt = ?, base_commit = ?, head_commit = ?, branch_name = ?,
           worktree_path = ?, executor_session_id = ?, supervisor_session_id = ?,
-          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?, execution_state_json = ?
+          summary = ?, review = ?, error = ?, updated_at = ?, completed_at = ?, failure_code = ?, execution_state_json = ?,
+          output_manifest_json = COALESCE(?, output_manifest_json)
       WHERE id = ?
     `).run(
       status,
@@ -305,6 +308,7 @@ export class WorkItemDelegationStore {
       completedAt,
       patch.failureCode ?? current.failureCode ?? null,
       patch.checkpoint ? JSON.stringify(patch.checkpoint) : current.checkpoint ? JSON.stringify(current.checkpoint) : null,
+      patch.outputManifest ? JSON.stringify(patch.outputManifest) : null,
       id,
     );
     if (result.changes !== 1) {
