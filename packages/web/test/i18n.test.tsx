@@ -1,5 +1,5 @@
 /**
- * @input  依赖：语言偏好解析、英文词典、I18nProvider 与 HeaderBar 静态渲染
+ * @input  依赖：语言偏好解析、英文词典、I18nProvider 与 ConversationList / PreferencesDialog 静态渲染
  * @output 验证：系统语言回退、手动偏好优先、插值、未知用户内容原样保留和中英切换入口
  * @pos    Council 中英双语边界的前端回归测试
  *
@@ -8,7 +8,8 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { HeaderBar } from "../src/components/HeaderBar";
+import { ConversationList } from "../src/components/ConversationList";
+import { PreferencesDialog } from "../src/components/PreferencesDialog";
 import { I18nProvider, translate } from "../src/i18n/I18nProvider";
 import { resolveLocalePreference } from "../src/i18n/locale";
 
@@ -31,21 +32,29 @@ describe("Council 界面语言", () => {
     expect(translate("zh-CN", "新建议题")).toBe("新建议题");
   });
 
-  it("英文模式渲染核心命令栏和中英切换入口", () => {
+  it("英文模式渲染会话列表命令区和偏好对话框的中英切换入口", () => {
     const html = renderToStaticMarkup(
       <I18nProvider initialLocale="en">
-        <HeaderBar
+        <ConversationList
           project={{ id: "example", name: "Example" }}
-          sync={{ status: "connected", label: "已连接" }}
+          topics={[]}
+          tasks={[]}
+          pipelines={[]}
+          route={{ view: "discussion" }}
+          selectedTopicId=""
+          isOpen
           searchQuery=""
-          themePreference="system"
-          onCycleTheme={() => undefined}
           onSearchChange={() => undefined}
+          onNavigate={() => undefined}
+          onSelectTopic={() => undefined}
           onCreateTopic={() => undefined}
-          onRetrySync={() => undefined}
-          onOpenTopics={() => undefined}
-          onOpenInspector={() => undefined}
-          onOpenSettings={() => undefined}
+          onClose={() => undefined}
+        />
+        <PreferencesDialog
+          isOpen={false}
+          themePreference="system"
+          onThemeChange={() => undefined}
+          onClose={() => undefined}
         />
       </I18nProvider>,
     );

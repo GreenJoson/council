@@ -10,6 +10,7 @@
 | `create-repository.ts` | 配置 | 根据环境选择当前数据实现 |
 | `orchestration-repository.ts` | 边界 | 定义 `@Agent` 单次调用、仅由用户显式触发的 AI 实施计划、任务委派/恢复、审计与待处理查询、三范围圆桌开局/作答、RuntimeBinding 关闭/重开和订阅接口 |
 | `create-orchestration-repository.ts` | 配置 | 根据环境选择自动轮次数据实现 |
+| `cycle-preferences.ts` | 偏好 | 圆桌轮次上限的 localStorage 读写与订阅（`useCycleRoundBudget`），默认 3、夹取 1–10 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
 | `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页与 `agent.output` 草稿事件 |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |

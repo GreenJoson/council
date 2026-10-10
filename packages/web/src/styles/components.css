@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：议题、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式
+ * @output 导出：会话流筛选 chips 与议题行、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,57 +9,6 @@
 .sidebar-mobile-heading,
 .inspector-close {
   display: none;
-}
-
-.project-navigation {
-  display: grid;
-  gap: 3px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.project-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-height: 40px;
-  padding: 0 12px;
-  border-radius: var(--radius-small);
-  background: transparent;
-  color: var(--color-text-secondary);
-  text-align: left;
-}
-
-.project-nav-item:hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-}
-
-.project-nav-item.active {
-  background: var(--color-surface-selected);
-  color: var(--color-focus);
-}
-
-.topic-list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 4px 9px 10px;
-}
-
-.topic-list-heading > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.eyebrow {
-  color: var(--color-text-secondary);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
 }
 
 .count-pill {
@@ -76,35 +25,37 @@
   font-size: 10px;
 }
 
-.topic-filter-chips {
+.stream-filter-chips {
   display: flex;
-  gap: 6px;
-  padding: 0 4px 10px 10px;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 2px;
 }
 
 .filter-chip {
-  padding: 4px 11px;
-  border: 1px solid var(--color-border);
-  border-radius: 99px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
 }
 
 .filter-chip:hover {
-  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
   color: var(--color-text);
 }
 
 .filter-chip.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
+  border-color: var(--control-border);
+  background: var(--segment-active-bg);
   color: var(--color-text);
+  box-shadow: var(--segment-active-shadow);
 }
 
 .topic-list {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .topic-list > [role="listitem"] {
@@ -116,10 +67,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px 10px;
-  min-height: 58px;
+  min-height: 56px;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-small);
+  border-radius: var(--radius-medium);
   background: transparent;
   color: var(--color-text-secondary);
   text-align: left;
@@ -130,10 +81,10 @@
   color: var(--color-text);
 }
 
+/* 选中行：浮起的白卡，不用主色描边——玻璃面板上主色块会显得脏 */
 .topic-row.selected {
-  border-color: var(--color-primary);
   background: var(--color-surface-selected);
-  box-shadow: inset 3px 0 0 var(--color-primary);
+  box-shadow: var(--shadow-small);
   color: var(--color-text);
 }
 
@@ -925,8 +876,10 @@
 .summary-grid {
   display: grid;
   gap: 12px;
-  margin: 0;
-  padding: 0 0 18px;
+  /* 不再是右栏首块：上方有圆桌/决策/运行卡片，用上边框与它们分隔 */
+  margin: 18px 0 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--color-divider);
   border-bottom: 1px solid var(--color-divider);
 }
 
@@ -3204,8 +3157,9 @@
 
 /* ---------- 圆桌讨论 ---------- */
 
+/* 圆桌排在上下文栏第一位，顶部紧贴标题；与后续区块的间距由后者的 margin-top 提供 */
 .cycle-card {
-  margin-top: 18px;
+  margin-top: 0;
 }
 
 .cycle-round {
@@ -3275,24 +3229,9 @@
   color: var(--color-warning);
 }
 
-.cycle-budget {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0;
-  color: var(--color-text-muted);
-  font-size: 10px;
-}
-
-.cycle-budget input {
-  width: 56px;
-  padding: 5px 7px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-small);
-  background: var(--color-canvas-deep);
-  color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: 11px;
+/* 轮次上限来自全局偏好，开局前只做告知，不再提供输入框 */
+.cycle-budget-hint {
+  margin-bottom: 12px;
 }
 
 .cycle-hint-inline {
@@ -3473,6 +3412,14 @@
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.06em;
+}
+
+/* 轮次耗尽后的裁决出口：我来裁决 / 再给 1 轮 */
+.cycle-outcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .cycle-review-scope {

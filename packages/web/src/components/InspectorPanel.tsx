@@ -1,9 +1,10 @@
 /**
  * @input  依赖：界面语言上下文、含 owner/完整决策包/备选/实施进度冻结快照的当前议题、
  *         参与者回退、自动轮次与决策入口
- * @output 导出：InspectorPanel 议题摘要、紧凑实施进度、圆桌/按需运行状态、人工签署入口和决策包摘要卡
- * @pos    Operator Console 右侧编排、约束、证据、备选方案与决策区域；决策这里只放状态、
- *         数量/待办状态和「查看全部」入口；接受动作必须在能看见具体决策的主列完成
+ * @output 导出：InspectorPanel「上下文」右栏：圆桌（含轮次耗尽后的人工裁决出口）、决策包摘要卡与
+ *         人工签署入口、紧凑实施进度、按需运行状态、议题摘要表，以及约束/证据/备选三个只读区块
+ * @pos    Operator Console 右侧上下文栏；自上而下按「正在发生 → 结论 → 执行 → 元信息 → 背景」排列。
+ *         决策这里只放状态、数量/待办状态和「查看全部」入口；接受动作必须在能看见具体决策的主列完成
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -13,7 +14,6 @@ import {
   BookOpen,
   Check,
   FileText,
-  Plus,
   ShieldCheck,
   TriangleAlert,
   X,
@@ -98,44 +98,11 @@ export function InspectorPanel({
   return (
     <aside className={`inspector-panel ${isOpen ? "panel-open" : ""}`} aria-label={t("议题摘要")}>
       <div className="inspector-heading">
-        <h2>{t("概要")}</h2>
+        <h2>{t("上下文")}</h2>
         <button className="icon-button inspector-close" type="button" aria-label={t("关闭议题摘要")} onClick={onClose}>
           <X size={18} />
         </button>
       </div>
-
-      <dl className="summary-grid">
-        <div>
-          <dt>{t("状态")}</dt>
-          <dd><StatusBadge status={topic.status} /></dd>
-        </div>
-        <div>
-          <dt>{t("所有者")}</dt>
-          <dd>
-            <AgentAvatar agent={topic.owner} participant={owner} size="small" />
-            <span>{owner?.name ?? topic.owner}</span>
-          </dd>
-        </div>
-        <div>
-          <dt>{t("参与者")}</dt>
-          <dd className="summary-participants">
-            {topic.participants.map((agent) => (
-              <AgentAvatar
-                agent={agent}
-                participant={participants.get(agent)}
-                key={agent}
-                size="small"
-              />
-            ))}
-          </dd>
-        </div>
-        <div>
-          <dt>{t("更新")}</dt>
-          <dd>{topic.updatedLabel}</dd>
-        </div>
-      </dl>
-
-      <ImplementationSummary topic={topic} />
 
       <CyclePanel
         topicId={topic.id}
@@ -147,81 +114,8 @@ export function InspectorPanel({
         onAnswer={onAnswerCycleQuestion}
         onSubmitFixes={onSubmitFixes}
         onAbandon={onAbandonCycle}
+        onRecordManualDecision={onRecordManualDecision}
       />
-
-      <AutoRoundsPanel
-        topicId={topic.id}
-        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
-        snapshot={orchestration}
-        busyAction={orchestrationBusyAction}
-        onStart={onStartRun}
-        onApprove={onApproveRun}
-        onCancel={onCancelRun}
-        onRecover={onRecoverRun}
-        onCloseBinding={onCloseRuntimeBinding}
-        onReopenBinding={onReopenRuntimeBinding}
-      />
-
-      <InspectorSection title="约束条件" count={topic.constraints.length}>
-        <ul className="inspector-list constraint-list">
-          {topic.constraints.map((constraint) => (
-            <li key={constraint.id}>
-              {constraint.tone === "warning" ? (
-                <TriangleAlert className="warning-icon" size={15} />
-              ) : (
-                <Check className="positive-icon" size={15} />
-              )}
-              <span>{constraint.label}</span>
-            </li>
-          ))}
-        </ul>
-      </InspectorSection>
-
-      <InspectorSection title="关键证据" count={topic.evidence.length}>
-        {topic.evidence.length > 0 ? (
-          <ul className="inspector-list evidence-list">
-            {topic.evidence.map((evidence) => (
-              <li key={evidence.id}>
-                <FileText size={15} />
-                <span>
-                  <strong>{evidence.label}</strong>
-                  <small>{evidence.meta}</small>
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="empty-copy">{t("尚未添加证据。")}</p>
-        )}
-      </InspectorSection>
-
-      <InspectorSection title="备选方案" count={topic.alternatives.length}>
-        {topic.alternatives.length > 0 ? (
-          <ol className="alternative-list">
-            {topic.alternatives.map((alternative, index) => {
-              const author = participantFromActorSnapshot(
-                alternative.authorSnapshot,
-                participants.get(alternative.author),
-              );
-              return (
-                <li key={alternative.id}>
-                  <span className="alternative-index">{index + 1}</span>
-                  <div>
-                    <strong>{alternative.title}</strong>
-                    <small>
-                      {author?.name ?? alternative.author}
-                      <span aria-hidden="true"> · </span>
-                      {alternative.createdLabel}
-                    </small>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <p className="empty-copy">{t("尚未提出备选方案。")}</p>
-        )}
-      </InspectorSection>
 
       {leadDecision ? (
         <section className="decision-card decision-package-summary-card">
@@ -286,6 +180,113 @@ export function InspectorPanel({
           </button>
         </section>
       )}
+
+      <ImplementationSummary topic={topic} />
+
+      <AutoRoundsPanel
+        topicId={topic.id}
+        isTopicOpen={topic.status !== "decided" && topic.status !== "closed"}
+        snapshot={orchestration}
+        busyAction={orchestrationBusyAction}
+        onStart={onStartRun}
+        onApprove={onApproveRun}
+        onCancel={onCancelRun}
+        onRecover={onRecoverRun}
+        onCloseBinding={onCloseRuntimeBinding}
+        onReopenBinding={onReopenRuntimeBinding}
+      />
+
+      <dl className="summary-grid">
+        <div>
+          <dt>{t("状态")}</dt>
+          <dd><StatusBadge status={topic.status} /></dd>
+        </div>
+        <div>
+          <dt>{t("所有者")}</dt>
+          <dd>
+            <AgentAvatar agent={topic.owner} participant={owner} size="small" />
+            <span>{owner?.name ?? topic.owner}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("参与者")}</dt>
+          <dd className="summary-participants">
+            {topic.participants.map((agent) => (
+              <AgentAvatar
+                agent={agent}
+                participant={participants.get(agent)}
+                key={agent}
+                size="small"
+              />
+            ))}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("更新")}</dt>
+          <dd>{topic.updatedLabel}</dd>
+        </div>
+      </dl>
+
+      <InspectorSection title="约束条件" count={topic.constraints.length}>
+        <ul className="inspector-list constraint-list">
+          {topic.constraints.map((constraint) => (
+            <li key={constraint.id}>
+              {constraint.tone === "warning" ? (
+                <TriangleAlert className="warning-icon" size={15} />
+              ) : (
+                <Check className="positive-icon" size={15} />
+              )}
+              <span>{constraint.label}</span>
+            </li>
+          ))}
+        </ul>
+      </InspectorSection>
+
+      <InspectorSection title="关键证据" count={topic.evidence.length}>
+        {topic.evidence.length > 0 ? (
+          <ul className="inspector-list evidence-list">
+            {topic.evidence.map((evidence) => (
+              <li key={evidence.id}>
+                <FileText size={15} />
+                <span>
+                  <strong>{evidence.label}</strong>
+                  <small>{evidence.meta}</small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-copy">{t("尚未添加证据。")}</p>
+        )}
+      </InspectorSection>
+
+      <InspectorSection title="备选方案" count={topic.alternatives.length}>
+        {topic.alternatives.length > 0 ? (
+          <ol className="alternative-list">
+            {topic.alternatives.map((alternative, index) => {
+              const author = participantFromActorSnapshot(
+                alternative.authorSnapshot,
+                participants.get(alternative.author),
+              );
+              return (
+                <li key={alternative.id}>
+                  <span className="alternative-index">{index + 1}</span>
+                  <div>
+                    <strong>{alternative.title}</strong>
+                    <small>
+                      {author?.name ?? alternative.author}
+                      <span aria-hidden="true"> · </span>
+                      {alternative.createdLabel}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        ) : (
+          <p className="empty-copy">{t("尚未提出备选方案。")}</p>
+        )}
+      </InspectorSection>
     </aside>
   );
 }
@@ -305,9 +306,6 @@ function InspectorSection({ title, count, children }: InspectorSectionProps) {
           <h3>{t(title)}</h3>
           <span className="count-pill">{count}</span>
         </div>
-        <button className="icon-button compact" type="button" aria-label={t("添加{title}", { title: t(title) })}>
-          <Plus size={16} />
-        </button>
       </header>
       {children}
     </section>

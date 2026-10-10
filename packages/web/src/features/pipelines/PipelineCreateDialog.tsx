@@ -3,7 +3,8 @@
  *         pipeline-labels、features/assets 的 AssetThumbnail
  * @output 导出：PipelineCreateDialog —— 原生 <dialog> 新建流水线：模板单选、目标（必填）、多行约束（每行一条）、
  *         资产库参考图多选（最多 8 张）、各阶段 Agent 选择（默认留空 = 服务端默认）
- * @pos    流水线列表的新建入口；创建成功把详情交给调用方（负责导航到 #/pipelines/<id>），失败留在表单内显示
+ * @pos    流水线列表的新建入口，也由 App 壳从讨论编辑器「起流水线」打开并以 initialGoal 带入草稿；
+ *         创建成功把详情交给调用方（负责导航到 #/pipelines/<id>），失败留在表单内显示
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -28,6 +29,8 @@ export interface PipelineCreateDialogProps {
   repository: PipelineRepository;
   assetRepository: AssetRepository;
   agents: OrchestrationAdapter[];
+  /** 打开瞬间预填的目标（讨论编辑器草稿）；只在从关到开时应用 */
+  initialGoal?: string;
   onClose: () => void;
   onCreated: (detail: PipelineDetail) => void;
 }
@@ -51,7 +54,7 @@ function splitLines(text: string): string[] {
   return text.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-export function PipelineCreateDialog({ isOpen, repository, assetRepository, agents, onClose, onCreated }: PipelineCreateDialogProps) {
+export function PipelineCreateDialog({ isOpen, repository, assetRepository, agents, initialGoal, onClose, onCreated }: PipelineCreateDialogProps) {
   const { t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [template, setTemplate] = useState<PipelineTemplate>("app-mockup");
@@ -72,9 +75,12 @@ export function PipelineCreateDialog({ isOpen, repository, assetRepository, agen
     if (!dialog) return;
     if (isOpen && !dialog.open) {
       setError(null);
+      if (initialGoal) setGoal(initialGoal);
       dialog.showModal();
     }
     if (!isOpen && dialog.open) dialog.close();
+    // initialGoal 只在打开瞬间读一次，刻意不作为依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const canCreate = goal.trim().length > 0 && !isCreating;

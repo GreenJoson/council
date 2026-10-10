@@ -1,7 +1,8 @@
 /**
  * @input  依赖：theme.css 语义变量和 React 组件类名
- * @output 导出：全局、顶栏中英切换、三栏/两栏工作区布局、讨论滚动壳、讨论列尺寸容器和基础交互样式
- * @pos    Operator Console 的桌面端空间骨架
+ * @output 导出：全局画布柔光背景、V2 壳栅格（图标栏 + 会话列表 + 主区 + 状态条）、磨砂玻璃面板、
+ *         图标栏/会话流行/分段控件/偏好对话框/幽灵按钮、项目菜单、讨论滚动壳、讨论列尺寸容器和基础交互样式
+ * @pos    Operator Console 的桌面端空间骨架；颜色/圆角/阴影只从 theme.css 的 token 读取
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,8 +22,11 @@ body,
 body {
   min-height: 100vh;
   overflow: hidden;
+  /* 磨砂玻璃需要底下有柔和色斑才能"透"出层次；三个光斑都是中性灰阶，不带品牌色 */
   background:
-    radial-gradient(circle at 50% -20%, color-mix(in srgb, var(--color-primary) 12%, transparent), transparent 44%),
+    radial-gradient(900px 620px at 6% -8%, var(--blob-b), transparent 70%),
+    radial-gradient(760px 520px at 102% 2%, var(--blob-c), transparent 68%),
+    radial-gradient(720px 520px at 58% 112%, var(--blob-a), transparent 70%),
     var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-body);
@@ -113,22 +117,38 @@ textarea:focus-visible {
   transform: translateY(0);
 }
 
+/* V2 壳：图标栏 | 会话列表 | 主区 三列悬浮在画布上，状态条横贯底部；对话框、scrim 和 toast 都是 fixed，不参与栅格排布。 */
 .app-shell {
   display: grid;
-  grid-template-rows: var(--header-height) minmax(0, 1fr) var(--status-bar-height);
+  grid-template-columns: var(--rail-width) var(--list-width) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) var(--status-bar-height);
+  gap: var(--shell-gap);
   width: 100vw;
   height: 100vh;
+  padding: var(--shell-gutter) var(--shell-gutter) 0;
   overflow: hidden;
 }
 
-/* 状态条只占一行高度；对话框、scrim 和 toast 都是 fixed，不参与栅格排布。 */
+/* 磨砂玻璃面板：三列共用；内部各自负责滚动，面板本身不裁切（项目菜单要能浮出列表栏） */
+.nav-rail,
+.topic-sidebar,
+.workspace-grid > * {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-large);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(150%);
+}
+
 .status-bar {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 0 12px;
-  border-top: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-canvas) 96%, transparent);
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .status-build {
@@ -150,23 +170,6 @@ textarea:focus-visible {
   opacity: 0.5;
 }
 
-.header-bar {
-  position: relative;
-  z-index: var(--z-header);
-  display: grid;
-  /* 左栏宽度对齐下方侧边栏（减去头部自身的 18px 内边距），让切换器与它作用的那一栏严丝合缝 */
-  grid-template-columns: calc(var(--sidebar-width) - 18px) minmax(320px, 520px) minmax(0, 1fr);
-  align-items: center;
-  gap: 24px;
-  min-width: 0;
-  height: var(--header-height);
-  padding: 0 18px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-canvas);
-}
-
-.brand-cluster,
-.header-actions,
 .topic-heading-row,
 .topic-title-line,
 .topic-metadata,
@@ -188,60 +191,6 @@ textarea:focus-visible {
   align-items: center;
 }
 
-.brand-cluster,
-.header-actions {
-  min-width: 0;
-  gap: 12px;
-}
-
-.header-actions {
-  justify-content: flex-end;
-}
-
-.language-switcher {
-  display: inline-flex;
-  flex: none;
-  height: 30px;
-  padding: 2px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-small);
-  background: var(--color-surface-subtle);
-}
-
-.language-switcher button {
-  min-width: 30px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: calc(var(--radius-small) - 2px);
-  background: transparent;
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.language-switcher button:hover:not(.active) {
-  color: var(--color-text);
-}
-
-.language-switcher button.active {
-  background: var(--color-surface-raised);
-  color: var(--color-primary);
-  box-shadow: var(--shadow-small);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--color-text);
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.045em;
-  text-decoration: none;
-}
-
 .brand-logo {
   display: block;
   flex: none;
@@ -250,10 +199,13 @@ textarea:focus-visible {
 .project-switcher,
 .primary-button,
 .secondary-button,
+.ghost-button,
 .publish-button,
 .accept-button,
-.project-nav-item,
+.nav-rail-item,
 .topic-row,
+.stream-row,
+.segment-option,
 .kind-option,
 .filter-chip,
 .icon-button {
@@ -440,13 +392,13 @@ textarea:focus-visible {
 .global-search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 39px;
+  gap: 8px;
+  height: 36px;
   min-width: 0;
-  padding: 0 10px 0 13px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-  background: var(--color-surface);
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-medium);
+  background: var(--control-bg);
   color: var(--color-text-muted);
   transition: border-color var(--transition-fast), background var(--transition-fast);
 }
@@ -470,13 +422,14 @@ textarea:focus-visible {
 }
 
 .global-search kbd {
-  padding: 2px 7px;
+  flex: none;
+  padding: 1px 6px;
   border: 1px solid var(--color-border);
   border-radius: 5px;
   background: var(--color-canvas-deep);
   color: var(--color-text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .sync-state {
@@ -552,6 +505,31 @@ button.sync-offline:hover {
   color: var(--color-text);
 }
 
+/* 幽灵按钮：次级动作里最轻的一档，只有文字和细边，hover 才浮起 */
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.ghost-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.ghost-button:disabled {
+  opacity: 0.48;
+}
+
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -578,9 +556,64 @@ button.sync-offline:hover {
   display: none;
 }
 
+/* ===== 图标栏 ===== */
+.nav-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 10px 0 8px;
+}
+
+.nav-rail-brand {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-medium);
+  color: var(--color-text);
+}
+
+.nav-rail-items {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-rail-item {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: var(--radius-medium);
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.nav-rail-item:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.nav-rail-item.active {
+  background: var(--rail-active-bg);
+  color: var(--color-text);
+  box-shadow: var(--shadow-small);
+}
+
+.nav-rail-spacer {
+  flex: 1;
+}
+
+/* ===== 主区：讨论列 + 上下文栏 ===== */
 .workspace-grid {
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--inspector-width);
+  grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+  gap: var(--shell-gap);
   min-width: 0;
   min-height: 0;
 }
@@ -589,25 +622,205 @@ button.sync-offline:hover {
 .inspector-panel,
 .discussion-panel {
   min-height: 0;
-  background: color-mix(in srgb, var(--color-canvas) 96%, transparent);
 }
 
-.topic-sidebar,
 .inspector-panel {
+  padding: 16px 16px 24px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
+/* 列表栏：自身不滚（项目菜单要能浮出去），只有 .topic-list-scroll 滚 */
 .topic-sidebar {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  padding: 18px 12px 14px;
-  border-right: 1px solid var(--color-border);
+  gap: 10px;
+  padding: 12px 10px 10px;
+  overflow: visible;
 }
 
-.inspector-panel {
-  padding: 18px 16px 24px;
-  border-left: 1px solid var(--color-border);
+.topic-list-scroll {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.stream-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stream-toolbar .project-switcher-shell {
+  flex: 1;
+  min-width: 0;
+}
+
+.stream-toolbar .project-switcher {
+  width: 100%;
+}
+
+.new-topic-button {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: var(--color-text);
+}
+
+.new-topic-button:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+/* 会话流里的任务/流水线行：和议题行同一密度，左侧小图标标出类型 */
+.stream-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  min-height: 50px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-medium);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+}
+
+.stream-row > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--color-text-muted);
+}
+
+.stream-row:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.stream-row.selected {
+  background: var(--color-surface-selected);
+  color: var(--color-text);
+  box-shadow: var(--shadow-small);
+}
+
+.stream-row-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stream-row-meta {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-more {
+  display: block;
+  padding: 6px 10px 10px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.stream-more:hover {
+  color: var(--color-primary);
+}
+
+/* ===== 分段控件（偏好里的主题/语言、编辑器模式） ===== */
+.segment-control {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-medium);
+  background: var(--segment-bg);
+}
+
+.segment-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 11px;
+  border-radius: calc(var(--radius-medium) - 3px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.segment-option:hover:not(.active) {
+  color: var(--color-text);
+}
+
+.segment-option.active {
+  background: var(--segment-active-bg);
+  color: var(--color-text);
+  box-shadow: var(--segment-active-shadow);
+}
+
+.composer-mode-switch {
+  margin-right: 4px;
+}
+
+/* ===== 偏好对话框 ===== */
+.preferences-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.preferences-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.preference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.preference-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.preference-label small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.preference-number {
+  width: 72px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-small);
+  background: var(--control-bg);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.preference-number:focus {
+  border-color: var(--color-focus);
+  outline: 0;
 }
 
 .discussion-panel {
@@ -620,8 +833,7 @@ button.sync-offline:hover {
 .topic-header {
   flex: none;
   padding: 11px 24px 0;
-  border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-surface) 64%, transparent);
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .topic-heading-row {
@@ -656,6 +868,11 @@ button.sync-offline:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.topic-heading-actions .icon-button {
+  width: 32px;
+  height: 32px;
 }
 
 .topic-close-button {
@@ -920,9 +1137,9 @@ button.sync-offline:hover {
   gap: 10px;
 }
 
-/* 工作区没有议题时的议题视图，以及架构档案/决策记录视图：都是「侧栏 + 单一全宽面板」两列布局 */
+/* 工作区没有议题、其余单栏视图，或用户收起上下文栏：主区只剩一块面板 */
 .workspace-grid-full {
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .empty-workspace {

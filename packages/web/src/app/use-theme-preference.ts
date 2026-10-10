@@ -1,12 +1,12 @@
 /**
  * @input  依赖：React、data/theme 主题偏好读写与系统深浅色监听
- * @output 导出：useThemePreference —— 当前主题偏好与 light → dark → system 循环切换
+ * @output 导出：useThemePreference —— 当前主题偏好与 setThemePreference（偏好对话框直接选 light / dark / system）
  * @pos    App 壳的主题状态；跟随系统时实时重放操作系统深浅色变化
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   applyThemePreference,
   resolveInitialPreference,
@@ -16,9 +16,9 @@ import {
 
 export function useThemePreference(): {
   themePreference: ThemePreference;
-  cycleTheme: () => void;
+  setThemePreference: (next: ThemePreference) => void;
 } {
-  const [themePreference, setThemePreference] = useState<ThemePreference>(resolveInitialPreference);
+  const [themePreference, setPreference] = useState<ThemePreference>(resolveInitialPreference);
 
   // 跟随系统时监听操作系统深浅色变化并实时重放到根节点
   useEffect(() => {
@@ -28,14 +28,10 @@ export function useThemePreference(): {
     return watchSystemTheme(() => applyThemePreference("system"));
   }, [themePreference]);
 
-  function cycleTheme(): void {
-    setThemePreference((current) => {
-      const next: ThemePreference =
-        current === "light" ? "dark" : current === "dark" ? "system" : "light";
-      applyThemePreference(next);
-      return next;
-    });
-  }
+  const setThemePreference = useCallback((next: ThemePreference): void => {
+    applyThemePreference(next);
+    setPreference(next);
+  }, []);
 
-  return { themePreference, cycleTheme };
+  return { themePreference, setThemePreference };
 }

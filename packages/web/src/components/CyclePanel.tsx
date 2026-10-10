@@ -1,7 +1,10 @@
 /**
- * @input  依赖：界面语言上下文、议题发起人、编排快照里的活动圆桌、可用 Agent 名册与受控开局/回答操作
- * @output 导出：CyclePanel 三段审查范围、名册能力校验、阶段进度、阻塞提问与累计度量
- * @pos    Inspector 内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问
+ * @input  依赖：界面语言上下文、议题发起人、编排快照里的活动圆桌、可用 Agent 名册、
+ *         全局轮次上限偏好（data/cycle-preferences）与受控开局/回答/人工裁决操作
+ * @output 导出：CyclePanel 三段审查范围、名册能力校验、阶段进度、阻塞提问、
+ *         轮次耗尽后的裁决出口（我来裁决 / 再给 1 轮）与累计度量
+ * @pos    上下文栏内圆桌讨论的唯一控制面——用户只在这里点两次：开局，和回答提问；
+ *         轮次上限不在此处输入，由偏好统一提供
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -18,6 +21,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
+import { useCycleRoundBudget } from "../data/cycle-preferences";
 import { useI18n, type TranslationParams } from "../i18n/I18nProvider";
 import type {
   CycleMetrics,
@@ -47,13 +51,9 @@ const STANCE_LABELS: Readonly<Record<CycleTurn["stance"], string>> = {
 
 const STOP_REASON_LABELS: Readonly<Record<string, string>> = {
   converged: "已收敛并生成待确认决策",
-  round_budget_exhausted: "轮次预算耗尽，仍有阻断异议",
   decision_accepted: "用户已接受决策",
   cancelled: "用户已取消本轮圆桌",
 };
-
-/** 默认轮次预算与服务端 DEFAULT_ROUND_BUDGET 一致：提案 + 一轮反驳 + 一轮复核。 */
-const DEFAULT_ROUND_BUDGET = 3;
 
 const REVIEW_SCOPE_OPTIONS: ReadonlyArray<{
   value: CycleReviewScope;
@@ -86,6 +86,8 @@ export interface CyclePanelProps {
   /** 外部 Agent 修完之后开下一轮复审；条目是否关闭仍由复审判定。 */
   onSubmitFixes: () => Promise<void>;
   onAbandon: () => Promise<void>;
+  /** 轮次耗尽仍有阻断分歧时，把裁决交回用户：打开人工决策对话框。 */
+  onRecordManualDecision: () => void;
 }
 
 /**
@@ -194,7 +196,8 @@ function CycleStarter({
   );
   // 发起人入选时固定置首但不再次调用；其余 Agent 仍按勾选顺序评审。
   const [roster, setRoster] = useState<string[]>([]);
-  const [roundBudget, setRoundBudget] = useState(DEFAULT_ROUND_BUDGET);
+  // 轮次上限是全局偏好而非每次开局的输入：用户无法预知要讨论几轮
+  const roundBudget = useCycleRoundBudget();
   const [reviewScope, setReviewScope] = useState<CycleReviewScope>("discussion");
 
   const toggle = (adapterId: string): void => {
@@ -310,21 +313,9 @@ function CycleStarter({
           })}
         </p>
       ) : null}
-      <label className="cycle-budget">
-        {t("轮次预算")}
-        <input
-          type="number"
-          min={1}
-          max={10}
-          value={roundBudget}
-          disabled={!isTopicOpen || busy}
-          onChange={(event) => {
-            const parsed = Number.parseInt(event.target.value, 10);
-            setRoundBudget(Number.isNaN(parsed) ? DEFAULT_ROUND_BUDGET : parsed);
-          }}
-        />
-        <span className="cycle-hint-inline">{t("预算耗尽时输出阻断清单并交回给你")}</span>
-      </label>
+      <p className="cycle-hint cycle-budget-hint">
+        {t("讨论到没人再反对为止，最多 {count} 轮，超出交给你裁决", { count: roundBudget })}
+      </p>
       <button
         type="button"
         className="primary-button"
@@ -417,19 +408,38 @@ function BlockingQuestion({
 function CycleOutcome({
   view,
   adapters,
+  isTopicOpen,
+  busy,
+  onStart,
+  onRecordManualDecision,
 }: {
   view: DiscussionCycleView;
   adapters: readonly OrchestrationAdapter[];
+  isTopicOpen: boolean;
+  busy: boolean;
+  onStart: CyclePanelProps["onStart"];
+  onRecordManualDecision: CyclePanelProps["onRecordManualDecision"];
 }): ReactElement {
   const { t } = useI18n();
   const { cycle } = view;
+  // 轮次耗尽：标题直接说清还剩多少分歧，并给出裁决出口，而不是只报一个停止原因
+  const exhausted = cycle.stopReason === "round_budget_exhausted";
+  const blockingCount = cycle.outcome?.kind === "blocking_disagreements"
+    ? cycle.outcome.items.length
+    : 0;
+  const title = exhausted
+    ? t("{rounds} 轮后仍有 {count} 条阻断分歧", {
+      rounds: cycle.currentRound,
+      count: blockingCount,
+    })
+    : t(STOP_REASON_LABELS[cycle.stopReason ?? ""] ?? "圆桌已经结束");
   return (
     <div className={`cycle-question cycle-outcome is-${cycle.status}`}>
       <p className="cycle-question-title">
         {cycle.status === "completed"
           ? <ThumbsUp size={15} />
           : <TriangleAlert size={15} />}
-        {t(STOP_REASON_LABELS[cycle.stopReason ?? ""] ?? "圆桌已经结束")}
+        {title}
       </p>
       {cycle.outcome?.kind === "blocking_disagreements" ? (
         <>
@@ -451,6 +461,28 @@ function CycleOutcome({
             ))}
           </ul>
         </>
+      ) : null}
+      {exhausted ? (
+        <div className="cycle-outcome-actions">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={onRecordManualDecision}
+          >
+            <Gavel size={14} /> {t("我来裁决")}
+          </button>
+          {/* 后端会复用该议题最新提案，这里只是用同一名册与范围再跑一轮 */}
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={busy || !isTopicOpen}
+            onClick={() => {
+              void onStart(cycle.participants, 1, cycle.requirements.reviewScope);
+            }}
+          >
+            <Play size={14} /> {t("再给 1 轮")}
+          </button>
+        </div>
       ) : null}
     </div>
   );
@@ -523,6 +555,7 @@ export function CyclePanel({
   onAnswer,
   onSubmitFixes,
   onAbandon,
+  onRecordManualDecision,
 }: CyclePanelProps): ReactElement | null {
   const { t } = useI18n();
   const adapters = snapshot?.capabilities?.adapters ?? [];
@@ -590,7 +623,16 @@ export function CyclePanel({
         </>
       ) : (
         <>
-          {view ? <CycleOutcome view={view} adapters={adapters} /> : null}
+          {view ? (
+            <CycleOutcome
+              view={view}
+              adapters={adapters}
+              isTopicOpen={isTopicOpen}
+              busy={busy}
+              onStart={onStart}
+              onRecordManualDecision={onRecordManualDecision}
+            />
+          ) : null}
           <CycleStarter
             adapters={adapters}
             initiatorActorId={initiatorActorId}

@@ -1,40 +1,38 @@
 /**
- * @input  依赖：Operator Console 桌面布局与语义组件，含项目架构档案与决策记录归档
- * @output 导出：平板、手机、流体讨论列、消息阶梯导航和低动态偏好的适配规则
+ * @input  依赖：app.css 的 V2 壳栅格（图标栏 + 会话列表 + 主区）与语义组件，含项目架构档案与决策记录归档
+ * @output 导出：≤1260px 上下文栏变抽屉、≤920px 会话列表变抽屉且图标栏变底部横条、≤680px 讨论列紧凑化、
+ *         桌面设置卡与低动态偏好的适配规则
  * @pos    保证 375px 至 1440px 无横向滚动和可访问交互
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 @media (max-width: 1260px) {
-  /* 本断点侧边栏仍是 296px 实体列，左栏继续与它对齐；
-     左右栏改为跟随剩余空间后，头部最小宽度从 1044px 降到约 622px，中等窗口不再挤出横向溢出 */
-  .header-bar {
-    grid-template-columns: calc(var(--sidebar-width) - 18px) minmax(280px, 430px) minmax(0, 1fr);
-    gap: 14px;
-  }
-
   .sync-state span {
     display: none;
   }
 
+  /* 上下文栏不再占列：主区只剩讨论列，上下文由讨论头部按钮作为右侧抽屉拉出 */
   .workspace-grid {
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .inspector-mobile-button {
     display: inline-grid;
   }
 
+  .inspector-desktop-toggle {
+    display: none;
+  }
+
   .inspector-panel {
     position: fixed;
-    top: var(--header-height);
-    right: 0;
-    bottom: 0;
+    inset: 0 0 0 auto;
     z-index: var(--z-panel);
     width: min(var(--inspector-width), calc(100vw - 36px));
+    border-radius: 0;
     border-left: 1px solid var(--color-border-strong);
-    background: var(--color-canvas);
+    background: var(--glass-bg-strong);
     box-shadow: var(--shadow-large);
     transform: translateX(102%);
     transition: transform var(--transition-medium);
@@ -50,7 +48,7 @@
 
   .panel-scrim {
     position: fixed;
-    inset: var(--header-height) 0 0;
+    inset: 0;
     z-index: var(--z-scrim);
     display: block;
     border: 0;
@@ -59,29 +57,29 @@
 }
 
 @media (max-width: 920px) {
-  .header-bar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .project-switcher {
-    min-width: 0;
-    width: 42px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .project-switcher span:not(.project-mark),
-  .project-switcher svg,
-  .desktop-action {
-    display: none;
-  }
-
-  .global-search kbd {
-    display: none;
-  }
-
-  .workspace-grid {
+  /* 图标栏贴到底部横排，会话列表变成左侧抽屉；壳只剩主区一列，底部留出横条高度 */
+  .app-shell {
     grid-template-columns: minmax(0, 1fr);
+    padding-bottom: calc(var(--rail-width) + var(--shell-gap));
+  }
+
+  .nav-rail {
+    position: fixed;
+    right: var(--shell-gutter);
+    bottom: var(--shell-gutter);
+    left: var(--shell-gutter);
+    z-index: var(--z-header);
+    flex-direction: row;
+    height: var(--rail-width);
+    padding: 0 8px;
+  }
+
+  .nav-rail-brand {
+    margin: 0;
+  }
+
+  .nav-rail-items {
+    flex-direction: row;
   }
 
   .mobile-panel-button {
@@ -90,13 +88,12 @@
 
   .topic-sidebar {
     position: fixed;
-    top: var(--header-height);
-    bottom: 0;
-    left: 0;
+    inset: 0 auto 0 0;
     z-index: var(--z-panel);
     width: min(var(--sidebar-width), calc(100vw - 36px));
+    border-radius: 0;
     border-right: 1px solid var(--color-border-strong);
-    background: var(--color-canvas);
+    background: var(--glass-bg-strong);
     box-shadow: var(--shadow-large);
     transform: translateX(-102%);
     transition: transform var(--transition-medium);
@@ -110,9 +107,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 10px;
     color: var(--color-text-secondary);
     font-weight: 600;
+  }
+
+  .global-search kbd {
+    display: none;
   }
 
   .topic-header {
@@ -170,31 +170,20 @@
   .desktop-setup-steps button {
     padding-inline: 13px;
   }
+
   :root {
-    --header-height: 58px;
+    --shell-gutter: 8px;
+    --shell-gap: 8px;
   }
 
-  .header-bar {
-    gap: 8px;
-    padding-inline: 9px;
+  .nav-rail {
+    justify-content: space-between;
   }
 
-  .brand {
-    display: none;
-  }
-
-  .brand-cluster,
-  .header-actions {
-    gap: 4px;
-  }
-
-  .global-search {
-    height: 38px;
-  }
-
-  .primary-button {
-    width: 40px;
-    padding: 0;
+  .nav-rail-item,
+  .nav-rail-brand {
+    width: 36px;
+    height: 36px;
   }
 
   .primary-button span,
@@ -210,8 +199,7 @@
     align-items: flex-start;
   }
 
-  .topic-participants .agent-avatar,
-  .topic-participants .icon-button:first-of-type {
+  .topic-participants .agent-avatar {
     display: none;
   }
 

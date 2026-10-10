@@ -12,7 +12,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Bot, FolderGit2, GitCommitHorizontal, Link2, Plus, Send, TriangleAlert, X } from "lucide-react";
+import { Bot, FolderGit2, GitCommitHorizontal, Link2, ListTodo, MessagesSquare, Plus, Send, TriangleAlert, Workflow, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n/I18nProvider";
 import {
@@ -72,6 +72,12 @@ export interface ComposerProps {
   topicId: string;
   orchestration: OrchestrationSnapshot | null;
   orchestrationBusyAction: string | null;
+  /**
+   * 模式切换「派任务 / 起流水线」：不在编辑器内建表单，只把当前草稿交给壳层打开对话框；
+   * 两个都缺省时不渲染切换条（测试与独立使用场景）。
+   */
+  onOpenTaskCreate?: (draft: string) => void;
+  onOpenPipelineCreate?: (draft: string) => void;
 }
 
 export function Composer({
@@ -84,6 +90,8 @@ export function Composer({
   topicId,
   orchestration,
   orchestrationBusyAction,
+  onOpenTaskCreate,
+  onOpenPipelineCreate,
 }: ComposerProps) {
   const { t } = useI18n();
   const [kind, setKind] = useState<MessageKind>("rebuttal");
@@ -328,6 +336,28 @@ export function Composer({
   return (
     <form className="composer" onSubmit={(event) => void handleSubmit(event)}>
       <div className="composer-meta">
+        {onOpenTaskCreate || onOpenPipelineCreate ? (
+          <div className="segment-control composer-mode-switch" role="group" aria-label={t("编辑器模式")}>
+            <button className="segment-option active" type="button" aria-pressed="true">
+              <MessagesSquare size={13} aria-hidden="true" />
+              {t("讨论")}
+            </button>
+            {onOpenTaskCreate ? (
+              <button className="segment-option" type="button" aria-pressed="false"
+                onClick={() => onOpenTaskCreate(content)}>
+                <ListTodo size={13} aria-hidden="true" />
+                {t("派任务")}
+              </button>
+            ) : null}
+            {onOpenPipelineCreate ? (
+              <button className="segment-option" type="button" aria-pressed="false"
+                onClick={() => onOpenPipelineCreate(content)}>
+                <Workflow size={13} aria-hidden="true" />
+                {t("起流水线")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <div className="kind-selector" aria-label={t("选择消息类型")}>
           {composerKinds.map((candidate) => (
             <button

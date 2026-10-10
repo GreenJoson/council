@@ -1,8 +1,10 @@
 /**
- * @input  依赖：界面语言、Council/Orchestration Repository 工厂、hash 路由、主题/toast/桌面设置/内容/编排/议题写操作控制器、
- *         头部/侧栏/对话框/状态栏组件与 WorkspaceMain 视图分发
+ * @input  依赖：界面语言、Council/Orchestration/任务/流水线/资产 Repository 工厂、hash 路由、主题/toast/桌面设置/内容/编排/议题写操作控制器、
+ *         features/tasks 与 features/pipelines 的列表 hook、图标栏/会话列表/对话框/状态栏组件与 WorkspaceMain 视图分发
  * @output 导出：App 根组件（壳）
- * @pos    只做装配：创建仓储、串起各控制器、处理桌面首次设置/致命错误/加载中三种前置态，并把 activeView 交给 hash 路由；
+ * @pos    只做装配：创建仓储、串起各控制器、处理桌面首次设置/致命错误/加载中三种前置态，并把路由交给 hash；
+ *         V2 壳为「图标栏 + 会话列表 + 主区（讨论 + 可收起的上下文栏）」，会话列表同时露出任务与流水线，
+ *         任务/流水线新建对话框在壳层渲染以便从编辑器一键切换并带入草稿；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 通知决策记录视图定位；
  *         Composer 的 @claude/@codex 召唤语法糖由 use-topic-actions 的 publish 承接
  *
@@ -10,19 +12,27 @@
  */
 
 import { useMemo, useState } from "react";
+import { ConversationList } from "../components/ConversationList";
 import { CreateTopicDialog } from "../components/CreateTopicDialog";
 import type { DecisionRecordFocusRequest } from "../components/DecisionRecordsView";
 import { DesktopSetup } from "../components/DesktopSetup";
 import { ProjectFilesProvider } from "../components/files/ProjectFilesProvider";
-import { HeaderBar } from "../components/HeaderBar";
 import { ManualDecisionDialog } from "../components/ManualDecisionDialog";
 import { ModelRouterDialog } from "../components/ModelRouterDialog";
+import { NavRail } from "../components/NavRail";
+import { PreferencesDialog } from "../components/PreferencesDialog";
 import { StatusBar } from "../components/StatusBar";
-import { TopicSidebar } from "../components/TopicSidebar";
+import { createAssetRepository } from "../data/assets/create-asset-repository";
 import { createOrchestrationRepository } from "../data/create-orchestration-repository";
 import { createCouncilRepository } from "../data/create-repository";
 import { isNativeCouncilRepository } from "../data/native-repository";
-import { filterTopics, type TopicStatusFilter } from "../data/selectors";
+import { createPipelineRepository } from "../data/pipelines/create-pipeline-repository";
+import { filterTopics } from "../data/selectors";
+import { createTaskRepository } from "../data/tasks/create-task-repository";
+import { PipelineCreateDialog } from "../features/pipelines/PipelineCreateDialog";
+import { usePipelines } from "../features/pipelines/use-pipelines";
+import { TaskCreateDialog } from "../features/tasks/TaskCreateDialog";
+import { useTasks } from "../features/tasks/use-tasks";
 import { ExecutionRepositoryContext } from "../hooks/useExecutionRepository";
 import { useI18n } from "../i18n/I18nProvider";
 import { FatalState, LoadingState, RecoverableError } from "./app-states";
@@ -36,13 +46,24 @@ import { useWorkspaceContent } from "./use-workspace-content";
 import { useWorkspaceRoute } from "./use-workspace-route";
 import { WorkspaceMain } from "./WorkspaceMain";
 
+/** 编辑器草稿转成任务标题：只取第一行并截到标题上限，正文留给用户在对话框里补。 */
+function draftTitle(draft: string | null): string | undefined {
+  if (draft === null) {
+    return undefined;
+  }
+  return draft.split(/\r?\n/, 1)[0]?.trim().slice(0, 200) ?? "";
+}
+
 export default function App() {
   const { t } = useI18n();
   const repository = useMemo(() => createCouncilRepository(), []);
   const orchestrationRepository = useMemo(() => createOrchestrationRepository(), []);
+  const taskRepository = useMemo(() => createTaskRepository(), []);
+  const pipelineRepository = useMemo(() => createPipelineRepository(), []);
+  const assetRepository = useMemo(() => createAssetRepository(), []);
   const nativeRepository = isNativeCouncilRepository(repository) ? repository : undefined;
   const { route, navigate } = useWorkspaceRoute();
-  const { themePreference, cycleTheme } = useThemePreference();
+  const { themePreference, setThemePreference } = useThemePreference();
   const [toastMessage, setToastMessage] = useToast();
   // content 在下一行才声明；回调只在桌面切换项目成功后的事件里调用，届时已初始化
   const desktop = useDesktopSettings(nativeRepository, () => content.resetWorkspace());
@@ -55,8 +76,11 @@ export default function App() {
     route, navigate, workspace: content.workspace,
     activeTopicId: content.activeTopicId, selectTopic: content.selectTopic,
   });
+  // 会话列表里的任务/流水线行：工作区快照或编排 revision 变化即重读，失败只是不显示，不打断主流程
+  const executionRevision = orch.orchestration?.revision;
+  const taskStream = useTasks(taskRepository, {}, content.workspace, executionRevision);
+  const pipelineStream = usePipelines(pipelineRepository, content.workspace, executionRevision);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<TopicStatusFilter>("all");
   const [decisionFocus, setDecisionFocus] = useState<DecisionRecordFocusRequest | null>(null);
   /*
    * 右栏「查看全文」→ 主列「决策」tab。递增 nonce 而不是布尔量：同一议题里反复点也要
@@ -67,7 +91,12 @@ export default function App() {
   const [isManualDecisionOpen, setIsManualDecisionOpen] = useState(false);
   const [isTopicsOpen, setIsTopicsOpen] = useState(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [isContextCollapsed, setIsContextCollapsed] = useState(false);
   const [isModelRouterOpen, setIsModelRouterOpen] = useState(false);
+  const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
+  // null = 对话框关闭；字符串 = 从编辑器带来的草稿（可为空串）
+  const [taskDraft, setTaskDraft] = useState<string | null>(null);
+  const [pipelineDraft, setPipelineDraft] = useState<string | null>(null);
   const { workspace, selectedTopic } = content;
   const desktopSettings = desktop.settings;
   const chooseLogs = () => desktop.choose("logs");
@@ -94,7 +123,8 @@ export default function App() {
     return <LoadingState />;
   }
 
-  const visibleTopics = filterTopics(workspace.topics, searchQuery, statusFilter);
+  const visibleTopics = filterTopics(workspace.topics, searchQuery);
+  const delegationAgents = orch.orchestration?.capabilities?.adapters ?? [];
   const recoverableErrorMessage =
     orch.capabilitiesErrorMessage ?? orch.runsErrorMessage ?? content.errorMessage;
 
@@ -118,38 +148,39 @@ export default function App() {
     setDecisionFocus((current) => ({ topicId, nonce: (current?.nonce ?? 0) + 1 }));
   }
 
-  // 议题视图且工作区没有任何议题，或其余单栏视图（合并中右两栏为单一全宽面板）时，
-  // workspace-grid 都退化为「侧栏 + 单栏」两列布局，共用同一个修饰类
-  const showsSingleColumn = route.view !== "discussion" || !selectedTopic;
+  // 议题视图且工作区没有任何议题、其余单栏视图，或用户收起了上下文栏时，
+  // 主区都退化为单栏（讨论列独占），共用同一个修饰类
+  const showsSingleColumn = route.view !== "discussion" || !selectedTopic || isContextCollapsed;
 
   return (
     <ExecutionRepositoryContext.Provider value={orchestrationRepository}>
     <ProjectFilesProvider projectKey={`${desktopSettings?.logLibrary ?? ""}:${desktopSettings?.currentProjectPath ?? workspace.project.id}`}>
     <div className="app-shell">
-      <HeaderBar project={workspace.project} sync={workspace.sync} searchQuery={searchQuery}
-        themePreference={themePreference} onCycleTheme={cycleTheme} onSearchChange={setSearchQuery}
-        onCreateTopic={() => setIsCreateDialogOpen(true)} onRetrySync={content.retrySync}
-        onOpenTopics={() => setIsTopicsOpen(true)} onOpenInspector={() => setIsInspectorOpen(true)}
-        onOpenSettings={() => setIsModelRouterOpen(true)} desktopSettings={desktopSettings ?? undefined}
+      <NavRail activeView={route.view} activeTopicId={content.activeTopicId || undefined}
+        onNavigate={navigate} onOpenTopics={() => setIsTopicsOpen(true)}
+        onOpenPreferences={() => setIsPreferencesOpen(true)}
+        onOpenSettings={() => setIsModelRouterOpen(true)} />
+      <ConversationList project={workspace.project} topics={visibleTopics} tasks={taskStream.tasks}
+        pipelines={pipelineStream.pipelines} route={route} selectedTopicId={selectedTopic?.id ?? ""}
+        isOpen={isTopicsOpen} searchQuery={searchQuery} desktopSettings={desktopSettings ?? undefined}
+        onSearchChange={setSearchQuery} onNavigate={navigate} onSelectTopic={openTopic}
+        onCreateTopic={() => setIsCreateDialogOpen(true)} onClose={() => setIsTopicsOpen(false)}
         onChooseProject={chooseProject} onChooseLogLibrary={chooseLogs}
         onSelectRecentProject={desktop.selectRecentProject} />
       <div className={`workspace-grid ${showsSingleColumn ? "workspace-grid-full" : ""}`}>
-        <TopicSidebar topics={visibleTopics} selectedTopicId={selectedTopic?.id ?? ""} isOpen={isTopicsOpen}
-          statusFilter={statusFilter} activeView={route.view}
-          onSelectView={(view) => navigate(view === "discussion"
-            ? { view, topicId: content.activeTopicId || undefined }
-            : { view })}
-          onStatusFilterChange={setStatusFilter} onSelectTopic={openTopic}
-          onClose={() => setIsTopicsOpen(false)} />
         <WorkspaceMain route={route} workspace={workspace} repository={repository}
           projectPath={desktopSettings?.currentProjectPath ?? undefined} content={content}
           orchestrationState={orch} topicActions={topicActions} decisionFocus={decisionFocus}
           topicDecisionFocusNonce={topicDecisionFocusNonce} isInspectorOpen={isInspectorOpen}
+          isContextCollapsed={isContextCollapsed}
           onOpenTopic={openTopic} onOpenDecisionRecord={handleOpenDecisionRecord}
           onCreateTopic={() => setIsCreateDialogOpen(true)}
           onOpenManualDecision={() => setIsManualDecisionOpen(true)}
           onFocusTopicDecision={() => setTopicDecisionFocusNonce((current) => (current ?? 0) + 1)}
-          onCloseInspector={() => setIsInspectorOpen(false)} />
+          onOpenInspector={() => setIsInspectorOpen(true)}
+          onToggleContext={() => setIsContextCollapsed((current) => !current)}
+          onCloseInspector={() => setIsInspectorOpen(false)}
+          onOpenTaskCreate={setTaskDraft} onOpenPipelineCreate={setPipelineDraft} />
       </div>
       {(isTopicsOpen || isInspectorOpen) ? (
         <button className="panel-scrim" type="button" aria-label={t("关闭侧边面板")}
@@ -165,6 +196,23 @@ export default function App() {
         topicTitle={selectedTopic?.title ?? ""}
         onClose={() => { if (!content.isRecordingManualDecision) setIsManualDecisionOpen(false); }}
         onRecord={content.recordManualDecision} />
+      {/* 任务/流水线视图各自也挂着同名对话框；壳层这份只在有草稿时挂载，避免关闭态的 <dialog> 重复留在 DOM 里 */}
+      {taskDraft !== null ? (
+        <TaskCreateDialog isOpen repository={taskRepository}
+          initialTitle={draftTitle(taskDraft)} onClose={() => setTaskDraft(null)}
+          onCreated={(task) => { setTaskDraft(null); navigate({ view: "tasks", taskId: task.id }); }} />
+      ) : null}
+      {pipelineDraft !== null ? (
+        <PipelineCreateDialog isOpen repository={pipelineRepository}
+          assetRepository={assetRepository} agents={delegationAgents}
+          initialGoal={pipelineDraft} onClose={() => setPipelineDraft(null)}
+          onCreated={(detail) => {
+            setPipelineDraft(null);
+            navigate({ view: "pipelines", pipelineId: detail.task.id });
+          }} />
+      ) : null}
+      <PreferencesDialog isOpen={isPreferencesOpen} themePreference={themePreference}
+        onThemeChange={setThemePreference} onClose={() => setIsPreferencesOpen(false)} />
       <ModelRouterDialog isOpen={isModelRouterOpen} repository={orchestrationRepository}
         onClose={() => setIsModelRouterOpen(false)} onChanged={orch.reloadCapabilities} />
       {recoverableErrorMessage ? (
@@ -172,7 +220,7 @@ export default function App() {
           onClose={() => { content.setErrorMessage(null); orch.clearErrors(); }} />
       ) : null}
       {toastMessage ? <div className="toast" role="status">{toastMessage}</div> : null}
-      <StatusBar />
+      <StatusBar sync={workspace.sync} onRetrySync={content.retrySync} />
     </div>
     </ProjectFilesProvider>
     </ExecutionRepositoryContext.Provider>

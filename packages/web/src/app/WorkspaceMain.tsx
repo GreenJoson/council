@@ -1,8 +1,9 @@
 /**
  * @input  依赖：界面语言、当前 WorkspaceRoute、内容/编排/议题写操作控制器、各工作区视图组件与 features/tasks 的 TasksView、
  *         features/assets 的 AssetsView、features/pipelines 的 PipelinesView
- * @output 导出：WorkspaceMain —— 侧栏右侧的主区域，按路由渲染待处理/架构档案/决策记录/任务（列表或详情，传入内容与编排 revision）/资产库（网格或详情，传入内容 revision）/流水线（列表或详情，传入内容与编排 revision）/
- *         议题讨论（含右栏检查器，讨论页不再承载单项委派与取消）或空工作区
+ * @output 导出：WorkspaceMain —— 会话列表右侧的主区域，按路由渲染待处理/架构档案/决策记录/任务（列表或详情，传入内容与编排 revision）/资产库（网格或详情，传入内容 revision）/流水线（列表或详情，传入内容与编排 revision）/
+ *         议题讨论（含右栏「上下文」检查器：桌面端可由讨论头部收起，收起后不渲染；≤1260px 由讨论头部按钮作为抽屉打开）或空工作区；
+ *         讨论头部与编辑器的派任务/起流水线入口只回调草稿，由 App 壳打开对话框
  * @pos    App 壳的视图分发层，只做路由 → 组件与 props 接线，不持有业务状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,12 +37,17 @@ export interface WorkspaceMainProps {
   decisionFocus: DecisionRecordFocusRequest | null;
   topicDecisionFocusNonce: number | undefined;
   isInspectorOpen: boolean;
+  isContextCollapsed: boolean;
   onOpenTopic: (topicId: string) => void;
   onOpenDecisionRecord: (topicId: string) => void;
   onCreateTopic: () => void;
   onOpenManualDecision: () => void;
   onFocusTopicDecision: () => void;
+  onOpenInspector: () => void;
+  onToggleContext: () => void;
   onCloseInspector: () => void;
+  onOpenTaskCreate: (draft: string) => void;
+  onOpenPipelineCreate: (draft: string) => void;
 }
 
 export function WorkspaceMain({
@@ -55,12 +61,17 @@ export function WorkspaceMain({
   decisionFocus,
   topicDecisionFocusNonce,
   isInspectorOpen,
+  isContextCollapsed,
   onOpenTopic,
   onOpenDecisionRecord,
   onCreateTopic,
   onOpenManualDecision,
   onFocusTopicDecision,
+  onOpenInspector,
+  onToggleContext,
   onCloseInspector,
+  onOpenTaskCreate,
+  onOpenPipelineCreate,
 }: WorkspaceMainProps) {
   const { t } = useI18n();
   const { participants, selectedTopic } = content;
@@ -155,7 +166,14 @@ export function WorkspaceMain({
         isClosingTopic={content.isClosingTopic}
         onCloseTopic={() => void content.closeTopic()}
         decisionFocusNonce={topicDecisionFocusNonce}
+        isContextCollapsed={isContextCollapsed}
+        onOpenInspector={onOpenInspector}
+        onToggleContext={onToggleContext}
+        onOpenTaskCreate={onOpenTaskCreate}
+        onOpenPipelineCreate={onOpenPipelineCreate}
       />
+      {/* 桌面端收起后不渲染；窄屏抽屉打开时仍要渲染，否则按钮点了没反应 */}
+      {!isContextCollapsed || isInspectorOpen ? (
       <InspectorPanel
         topic={selectedTopic}
         participants={participants}
@@ -177,6 +195,7 @@ export function WorkspaceMain({
         onCloseRuntimeBinding={(bindingId) => orch.runtimeBindingAction("close", bindingId)}
         onReopenRuntimeBinding={(bindingId) => orch.runtimeBindingAction("reopen", bindingId)}
       />
+      ) : null}
     </>
   );
 }

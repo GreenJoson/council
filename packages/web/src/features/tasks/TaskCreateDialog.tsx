@@ -2,7 +2,8 @@
  * @input  依赖：界面语言、打开状态、TaskRepository.createTask、kind 文案与可建 kind 列表、BriefEditor 与 brief-form
  * @output 导出：TaskCreateDialog —— 原生 <dialog> 新建任务表单（标题必填、说明、kind、优先级；
  *         image 任务可勾选「附带简报」用 BriefEditor 编写 council-brief，本地校验通过才提交）
- * @pos    任务列表的直接任务入口；创建成功把新行交给调用方（负责导航到 #/tasks/<id>），失败（含同项目重名 409）留在表单内显示
+ * @pos    任务列表的直接任务入口，也由 App 壳从讨论编辑器「派任务」打开并以 initialTitle 带入草稿首行；
+ *         创建成功把新行交给调用方（负责导航到 #/tasks/<id>），失败（含同项目重名 409）留在表单内显示
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,11 +22,13 @@ import { CREATABLE_KINDS, KIND_LABELS } from "./task-labels";
 export interface TaskCreateDialogProps {
   isOpen: boolean;
   repository: TaskRepository;
+  /** 打开瞬间预填的标题（讨论编辑器草稿首行）；只在从关到开时应用，不覆盖用户已改的输入 */
+  initialTitle?: string;
   onClose: () => void;
   onCreated: (task: CouncilWorkItem) => void;
 }
 
-export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: TaskCreateDialogProps) {
+export function TaskCreateDialog({ isOpen, repository, initialTitle, onClose, onCreated }: TaskCreateDialogProps) {
   const { t } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [title, setTitle] = useState("");
@@ -44,11 +47,14 @@ export function TaskCreateDialog({ isOpen, repository, onClose, onCreated }: Tas
     if (!dialog) return;
     if (isOpen && !dialog.open) {
       setError(null);
+      if (initialTitle) setTitle(initialTitle);
       dialog.showModal();
     }
     if (!isOpen && dialog.open) {
       dialog.close();
     }
+    // initialTitle 只在打开瞬间读一次，刻意不作为依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const parsedPriority = Number(priority);

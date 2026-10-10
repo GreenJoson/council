@@ -9,7 +9,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Archive, Check, CheckCircle2, Copy, FileCheck2 } from "lucide-react";
+import { Archive, Check, CheckCircle2, Copy, FileCheck2, PanelRight, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type {
   CouncilMessage,
@@ -74,6 +74,14 @@ export interface DiscussionPanelProps {
   onCloseTopic: () => void;
   /** 右栏「查看全文」发来的切换请求；nonce 变化即一次新请求，同一议题重复点也生效 */
   decisionFocusNonce?: number;
+  /** 桌面端上下文栏是否已收起；配合 onToggleContext 在头部给出收起/展开按钮 */
+  isContextCollapsed?: boolean;
+  /** ≤1260px 时把上下文栏作为抽屉打开（按钮只在窄屏显示） */
+  onOpenInspector?: () => void;
+  onToggleContext?: () => void;
+  /** 编辑器「派任务 / 起流水线」切换：把当前草稿交给壳层打开对应对话框 */
+  onOpenTaskCreate?: (draft: string) => void;
+  onOpenPipelineCreate?: (draft: string) => void;
 }
 
 type DiscussionTab = "discussion" | "decision" | "tasks" | "metadata";
@@ -122,6 +130,11 @@ export function DiscussionPanel({
   isClosingTopic,
   onCloseTopic,
   decisionFocusNonce,
+  isContextCollapsed = false,
+  onOpenInspector,
+  onToggleContext,
+  onOpenTaskCreate,
+  onOpenPipelineCreate,
 }: DiscussionPanelProps) {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<DiscussionTab>("discussion");
@@ -365,6 +378,22 @@ export function DiscussionPanel({
                 />
               ))}
             </div>
+            {onOpenInspector ? (
+              <button className="icon-button inspector-mobile-button" type="button"
+                aria-label={t("打开议题摘要")} title={t("上下文")} onClick={onOpenInspector}>
+                <PanelRight size={17} aria-hidden="true" />
+              </button>
+            ) : null}
+            {onToggleContext ? (
+              <button className="icon-button inspector-desktop-toggle" type="button"
+                aria-pressed={!isContextCollapsed}
+                aria-label={t(isContextCollapsed ? "展开议题摘要" : "收起议题摘要")}
+                title={t(isContextCollapsed ? "展开议题摘要" : "收起议题摘要")} onClick={onToggleContext}>
+                {isContextCollapsed
+                  ? <PanelRightOpen size={17} aria-hidden="true" />
+                  : <PanelRightClose size={17} aria-hidden="true" />}
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="topic-question">
@@ -494,6 +523,8 @@ export function DiscussionPanel({
             topicId={topic.id}
             orchestration={orchestration}
             orchestrationBusyAction={orchestrationBusyAction}
+            onOpenTaskCreate={onOpenTaskCreate}
+            onOpenPipelineCreate={onOpenPipelineCreate}
           />
         </>
       ) : activeTab === "decision" ? (
