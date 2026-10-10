@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界与直接任务闭环检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环与图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import ConsoleMessage, sync_playwright
@@ -846,6 +846,87 @@ with sync_playwright() as playwright:
     assert api_request("GET", "/api/v1/topics", None)["total"] == topics_before
     if SCREENSHOT_PATH:
         page.screenshot(path=str(Path(SCREENSHOT_PATH).with_name("direct-task-completed.png")), full_page=True)
+
+    # 图像委派闭环：Codex（替身）生图 -> 三路收集按 sha256 去重入库 -> 以 output 角色挂到任务；
+    # 监督者省略时取默认 Claude，completionPolicy 强制 human，工作项停在 in_progress 等人工验收。
+    router_snapshot = api_request("GET", "/api/v1/settings/model-router")
+    codex_provider = next(provider for provider in router_snapshot["providers"] if provider["protocol"] == "codex-cli")
+    if codex_provider["status"] != "active":
+        api_request("PUT", f"/api/v1/settings/providers/{codex_provider['id']}", {
+            "displayName": codex_provider["displayName"], "brandAssetId": codex_provider["brandAssetId"],
+            "active": True,
+        })
+    codex_agent = next(agent for agent in router_snapshot["agents"] if agent["providerId"] == codex_provider["id"])
+    api_request("PUT", f"/api/v1/settings/agents/{codex_agent['id']}", {
+        "displayName": codex_agent["displayName"], "model": codex_agent["model"],
+        "mentionAlias": codex_agent["mentionAlias"], "enabled": True,
+        "permissionProfile": "workspace_write", "executionRole": "executor",
+    })
+    image_brief = {
+        "schemaVersion": 1, "kind": "custom", "goal": "图像委派闭环验收",
+        "deliverables": [{"id": "hero", "description": "首页主视觉占位图", "size": "1024x1024"}],
+        "acceptance": ["产物入库并挂到任务"],
+    }
+    image_task = api_request("POST", "/api/v1/tasks", {
+        "projectPath": PROJECT_PATH, "title": "图像委派闭环", "kind": "image", "brief": image_brief,
+    })
+    assert image_task["kind"] == "image", image_task
+    # 执行者不是 Codex 时固定拒绝，且不留下委派记录。
+    rejected = api_expect_error("POST", f"/api/v1/tasks/{image_task['id']}/delegations", 400, {
+        "expectedVersion": image_task["version"], "executorAgentId": completed["executorAgentId"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "产物入库", "completionPolicy": "human",
+        "kind": "image", "inputAssetIds": [],
+    })
+    assert "生图需要本机 ChatGPT 登录的 Codex" in rejected["message"], rejected
+    assert api_request("GET", f"/api/v1/tasks/{image_task['id']}/delegations") == []
+    api_request("POST", f"/api/v1/tasks/{image_task['id']}/delegations", {
+        "expectedVersion": image_task["version"], "executorAgentId": codex_agent["id"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "产物入库", "completionPolicy": "review",
+        "kind": "image", "inputAssetIds": [],
+    })
+    image_done = wait_task_delegation(image_task["id"], "approved")
+    assert image_done["kind"] == "image" and image_done["completionPolicy"] == "human", image_done
+    assert image_done["supervisorAgentId"] == completed["executorAgentId"], image_done
+    assert image_done["headCommit"] == image_done["baseCommit"], image_done
+    manifest_outputs = image_done["outputManifest"]["outputs"]
+    assert manifest_outputs and all(not item["path"].startswith("/") for item in manifest_outputs), image_done
+    image_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{image_task['id']}")
+    assert image_assets["total"] >= 2 and all(asset["kind"] == "image" for asset in image_assets["items"]), image_assets
+    content_request = Request(
+        f"{API_URL}/api/v1/assets/{image_assets['items'][0]['id']}/content", headers={"Origin": WEB_ORIGIN},
+    )
+    with LOCAL_OPENER.open(content_request, timeout=5) as response:
+        assert response.headers.get_content_type() == "image/png", response.headers
+        assert response.read(8) == b"\x89PNG\r\n\x1a\n"
+    image_item = api_request("GET", f"/api/v1/tasks/{image_task['id']}")["task"]
+    assert image_item["status"] == "in_progress" and "等待人工验收" in image_item["statusNote"], image_item
+    # 投递目录 .council/ 已写入 exclude，项目工作区保持干净。
+    council_status = subprocess.run(
+        ["git", "-C", PROJECT_PATH, "status", "--porcelain", "--", ".council"],
+        check=True, capture_output=True, text=True,
+    )
+    assert council_status.stdout == "", council_status.stdout
+    # 第二轮：先经 PUT 写入 brief，再以首轮产物作参考图委派；同内容产物按 sha256 去重仍挂到新任务。
+    variant_task = api_request("POST", "/api/v1/tasks", {
+        "projectPath": PROJECT_PATH, "title": "图像变体闭环", "kind": "image",
+    })
+    variant_task = api_request("PUT", f"/api/v1/tasks/{variant_task['id']}", {
+        "status": variant_task["status"], "expectedVersion": variant_task["version"],
+        "brief": {**image_brief, "goal": "基于参考图出变体"},
+    })
+    assert variant_task["brief"]["goal"] == "基于参考图出变体", variant_task
+    reference_id = image_assets["items"][0]["id"]
+    api_request("POST", f"/api/v1/tasks/{variant_task['id']}/delegations", {
+        "expectedVersion": variant_task["version"], "executorAgentId": codex_agent["id"],
+        "requestedPermission": "workspace_write", "acceptanceCriteria": "变体入库", "completionPolicy": "human",
+        "kind": "image", "inputAssetIds": [reference_id],
+    })
+    variant_done = wait_task_delegation(variant_task["id"], "approved")
+    assert variant_done["inputAssetIds"] == [reference_id], variant_done
+    variant_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{variant_task['id']}")
+    assert variant_assets["total"] >= 2, variant_assets
+    first_ids = {asset["id"] for asset in image_assets["items"]}
+    assert {asset["id"] for asset in variant_assets["items"]} == first_ids, (variant_assets, first_ids)
     page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 
     second_topic = api_request(
