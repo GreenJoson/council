@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件、Zod、RevisionEventStream、项目文件预览服务与 routes/ 下各路由模块
- * @output 导出：含 schema ready、服务停止、SSE 事件流，并按顺序挂载设置/议题/实施项/任务/资产/流水线/编排路由模块与脱敏错误处理的应用工厂
+ * @output 导出：含 schema ready、服务停止、SSE 事件流，并按顺序挂载设置/客户端接入/议题/实施项/任务/资产/流水线/编排路由模块与脱敏错误处理的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -42,6 +42,7 @@ import { RevisionEventStream } from "./revision-stream.js";
 import { eventsQuerySchema } from "./schemas.js";
 import { parse, type HttpRouteContext } from "./routes/context.js";
 import { registerSettingsRoutes } from "./routes/settings-routes.js";
+import { registerClientConfigRoutes } from "./routes/client-config-routes.js";
 import { registerTopicRoutes } from "./routes/topic-routes.js";
 import { registerWorkItemRoutes } from "./routes/work-item-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
@@ -222,6 +223,7 @@ export function createCouncilHttpApp(
   // 路由模块的注册顺序与拆分前的内联顺序一致，Express 按注册顺序匹配。
   const context: HttpRouteContext = { config, database, orchestration, projectFiles };
   registerSettingsRoutes(app, context);
+  registerClientConfigRoutes(app, context);
   registerTopicRoutes(app, context);
   registerWorkItemRoutes(app, context);
   registerTaskRoutes(app, context);

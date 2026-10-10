@@ -1,6 +1,6 @@
 /**
- * @input  依赖：COUNCIL_DATA_DIR、schema 迁移、COUNCIL_HTTP_* 与 COUNCIL_ASSET_* 环境变量
- * @output 导出：经过 Zod 校验且含文件预览预算、v19 资产库配置与迁移重试策略的 CouncilHttpConfig
+ * @input  依赖：COUNCIL_DATA_DIR、schema 迁移、COUNCIL_HTTP_*、COUNCIL_ASSET_* 与 COUNCIL_CLIENT_CONFIG_* 环境变量
+ * @output 导出：经过 Zod 校验且含文件预览预算、v19 资产库配置、客户端配置分发设置与迁移重试策略的 CouncilHttpConfig
  * @pos    本地 HTTP 服务的唯一配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,7 +14,7 @@ import {
   MAX_ORCHESTRATION_PLAN_ROUNDS,
   MAX_ORCHESTRATION_STARTUP_SCAN,
 } from "../constants.js";
-import { isLoopbackHost, loadAssetConfig } from "../config.js";
+import { isLoopbackHost, loadAssetConfig, loadClientConfigSettings } from "../config.js";
 import type { CouncilHttpConfig } from "../types.js";
 import { loadProjectFilePreviewConfig } from "../project-file-preview-config.js";
 
@@ -135,6 +135,7 @@ export function loadHttpConfig(env: NodeJS.ProcessEnv = process.env): CouncilHtt
   return {
     filePreview: loadProjectFilePreviewConfig(env),
     assets: loadAssetConfig(env, dataDir),
+    clientConfig: loadClientConfigSettings(env, dataDir),
     databasePath: path.join(dataDir, "council.sqlite3"),
     sqliteBusyTimeoutMs: parsed.data.COUNCIL_SQLITE_BUSY_TIMEOUT_MS,
     schemaMigrationMaxAttempts:
