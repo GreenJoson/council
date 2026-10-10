@@ -8,9 +8,11 @@
  *         一次性调用不持锁（锁内置 running → 锁外调用 → 锁内重读，已取消或 startedAt 变了就丢弃结果）；
  *         委派在锁内发起并写回 delegationId，因此终态回调总能在锁后看到对应阶段；
  *         复盘范围 = 图像委派 outputManifest.assetIds（resume 重跑不把上一次失败尝试入库的产物混进本轮），
- *         每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑；
+ *         产物按清单顺序列出（资产表同毫秒入库的顺序会抖动），每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑；
  *         brief 指令与草稿校验都带单次生图上限 maxImageOutputs（交付物合计超过即 brief_invalid，可 resume 重写）；
- *         原型阶段停在交接类失败（execution_checkpoint 等）时 resume 走委派接续，保留隔离工作区里的工作，不从头重做
+ *         原型阶段停在交接类失败（execution_checkpoint 等）或审核类失败（review_revision_limit / review_incomplete）时 resume 走委派接续，保留隔离工作区里的工作与审核意见，不从头重做
+ *         原型委派的权限档来自配置 prototypePermission（默认 workspace_write，可放宽为 danger_full_access 让执行者自行起服务验证）
+ *         修订简报以确认后的原 brief 为基线，只带本轮复盘的改法（不逐轮累加撞协议上限，goal 前缀不嵌套）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,7 +23,7 @@ import { logger } from "../logger.js";
 import { readImageOutputManifest } from "../orchestration/delegation-image-execution.js";
 import type { StartWorkItemDelegationInput } from "../orchestration/work-item-delegation-manager.js";
 import type { WorkItemDelegation } from "../orchestration/work-item-delegation-store.js";
-import type { WorkItem } from "../types.js";
+import type { PipelinePrototypePermission, WorkItem } from "../types.js";
 import { parseCouncilBrief, type CouncilBrief } from "./brief-protocol.js";
 import {
   buildRevisionBrief,
@@ -82,14 +84,22 @@ export interface PipelineDelegationPort {
 type OneShotStage = "brief" | "review";
 
 const TERMINAL_DELEGATION = new Set<WorkItemDelegation["status"]>(["approved", "failed", "cancelled"]);
-/** 流水线派发的委派一律 workspace_write：图像只写 `.council/out`，原型在隔离工作树内改代码。 */
-const DELEGATION_PERMISSION = "workspace_write" as const;
-/** 代码委派把工作存在隔离工作区后停下的失败码：重试时接续而不是重新委派。 */
+/**
+ * 图像委派一律 workspace_write（只写 `.council/out`）；原型默认也是这一档，可经配置放宽为 danger_full_access
+ * 让执行者自行起服务与浏览器验证，实际权限仍与执行 Agent 的权限档取交集。
+ */
+const IMAGE_DELEGATION_PERMISSION = "workspace_write" as const;
+/**
+ * 代码委派把工作存在隔离工作区后停下的失败码：重试时接续而不是重新委派。
+ * 审核类失败（修订轮次用尽、审核未确认补查）同样保留了提交与审核意见，接续时执行者按上次审核继续改，不从头重做。
+ */
 const CHECKPOINT_FAILURES = new Set([
   "execution_checkpoint",
   "execution_time_limit",
   "execution_segment_limit",
   "execution_no_progress",
+  "review_revision_limit",
+  "review_incomplete",
 ]);
 const MAX_ERROR_MESSAGE = 1_000;
 const HUMAN = "human";
@@ -131,6 +141,8 @@ export class PipelineDriver {
   readonly #maxRevisions: number;
   /** 单次图像委派能入库的张数；brief 指令告知模型，草稿与人工确认都按它校验。 */
   readonly #maxImageOutputs: number;
+  /** 原型代码委派请求的权限档（COUNCIL_PIPELINE_PROTOTYPE_PERMISSION）。 */
+  readonly #prototypePermission: PipelinePrototypePermission;
   /** pipelineId → 正在进行的一次性调用；取消与停机时中止。 */
   readonly #inflight = new Map<string, AbortController>();
   #unsubscribe: (() => void) | undefined;
@@ -142,12 +154,14 @@ export class PipelineDriver {
     delegations: PipelineDelegationPort;
     maxRevisions: number;
     maxImageOutputs: number;
+    prototypePermission: PipelinePrototypePermission;
   }) {
     this.#store = deps.store;
     this.#agents = deps.agents;
     this.#delegations = deps.delegations;
     this.#maxRevisions = deps.maxRevisions;
     this.#maxImageOutputs = deps.maxImageOutputs;
+    this.#prototypePermission = deps.prototypePermission;
   }
 
   /** 订阅委派终态并做一次启动对账；须在委派管理器初始化（含恢复）之后调用。 */
@@ -390,7 +404,9 @@ export class PipelineDriver {
     const manifest = imageStage.delegationId
       ? readImageOutputManifest(this.#delegations.get(imageStage.delegationId)?.outputManifest)
       : undefined;
-    const assets = manifest ? linked.filter((asset) => manifest.assetIds.includes(asset.id)) : linked;
+    // 按清单顺序（同交付物声明顺序）列给复盘者：资产表按入库时间倒序、同一毫秒入库的几张再按 id 排，顺序会抖动。
+    const byId = new Map(linked.map((asset) => [asset.id, asset] as const));
+    const assets = manifest ? manifest.assetIds.flatMap((id) => byId.get(id) ?? []) : linked;
     if (assets.length === 0) throw new PipelineProtocolError("review_invalid", "本轮没有可复盘的产物。");
     return {
       childId: child.id,
@@ -434,7 +450,9 @@ export class PipelineDriver {
       return;
     }
     const revisionCount = document.revisionCount + 1;
-    const revision = buildRevisionBrief(inputs.brief, review);
+    // 以确认后的原 brief 为基线，而不是上一轮修订简报：否则每轮改法都累加进 constraints，撞到协议上限后
+    // 最新一轮的改法会被整轮丢弃，goal 的「【修订】…原目标：」前缀也会层层嵌套。
+    const revision = buildRevisionBrief(document.brief ?? inputs.brief, review);
     this.#store.write(pipelineId, ({ document: current }) => ({
       ...withStage(current, "review", { status: "pending" }, at),
       reviews: [...current.reviews, record],
@@ -486,15 +504,16 @@ export class PipelineDriver {
     const startedAt = now();
     try {
       const child = this.#store.database.getWorkItem(childId);
+      const permission = stageId === "image" ? IMAGE_DELEGATION_PERMISSION : this.#prototypePermission;
       const base = {
         workItemId: childId,
         expectedVersion: child.version,
-        requestedPermission: DELEGATION_PERMISSION,
+        requestedPermission: permission,
         inputAssetIds: [...inputAssetIds],
       };
       const prototype = document.agents.prototype;
       const delegation = resumeFromId
-        ? await this.#delegations.resume(resumeFromId, child.version, DELEGATION_PERMISSION)
+        ? await this.#delegations.resume(resumeFromId, child.version, permission)
         : await this.#delegations.start(stageId === "image"
           ? { ...base, kind: "image", executorAgentId: document.agents.image }
           : {

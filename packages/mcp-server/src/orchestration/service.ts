@@ -663,6 +663,7 @@ export function createProductionOrchestrationService(
       // brief 交付物合计不得超过单次图像委派能入库的张数，与委派管理器的 imageMaxOutputs 同源。
       maxImageOutputs: councilConfig.codexImageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     },
+    prototypePermission: councilConfig.pipelinePrototypePermission ?? "workspace_write",
   }));
   return service;
 }

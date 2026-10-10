@@ -3,7 +3,7 @@
  * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
- *         修订 brief 生成 buildRevisionBrief（只保留不合格交付物，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
+ *         修订 brief 生成 buildRevisionBrief（以原 brief 为基线只保留不合格交付物并带本轮改法，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
  * @pos    流水线驱动状态的协议正本：纯函数，不起进程、不读写数据库；与 brief-protocol 同一严格度
  *         （未知字段拒绝、尾块取最后一个围栏、损坏即失败关闭）
  *
@@ -362,6 +362,7 @@ export function parseCouncilReview(
 /**
  * 修订子任务的 brief：只保留不合格交付物，change 追加进 style.constraints（到 brief 协议上限即停止追加）；
  * 返回修订 brief 与要作为输入的原图资产 id（不超过委派输入上限 8 张）。
+ * 调用方应传确认后的原 brief 而不是上一轮修订简报，否则改法逐轮累加、goal 前缀嵌套。
  */
 export function buildRevisionBrief(
   brief: CouncilBrief,

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限、v19 资产库的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限与原型权限档、v19 资产库的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -36,6 +36,8 @@ export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
 export type AssetKind = (typeof ASSET_KINDS)[number];
 export type AssetLinkTargetKind = (typeof ASSET_LINK_TARGET_KINDS)[number];
 export type AssetLinkRole = (typeof ASSET_LINK_ROLES)[number];
+/** 流水线原型委派可请求的权限档：默认沙箱写盘；danger_full_access 让 Codex 不带沙箱运行以便自行起服务与浏览器验证。 */
+export type PipelinePrototypePermission = "workspace_write" | "danger_full_access";
 
 export interface CouncilConfig {
   dataDir: string;
@@ -57,6 +59,8 @@ export interface CouncilConfig {
   /** P3 流水线：模板阶段数上限与复盘后自动修订轮数上限。 */
   pipelineMaxStages?: number;
   pipelineMaxRevisions?: number;
+  /** P3 原型代码委派请求的权限档（默认 workspace_write）；实际权限仍与执行 Agent 的权限档取交集。 */
+  pipelinePrototypePermission?: PipelinePrototypePermission;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;

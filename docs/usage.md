@@ -215,7 +215,7 @@ MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 
 `COUNCIL_ASSET_MAX_TOTAL_BYTES` 限制；文件按内容哈希存放在 `COUNCIL_ASSET_DIR`（留空为日志库下的 `assets` 子目录），
 缩略图由 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 生成并缓存。资产只属于一个项目，跨项目不可见。
 
-流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）可在 `.env` 调整。
+流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）与原型委派权限档 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`（默认 `workspace_write`）可在 `.env` 调整。
 
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
@@ -433,7 +433,7 @@ codex login status
 
 ### 流水线创建返回 409 或 503
 
-`503 流水线需要本地 Agent 服务，当前未启用。` 表示桌面 app 或 `start:http` 没有在运行，先启动再试。`409` 带 Agent 提示时按文案处理：写简报与复盘需要已启用、已填写模型且可用的 Claude CLI（Claude Agent 模型留空时不算可用，先在“模型与 Provider 设置”里填写），出图需要通过生图探针（本机 ChatGPT 登录）的 Codex，可在“模型与 Provider 设置”里启用后重试，或在新建对话框里显式指定。确认简报返回 `400` 时按字段路径修改简报（规则同图像任务；交付物 count 合计不能超过 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`，默认 16 张，Claude 写的草稿超限会直接让 brief 阶段失败，“恢复”即重写）；阶段显示“失败”时先看阶段错误码：`image_unavailable` 带 Codex 侧原因，其中“生图超时”按每张约 1 分钟估算，交付物多时调大 `COUNCIL_CODEX_IMAGE_TIMEOUT_MS`（默认 15 分钟）或在简报里减张数，`outputs_missing` 多为 Codex 只给了清单没写文件，`manifest_invalid` 是清单损坏或答非所问（已找到的图仍会入库挂在出图子任务上，但复盘只看重跑后那一次的产物，之前的图只出现在并排对比里），`interrupted` 是服务重启时该阶段正在跑，三者都可直接“恢复”；原型阶段的 `execution_checkpoint`（以及 `execution_no_progress` 等交接类错误）表示 Agent 已把代码存在隔离工作区并停下，常见原因是沙箱不允许起服务或浏览器做验证，“恢复”会从交接点接续而不是重做，接续后仍做不了的验证留到人工验收时手工检查；复盘轮数用尽会停在“选定”等你定夺。
+`503 流水线需要本地 Agent 服务，当前未启用。` 表示桌面 app 或 `start:http` 没有在运行，先启动再试。`409` 带 Agent 提示时按文案处理：写简报与复盘需要已启用、已填写模型且可用的 Claude CLI（Claude Agent 模型留空时不算可用，先在“模型与 Provider 设置”里填写），出图需要通过生图探针（本机 ChatGPT 登录）的 Codex，可在“模型与 Provider 设置”里启用后重试，或在新建对话框里显式指定。确认简报返回 `400` 时按字段路径修改简报（规则同图像任务；交付物 count 合计不能超过 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`，默认 16 张，Claude 写的草稿超限会直接让 brief 阶段失败，“恢复”即重写）；阶段显示“失败”时先看阶段错误码：`image_unavailable` 带 Codex 侧原因，其中“生图超时”按每张约 1 分钟估算，交付物多时调大 `COUNCIL_CODEX_IMAGE_TIMEOUT_MS`（默认 15 分钟）或在简报里减张数，`outputs_missing` 多为 Codex 只给了清单没写文件，`manifest_invalid` 是清单损坏或答非所问（已找到的图仍会入库挂在出图子任务上，但复盘只看重跑后那一次的产物，之前的图只出现在并排对比里），`interrupted` 是服务重启时该阶段正在跑，三者都可直接“恢复”；原型阶段的 `execution_checkpoint`（以及 `execution_no_progress` 等交接类错误）表示 Agent 已把代码存在隔离工作区并停下，常见原因是沙箱不允许起服务或浏览器做验证，“恢复”会从交接点接续而不是重做（`review_revision_limit`：Agent 审核在修订轮次内没通过，提交与审核意见都保留，“恢复”同样接续原工作区按上次审核继续改）；原型任务说明已要求 Agent 遇到沙箱拒绝时不停下等放行、把未验证项写进收尾说明交人工验收，要让 Agent 自己起服务和浏览器验证，可把 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION` 设为 `danger_full_access`（Codex 将不带沙箱运行，执行 Agent 的权限档也得是该档，只建议在隔离机器上开）；复盘轮数用尽会停在“选定”等你定夺。
 
 ### `@claude` 已识别但运行失败
 

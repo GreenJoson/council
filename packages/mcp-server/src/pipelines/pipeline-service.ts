@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase（父任务/子任务/资产）、PipelineStateStore 与 PipelineDriver（锁与阶段推进）、
- *         Agent 候选目录（默认 Agent 选择）、委派端口、模板与文档协议、参考图校验
+ *         Agent 候选目录（默认 Agent 选择）、委派端口、模板与文档协议、参考图校验、原型委派权限档（prototypePermission）
  * @output 导出：PipelineService（create/list/get/confirmBrief/selectFinal/resume/cancel 与生命周期）、
  *         PipelineSummary、PipelineDetail、CreatePipelineInput、PipelineAgentCatalog
  * @pos    流水线用例层：校验人工输入（版本、阶段可操作性、brief 模板约束与交付物合计 ≤ 单次生图上限、终稿归属与数量上限、Agent 可用性）后交给驱动器推进；
@@ -15,7 +15,7 @@ import { CouncilConflictError, CouncilValidationError } from "../errors.js";
 import { validateInputImageAssets } from "../orchestration/delegation-task-resolver.js";
 import type { AgentCandidate } from "../orchestration/product-service.js";
 import { normalizeProjectPath } from "../project-path.js";
-import type { WorkItem } from "../types.js";
+import type { PipelinePrototypePermission, WorkItem } from "../types.js";
 import {
   PipelineDriver,
   type PipelineAgentPort,
@@ -113,6 +113,8 @@ export class PipelineService {
     agents: PipelineAgentPort & PipelineAgentCatalog;
     delegations: PipelineDelegationPort;
     limits: { maxStages: number; maxRevisions: number; maxImageOutputs: number };
+    /** 原型代码委派请求的权限档；缺省 workspace_write（手工构造的调用方与测试夹具不必关心）。 */
+    prototypePermission?: PipelinePrototypePermission;
   }) {
     this.#database = deps.database;
     this.#store = new PipelineStateStore(deps.database);
@@ -126,6 +128,7 @@ export class PipelineService {
       // 文档 reviews 最多 32 条（修订轮数 + 1），上限据此收紧。
       maxRevisions: Math.min(deps.limits.maxRevisions, MAX_PIPELINE_REVISIONS),
       maxImageOutputs: deps.limits.maxImageOutputs,
+      prototypePermission: deps.prototypePermission ?? "workspace_write",
     });
   }
 

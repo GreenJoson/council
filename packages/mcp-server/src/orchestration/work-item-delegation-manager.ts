@@ -2,6 +2,7 @@
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git、委派账本与任务上下文解析
  * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复（沿用原 kind 与输入图）、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
+ *         审核提示词写明 approved 时 findings 必须为空（解析器会把带 findings 的 approved 改判 changes_requested），非阻断建议与人工验证项进 summary
  *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
  *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
  *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
@@ -1045,6 +1046,7 @@ export class WorkItemDelegationManager {
           "只返回一个 JSON 对象，不要 Markdown：",
           '{"verdict":"approved|changes_requested|blocked","summary":"结论","findings":["可执行问题"],"inspectedFiles":["已只读补查完整变更的相对路径"]}',
           "无法读取或补查必要证据时返回 blocked；changes_requested 仅用于已核实的实现问题。",
+          "approved 时 findings 必须为空：findings 里出现任何条目都会按 changes_requested 处理。非阻断建议、顺手可做的小改进，以及只能由人工或在有浏览器、能起服务的环境里验证的项目都不是 findings，逐条写进 summary 留给人工验收；执行环境限制（沙箱不能监听端口、起浏览器）本身不是实现缺陷。",
           "",
           `验收标准：${delegation!.acceptanceCriteria}`,
           `当前任务与约束（不能依赖旧会话是否仍在）：\n${task.context}`,

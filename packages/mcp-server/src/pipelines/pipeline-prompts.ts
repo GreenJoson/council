@@ -1,7 +1,7 @@
 /**
  * @input  依赖：brief-protocol（CouncilBrief 与协议常量）、templates（模板要求）、pipeline-document（围栏名与请求类型）
  * @output 导出：brief 阶段指令 renderBriefInstruction（告知单次生图上限与每张约 1 分钟的时间预算）、review 阶段指令 renderReviewInstruction、
- *         原型子任务说明 renderPrototypeDetails，以及指令首行机器标记常量
+ *         原型子任务说明 renderPrototypeDetails（告知沙箱限制：做不了的验证不停下等放行，列入收尾说明交人工），以及指令首行机器标记常量
  * @pos    流水线一次性 Agent 调用的提示词正本：纯函数，不读写文件；所有用户输入作为「数据」段给出，
  *         不覆盖工作规则；路径一律相对项目根目录（`.council/in/…`），不出现绝对路径；
  *         复盘产物行带生图清单标注的 deliverableId 提示，复盘者直接沿用而不必自己猜对应关系
@@ -133,6 +133,10 @@ export function renderPrototypeDetails(goal: string, brief: CouncilBrief): strin
     list(brief.acceptance, "- 与选定设计稿一致"),
     "",
     "选定的设计稿已作为输入图提供（见任务上下文中的相对路径）。",
+    "",
+    "执行环境说明：",
+    "- 代码在沙箱里运行，通常不允许监听端口、启动浏览器或安装系统级依赖；遇到这类拒绝不要停下等待放行，也不要以 canContinue:false 交接。",
+    "- 改用静态检查（语法、数据逻辑、结构与样式核对）完成实现并收尾，把未能实际验证的项目逐条写进收尾说明，留给人工验收时手工检查。",
   ].join("\n");
   return text.length <= MAX_DETAILS_CHARS ? text : `${text.slice(0, MAX_DETAILS_CHARS - 1)}…`;
 }
