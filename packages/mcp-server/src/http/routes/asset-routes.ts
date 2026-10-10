@@ -1,40 +1,44 @@
 /**
  * @input  依赖：HttpRouteContext（CouncilDatabase、HTTP 配置中的资产配置）、assets/AssetService、Zod schema 与统一响应
- * @output 导出：注册资产库 REST（列表、详情、原始内容、缩略图、项目内导入、链接增删、软删除）的 registerAssetRoutes
- * @pos    /api/v1/assets：资产字节只经这里出站，响应头固定 no-store/nosniff，SVG 额外加沙箱 CSP；
+ * @output 导出：注册资产库 REST（列表、详情、原始内容、缩略图、项目内导入、浏览器上传图片、本机图片入库、链接增删、软删除）的 registerAssetRoutes
+ * @pos    /api/v1/assets：资产字节经 sendInlineBytes 出站（no-store/nosniff，SVG 沙箱 CSP）；
+ *         upload 用路由级 raw 解析、上限与单文件配额一致，upload/ingest 只收 image 种类；
  *         入库拒绝原因按 AssetRejectedError 原因码映射为 403/404/413/415/507。写入沿用 council.changed
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import path from "node:path";
-import type { Express, Response } from "express";
+import express, { type Express, type Response } from "express";
 import { AssetRejectedError, assetRejectHttpStatus } from "../../assets/asset-errors.js";
+import type { IngestResult } from "../../assets/asset-ingest.js";
 import type { AssetPayload } from "../../assets/asset-preview.js";
 import { AssetService } from "../../assets/asset-service.js";
 import { loadAssetConfig } from "../../config.js";
-import { HttpError, sendSuccess } from "../responses.js";
+import { HttpError, sendInlineBytes, sendSuccess } from "../responses.js";
 import {
   addAssetLinkBodySchema,
   assetLinkParamsSchema,
   assetParamsSchema,
   importAssetBodySchema,
+  ingestAssetBodySchema,
   listAssetsQuerySchema,
+  uploadAssetQuerySchema,
 } from "../schemas.js";
 import { parse, type HttpRouteContext } from "./context.js";
 
-const SVG_MIME = "image/svg+xml";
-
 function sendPayload(response: Response, payload: AssetPayload): void {
-  response.setHeader("Content-Type", payload.mime);
-  response.setHeader("Content-Disposition", `inline; filename="${payload.filename}"`);
-  response.setHeader("Cache-Control", "no-store");
-  response.setHeader("X-Content-Type-Options", "nosniff");
-  if (payload.mime === SVG_MIME) {
-    // SVG 可内嵌脚本：沙箱化并禁止脚本，即使被直接打开也不会在同源执行。
-    response.setHeader("Content-Security-Policy", "sandbox; script-src 'none'");
-  }
-  response.status(200).end(payload.bytes);
+  sendInlineBytes(response, payload);
+}
+
+/** 入库结果：命中去重返回 200 与既有资产，新建返回 201。 */
+function sendIngestResult(response: Response, result: IngestResult, createdMessage: string): void {
+  sendSuccess(
+    response,
+    result.asset,
+    result.deduplicated ? "项目中已有相同内容的资产。" : createdMessage,
+    result.deduplicated ? 200 : 201,
+  );
 }
 
 /** 入库拒绝细化为具体状态码；其它错误交给统一错误中间件。 */
@@ -48,10 +52,8 @@ function rethrowAssetError(error: unknown): never {
 export function registerAssetRoutes(app: Express, context: HttpRouteContext): void {
   const { config, database } = context;
   // 测试夹具手工构造 HTTP 配置时没有 assets，按数据库所在目录回落到默认资产配置。
-  const assets = new AssetService(
-    database,
-    config.assets ?? loadAssetConfig({}, path.dirname(config.databasePath)),
-  );
+  const assetConfig = config.assets ?? loadAssetConfig({}, path.dirname(config.databasePath));
+  const assets = new AssetService(database, assetConfig);
 
   app.get("/api/v1/assets", (request, response) => {
     const query = parse(listAssetsQuerySchema, request.query);
@@ -72,12 +74,40 @@ export function registerAssetRoutes(app: Express, context: HttpRouteContext): vo
       relativePath: input.relativePath,
       actorId: "human",
     }).catch(rethrowAssetError);
-    sendSuccess(
-      response,
-      result.asset,
-      result.deduplicated ? "项目中已有相同内容的资产。" : "资产已导入。",
-      result.deduplicated ? 200 : 201,
-    );
+    sendIngestResult(response, result, "资产已导入。");
+  });
+
+  // 浏览器上传（编辑器粘贴 / 文件选择）：正文是原始图片字节，全局 JSON 解析不会碰非 JSON 类型，
+  // 这里按路由挂 raw 解析；超过单文件上限由 body-parser 直接 413。
+  app.post(
+    "/api/v1/assets/upload",
+    express.raw({ type: () => true, limit: assetConfig.maxBytes }),
+    async (request, response) => {
+      const query = parse(uploadAssetQuerySchema, request.query);
+      const bytes: unknown = request.body;
+      if (!Buffer.isBuffer(bytes) || bytes.byteLength === 0) {
+        throw new HttpError(400, "上传内容为空，请求正文应是图片文件字节。");
+      }
+      const result = await assets.ingestBytes({
+        projectPath: query.project,
+        bytes,
+        origin: { actorId: "human" },
+        acceptKinds: ["image"],
+      }).catch(rethrowAssetError);
+      sendIngestResult(response, result, "图片已加入资产库。");
+    },
+  );
+
+  // 桌面壳：用户在原生选择器里选中的本机图片按绝对路径读入资产库，原文件不复制不移动。
+  app.post("/api/v1/assets/ingest", async (request, response) => {
+    const input = parse(ingestAssetBodySchema, request.body);
+    const result = await assets.ingestFile({
+      projectPath: input.projectPath,
+      sourcePath: input.sourcePath,
+      origin: { actorId: "human" },
+      acceptKinds: ["image"],
+    }).catch(rethrowAssetError);
+    sendIngestResult(response, result, "图片已加入资产库。");
   });
 
   app.get("/api/v1/assets/:assetId", (request, response) => {

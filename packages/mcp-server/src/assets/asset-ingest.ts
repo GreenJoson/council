@@ -1,8 +1,9 @@
 /**
  * @input  依赖：CouncilDatabase（资产查重/新建/恢复）、AssetStorage（落盘与配额）、asset-sniff（MIME 与宽高）、
  *         project-path / project-path-policy（项目锚点规范化与敏感路径判定）
- * @output 导出：AssetIngestor（ingestFile 本机文件入库、importFromProject 项目内相对路径导入）、IngestFileInput、IngestResult
- * @pos    资产入库的唯一入口：图像委派（C）收集产物、REST/MCP 导入都走这里，拒绝规则只有一份。
+ * @output 导出：AssetIngestor（ingestFile 本机文件入库、ingestBytes 内存字节入库、importFromProject 项目内相对路径导入）、
+ *         IngestFileInput、IngestBytesInput、IngestResult
+ * @pos    资产入库的唯一入口：图像委派（C）收集产物、REST/MCP 导入、编辑器上传/粘贴图片都走这里，拒绝规则只有一份。
  *         拒绝符号链接与非普通文件，以文件头嗅探 MIME（不信扩展名），校验白名单、单文件与总配额；
  *         同项目同 sha256 只保留一行，命中时返回既有资产（软删除则恢复）。错误文案不含绝对路径
  *
@@ -18,19 +19,26 @@ import type { CouncilDatabase } from "../database.js";
 import { CouncilValidationError } from "../errors.js";
 import { normalizeProjectPath } from "../project-path.js";
 import { isProtectedProjectRelativePath } from "../project-path-policy.js";
-import type { Asset } from "../types.js";
+import type { Asset, AssetKind } from "../types.js";
 import { AssetRejectedError } from "./asset-errors.js";
 import { assetKindForMime, readImageDimensions, sniffAssetMime } from "./asset-sniff.js";
 import type { AssetStorage } from "./asset-storage.js";
 
-export interface IngestFileInput {
+export interface IngestBytesInput {
   /** 资产所属项目（绝对路径），与 work_items.project_path 同一锚点。 */
   projectPath: string;
-  /** 待入库文件的绝对路径；末级不得是符号链接。 */
-  sourcePath: string;
+  /** 文件完整字节；调用方（HTTP raw body 上限 / 本机读取上限）已限定过大小。 */
+  bytes: Uint8Array;
   origin: { delegationId?: string; actorId?: string };
   /** 已脱敏的生成提示词；超长部分截断。 */
   prompt?: string;
+  /** 限定允许的资产种类（编辑器引用图片时只收 image）；不传则接受整个 MIME 白名单。 */
+  acceptKinds?: readonly AssetKind[];
+}
+
+export interface IngestFileInput extends Omit<IngestBytesInput, "bytes"> {
+  /** 待入库文件的绝对路径；末级不得是符号链接。 */
+  sourcePath: string;
 }
 
 export interface IngestResult {
@@ -110,12 +118,32 @@ export class AssetIngestor {
     if (!path.isAbsolute(input.sourcePath)) {
       throw new CouncilValidationError("待导入文件路径必须是绝对路径。");
     }
-    const bytes = await this.#readRegularFile(input.sourcePath);
+    const { sourcePath, ...rest } = input;
+    const bytes = await this.#readRegularFile(sourcePath);
+    return this.ingestBytes({ ...rest, projectPath, bytes });
+  }
+
+  /**
+   * 内存字节入库：本机文件读取与浏览器上传（粘贴 / 文件选择器）共用的后半段。
+   * 嗅探 MIME → 白名单与种类限定 → 同项目同内容去重（软删除则恢复）→ 配额 → 落盘 → 插入。
+   */
+  async ingestBytes(input: IngestBytesInput): Promise<IngestResult> {
+    const projectPath = normalizeProjectPath(input.projectPath);
+    if (!projectPath) {
+      throw new CouncilValidationError("资产必须归属一个项目目录。");
+    }
+    const { bytes } = input;
     const mime = sniffAssetMime(bytes);
     if (!mime || !this.storage.config.mimeAllowlist.includes(mime)) {
       throw new AssetRejectedError(
         "unsupported_type",
         `文件内容不是允许的资产类型（允许：${this.storage.config.mimeAllowlist.join(", ")}）。`,
+      );
+    }
+    if (input.acceptKinds && !input.acceptKinds.includes(assetKindForMime(mime))) {
+      throw new AssetRejectedError(
+        "unsupported_type",
+        `当前文件类型 ${mime} 不属于本次允许的资产种类（${input.acceptKinds.join("、")}）。`,
       );
     }
     const sha256 = createHash("sha256").update(bytes).digest("hex");

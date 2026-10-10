@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase（assets / asset_links 唯一读写方）、AssetConfig、AssetStorage / AssetIngestor / AssetPreviewer
- * @output 导出：AssetService（list/get/importFromProject/ingestFile/addLink/removeLink/softDelete/content/thumbnail）与 ListAssetsInput
+ * @output 导出：AssetService（list/get/importFromProject/ingestFile/ingestBytes/addLink/removeLink/softDelete/content/thumbnail）与 ListAssetsInput
  * @pos    资产领域用例门面：REST、stdio MCP 与图像委派（C）共用；协议层只做参数适配与状态码映射。
  *         写入经仓储推进内容 revision（v19 触发器），沿用 council.changed，不新增 SSE 事件类型
  *
@@ -18,7 +18,7 @@ import type {
   AssetLinkTargetKind,
   PaginatedAssets,
 } from "../types.js";
-import { AssetIngestor, type IngestFileInput, type IngestResult } from "./asset-ingest.js";
+import { AssetIngestor, type IngestBytesInput, type IngestFileInput, type IngestResult } from "./asset-ingest.js";
 import { AssetPreviewer, type AssetPayload } from "./asset-preview.js";
 import { AssetStorage } from "./asset-storage.js";
 
@@ -68,6 +68,11 @@ export class AssetService {
   /** 图像委派（C）收集产物的入口：本机绝对路径入库并返回去重标志。 */
   ingestFile(input: IngestFileInput): Promise<IngestResult> {
     return this.#ingestor.ingestFile(input);
+  }
+
+  /** 编辑器上传/粘贴的图片字节入库：HTTP raw body 直达，不落临时文件。 */
+  ingestBytes(input: IngestBytesInput): Promise<IngestResult> {
+    return this.#ingestor.ingestBytes(input);
   }
 
   importFromProject(input: { projectPath: string; relativePath: string; actorId?: string }): Promise<IngestResult> {
