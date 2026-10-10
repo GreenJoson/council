@@ -1,7 +1,8 @@
 /**
- * @input  依赖：界面语言、TaskRepository、taskId、两路 revision、可用 Agent 列表、打开议题回调；
- *         use-task-detail、TaskStatusForm、DelegationTimeline，以及 components 的 WorkItemDelegationPanel 与状态文案表
- * @output 导出：TaskDetail —— 单个任务的详情：元信息、正文、简报、状态更新、议题跳转、诚实限制提示、委派面板与历史
+ * @input  依赖：界面语言、TaskRepository、AssetRepository、taskId、两路 revision、可用 Agent 列表、打开议题回调；
+ *         use-task-detail、TaskStatusForm、BriefSection、TaskAssetsSection、TaskDelegationSection 与状态文案表
+ * @output 导出：TaskDetail —— 单个任务的详情：元信息、正文、简报（展示/编辑）、产物区、状态更新、议题跳转、
+ *         诚实限制提示、委派（代码/图像）面板与历史
  * @pos    #/tasks/<taskId> 的主体；读取失败（含任务不存在）时显示占位与返回列表链接，不白屏
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,17 +11,21 @@
 import { AlertTriangle, ArrowLeft, GitCommitHorizontal, MessagesSquare, RefreshCw } from "lucide-react";
 import { buildHash } from "../../app/routes";
 import { WORK_ITEM_STATUS_LABELS } from "../../components/ImplementationProgress";
-import { WorkItemDelegationPanel } from "../../components/WorkItemDelegationPanel";
+import type { AssetRepository } from "../../data/assets/asset-repository";
+import { parseCouncilBrief } from "../../data/tasks/council-brief";
 import type { TaskRepository } from "../../data/tasks/task-repository";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { OrchestrationAdapter } from "../../types/orchestration";
-import { DelegationTimeline } from "./DelegationTimeline";
+import { BriefSection } from "./BriefSection";
 import { KIND_LABELS, SOURCE_LABELS } from "./task-labels";
+import { TaskAssetsSection } from "./TaskAssetsSection";
+import { TaskDelegationSection } from "./TaskDelegationSection";
 import { TaskStatusForm } from "./TaskStatusForm";
 import { useTaskDetail } from "./use-task-detail";
 
 export interface TaskDetailProps {
   repository: TaskRepository;
+  assetRepository: AssetRepository;
   taskId: string;
   revision: unknown;
   executionRevision: unknown;
@@ -30,13 +35,9 @@ export interface TaskDetailProps {
 
 const LIST_HASH = buildHash({ view: "tasks" });
 
-/** 简报结构由任务类型决定，前端不解释字段：字符串原样显示，其余值序列化成紧凑 JSON。 */
-function briefValue(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
-}
-
 export function TaskDetail({
   repository,
+  assetRepository,
   taskId,
   revision,
   executionRevision,
@@ -67,8 +68,13 @@ export function TaskDetail({
   const { task, topic, delegations, limitation } = detail;
   const latestDelegation = delegations[0];
   const topicId = topic?.id ?? task.topicId;
-  const briefEntries = task.brief ? Object.entries(task.brief) : [];
   const busy = state.busyAction !== null;
+  const councilBrief = task.brief ? parseCouncilBrief(task.brief) : null;
+  // 图像委派的验收标准默认取简报的验收条目，其次是任务正文。
+  const defaultAcceptance = councilBrief?.acceptance.length
+    ? councilBrief.acceptance.join("\n")
+    : task.details || task.title;
+  const showAssets = task.kind === "image" || delegations.some((entry) => entry.kind === "image");
 
   return (
     <main className="tasks-view task-detail" id="main-content" data-task-id={task.id}>
@@ -109,16 +115,27 @@ export function TaskDetail({
 
       <section className="task-detail-section" aria-label={t("任务内容")}>
         {task.details ? <p className="task-details-text">{task.details}</p> : <p className="task-muted">{t("没有补充说明。")}</p>}
-        {briefEntries.length > 0 ? (
-          <dl className="task-brief">
-            {briefEntries.map(([key, value]) => (
-              <div key={key}><dt>{key}</dt><dd>{briefValue(value)}</dd></div>
-            ))}
-          </dl>
-        ) : null}
         {task.statusNote ? <blockquote>{task.statusNote}</blockquote> : null}
         {task.fixCommit ? <small className="task-commit"><GitCommitHorizontal size={12} />{task.fixCommit}</small> : null}
       </section>
+
+      <BriefSection
+        key={`${task.id}:brief`}
+        task={task}
+        isSaving={state.busyAction === "brief"}
+        disabled={busy}
+        saveError={state.actionError?.kind === "brief" ? state.actionError.message : undefined}
+        onSave={state.saveBrief}
+      />
+
+      {showAssets ? (
+        <TaskAssetsSection
+          repository={assetRepository}
+          taskId={task.id}
+          revision={revision}
+          executionRevision={executionRevision}
+        />
+      ) : null}
 
       <section className="task-detail-section" aria-labelledby="task-status-heading">
         <h2 id="task-status-heading">{t("更新状态")}</h2>
@@ -138,29 +155,18 @@ export function TaskDetail({
         />
       </section>
 
-      <section className="task-detail-section" aria-labelledby="task-delegation-heading">
-        <h2 id="task-delegation-heading">{t("Agent 委派")}</h2>
-        {state.actionError && state.actionError.kind !== "update" ? (
-          <p className="task-notice is-danger" role="alert">
-            <AlertTriangle size={13} />
-            {t("委派操作失败：{message}", { message: t(state.actionError.message) })}
-          </p>
-        ) : null}
-        {task.status !== "completed" || latestDelegation ? (
-          <WorkItemDelegationPanel
-            key={task.id}
-            item={task}
-            adapters={delegationAgents}
-            delegation={latestDelegation}
-            busyAction={state.busyAction}
-            onStart={state.startDelegation}
-            onCancel={state.cancelDelegation}
-          />
-        ) : (
-          <p className="task-muted">{t("任务已完成，没有委派记录。")}</p>
-        )}
-        <DelegationTimeline delegations={delegations.slice(1)} adapters={delegationAgents} />
-      </section>
+      <TaskDelegationSection
+        task={task}
+        delegations={delegations}
+        adapters={delegationAgents}
+        assetRepository={assetRepository}
+        defaultAcceptance={defaultAcceptance}
+        busyAction={state.busyAction}
+        actionError={state.actionError && (state.actionError.kind === "delegate" || state.actionError.kind === "cancel")
+          ? state.actionError.message : undefined}
+        onStart={state.startDelegation}
+        onCancel={state.cancelDelegation}
+      />
     </main>
   );
 }
