@@ -6,6 +6,10 @@
  *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
  *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
  *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
+ *         P4 Worker 团队：setTeamHooks 让 Lead 执行阶段注入 Council 团队 MCP 与「团队模式」指令，并在快照/提交前
+ *         从仓储同步 Lead headCommit（Worker 合并会移动 Lead HEAD），交付提交经 withLeadWorkspace 排进团队锁；startTeamWorker 建 team_worker 子委派并交给
+ *         delegation-worker-execution（不审核、不认领实施项）；setTeamLeadHead / teamLeadWorkspace / projectPathOf 供 TeamService 用
+ *         全新仓库的安全基线拆到 delegation-initial-baseline
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
@@ -28,6 +32,9 @@ import { delegationFailureCode, validateRecoveryCheckpoint } from "./delegation-
 import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } from "./delegation-workspace-snapshot.js";
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
+import { executeTeamWorker, type TeamWorkerWorkspace } from "./delegation-worker-execution.js";
+import { createInitialBaseline as establishInitialBaseline } from "./delegation-initial-baseline.js";
+import type { RuntimeMcpServers } from "../runtime-mcp-servers.js";
 import {
   copyInputAssets,
   COUNCIL_INPUT_DIR,
@@ -40,8 +47,7 @@ import {
 import { AssetService } from "../assets/asset-service.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath } from "node:fs/promises";
 import {
   canExecute,
   canReview,
@@ -119,6 +125,22 @@ export interface StartWorkItemDelegationBatchInput {
   createInitialBaseline?: boolean;
 }
 
+/** TeamService 注入：只有活跃团队的 Lead 委派返回运行时附加项，其余委派返回 undefined。 */
+export interface DelegationTeamHooks {
+  leadRuntime(delegationId: string): { mcpServers: RuntimeMcpServers; instructions: readonly string[] } | undefined;
+  /** Lead 交付提交与团队检查点/合并共用同一把团队锁，避免合并移动 HEAD 时被交付提交 reset 掉。 */
+  withLeadWorkspace<T>(delegationId: string, task: () => Promise<T>): Promise<T>;
+}
+
+export interface StartTeamWorkerInput {
+  leadDelegationId: string;
+  label: string;
+  brief: string;
+  scopePaths: readonly string[];
+  requestedPermission: DelegationExecutionPermission;
+  workspace: TeamWorkerWorkspace;
+}
+
 interface PreparedWorkspace {
   root: string;
   cwd: string;
@@ -184,6 +206,7 @@ export class WorkItemDelegationManager {
   readonly #tasks = new Map<string, Promise<void>>();
   /** 只允许回写本次派发/认领所得版本，不覆盖执行期间的人工作答。 */
   readonly #workItemVersions = new Map<string, number>();
+  #teamHooks: DelegationTeamHooks | undefined;
 
   constructor(
     private readonly config: DelegationManagerConfig,
@@ -258,6 +281,83 @@ export class WorkItemDelegationManager {
   /** 单条委派公开快照；流水线启动对账用。 */
   get(id: string): WorkItemDelegation | undefined {
     return this.#store.get(id);
+  }
+
+  setTeamHooks(hooks: DelegationTeamHooks): void {
+    this.#teamHooks = hooks;
+  }
+
+  /** 任务所在项目路径（议题任务取议题绑定路径）；TeamService 计算 Worker 工作区内的相对 cwd 用。 */
+  projectPathOf(workItemId: string): string {
+    return this.#taskContext(workItemId).projectPath;
+  }
+
+  /** Lead 工作区根目录与当前记录的 HEAD；Lead 尚未建好 worktree 时返回 undefined。 */
+  teamLeadWorkspace(id: string): { root: string; baseCommit: string; headCommit: string } | undefined {
+    const lead = this.#store.getPrivate(id);
+    if (!lead?.worktreePath || !lead.baseCommit || !ACTIVE_STATUSES.has(lead.status)) return undefined;
+    return { root: lead.worktreePath, baseCommit: lead.baseCommit, headCommit: lead.headCommit ?? lead.baseCommit };
+  }
+
+  /** TeamService 在 Lead 工作区提交检查点或合并 Worker 后回写；Lead 执行阶段以此为快照/提交基准。 */
+  setTeamLeadHead(id: string, headCommit: string): void {
+    const lead = this.#store.get(id);
+    if (!lead || !ACTIVE_STATUSES.has(lead.status)) throw new CouncilConflictError("Lead 委派已结束，不能再合并。");
+    this.#store.update(id, { headCommit, now: new Date().toISOString() });
+  }
+
+  /**
+   * 建 Worker 子委派（team_worker=1，沿用 Lead 的执行者、审核者与完成策略），立即异步执行。
+   * 权限取请求值与 Lead 权限的交集；工作区由 TeamService 事先从 Lead HEAD 分叉。
+   */
+  startTeamWorker(input: StartTeamWorkerInput): WorkItemDelegation {
+    const lead = this.#store.get(input.leadDelegationId);
+    if (!lead || !ACTIVE_STATUSES.has(lead.status)) throw new CouncilConflictError("Lead 委派已结束，不能再派发 Worker。");
+    const executor = this.#requireAgent(lead.executorAgentId, "执行");
+    const permission = intersectPermissionProfiles(
+      intersectPermissionProfiles(executor.permissionProfile, lead.permissionProfile),
+      input.requestedPermission,
+    );
+    if (!isExecutionPermission(permission)) throw new CouncilValidationError("Worker 权限不足以执行代码改动。");
+    const brief = input.brief.trim();
+    if (!brief) throw new CouncilValidationError("Worker 指令不能为空。");
+    const delegation = this.#store.create({
+      id: `delegation-${randomUUID()}`,
+      ...(lead.topicId ? { topicId: lead.topicId } : {}),
+      workItemId: lead.workItemId,
+      supervisorAgentId: lead.supervisorAgentId,
+      executorAgentId: lead.executorAgentId,
+      permissionProfile: permission,
+      // 与 Lead 相同，避免实施项验收触发器按「最新一条委派」读到不同的完成策略。
+      completionPolicy: lead.completionPolicy,
+      acceptanceCriteria: compact(brief, 4_000),
+      maxAttempts: this.config.maxAttempts,
+      branchName: input.workspace.branchName,
+      teamWorker: true,
+      now: new Date().toISOString(),
+    });
+    this.#recordAudit(delegation.id, "delegation.created", { criteria: delegation.acceptanceCriteria, leadDelegationId: lead.id });
+    const controller = new AbortController();
+    this.#controllers.set(delegation.id, controller);
+    const run = executeTeamWorker(delegation.id, input.workspace,
+      { brief, scopePaths: input.scopePaths, label: input.label }, {
+        store: this.#store, executor, executorProtocol: this.#requireNativeProvider(executor).protocol,
+        generate: (stage) => this.#runtimeGenerate(stage),
+        git: async (cwd, args, env) => (await this.#git(cwd, args, controller.signal, env)).stdout,
+        record: (kind, data) => this.#recordAudit(delegation.id, kind, data),
+        maxFileChars: this.config.gitMaxOutputChars,
+        ...(this.config.maxExecutionSegments ? { maxExecutionSegments: this.config.maxExecutionSegments } : {}),
+        ...(this.config.executionTimeoutMs ? { executionTimeoutMs: this.config.executionTimeoutMs } : {}),
+        ...(this.config.executionMaxTurns ? { executionMaxTurns: this.config.executionMaxTurns } : {}),
+      }, controller.signal)
+      .then(() => undefined)
+      .catch((error: unknown) => this.#recordFailure(delegation.id, error, false))
+      .finally(() => {
+        this.#controllers.delete(delegation.id);
+        this.#tasks.delete(delegation.id);
+      });
+    this.#tasks.set(delegation.id, run);
+    return delegation;
   }
 
   /** 委派进入终态（approved/failed/cancelled）时异步通知一次；返回取消订阅函数。 */
@@ -642,66 +742,6 @@ export class WorkItemDelegationManager {
     });
   }
 
-  async #createInitialBaseline(root: string, signal: AbortSignal): Promise<string> {
-    const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "council-baseline-"));
-    const indexPath = path.join(temporaryDirectory, "index");
-    const indexEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      GIT_INDEX_FILE: indexPath,
-    };
-    try {
-      await this.#git(root, ["read-tree", "--empty"], signal, indexEnv);
-      await this.#git(root, ["add", "--all"], signal, indexEnv);
-      const names = (await this.#git(
-        root,
-        ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB", "--"],
-        signal,
-        indexEnv,
-      )).stdout.split("\n").filter(Boolean);
-      if (names.length === 0) {
-        throw new Error("项目没有可建立安全基线的文件。");
-      }
-      if (names.some((name) => FORBIDDEN_STAGED_PATH.test(name))) {
-        throw new Error("安全基线包含凭据或私密配置文件，已停止执行。");
-      }
-      const stagedDiff = (await this.#git(
-        root,
-        ["diff", "--cached", "--no-ext-diff", "--unified=0", "--"],
-        signal,
-        indexEnv,
-      )).stdout;
-      if (SECRET_DIFF_PATTERN.test(stagedDiff)) {
-        throw new Error("安全基线疑似包含凭据，已停止执行。");
-      }
-      const tree = (await this.#git(root, ["write-tree"], signal, indexEnv)).stdout.trim();
-      const headRefResult = await this.#runGit(root, ["symbolic-ref", "-q", "HEAD"], signal);
-      const headRef = headRefResult.stdout.trim();
-      if (headRefResult.exitCode !== 0 || !headRef.startsWith("refs/heads/")) {
-        throw new Error("项目初始分支无效，不能建立安全基线。");
-      }
-      const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        GIT_AUTHOR_NAME: "Council Agent",
-        GIT_AUTHOR_EMAIL: "council@localhost",
-        GIT_COMMITTER_NAME: "Council Agent",
-        GIT_COMMITTER_EMAIL: "council@localhost",
-      };
-      const commit = (await this.#git(
-        root,
-        ["commit-tree", tree, "-m", "chore: establish Council baseline"],
-        signal,
-        commitEnv,
-      )).stdout.trim();
-      // 初始基线只能认领仍不存在的分支，不能覆盖用户并发创建的第一个提交。
-      await this.#git(root, ["update-ref", headRef, commit, "0".repeat(commit.length)], signal);
-      // 只同步索引，不改工作文件；这样安全基线失败前后都不会吞掉用户内容。
-      await this.#git(root, ["reset", "--mixed", "--quiet", commit], signal);
-      return commit;
-    } finally {
-      await rm(temporaryDirectory, { recursive: true, force: true });
-    }
-  }
-
   async #prepareWorktree(
     delegation: WorkItemDelegation,
     projectPath: string,
@@ -725,7 +765,10 @@ export class WorkItemDelegationManager {
       if (!createInitialBaseline) {
         throw new Error("项目尚未建立初始提交；请使用“建立安全基线并委派”。");
       }
-      baseCommit = await this.#createInitialBaseline(root, signal);
+      baseCommit = await establishInitialBaseline(root, {
+        git: (cwd, args, env) => this.#git(cwd, args, signal, env),
+        runGit: (cwd, args) => this.#runGit(cwd, args, signal),
+      });
     } else {
       const status = (await this.#git(root, ["status", "--porcelain=v1"], signal)).stdout.trim();
       if (status) {
@@ -928,6 +971,11 @@ export class WorkItemDelegationManager {
     let review: DelegationReview | undefined;
     let headCommit = checkpoint?.headCommit ?? workspace.baseCommit;
     let executorSummary = checkpoint?.summary ?? "";
+    // 团队 Lead：Worker 合并与派发前检查点会移动 Lead HEAD，并由 TeamService 回写仓储；快照与提交前必须同步。
+    const syncTeamHead = (): string => {
+      if (this.#teamHooks?.leadRuntime(id)) headCommit = this.#store.get(id)?.headCommit ?? headCommit;
+      return headCommit;
+    };
     for (let attempt = 1; attempt <= delegation.maxAttempts; attempt += 1) {
       if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
       delegation = this.#store.update(id, {
@@ -950,7 +998,7 @@ export class WorkItemDelegationManager {
             checkpoint: { ...this.#store.getPrivate(id)?.checkpoint, version: 1, executionBudget: { ...budget } },
             ...(summary ? { summary } : {}), now: new Date().toISOString(),
           }),
-          snapshot: async () => (await snapshotUncommittedWork({ root: workspace.root, headCommit,
+          snapshot: async () => (await snapshotUncommittedWork({ root: workspace.root, headCommit: syncTeamHead(),
             allowEmpty: true, maxFileChars: this.config.gitMaxOutputChars,
             git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
           })).tree,
@@ -964,18 +1012,21 @@ export class WorkItemDelegationManager {
             }
           },
           record: (kind, data) => this.#recordAudit(id, kind, data),
-          generate: (sessionId, segmentContinuation, segmentSignal) => this.#runtimeGenerate({
+          generate: (sessionId, segmentContinuation, segmentSignal) => {
+            const team = this.#teamHooks?.leadRuntime(id);
+            return this.#runtimeGenerate({
             delegationId: id, stage: "execution",
             agent: executor,
             cwd: workspace.cwd,
             ...(sessionId ? { sessionId } : {}),
             permissionProfile: executionAssignment.permissionProfile,
             signal: segmentSignal,
+            ...(team ? { mcpServers: team.mcpServers } : {}),
             prompt: [
               "你是本次任务的 executor。只处理下面这一个实施项。",
               "在当前隔离 worktree 中直接修改代码并运行必要验证；不要切换仓库，不要访问无关目录。",
               "不要自行 git commit；Council 会扫描敏感内容后统一提交。",
-              "不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。",
+              ...(team ? team.instructions : ["不要调用 Council，也不要委派其他 Agent。完成后简要说明改动和测试结果。"]),
               EXECUTION_CHECKPOINT_INSTRUCTION,
               ...(this.#requireNativeProvider(executor).protocol === "claude-cli" && this.config.executionMaxTurns
                 ? [`本次最多 ${this.config.executionMaxTurns} 个模型回合；预留回合用于验证与阶段交接，不要等 CLI 强制中断。`] : []),
@@ -992,7 +1043,8 @@ export class WorkItemDelegationManager {
               ...correction,
               segmentContinuation,
             ].join("\n"),
-          }),
+            });
+          },
         });
         executorSessionId = executorResponse.sessionId ?? executorSessionId;
         executorSummary = compact(executorResponse.content, 8_000);
@@ -1000,14 +1052,18 @@ export class WorkItemDelegationManager {
         const commitTime = new Date().toISOString();
         this.#store.update(id, { summary: executorSummary, checkpoint: { ...beforeCommit, version: 1,
           progress: { phase: "commit", phaseStartedAt: commitTime, lastActivityAt: commitTime } }, now: commitTime });
-        headCommit = await commitDelegationChanges({
-          root: workspace.root, workItemId: delegation.workItemId,
-          baseCommit: workspace.baseCommit, expectedHead: headCommit,
-          maxFileChars: this.config.gitMaxOutputChars,
-          git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
-        });
-        // 提交已产生就先保存检查点，后续取消或 diff 读取失败仍可显式恢复。
-        this.#store.update(id, { headCommit, summary: executorSummary, now: new Date().toISOString() });
+        const commitAndSave = async (): Promise<string> => {
+          const committed = await commitDelegationChanges({
+            root: workspace.root, workItemId: executionAssignment.workItemId,
+            baseCommit: workspace.baseCommit, expectedHead: syncTeamHead(),
+            maxFileChars: this.config.gitMaxOutputChars,
+            git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+          });
+          // 提交已产生就先保存检查点，后续取消或 diff 读取失败仍可显式恢复。
+          this.#store.update(id, { headCommit: committed, summary: executorSummary, now: new Date().toISOString() });
+          return committed;
+        };
+        headCommit = await (this.#teamHooks ? this.#teamHooks.withLeadWorkspace(id, commitAndSave) : commitAndSave());
       }
       if (signal.aborted) throw Object.assign(new Error("任务执行已取消。"), { name: "AbortError" });
       this.#recordAudit(id, "commit.created", { baseCommit: workspace.baseCommit, headCommit });

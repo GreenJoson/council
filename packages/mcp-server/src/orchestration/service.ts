@@ -6,13 +6,15 @@
  *         生产依赖工厂，以及从两个协作模块再导出的注册/Run/审批类型与 AVAILABILITY_TTL_MS
  * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
  *         （Codex 绑定的可用性检查顺带刷新生图探针声明；工厂装配并挂载 P3 PipelineService，
- *         initialize 在委派恢复后启动流水线对账，shutdown/close 同步停止与关闭）
+ *         initialize 在委派恢复后启动流水线对账，shutdown/close 同步停止与关闭；
+ *         P4 同样装配并挂载 TeamService：Lead MCP 入口/COUNCIL_* 环境/回环地址在此注入，
+ *         initialize 在委派恢复后对账团队，close 关闭团队仓储）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { RuntimeAuditStore } from "./runtime-audit-store.js";
-import { DEFAULT_CODEX_IMAGE_MAX_OUTPUTS } from "../config.js";
+import { collectCouncilEnv, DEFAULT_CODEX_IMAGE_MAX_OUTPUTS } from "../config.js";
 import { WorkAttentionStore } from "./work-attention-store.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -90,6 +92,11 @@ import {
 } from "./agent-registry.js";
 import { CouncilDatabase } from "../database.js";
 import { PipelineService } from "../pipelines/pipeline-service.js";
+import { resolveCouncilMcpEntry } from "../teams/lead-mcp-config.js";
+import { TeamGit } from "../teams/team-git.js";
+import { TeamService } from "../teams/team-service.js";
+import { TeamStore } from "../teams/team-store.js";
+import { defaultImageSupervisor } from "./delegation-image-execution.js";
 import {
   CouncilProductService,
   type AgentCandidate,
@@ -128,6 +135,7 @@ export class CouncilOrchestrationService {
   #reviewLedger: ReviewLedgerWriter | undefined;
   /** P3 流水线用例；生产工厂在构造后挂载，测试/嵌入场景可缺省（路由返回 503）。 */
   #pipelines: PipelineService | undefined;
+  #teams: TeamService | undefined;
   #configurationTail = Promise.resolve();
   #runtimeBindingIdleTimer: ReturnType<typeof globalThis.setInterval> | undefined;
   #runtimeBindingIdleSweep: Promise<void> | null = null;
@@ -253,6 +261,15 @@ export class CouncilOrchestrationService {
 
   get pipelines(): PipelineService | undefined {
     return this.#pipelines;
+  }
+
+  /** 挂载 Worker 团队用例；它依赖委派管理器与本服务的委派转发，只能在构造后注入。 */
+  attachTeams(teams: TeamService): void {
+    this.#teams = teams;
+  }
+
+  get teams(): TeamService | undefined {
+    return this.#teams;
   }
 
   invokeOneShot(input: Parameters<CouncilProductService["invokeOneShot"]>[0]): Promise<{ actorId: string; content: string }> {
@@ -439,6 +456,8 @@ export class CouncilOrchestrationService {
     await this.manager.recoverOnStartup();
     // 委派管理器已恢复：流水线订阅终态并对账上次停在 running 的阶段。
     await this.#pipelines?.initialize();
+    // 委派已恢复（中断的 Lead 已落终态）：结束 Lead 不再活跃的团队并同步 Worker 状态。
+    this.#teams?.initialize();
     this.#startRuntimeBindingIdleSweep();
   }
 
@@ -488,6 +507,7 @@ export class CouncilOrchestrationService {
     this.attention.close();
     this.audit.close();
     this.#pipelines?.close();
+    this.#teams?.close();
     this.delegationManager?.close();
     this.#store.close();
     this.#fallbackRouterStore?.close();
@@ -668,6 +688,51 @@ export function createProductionOrchestrationService(
       maxImageOutputs: councilConfig.codexImageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     },
     prototypePermission: councilConfig.pipelinePrototypePermission ?? "workspace_write",
+  }));
+  // P4 Worker 团队：独立数据库连接；Lead 委派经本服务转发（复用配置锁），Worker 子委派直接交委派管理器。
+  // Lead 的 Council MCP 子进程继承本进程 COUNCIL_* 配置，并经回环地址把写操作转发回本服务。
+  const loopbackHost = httpConfig.host === "0.0.0.0" || httpConfig.host === "::" ? "127.0.0.1" : httpConfig.host;
+  service.attachTeams(new TeamService({
+    store: new TeamStore(councilConfig.databasePath, councilConfig.sqliteBusyTimeoutMs),
+    git: new TeamGit({
+      gitCommand: councilConfig.gitCommand,
+      timeoutMs: councilConfig.gitDiffTimeoutMs,
+      killGraceMs: councilConfig.gitDiffKillGraceMs,
+      maxOutputChars: councilConfig.delegationGitMaxOutputChars,
+    }),
+    delegations: {
+      start: async (input) => await service.startWorkItemDelegation(input),
+      get: (id) => delegationManager.get(id),
+      cancel: (id) => service.cancelWorkItemDelegation(id),
+      onSettled: (listener) => delegationManager.onSettled(listener),
+      startTeamWorker: (input) => delegationManager.startTeamWorker(input),
+      setTeamLeadHead: (id, head) => delegationManager.setTeamLeadHead(id, head),
+      teamLeadWorkspace: (id) => delegationManager.teamLeadWorkspace(id),
+      projectPathOf: (workItemId) => delegationManager.projectPathOf(workItemId),
+      setTeamHooks: (hooks) => delegationManager.setTeamHooks(hooks),
+    },
+    agents: {
+      executorIdentity: (agentId) => {
+        const agent = modelRouter.getAgent(agentId);
+        const provider = agent && !agent.deletedAt ? modelRouter.getProvider(agent.providerId) : undefined;
+        return agent && provider ? { actorId: agent.actorId, protocol: provider.protocol } : undefined;
+      },
+      defaultSupervisor: (executorAgentId) => defaultImageSupervisor(
+        modelRouter.listAgents(),
+        (providerId) => modelRouter.getProvider(providerId),
+        executorAgentId,
+      ).id,
+    },
+    config: {
+      maxParallel: councilConfig.workerMaxParallel ?? 3,
+      worktreeRoot: councilConfig.delegationWorktreeRoot,
+      leadMcp: {
+        ...(resolveCouncilMcpEntry() ? { entry: resolveCouncilMcpEntry()! } : {}),
+        baseEnv: collectCouncilEnv(),
+        httpHost: loopbackHost,
+        httpPort: httpConfig.port,
+      },
+    },
   }));
   return service;
 }

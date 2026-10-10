@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v19 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v19 schema（v18 任务一等化 + v19 资产库 assets/asset_links）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）、只读资产查询（list_assets/get_asset，见 store/asset_queries.rs）和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v20 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v20 schema（v18 任务一等化 + v19 资产库 assets/asset_links + v20 Worker 团队 task_teams/task_workers，Rust 只校验存在不读写）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）、只读资产查询（list_assets/get_asset，见 store/asset_queries.rs）和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -25,7 +25,7 @@ use crate::types::{
     WorkItemSeverity, WorkItemSource, WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 19;
+const SUPPORTED_SCHEMA_VERSION: i64 = 20;
 const REQUIRED_TABLES: &[&str] = &[
     "runtime_audit_events",
     "topics",
@@ -48,6 +48,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "work_item_delegations",
     "assets",
     "asset_links",
+    "task_teams",
+    "task_workers",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -81,6 +83,7 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_work_item_delegations_one_active",
     "idx_assets_project_kind",
     "idx_asset_links_target",
+    "task_teams_one_active",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_runtime_audit_immutable",
@@ -119,6 +122,12 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_assets_revision_delete",
     "trg_asset_links_revision_insert",
     "trg_asset_links_revision_delete",
+    "trg_task_teams_revision_insert",
+    "trg_task_teams_revision_update",
+    "trg_task_teams_revision_delete",
+    "trg_task_workers_revision_insert",
+    "trg_task_workers_revision_update",
+    "trg_task_workers_revision_delete",
 ];
 const ASSET_COLUMNS: &[&str] = &[
     "id",
@@ -364,6 +373,8 @@ const WORK_ITEM_DELEGATION_COLUMNS: &[&str] = &[
     "kind",
     "input_asset_ids_json",
     "output_manifest_json",
+    // v20 追加：Worker 团队子委派标记（单活跃索引只约束 team_worker = 0）。
+    "team_worker",
 ];
 
 fn assert_schema_objects(

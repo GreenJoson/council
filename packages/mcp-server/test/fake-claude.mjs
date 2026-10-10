@@ -5,12 +5,17 @@
  *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单；
  *         COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 首次只出清单不写文件，COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 首次写一张
  *         草稿图但清单损坏）；P3 流水线 brief / 复盘一次性调用替身（COUNCIL_PIPELINE_BRIEF 按模板返回合法
- *         council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass，deliverableId 优先取产物行的清单标注）
+ *         council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass，deliverableId 优先取产物行的清单标注）；
+ *         P4 Worker 团队替身（COUNCIL_TEAM_E2E）：Lead 必须带注入的 council MCP 与「团队模式」指令，首段真实拉起该 MCP
+ *         核对只有六个团队工具并调用 council_list_workers，之后每段约 2.5 秒内（给 5 秒进程超时留余量）等 team-a/team-b 的 worker.txt 被合并进来，
+ *         等到即写 team-lead.txt 收尾，否则写进度文件以 canContinue:true 交接；Worker 不得带 MCP，按 brief 的
+ *         `dir=<目录> delay=<毫秒>` 延时后写 <目录>/worker.txt；审核一律 approved
  * @pos    测试专用的 Claude Code / Codex CLI 最小协议替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 const args = process.argv.slice(2);
@@ -60,6 +65,10 @@ process.stdin.on("end", () => {
   }
   if (prompt.includes("COUNCIL_MODEL_PROBE") && args.includes("--print")) {
     process.stdout.write(JSON.stringify({ type: "result", result: readFileSync("council-probe.txt", "utf8"), model: "fake-probe-model" }));
+    return;
+  }
+  if (prompt.includes("COUNCIL_TEAM_E2E") && args.includes("--print")) {
+    fakeTeam(prompt).catch((error) => teamFail(error instanceof Error ? error.message : String(error)));
     return;
   }
   // 流水线一次性调用要排在 COUNCIL_SEGMENT_E2E 之前：E2E 的流水线 goal 带该标记，好让原型代码委派走分段替身。
@@ -234,4 +243,109 @@ function fakeImageGeneration(text) {
     JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: message } }),
     "",
   ].join("\n"));
+}
+
+// ---- P4 Worker 团队替身（COUNCIL_TEAM_E2E）----
+// Lead 每段最多停留约 3.8 秒（E2E 的 Claude 单进程超时 5 秒），未等到两个 Worker 的文件被合并进来就写进度文件并以
+// canContinue:true 交接，靠分段接续撑过 Worker 执行与合并；首段先真实拉起注入的 council MCP，核对只注册了六个团队工具。
+const TEAM_TOOLS = [
+  "council_archive_worker", "council_dispatch_worker", "council_interrupt_worker",
+  "council_list_workers", "council_merge_worker", "council_wait_worker",
+];
+const TEAM_LEAD_SEGMENT_MS = 2_500;
+
+function teamResult(result) {
+  process.stdout.write(JSON.stringify({ type: "result", result, session_id: "fake-team-session" }));
+}
+
+function teamFail(message) {
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 2;
+}
+
+function mcpServersFromArgs() {
+  try {
+    return JSON.parse(optionValue("--mcp-config") ?? "{}").mcpServers ?? {};
+  } catch {
+    return undefined;
+  }
+}
+
+/** 按注入配置启动 council MCP，走 initialize → tools/list → council_list_workers，返回工具名与调用结果。 */
+async function probeLeadMcp(server) {
+  const child = spawn(server.command, server.args, { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
+  const pending = new Map();
+  let buffer = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index).trim();
+      buffer = buffer.slice(index + 1);
+      if (!line) continue;
+      const message = JSON.parse(line);
+      pending.get(message.id)?.(message);
+    }
+  });
+  const call = (id, method, params) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`MCP ${method} 超时`)), 3_000);
+    pending.set(id, (message) => {
+      clearTimeout(timer);
+      if (message.error) reject(new Error(`MCP ${method} 失败：${JSON.stringify(message.error)}`));
+      else resolve(message.result);
+    });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  });
+  try {
+    await call(1, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "fake-claude", version: "1.0.0" } });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+    const tools = (await call(2, "tools/list", {})).tools.map((tool) => tool.name).sort();
+    const listed = await call(3, "tools/call", { name: "council_list_workers", arguments: {} });
+    return { tools, listed };
+  } finally {
+    child.kill();
+  }
+}
+
+async function fakeTeam(text) {
+  const servers = mcpServersFromArgs();
+  if (text.includes("你是 Worker 团队中的 Worker")) {
+    // Worker 不得拿到任何 Council MCP；brief 形如 `dir=<目录> delay=<毫秒>`。
+    if (!servers || Object.keys(servers).length > 0) return teamFail("Worker 不应注入 MCP");
+    const dir = /dir=([A-Za-z0-9_-]+)/u.exec(text)?.[1] ?? "worker";
+    const delay = Number(/delay=(\d+)/u.exec(text)?.[1] ?? "0");
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "worker.txt"), `${dir} done\n`);
+    return teamResult(`Worker 已写入 ${dir}/worker.txt。`);
+  }
+  if (text.includes("只返回一个 JSON 对象")) {
+    return teamResult(JSON.stringify({
+      verdict: "approved", summary: "Lead 与已合并 Worker 的提交符合验收标准。", findings: [],
+      inspectedFiles: ["team-lead.txt", "team-a/worker.txt", "team-b/worker.txt"],
+    }));
+  }
+  if (!text.includes("你是本次任务的 executor")) return teamResult("COUNCIL_TEAM_E2E：Lead 派发两个 Worker 并合并。");
+  const council = servers?.council;
+  if (!council?.env?.COUNCIL_TEAM_LEAD_DELEGATION_ID || !text.includes("## 团队模式")) {
+    return teamFail("Lead 缺少团队 MCP 注入或团队模式指令");
+  }
+  const started = Date.now();
+  if (!existsSync("team-lead-progress.txt")) {
+    const { tools, listed } = await probeLeadMcp(council);
+    if (JSON.stringify(tools) !== JSON.stringify(TEAM_TOOLS)) return teamFail(`Lead MCP 工具面不符：${tools.join(",")}`);
+    if (listed.isError) return teamFail(`council_list_workers 失败：${JSON.stringify(listed.content)}`);
+  }
+  while (Date.now() - started < TEAM_LEAD_SEGMENT_MS) {
+    if (existsSync(path.join("team-a", "worker.txt")) && existsSync(path.join("team-b", "worker.txt"))) {
+      writeFileSync("team-lead.txt", "lead merged team-a and team-b\n");
+      return teamResult("已合并 team-a 与 team-b，Lead 收尾完成。");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  writeFileSync("team-lead-progress.txt", `${String(Date.now())}\n`);
+  return teamResult("等待 Worker 合并。\n```json\nCOUNCIL_CHECKPOINT\n" + JSON.stringify({
+    completed: ["已派发 Worker"], validation: ["等待合并"], remaining: ["合并 team-a 与 team-b"], canContinue: true,
+  }) + "\n```");
 }

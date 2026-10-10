@@ -1,7 +1,10 @@
 /**
  * @input  依赖：议题、决策、实施项、委派和圆桌的真实当前状态
  * @output 导出：同项目按议题聚合的待处理摘要
- * @pos    无独立通知状态；源状态解决后条目自动消失，不把历史失败当作新待办
+ * @pos    无独立通知状态；源状态解决后条目自动消失，不把历史失败当作新待办；
+ *         「最新委派」只看主委派（team_worker = 0），Worker 子委派的失败由 Lead 自行处理
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import { DatabaseSync } from "node:sqlite";
 
@@ -26,7 +29,7 @@ export class WorkAttentionStore {
     return this.#database.prepare(`
       WITH latest_delegations AS (
         SELECT d.* FROM work_item_delegations d WHERE d.rowid = (
-          SELECT rowid FROM work_item_delegations WHERE work_item_id = d.work_item_id
+          SELECT rowid FROM work_item_delegations WHERE work_item_id = d.work_item_id AND team_worker = 0
           ORDER BY created_at DESC, rowid DESC LIMIT 1
         )
       ), attention AS (

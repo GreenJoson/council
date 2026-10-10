@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1151,6 +1151,95 @@ with sync_playwright() as playwright:
     page.locator(".topic-row", has_text="惰性详情验收").click()
     page.get_by_role("heading", name="惰性详情验收", exact=True).wait_for()
     assert second_topic["id"] != topic_id
+
+    # P4 Worker 团队闭环（真实 HTTP + Git + 子进程替身）：组队 → Lead（替身）真实拉起注入的 council MCP 核对工具面 →
+    # 派发 3 个 Worker（第 4 个超并行上限 409）→ 中断 1 个 → 另 2 个 done → 逐个合并 → Lead 收尾 → 全团队只审一次。
+    team_started = time.monotonic()
+    team_item = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "Worker 团队闭环", "details": "COUNCIL_TEAM_E2E 团队并行交付"}],
+    })[0]
+    team_base = f"/api/v1/tasks/{team_item['id']}/team"
+    api_expect_error("GET", team_base, 404)
+    team_payload = {
+        "expectedVersion": team_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_TEAM_E2E 团队并行交付", "completionPolicy": "human",
+    }
+    started_team = api_request("POST", team_base, team_payload)
+    lead_id = started_team["leadDelegation"]["id"]
+    assert started_team["team"]["leadDelegationId"] == lead_id and started_team["team"]["status"] == "active", started_team
+    api_expect_error("POST", team_base, 409, team_payload)
+
+    def dispatch_worker(label, brief):
+        # Lead 工作区在执行阶段前才建好；之前派发返回 409「尚未就绪」，短暂重试。
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                return api_request("POST", f"{team_base}/workers", {"label": label, "brief": brief, "scopePaths": [label]})
+            except AssertionError as error:
+                if "尚未就绪" not in str(error) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
+
+    worker_a = dispatch_worker("team-a", "COUNCIL_TEAM_E2E dir=team-a delay=2500")
+    worker_b = dispatch_worker("team-b", "COUNCIL_TEAM_E2E dir=team-b delay=2500")
+    worker_slow = dispatch_worker("team-slow", "COUNCIL_TEAM_E2E dir=team-slow delay=4000")
+    assert all(worker["id"].startswith("worker-") and worker["branchName"] for worker in (worker_a, worker_b, worker_slow))
+    over_limit = api_expect_error("POST", f"{team_base}/workers", 409, {"label": "team-extra", "brief": "COUNCIL_TEAM_E2E dir=x delay=0"})
+    assert "上限" in over_limit["message"], over_limit
+    interrupted = api_request("POST", f"{team_base}/workers/{worker_slow['id']}/actions/interrupt")
+    assert interrupted["status"] == "error", interrupted
+    done_workers = []
+    for worker in (worker_a, worker_b):
+        settled = api_request("GET", f"{team_base}/workers/{worker['id']}/wait?timeoutMs=20000", timeout=25)
+        assert settled["status"] == "done" and settled["delegation"]["headCommit"], settled
+        done_workers.append(settled)
+    api_expect_error("POST", f"{team_base}/workers/{worker_slow['id']}/actions/merge", 409)
+    for worker in done_workers:
+        try:
+            merged = api_request("POST", f"{team_base}/workers/{worker['id']}/actions/merge")
+        except AssertionError as error:
+            # 合并失败时带上团队视图（含 Lead failureCode），便于定位 Lead 为何提前结束。
+            raise AssertionError(f"{error}; team={api_request('GET', team_base)}") from error
+        assert merged["mergedCommit"], merged
+
+    deadline = time.monotonic() + 40
+    while True:
+        team_view = api_request("GET", team_base)
+        lead_status = team_view["delegation"]["status"]
+        if lead_status in {"approved", "failed", "cancelled"}:
+            break
+        assert time.monotonic() < deadline, team_view
+        time.sleep(0.2)
+    assert lead_status == "approved", team_view
+    lead_head = team_view["delegation"]["headCommit"]
+    assert team_view["status"] == "ended" and team_view.get("endedAt"), team_view
+    workers_by_id = {worker["id"]: worker for worker in team_view["workers"]}
+    slow_view = workers_by_id[worker_slow["id"]]
+    assert slow_view["status"] == "error" and not slow_view.get("mergedCommit"), slow_view
+    assert slow_view["delegation"]["status"] == "cancelled", slow_view
+    for worker in done_workers:
+        view = workers_by_id[worker["id"]]
+        assert view["status"] == "done" and view["mergedCommit"], view
+        # Lead 交付分支同时包含 Worker 自己的提交与合并提交。
+        for commit in (view["delegation"]["headCommit"], view["mergedCommit"]):
+            subprocess.run(["git", "-C", PROJECT_PATH, "merge-base", "--is-ancestor", commit, lead_head], check=True)
+    for filename in ["team-lead.txt", "team-a/worker.txt", "team-b/worker.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{lead_head}:{filename}"]).strip()
+    slow_listing = subprocess.run(["git", "-C", PROJECT_PATH, "show", f"{lead_head}:team-slow/worker.txt"], capture_output=True)
+    assert slow_listing.returncode != 0, "被中断的 Worker 不应进入 Lead 交付"
+
+    def audit_kinds(source_id):
+        events = api_request("GET", f"/api/v1/topics/{topic_id}/runtime-audit?sourceKind=delegation&sourceId={source_id}")
+        return [event["kind"] for event in events["events"]]
+
+    # 全团队只审一次：Lead 一次审核材料，Worker 一次都没有。
+    assert audit_kinds(lead_id).count("review.evidence") == 1, audit_kinds(lead_id)
+    for worker in team_view["workers"]:
+        assert "review.evidence" not in audit_kinds(worker["delegationId"]), worker
+    # Worker 不进委派列表：任务委派只有 Lead 一条。
+    assert [run["id"] for run in api_request("GET", f"/api/v1/tasks/{team_item['id']}/delegations")] == [lead_id]
+    print(f"P4 Worker 团队闭环通过，耗时 {time.monotonic() - team_started:.1f}s")
 
     assert not console_errors, console_errors
     page.close()

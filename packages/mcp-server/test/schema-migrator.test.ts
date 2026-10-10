@@ -292,6 +292,8 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TABLE IF EXISTS task_workers;
+      DROP TABLE IF EXISTS task_teams;
       DROP TABLE IF EXISTS asset_links;
       DROP TABLE IF EXISTS assets;
       DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
@@ -378,9 +380,11 @@ async function createCanonicalV2Database(databasePath: string): Promise<void> {
   }
 }
 
-/** 当前库机械回退到 v13 以前时，必须连同委派表和 Agent 新列一起移除；v19 资产表外键指向委派表，先删。 */
+/** 当前库机械回退到 v13 以前时，必须连同委派表和 Agent 新列一起移除；v19 资产表、v20 团队表外键指向委派表，先删。 */
 function downgradeAgentDefinitionsBeforeVersionFourteen(database: DatabaseSync): void {
   database.exec(`
+    DROP TABLE IF EXISTS task_workers;
+    DROP TABLE IF EXISTS task_teams;
     DROP TABLE IF EXISTS asset_links;
     DROP TABLE IF EXISTS assets;
     DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
@@ -904,6 +908,7 @@ test("v10 起链式升级到当前版本且保留既有议题与决策", async (
           { version: 17, name: "delegation-runtime-checkpoints" },
           { version: 18, name: "task-first-class" },
           { version: 19, name: "asset-library" },
+          { version: 20, name: "worker-teams" },
         ],
       );
     } finally {
@@ -1935,8 +1940,9 @@ test("账本/user_version 不一致及未来版本均 fail closed", async () => 
         (17, 'delegation-runtime-checkpoints', '2026-01-17T00:00:00.000Z'),
         (18, 'task-first-class', '2026-01-18T00:00:00.000Z'),
         (19, 'asset-library', '2026-01-19T00:00:00.000Z'),
-        (20, 'future', '2026-01-20T00:00:00.000Z');
-      PRAGMA user_version = 20;
+        (20, 'worker-teams', '2026-01-20T00:00:00.000Z'),
+        (21, 'future', '2026-01-21T00:00:00.000Z');
+      PRAGMA user_version = 21;
     `);
     futureDatabase.close();
     await assert.rejects(
