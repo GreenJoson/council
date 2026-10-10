@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次仓储契约、领域类型与浏览器随机 ID
- * @output 导出：MockOrchestrationRepository 运行、AI 实施计划与持久会话交互原型
+ * @output 导出：MockOrchestrationRepository 运行、AI 实施计划、持久会话与客户端接入（内存三态）交互原型
  * @pos    mock 模式下模拟创建、启动、会话复用、关闭、增量草稿、取消和恢复；
  *         议题内委派固定写入 v18 的 kind=code 与空 inputAssetIds；夹具含一个 granted image_generate 的执行者（P2 图像委派）
  *
@@ -9,6 +9,7 @@
 
 import type { WorkAttention } from "./work-attention";
 import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+import type { ClientConfigClient, ClientConfigStatus } from "./client-config-api";
 
 import type {
   AnswerCycleQuestionInput,
@@ -267,6 +268,11 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
   readonly #bindings: RuntimeBinding[] = [];
   readonly #delegations: WorkItemDelegation[] = [];
   readonly #modelRouter = structuredClone(MOCK_MODEL_ROUTER);
+  /** 客户端接入的内存三态（未写入/已写入/已漂移）模拟；不触碰任何真实文件。 */
+  readonly #clientConfigs: Record<ClientConfigClient, ClientConfigStatus> = {
+    claude: { client: "claude", configFile: "~/.claude.json", skillsDir: "~/.claude/skills/council", state: "not_applied" },
+    codex: { client: "codex", configFile: "~/.codex/config.toml", skillsDir: "~/.codex/skills/council", state: "not_applied" },
+  };
   #snapshot: OrchestrationSnapshot = {
     capabilities: structuredClone(CAPABILITIES),
     activeTopicId: "topic-idempotency",
@@ -688,6 +694,42 @@ export class MockOrchestrationRepository implements OrchestrationRepository {
   async testAgent(_agentId: string): Promise<AgentConnectionTest> {
     await waitForMock();
     return { ok: true, latencyMs: MOCK_DELAY_MS };
+  }
+
+  async listClientConfigs(): Promise<ClientConfigStatus[]> {
+    await waitForMock();
+    return [structuredClone(this.#clientConfigs.claude), structuredClone(this.#clientConfigs.codex)];
+  }
+
+  async applyClientConfig(client: ClientConfigClient, options: { force?: boolean } = {}): Promise<ClientConfigStatus> {
+    await waitForMock();
+    const current = this.#clientConfigs[client];
+    if (current.state === "drifted" && !options.force) {
+      throw new Error("客户端配置在写入后被改动（已漂移）；确认覆盖请使用「重新写入（覆盖漂移）」。");
+    }
+    const { detail: _detail, ...rest } = current;
+    this.#clientConfigs[client] = {
+      ...rest,
+      state: "applied",
+      appliedAt: new Date().toISOString(),
+      stashPath: current.stashPath ?? `~/.council/client-config/stash/${client}/mock`,
+    };
+    return structuredClone(this.#clientConfigs[client]);
+  }
+
+  async restoreClientConfig(client: ClientConfigClient): Promise<ClientConfigStatus> {
+    await waitForMock();
+    const current = this.#clientConfigs[client];
+    if (current.state === "not_applied") {
+      throw new Error("该客户端尚未由 Council 写入，无需还原。");
+    }
+    this.#clientConfigs[client] = {
+      client,
+      configFile: current.configFile,
+      skillsDir: current.skillsDir,
+      state: "not_applied",
+    };
+    return structuredClone(this.#clientConfigs[client]);
   }
 
   async resumeWorkItemDelegation(_id: string, _expectedVersion: number): Promise<WorkItemDelegation> {
