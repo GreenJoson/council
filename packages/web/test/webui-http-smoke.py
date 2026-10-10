@@ -1,7 +1,7 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
 @output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）检查
-@pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
+@pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
 """
@@ -117,9 +117,18 @@ def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 60
     )
 
 
+# 团队契约：GET /api/v1/tasks/:taskId/team 以 404 表示「没有团队」，任务详情每次重读都会触发；
+# 浏览器把它记成资源加载失败，这是约定内的状态而非页面错误，只放过这一条路径的 404。
+TEAM_NOT_FOUND_URL = re.compile(r"/api/v1/tasks/[^/]+/team$")
+
+
 def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
-    if message.type == "error":
-        errors.append(message.text)
+    if message.type != "error":
+        return
+    location_url = urlsplit(message.location.get("url") or "").path
+    if "status of 404" in message.text and TEAM_NOT_FOUND_URL.search(location_url):
+        return
+    errors.append(message.text)
 
 
 with sync_playwright() as playwright:

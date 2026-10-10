@@ -1,8 +1,9 @@
 /**
  * @input  依赖：API 任务行与委派协议类型、mock-data 的 Actor 快照
- * @output 导出：MOCK_TASK_PROJECT_PATH 与 createMockTaskFixtures()（任务行 + 委派的深拷贝夹具）
- * @pos    任务看板与详情的脱敏 mock 数据源：6 条直接任务覆盖四种状态与 image/research/prototype
- *         类型（image 任务的 brief 是 council-brief v1），2 条挂 topic-idempotency 的议题任务，2 条委派（reviewing 与 approved）
+ * @output 导出：MOCK_TASK_PROJECT_PATH、MOCK_TEAM_TASK_ID 与 createMockTaskFixtures()（任务行 + 委派 + 团队的深拷贝夹具）
+ * @pos    任务看板与详情的脱敏 mock 数据源：7 条直接任务覆盖四种状态与 image/research/prototype
+ *         类型（image 任务的 brief 是 council-brief v1），2 条挂 topic-idempotency 的议题任务，3 条委派（reviewing、approved
+ *         与团队 Lead 的 executing），1 个活动团队（3 个 Worker：running+聚焦 / done 已合并 / error 被打断）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -10,6 +11,7 @@
 import type { ApiWorkItem } from "../api-types";
 import { mockActorSnapshot } from "../mock-data";
 import type { WorkItemDelegation } from "../../types/orchestration";
+import type { TaskTeam } from "../../types/team";
 
 /** 明显的占位路径，不对应任何真实目录。 */
 export const MOCK_TASK_PROJECT_PATH = "/workspace/demo-project";
@@ -17,9 +19,14 @@ export const MOCK_TASK_PROJECT_PATH = "/workspace/demo-project";
 /** 议题任务挂到 mock 工作区里已存在的议题，便于从任务跳回议题。 */
 const MOCK_TOPIC_ID = "topic-idempotency";
 
+/** 带团队的 code 任务；E2E 与文档引用这个 id。 */
+export const MOCK_TEAM_TASK_ID = "work_item_task_channel_adapter_split";
+
 export interface MockTaskFixtures {
   tasks: ApiWorkItem[];
   delegations: WorkItemDelegation[];
+  /** P4 团队；缺省视为没有任何团队。 */
+  teams?: TaskTeam[];
 }
 
 function task(
@@ -123,6 +130,18 @@ const TASKS: ApiWorkItem[] = [
     updatedAt: "2026-10-08T05:00:00.000Z",
   }),
   task({
+    id: MOCK_TEAM_TASK_ID,
+    title: "支付渠道适配层拆分",
+    details: "把三家渠道的下单、回调与对账解析拆成独立适配器目录，由 Lead 按目录并行派发 Worker 后统一合并。",
+    status: "in_progress",
+    priority: 15,
+    version: 2,
+    assigneeActorId: "codex",
+    claimedAt: "2026-10-10T01:00:00.000Z",
+    updatedByActorId: "codex",
+    updatedAt: "2026-10-10T02:40:00.000Z",
+  }),
+  task({
     id: "work_item_topic_idempotency_key_table",
     topicId: MOCK_TOPIC_ID,
     decisionId: "decision-idempotency-primary",
@@ -205,8 +224,114 @@ const DELEGATIONS: WorkItemDelegation[] = [
     updatedAt: "2026-10-07T15:20:00.000Z",
     completedAt: "2026-10-07T15:20:00.000Z",
   },
+  {
+    id: "delegation_task_channel_adapter_lead",
+    workItemId: MOCK_TEAM_TASK_ID,
+    supervisorAgentId: "claude",
+    executorAgentId: "codex",
+    permissionProfile: "workspace_write",
+    completionPolicy: "human",
+    acceptanceCriteria: "三家渠道适配器各自独立目录；合并后订单与回调 E2E 全部通过。",
+    status: "executing",
+    kind: "code",
+    inputAssetIds: [],
+    attempt: 0,
+    maxAttempts: 2,
+    baseCommit: "5e6f7a8b9c0d",
+    branchName: "council/task-channel-adapter-split",
+    execution: {
+      phase: "execution",
+      phaseStartedAt: "2026-10-10T01:05:00.000Z",
+      lastActivityAt: "2026-10-10T02:40:00.000Z",
+      turnsUsed: 9,
+      turnLimit: 40,
+      toolCalls: 21,
+      lastTool: "council_wait_worker",
+      checkpointAvailable: false,
+    },
+    createdAt: "2026-10-10T01:00:00.000Z",
+    updatedAt: "2026-10-10T02:40:00.000Z",
+  },
+];
+
+const TEAM_ID = "team_channel_adapter_split";
+
+const TEAMS: TaskTeam[] = [
+  {
+    id: TEAM_ID,
+    workItemId: MOCK_TEAM_TASK_ID,
+    leadDelegationId: "delegation_task_channel_adapter_lead",
+    status: "active",
+    maxParallel: 3,
+    createdAt: "2026-10-10T01:00:00.000Z",
+    workers: [
+      {
+        id: "worker_channel_gateway",
+        teamId: TEAM_ID,
+        delegationId: "delegation_worker_channel_gateway",
+        label: "渠道下单适配",
+        role: "实现",
+        status: "running",
+        focused: true,
+        branchName: "council/task-channel-adapter-split/worker-gateway",
+        scopePaths: ["src/channels/gateway/"],
+        createdAt: "2026-10-10T01:10:00.000Z",
+        updatedAt: "2026-10-10T02:38:00.000Z",
+        delegation: {
+          status: "executing",
+          execution: {
+            phase: "execution",
+            phaseStartedAt: "2026-10-10T01:12:00.000Z",
+            lastActivityAt: "2026-10-10T02:38:00.000Z",
+            turnsUsed: 12,
+            turnLimit: 40,
+            toolCalls: 27,
+            lastTool: "apply_patch",
+            checkpointAvailable: false,
+          },
+        },
+      },
+      {
+        id: "worker_reconcile_parser",
+        teamId: TEAM_ID,
+        delegationId: "delegation_worker_reconcile_parser",
+        label: "对账文件解析",
+        role: "实现",
+        status: "done",
+        focused: false,
+        branchName: "council/task-channel-adapter-split/worker-reconcile",
+        mergedCommit: "7d3e9a1c0b52",
+        scopePaths: ["src/channels/reconcile/", "test/reconcile/"],
+        createdAt: "2026-10-10T01:10:00.000Z",
+        updatedAt: "2026-10-10T02:20:00.000Z",
+        delegation: { status: "approved", headCommit: "a41c7e90d2f3" },
+      },
+      {
+        id: "worker_callback_docs",
+        teamId: TEAM_ID,
+        delegationId: "delegation_worker_callback_docs",
+        label: "回调文档同步",
+        role: "文档",
+        status: "error",
+        focused: false,
+        branchName: "council/task-channel-adapter-split/worker-docs",
+        scopePaths: ["docs/channels/"],
+        createdAt: "2026-10-10T01:11:00.000Z",
+        updatedAt: "2026-10-10T01:50:00.000Z",
+        delegation: {
+          status: "cancelled",
+          failureCode: "interrupted",
+          error: "Lead 已打断该 Worker。",
+        },
+      },
+    ],
+  },
 ];
 
 export function createMockTaskFixtures(): MockTaskFixtures {
-  return { tasks: structuredClone(TASKS), delegations: structuredClone(DELEGATIONS) };
+  return {
+    tasks: structuredClone(TASKS),
+    delegations: structuredClone(DELEGATIONS),
+    teams: structuredClone(TEAMS),
+  };
 }

@@ -4,7 +4,8 @@
  * @output 导出：DesktopTaskRepository、其桥接子接口与构造参数类型
  * @pos    桌面模式任务仓储：读（列表、任务本体、所属议题）走 Tauri 直读 Rust core；
  *         委派列表与全部写操作走本地 Agent 服务 HTTP；服务离线时写操作抛诚实指引，
- *         详情降级为“委派未知”而不是整体失败
+ *         详情降级为“委派未知”而不是整体失败；P4 团队读写全部透传本地 Agent 服务 HTTP（Tauri 无团队命令），
+ *         离线时 getTaskTeam 返回 null（详情的 limitation 已如实说明委派与团队未知），写操作抛同一离线指引
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,6 +22,7 @@ import { mapWorkItem } from "../workspace-mapper";
 import { HttpTaskRepository } from "./http-task-repository";
 import type { TaskRepository } from "./task-repository";
 import type { CouncilWorkItem } from "../../types/council";
+import type { StartTaskTeamInput, StartTaskTeamResult, TaskTeam, TaskWorker } from "../../types/team";
 import type {
   StartTaskDelegationInput,
   WorkItemDelegation,
@@ -125,6 +127,41 @@ export class DesktopTaskRepository implements TaskRepository {
       expectedVersion,
       requestedPermission,
     );
+  }
+
+  async getTaskTeam(taskId: string): Promise<TaskTeam | null> {
+    let delegate: TaskRepository | undefined;
+    try {
+      delegate = await this.#tryLive();
+    } catch {
+      delegate = undefined;
+    }
+    // 离线或未选项目：团队未知。不在这里重复提示——getTask 的 limitation 已说明本地服务不可达。
+    return delegate ? delegate.getTaskTeam(taskId) : null;
+  }
+
+  async startTaskTeam(taskId: string, input: StartTaskTeamInput): Promise<StartTaskTeamResult> {
+    return (await this.#requireLive()).startTaskTeam(taskId, input);
+  }
+
+  async focusWorker(taskId: string, workerId: string, focused: boolean): Promise<TaskWorker> {
+    return (await this.#requireLive()).focusWorker(taskId, workerId, focused);
+  }
+
+  async interruptWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    return (await this.#requireLive()).interruptWorker(taskId, workerId);
+  }
+
+  async archiveWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    return (await this.#requireLive()).archiveWorker(taskId, workerId);
+  }
+
+  async mergeWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    return (await this.#requireLive()).mergeWorker(taskId, workerId);
+  }
+
+  async endTeam(taskId: string): Promise<TaskTeam> {
+    return (await this.#requireLive()).endTeam(taskId);
   }
 
   /**

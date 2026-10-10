@@ -2,6 +2,7 @@
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
 @output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、P3 流水线页（分组、选定 final、失败恢复、新建确认 brief）、
+         P4 任务详情右栏「团队」（两列布局、Worker 聚焦切换、打断、归档、结束团队）、
          移动端布局（含 #/pipelines 无横向溢出）和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
@@ -413,6 +414,68 @@ def verify_pipeline_page(page) -> None:
     wait_stage(page, "image", ("running",))
 
 
+TEAM_TASK_ID = "work_item_task_channel_adapter_split"
+
+
+def worker_row(page, worker_id: str):
+    return page.locator(f".task-team-panel [data-worker-id='{worker_id}']")
+
+
+def verify_task_team(page) -> None:
+    """P4 团队：mock 预置 3 个 Worker（运行中且聚焦 / 已完成已合并 / 出错），走通聚焦切换、打断、归档与结束团队。"""
+    page.evaluate(f"location.hash = '#/tasks/{TEAM_TASK_ID}'")
+    panel = page.locator(".task-team-panel")
+    panel.wait_for()
+    assert panel.get_attribute("data-team-status") == "active"
+    assert panel.locator(".task-worker").count() == 3
+
+    # 宽屏两列：右栏在主列右侧
+    main_box = page.locator(".task-detail-main").bounding_box()
+    panel_box = panel.bounding_box()
+    assert main_box and panel_box and panel_box["x"] >= main_box["x"] + main_box["width"], "团队右栏未与主列并排"
+
+    gateway = worker_row(page, "worker_channel_gateway")
+    reconcile = worker_row(page, "worker_reconcile_parser")
+    assert gateway.get_attribute("data-worker-status") == "running"
+    gateway_focus = page.get_by_role("button", name="聚焦 Worker：渠道下单适配", exact=True)
+    reconcile_focus = page.get_by_role("button", name="聚焦 Worker：对账文件解析", exact=True)
+    assert gateway_focus.get_attribute("aria-pressed") == "true"
+    gateway.locator(".task-worker-focus").wait_for()
+
+    # 聚焦单选：切到另一个 Worker，原聚焦取消
+    reconcile_focus.click()
+    page.wait_for_function(
+        "document.querySelector(\".task-team-panel [data-worker-id='worker_reconcile_parser'] "
+        "button[aria-pressed]\")?.getAttribute('aria-pressed') === 'true'"
+    )
+    assert gateway_focus.get_attribute("aria-pressed") == "false"
+    reconcile.locator(".task-worker-focus").wait_for()
+
+    # 打断运行中的 Worker：内联确认后变为出错
+    page.get_by_role("button", name="打断 Worker：渠道下单适配", exact=True).click()
+    gateway.get_by_role("button", name="确认打断", exact=True).click()
+    page.wait_for_function(
+        "document.querySelector(\".task-team-panel [data-worker-id='worker_channel_gateway']\")"
+        "?.dataset.workerStatus === 'error'"
+    )
+    assert gateway.locator(".task-worker-status").inner_text() == "出错"
+
+    # 归档：默认视图隐藏，可展开找回
+    page.get_by_role("button", name="归档 Worker：渠道下单适配", exact=True).click()
+    gateway.wait_for(state="detached")
+    assert panel.locator(".task-worker").count() == 2
+    page.get_by_role("button", name="显示已归档（1）", exact=True).click()
+    gateway.wait_for()
+    assert gateway.get_attribute("data-worker-status") == "archived"
+
+    # 结束团队：确认后徽章变为已结束，结束入口消失
+    panel.get_by_role("button", name="结束团队", exact=True).click()
+    panel.get_by_role("button", name="确认结束团队", exact=True).click()
+    page.wait_for_function("document.querySelector('.task-team-panel')?.dataset.teamStatus === 'ended'")
+    assert panel.locator(".task-team-status").inner_text() == "已结束"
+    assert panel.get_by_role("button", name="结束团队", exact=True).count() == 0
+
+
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
@@ -525,6 +588,7 @@ def verify_desktop(browser) -> list[str]:
     verify_topic_question_collapse_control(page)
     verify_manual_decision_without_agent_run(page)
     verify_pipeline_page(page)
+    verify_task_team(page)
 
     page.close()
     return errors
