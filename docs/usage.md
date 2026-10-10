@@ -62,9 +62,11 @@ npm run build:desktop
 
 日志库和项目目录只保存在操作系统应用配置及 SQLite 运行数据中，不写进仓库。Codex 与 Claude 的 MCP 配置仍要把 `COUNCIL_DATA_DIR` 指向同一日志库；修改后重启两个桌面客户端，让新进程重新加载配置。
 
-工作区按视图切换，地址栏 hash 即入口：`#/discussion/<topicId>` 讨论、`#/tasks` 与 `#/tasks/<taskId>` 任务、`#/decisions` 决策、`#/architecture` 架构、`#/attention` 关注。刷新或从外部链接打开都能回到同一视图。
+工作区按视图切换，地址栏 hash 即入口：`#/discussion/<topicId>` 讨论、`#/tasks` 与 `#/tasks/<taskId>` 任务、`#/assets` 与 `#/assets/<assetId>` 资产、`#/decisions` 决策、`#/architecture` 架构、`#/attention` 关注。刷新或从外部链接打开都能回到同一视图。
 
-“任务”页是不经议题的工作入口：列表按状态分组，可按类型和来源筛选；“新建任务”只需标题和可选说明，当前仅开放代码任务（图片、原型、调研、流水线在后续阶段接入）。任务详情里更新状态（完成或受阻必须填写证据）、查看所属议题、发起或取消 Agent 委派并查看委派历史；单条委派的入口已从讨论页迁到这里，讨论页的“实施进度”只显示最近一次委派的状态与执行段，并提供“在任务页管理委派”跳转。议题派生的实施项也会出现在同一项目的任务列表中。
+“任务”页是不经议题的工作入口：列表按状态分组，可按类型和来源筛选；“新建任务”只需标题和可选说明，当前开放代码与图像任务（原型、调研、流水线在后续阶段接入）；图像任务可在创建时附带 `council-brief` 简报（目标、交付物尺寸与数量、是否透明、配色、风格约束、验收条目），也可以创建后在详情页编写，表单和 JSON 两种编辑方式会按服务端规则校验。任务详情里更新状态（完成或受阻必须填写证据）、查看所属议题、发起或取消 Agent 委派并查看委派历史；单条委派的入口已从讨论页迁到这里，讨论页的“实施进度”只显示最近一次委派的状态与执行段，并提供“在任务页管理委派”跳转。议题派生的实施项也会出现在同一项目的任务列表中。
+
+“资产”页是当前项目的资产库：图像、3D 模型、文档、归档包按类型筛选、分页浏览；“从项目导入”填写相对项目根目录的路径即可入库，绝对路径、越出项目目录的路径和符号链接会被拒绝，同一文件重复导入返回已有资产。资产详情显示缩略图、尺寸、SHA-256、生成者、来源委派与挂接关系；挂为任务产物的资产可以设为最终稿；删除是软删除，原文件保留在资产目录但不再可读。图像委派生成的图片会自动入库并出现在任务详情的“产物”区。
 
 桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用；存在调用或持久会话时，右栏才显示紧凑运行状态、取消、恢复和历史。直召依赖本地 Agent 服务；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
@@ -200,6 +202,13 @@ Codex/Claude 调用 `council_add_work_items` 批量拆分；实现过程中用
 （`council_delegate_task` 或 `POST /api/v1/tasks/:taskId/delegations`），当前只支持 `kind=code` 的代码任务；
 MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 或 `start:http` 需要在运行。
 议题实施项也会出现在同一项目的任务列表中。
+
+资产库对 Agent 开放同样的能力：MCP 用 `council_list_assets`、`council_get_asset`、`council_import_asset`（项目内相对路径）、
+`council_attach_asset`（把资产挂到任务、消息或决策，角色为 reference/output/final/brief）；HTTP 对应 `/api/v1/assets`、
+`POST /api/v1/assets/import`、`/api/v1/assets/:assetId`（`/content` 取原文件、`/thumbnail` 取缩略图、`/links` 管理挂接，`DELETE` 软删除）。
+入库按文件头嗅探类型，只接受 `COUNCIL_ASSET_MIME_ALLOWLIST` 内的类型，单文件与总量受 `COUNCIL_ASSET_MAX_BYTES`、
+`COUNCIL_ASSET_MAX_TOTAL_BYTES` 限制；文件按内容哈希存放在 `COUNCIL_ASSET_DIR`（留空为日志库下的 `assets` 子目录），
+缩略图由 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 生成并缓存。资产只属于一个项目，跨项目不可见。
 
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
@@ -402,6 +411,12 @@ codex login status
 如果失败卡片提供“恢复”，表示故障被判定为临时失败，可直接恢复。兼容 Provider 会显示脱敏后的 HTTP 原因：401/403 表示认证或模型权限，402 表示 API 额度，429 表示请求速率、Token 速率、并发或账户限制，5xx 表示服务暂时不可用；其他 4xx 应检查模型 ID、API 地址和参数兼容性。登录、模型权限或最终正文超限等确定性错误需要先修正配置。
 
 远程 Provider 则在顶栏齿轮中确认模型、API Base URL、API Key 和“启用”状态，然后执行连接测试。连接测试不会回显上游响应正文或 API Key。
+
+### 资产导入被拒绝
+
+`415` 表示文件头不是允许的类型（扩展名不算数，改名的文本文件仍会被拒）；`413` 表示超出单文件或总量配额，
+调大 `COUNCIL_ASSET_MAX_BYTES` / `COUNCIL_ASSET_MAX_TOTAL_BYTES` 后重启服务；`403` 表示路径越出项目目录或是符号链接，
+把文件复制进项目后再导入。缩略图返回 `404` 多半是 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 不可用或超时，原文件仍可经 `/content` 读取。
 
 ### `@claude` 已识别但运行失败
 
