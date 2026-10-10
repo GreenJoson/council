@@ -26,6 +26,8 @@ export interface ListAssetsInput {
   projectPath: string;
   kind?: AssetKind;
   target?: { kind: AssetLinkTargetKind; id: string };
+  /** 只看未挂任何目标的资产（资产库「清理未引用」用）。 */
+  unlinked?: boolean;
   includeDeleted?: boolean;
   limit: number;
   offset: number;

@@ -59,6 +59,7 @@ export function registerAssetRoutes(app: Express, context: HttpRouteContext): vo
       projectPath: query.project,
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.target ? { target: query.target } : {}),
+      ...(query.unlinked ? { unlinked: true } : {}),
       limit: query.limit,
       offset: query.offset,
     }));

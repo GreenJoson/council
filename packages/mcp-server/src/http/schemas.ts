@@ -479,11 +479,15 @@ export const assetLinkParamsSchema = z
   })
   .strict();
 
-/** target 形如 work_item:<id>；拆成结构化字段后再交给仓储。 */
+/** target 形如 work_item:<id>；拆成结构化字段后再交给仓储。unlinked=true 只看未挂任何目标的资产。 */
 export const listAssetsQuerySchema = z
   .object({
     project: taskProjectPathSchema,
     kind: z.enum(ASSET_KINDS).optional(),
+    unlinked: z
+      .enum(["true", "false"])
+      .transform((value) => value === "true")
+      .optional(),
     target: z
       .string()
       .max(MAX_ID_CHARS + 16)

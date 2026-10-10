@@ -1,5 +1,5 @@
 //! @input 依赖：CouncilStore 的只读连接、v19 assets/asset_links 表与资产领域类型
-//! @output 为 CouncilStore 增加 list_assets（kind/target 过滤 + limit/offset 分页，返回 PaginatedAssets）/ get_asset 两个只读查询
+//! @output 为 CouncilStore 增加 list_assets（kind/target/unlinked 过滤 + limit/offset 分页，返回 PaginatedAssets）/ get_asset 两个只读查询
 //! @pos 桌面端资产库的只读入口：写入、入库校验与字节读取都只在 Node 侧，
 //!      这里不读 storage_rel_path，返回的 DTO 与 Node 公开 Asset 同构
 //!
@@ -62,12 +62,14 @@ fn invalid(message: &str) -> CouncilError {
 }
 
 impl CouncilStore {
-    /// 按项目分页列出未删除资产（新到旧），可按类型与链接目标过滤；语义与 Node AssetRepository.list 一致。
+    /// 按项目分页列出未删除资产（新到旧），可按类型与链接目标过滤，`unlinked` 只看未挂任何目标的资产；
+    /// 语义与 Node AssetRepository.list 一致。
     pub fn list_assets(
         &self,
         project_path: &str,
         kind: Option<AssetKind>,
         target: Option<&AssetTargetFilter>,
+        unlinked: bool,
         limit: u32,
         offset: u32,
     ) -> CouncilResult<PaginatedAssets> {
@@ -88,6 +90,9 @@ impl CouncilStore {
             );
             values.push(target_kind_db(target.kind).to_string());
             values.push(target.id.clone());
+        }
+        if unlinked {
+            clause.push_str(" AND NOT EXISTS (SELECT 1 FROM asset_links l WHERE l.asset_id = a.id)");
         }
         let total: i64 = self.connection.query_row(
             &format!("SELECT COUNT(*) FROM assets a WHERE {clause}"),

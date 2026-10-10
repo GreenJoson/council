@@ -97,6 +97,19 @@
   font: inherit;
 }
 
+.assets-filters .assets-filter-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  cursor: pointer;
+}
+
+.assets-filters .assets-filter-check input {
+  margin: 0;
+}
+
 .assets-count {
   padding-bottom: 8px;
   color: var(--color-text-muted);

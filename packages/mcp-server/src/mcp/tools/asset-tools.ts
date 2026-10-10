@@ -80,13 +80,15 @@ export function registerAssetTools(context: McpToolContext): void {
     {
       title: "按项目查看资产",
       description:
-        "列出某个项目资产库中的资产（新到旧，不含已删除），可按类型或链接目标（任务/消息/决策）过滤。"
+        "列出某个项目资产库中的资产（新到旧，不含已删除），可按类型或链接目标（任务/消息/决策）过滤，"
+        + "unlinked=true 只看未挂任何目标的资产。"
         + "结果只含元数据，图像字节请在 Council 界面查看。",
       inputSchema: {
         project_path: projectPathField,
         kind: z.enum(ASSET_KINDS).optional(),
         target_kind: z.enum(ASSET_LINK_TARGET_KINDS).optional(),
         target_id: targetIdField.optional(),
+        unlinked: z.boolean().optional().describe("只看未挂任何目标的资产"),
         limit: z.number().int().min(1).max(MAX_ASSET_PAGE_LIMIT).optional(),
         offset: z.number().int().min(0).optional(),
       },
@@ -104,15 +106,19 @@ export function registerAssetTools(context: McpToolContext): void {
         openWorldHint: false,
       },
     },
-    async ({ project_path, kind, target_kind, target_id, limit, offset }) =>
+    async ({ project_path, kind, target_kind, target_id, unlinked, limit, offset }) =>
       await executeTool("council_list_assets", () => {
         if ((target_kind === undefined) !== (target_id === undefined)) {
           throw new CouncilValidationError("资产过滤条件 target_kind 与 target_id 必须同时提供。");
+        }
+        if (unlinked && target_kind) {
+          throw new CouncilValidationError("unlinked 与 target 过滤不能同时使用。");
         }
         const page = assets.list({
           projectPath: project_path,
           ...(kind ? { kind } : {}),
           ...(target_kind && target_id ? { target: { kind: target_kind, id: target_id } } : {}),
+          ...(unlinked ? { unlinked: true } : {}),
           limit: limit ?? DEFAULT_ASSET_PAGE_LIMIT,
           offset: offset ?? 0,
         });

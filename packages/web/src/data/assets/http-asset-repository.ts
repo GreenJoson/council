@@ -58,6 +58,7 @@ export class HttpAssetRepository implements AssetRepository {
         project: this.#projectPath,
         kind: query.kind,
         target: query.target ? `${query.target.targetKind}:${query.target.targetId}` : undefined,
+        unlinked: query.unlinked ? "true" : undefined,
         limit: query.limit ?? this.pageSize,
         offset: query.offset ?? 0,
       }),

@@ -43,6 +43,8 @@ export interface DesktopListAssetsArgs {
   projectPath: string;
   kind?: AssetKind;
   target?: string;
+  /** 只看未挂任何目标的资产；省略即不过滤。 */
+  unlinked?: boolean;
   limit: number;
   offset: number;
 }
@@ -211,6 +213,7 @@ export function createDesktopBridge(runtime: DesktopRuntime = tauriRuntime): Des
       projectPath: args.projectPath,
       ...(args.kind ? { kind: args.kind } : {}),
       ...(args.target ? { target: args.target } : {}),
+      ...(args.unlinked ? { unlinked: true } : {}),
       limit: args.limit,
       offset: args.offset,
     })),

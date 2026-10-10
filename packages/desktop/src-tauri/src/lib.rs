@@ -344,13 +344,14 @@ fn get_task(id: String, state: tauri::State<'_, AppState>) -> Result<Option<Work
     with_store(&state, |store| store.get_task(&id))
 }
 
-/// 按项目分页列资产元数据（不含已删除），参数与返回同 REST GET /api/v1/assets。
+/// 按项目分页列资产元数据（不含已删除），参数与返回同 REST GET /api/v1/assets（`unlinked` 只看未挂任何目标的资产）。
 /// 字节、缩略图与写入只走 Node HTTP /api/v1/assets。
 #[tauri::command]
 fn list_assets(
     project_path: String,
     kind: Option<AssetKind>,
     target: Option<String>,
+    unlinked: Option<bool>,
     limit: Option<u32>,
     offset: Option<u32>,
     state: tauri::State<'_, AppState>,
@@ -369,6 +370,7 @@ fn list_assets(
             &project_path,
             kind,
             target.as_ref(),
+            unlinked.unwrap_or(false),
             limit,
             offset.unwrap_or(0),
         )

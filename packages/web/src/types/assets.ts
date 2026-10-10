@@ -60,6 +60,8 @@ export interface AssetListQuery {
   kind?: AssetKind;
   /** 只看挂在某个目标上的资产（任意 role）。 */
   target?: { targetKind: AssetLinkTargetKind; targetId: string };
+  /** 只看未挂任何目标的资产（资产库「只看未引用 / 清理未引用」）；与 target 不同时使用。 */
+  unlinked?: boolean;
   limit?: number;
   offset?: number;
 }

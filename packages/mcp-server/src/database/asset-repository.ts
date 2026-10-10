@@ -1,7 +1,7 @@
 /**
  * @input  依赖：共享数据库上下文、资产行映射与安全错误语义
  * @output 导出：AssetRepository —— 按 (project_path, sha256) 查重、新建/恢复资产行、读取公开 DTO 与内部存储记录、
- *         按项目/kind/链接目标分页列表（默认不含软删除）、未删除资产字节总量、链接增删（目标存在且同项目）、软删除；
+ *         按项目/kind/链接目标/未引用（unlinked：不挂任何目标）分页列表（默认不含软删除）、未删除资产字节总量、链接增删（目标存在且同项目）、软删除；
  *         以及 AssetStorageRecord / NewAssetRecord / AssetListFilter 类型
  * @pos    assets / asset_links 两张表的唯一数据访问所有者；不碰文件系统，落盘与嗅探在 assets/ 领域完成。
  *         内容 revision 由 v19 触发器推进，这里不手动改 council_meta
@@ -40,6 +40,8 @@ export interface AssetListFilter {
   projectPath: string;
   kind?: AssetKind;
   target?: { kind: AssetLinkTargetKind; id: string };
+  /** 只看没有任何链接（任务/消息/决策）的资产；与 target 互斥时以 target 为准由调用方保证。 */
+  unlinked?: boolean;
   includeDeleted?: boolean;
   limit: number;
   offset: number;
@@ -202,6 +204,9 @@ export class AssetRepository {
         WHERE l.asset_id = a.id AND l.target_kind = ? AND l.target_id = ?
       )`);
       params.push(filter.target.kind, filter.target.id);
+    }
+    if (filter.unlinked) {
+      where.push("NOT EXISTS (SELECT 1 FROM asset_links l WHERE l.asset_id = a.id)");
     }
     const clause = where.join(" AND ");
     const total = this.#context.database.prepare(`

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：AssetRepository 契约、mock-assets 夹具与占位图生成
  * @output 导出：MockAssetRepository 与其构造参数类型
- * @pos    mock 模式的资产仓储：内存夹具、刷新即重置；同构模拟分页、kind/target 筛选、
+ * @pos    mock 模式的资产仓储：内存夹具、刷新即重置；同构模拟分页、kind/target/unlinked 筛选、
  *         导入（按扩展名推断 kind、同路径视为同 sha256 返回既有资产、拒绝绝对路径与 ..）、
  *         挂接/解除挂接（主键去重）与软删除（之后不再出现在列表，URL 返回 undefined）
  *
@@ -74,6 +74,7 @@ export class MockAssetRepository implements AssetRepository {
       .filter((asset) => !query.kind || asset.kind === query.kind)
       .filter((asset) => !target || asset.links.some((link) =>
         link.targetKind === target.targetKind && link.targetId === target.targetId))
+      .filter((asset) => !query.unlinked || asset.links.length === 0)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     const items = matched.slice(offset, offset + limit).map((asset) => structuredClone(asset));
     return {

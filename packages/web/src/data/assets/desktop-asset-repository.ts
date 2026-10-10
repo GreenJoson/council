@@ -65,6 +65,7 @@ export class DesktopAssetRepository implements AssetRepository {
       projectPath,
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.target ? { target: `${query.target.targetKind}:${query.target.targetId}` } : {}),
+      ...(query.unlinked ? { unlinked: true } : {}),
       limit: query.limit ?? this.pageSize,
       offset: query.offset ?? 0,
     }));
