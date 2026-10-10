@@ -47,16 +47,16 @@ function CouncilBriefView({ brief }: { brief: CouncilBrief }) {
           </li>
         ))}
       </ul>
-      {brief.style.constraints?.length ? (
+      {brief.style?.constraints?.length ? (
         <>
           <h3>{t("风格约束")}</h3>
           <ul>{brief.style.constraints.map((entry, index) => <li key={index}>{entry}</li>)}</ul>
         </>
       ) : null}
-      {brief.style.palette?.length ? (
-        <p><span className="task-muted">{t("配色")}</span> {brief.style.palette.join(" · ")}</p>
+      {brief.style?.palette ? (
+        <p><span className="task-muted">{t("配色")}</span> {brief.style.palette}</p>
       ) : null}
-      {brief.style.references?.length ? (
+      {brief.style?.references?.length ? (
         <>
           <h3>{t("参考资产")}</h3>
           <ul>

@@ -1,15 +1,16 @@
 /**
  * @input  依赖：界面语言、受控的 BriefDraft 与变更回调、外部传入的校验问题；brief-form 的双模式转换
- * @output 导出：BriefEditor —— council-brief 编辑器：表单（类型、目标、交付物 id/描述/尺寸/透明/数量、风格约束、验收条目）
+ * @output 导出：BriefEditor —— council-brief 编辑器：表单（类型、目标、交付物 id/描述/尺寸/透明/数量、配色、风格约束、验收条目）
  *         与 JSON 直接编辑两种模式；BRIEF_KIND_LABELS 简报类型文案表；BriefIssueList 问题列表
- * @pos    任务详情的「编辑简报」与新建任务对话框共用；只负责编辑，保存/提交按钮由调用方提供
+ * @pos    任务详情的「编辑简报」与新建任务对话框共用；只负责编辑，保存/提交按钮由调用方提供；
+ *         输入上限取自 data/tasks/council-brief 的 BRIEF_LIMITS（与服务端 brief-protocol 对齐）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { BriefIssue } from "../../data/tasks/council-brief";
+import { BRIEF_LIMITS, type BriefIssue } from "../../data/tasks/council-brief";
 import { useI18n } from "../../i18n/I18nProvider";
 import { COUNCIL_BRIEF_KINDS, type CouncilBriefKind } from "../../types/assets";
 import {
@@ -28,9 +29,6 @@ export const BRIEF_KIND_LABELS: Record<CouncilBriefKind, string> = {
   "icon-set": "图标组",
   custom: "自定义",
 };
-
-/** 交付物上限：避免表单无限加行；服务端另有产物数量上限。 */
-const MAX_DELIVERABLES = 12;
 
 export function BriefIssueList({ issues }: { issues: BriefIssue[] }) {
   const { t } = useI18n();
@@ -106,7 +104,7 @@ export function BriefEditor({ draft, onChange, issues = [], disabled = false }: 
             <span>{t("目标")}</span>
             <input
               value={form.goal}
-              maxLength={500}
+              maxLength={BRIEF_LIMITS.maxShortText}
               disabled={disabled}
               placeholder={t("一句话说明这批图要解决什么")}
               onChange={(event) => setForm({ goal: event.target.value })}
@@ -118,11 +116,11 @@ export function BriefEditor({ draft, onChange, issues = [], disabled = false }: 
               <div className="brief-deliverable" key={index}>
                 <label>
                   <span>id</span>
-                  <input value={entry.id} disabled={disabled} onChange={(event) => setDeliverable(index, { id: event.target.value })} />
+                  <input value={entry.id} maxLength={BRIEF_LIMITS.maxDeliverableIdLength} disabled={disabled} onChange={(event) => setDeliverable(index, { id: event.target.value })} />
                 </label>
                 <label>
                   <span>{t("描述")}</span>
-                  <input value={entry.description} disabled={disabled} onChange={(event) => setDeliverable(index, { description: event.target.value })} />
+                  <input value={entry.description} maxLength={BRIEF_LIMITS.maxLongText} disabled={disabled} onChange={(event) => setDeliverable(index, { description: event.target.value })} />
                 </label>
                 <label>
                   <span>{t("尺寸")}</span>
@@ -150,12 +148,22 @@ export function BriefEditor({ draft, onChange, issues = [], disabled = false }: 
             <button
               type="button"
               className="brief-row-button"
-              disabled={disabled || form.deliverables.length >= MAX_DELIVERABLES}
+              disabled={disabled || form.deliverables.length >= BRIEF_LIMITS.maxDeliverables}
               onClick={() => setForm({ deliverables: [...form.deliverables, emptyDeliverable(form.deliverables.length)] })}
             >
               <Plus size={12} />{t("添加交付物")}
             </button>
           </fieldset>
+          <label>
+            <span>{t("配色")}</span>
+            <input
+              value={form.palette}
+              maxLength={BRIEF_LIMITS.maxShortText}
+              disabled={disabled}
+              placeholder={t("如 #008080、#FFFFFF 为主")}
+              onChange={(event) => setForm({ palette: event.target.value })}
+            />
+          </label>
           <label>
             <span>{t("风格约束（每行一条）")}</span>
             <textarea rows={3} value={form.constraints} disabled={disabled} onChange={(event) => setForm({ constraints: event.target.value })} />

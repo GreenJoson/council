@@ -1,7 +1,8 @@
 /**
  * @input  依赖：无（纯类型与常量）
  * @output 导出：资产 DTO（Asset/AssetLink/AssetOrigin）、kind/targetKind/role 常量与联合类型、
- *         资产列表查询与分页结果、挂接目标；council-brief v1 的 TS 类型（CouncilBrief 等）
+ *         资产列表查询与分页结果、挂接目标；council-brief v1 的 TS 类型（CouncilBrief 等，
+ *         形状对齐服务端 pipelines/brief-protocol.ts：style 可选、style.palette 为单个文本）
  * @pos    P2 资产通道（/api/v1/assets 与 Tauri list_assets/get_asset）和任务 brief 在 Web 端的稳定领域模型；
  *         字段与 docs/council-v2-refactor-plan.md 的「P2 落地契约」一一对应，公开 DTO 不含任何路径
  *
@@ -95,7 +96,8 @@ export interface CouncilBriefDeliverable {
 }
 
 export interface CouncilBriefStyle {
-  palette?: string[];
+  /** 配色描述，单个 1–500 字文本，如「#008080、#FFFFFF 为主」。 */
+  palette?: string;
   /** reference 资产 id。 */
   references?: string[];
   constraints?: string[];
@@ -106,7 +108,8 @@ export interface CouncilBrief {
   kind: CouncilBriefKind;
   goal: string;
   deliverables: CouncilBriefDeliverable[];
-  style: CouncilBriefStyle;
+  /** 服务端为可选对象；没有任何风格项时省略。 */
+  style?: CouncilBriefStyle;
   acceptance: string[];
   nextStage?: { kind: "prototype"; notes: string };
 }

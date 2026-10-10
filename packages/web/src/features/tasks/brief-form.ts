@@ -2,7 +2,8 @@
  * @input  依赖：types/assets.ts 的 council-brief 类型、data/tasks/council-brief 的校验
  * @output 导出：BriefDraft（表单/JSON 双模式草稿）、createBriefDraft、briefDraftToJson、briefDraftFromJson、resolveBriefDraft
  * @pos    BriefEditor 的纯数据层：表单字段与 council-brief 对象互转，提交前统一走 validateCouncilBrief；
- *         表单不暴露的字段（style.palette、style.references、nextStage）原样保留，避免编辑时丢失
+ *         表单不暴露的字段（style.references、nextStage）原样保留，避免编辑时丢失；
+ *         没有任何风格项时不输出 style（服务端 style 为可选对象）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -27,7 +28,8 @@ export interface BriefFormDraft {
   constraints: string;
   /** 每行一条。 */
   acceptance: string;
-  palette?: string[];
+  /** 配色描述，单个文本；空串表示不填。 */
+  palette: string;
   references?: string[];
   nextStage?: CouncilBrief["nextStage"];
 }
@@ -57,10 +59,10 @@ function briefToForm(brief: CouncilBrief): BriefFormDraft {
       transparent: entry.transparent ?? false,
       count: entry.count === undefined ? "" : String(entry.count),
     })),
-    constraints: (brief.style.constraints ?? []).join("\n"),
+    constraints: (brief.style?.constraints ?? []).join("\n"),
     acceptance: brief.acceptance.join("\n"),
-    ...(brief.style.palette ? { palette: brief.style.palette } : {}),
-    ...(brief.style.references ? { references: brief.style.references } : {}),
+    palette: brief.style?.palette ?? "",
+    ...(brief.style?.references ? { references: brief.style.references } : {}),
     ...(brief.nextStage ? { nextStage: brief.nextStage } : {}),
   };
 }
@@ -68,6 +70,12 @@ function briefToForm(brief: CouncilBrief): BriefFormDraft {
 /** 生成提交对象：可选字段留空即省略；count 非数字时保留 NaN 让校验报出具体条目。 */
 function formToBrief(form: BriefFormDraft): Record<string, unknown> {
   const constraints = splitLines(form.constraints);
+  const palette = form.palette.trim();
+  const style = {
+    ...(palette ? { palette } : {}),
+    ...(form.references?.length ? { references: form.references } : {}),
+    ...(constraints.length ? { constraints } : {}),
+  };
   return {
     schemaVersion: 1,
     kind: form.kind,
@@ -79,11 +87,7 @@ function formToBrief(form: BriefFormDraft): Record<string, unknown> {
       ...(entry.transparent ? { transparent: true } : {}),
       ...(entry.count.trim() ? { count: Number(entry.count.trim()) } : {}),
     })),
-    style: {
-      ...(form.palette?.length ? { palette: form.palette } : {}),
-      ...(form.references?.length ? { references: form.references } : {}),
-      ...(constraints.length ? { constraints } : {}),
-    },
+    ...(Object.keys(style).length > 0 ? { style } : {}),
     acceptance: splitLines(form.acceptance),
     ...(form.nextStage ? { nextStage: form.nextStage } : {}),
   };
@@ -96,6 +100,7 @@ export function createBriefDraft(brief?: CouncilBrief | null): BriefDraft {
     deliverables: [emptyDeliverable(0)],
     constraints: "",
     acceptance: "",
+    palette: "",
   };
   return { mode: "form", form, json: JSON.stringify(formToBrief(form), null, 2) };
 }
