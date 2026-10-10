@@ -510,6 +510,8 @@ VITE_COUNCIL_ASSET_PAGE_SIZE=60                      # web
 - 讨论视图降密度；模式栏徽标；`StatusBar` 活动 Agent 计数；i18n 补齐；`docs/usage.md`、`docs/execution-delivery.md`、`README.zh.md` 更新；`docs/designs/` 补任务板/资产库/流水线三张截图。
 - 验收：桌面从首次运行到跑通 P3 的 app-mockup 全流程，仅靠 `docs/usage.md` 指引完成。
 
+   > **P5 落地记录（2026-10-11）**：① 讨论视图降密度 = 右侧「上下文」栏的约束/证据/备选区块默认折叠、只露标题与数量，展开状态由 `hooks/useInspectorSections` + `data/section-collapse` 跨会话记住；② 图标栏徽标：会话入口叠运行中 Agent 数、需要我处理入口叠待处理议题数（来自编排快照 `activity`，0 不显示，>99 显示 99+）；③ `StatusBar` 活动 Agent 计数 = `running/waiting_agent` Run + 执行/审核中委派，离线快照无该字段时不渲染；④ §8 风险表的「资产库清理未引用」落地：`unlinked` 过滤贯通 REST `GET /api/v1/assets?unlinked=true`、MCP `council_list_assets.unlinked`（与 target 过滤互斥）、Rust `list_assets(unlinked)` 与 Tauri 命令；前端「只看未引用」复选框 + 「清理未引用」= 客户端列全量未引用、确认后逐个软删除，配额只计未删除字节所以会释放配额，文件仍留在资产目录；⑤ 目录收口：discussion/decisions/architecture 三块视图迁入 `features/`，`components/` 只留跨功能域基础件，纯 `git mv` 不改行为；⑥ 文档：`usage.md` 补三栏壳入口说明与「从首次运行到跑通应用视觉稿」7 步、资产库与圆桌耗尽出口，`execution-delivery.md`/README/`docs/designs` 索引同步，截图 4 张（讨论壳、任务板、资产库、流水线，比计划多讨论壳 1 张）；⑦ 验收偏离：没有重新用真实 Codex 从桌面 app 首次运行跑一遍 app-mockup，步骤文字按界面文案与 P3 真实 Codex 验收记录核对，链路以 `npm run test:e2e` 替身流水线为据；⑧ 未做、留待后续：图标重绘（用户决定后置）、375px 下「关闭议题」标签折行、会话流内联事件卡。
+
 ## 8. 风险、未知与明确不做
 
 | 项 | 性质 | 处理 |
