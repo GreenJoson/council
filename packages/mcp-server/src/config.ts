@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算、流水线阶段/修订上限与 Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -459,6 +459,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     workerIdleTimeoutMs: parseOptionalTimer("COUNCIL_WORKER_IDLE_TIMEOUT_MS", env, EXECUTION_DEFAULTS.workerIdleTimeoutMs),
     delegationMaxExecutionSegments: parseOptionalPositiveInteger("COUNCIL_DELEGATION_MAX_EXECUTION_SEGMENTS", env, EXECUTION_DEFAULTS.maxSegments),
     delegationExecutionTimeoutMs: parseOptionalTimer("COUNCIL_DELEGATION_EXECUTION_TIMEOUT_MS", env, EXECUTION_DEFAULTS.timeoutMs),
+    pipelineMaxStages: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_STAGES", env, 6),
+    pipelineMaxRevisions: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_REVISIONS", env, 3),
     claudeReviewMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_REVIEW_MAX_TURNS", env, 48),
     delegationWorktreeRoot,
     delegationGitMaxOutputChars: parseOptionalPositiveInteger(

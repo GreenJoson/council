@@ -1,0 +1,568 @@
+/**
+ * @input  依赖：PipelineStateStore（锁与文档读写）、Agent 端口（一次性只读调用、agentId→actorId）、
+ *         委派端口（发起/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts
+ * @output 导出：PipelineDriver（阶段推进：brief/review 一次性调用、图像/修订/原型委派派发、委派终态推进、
+ *         失败阶段重试、取消、启动对账与停机），以及 PipelineAgentPort / PipelineDelegationPort
+ * @pos    流水线状态机的唯一推进者：HTTP 用例只做校验后调用这里；
+ *         一次性调用不持锁（锁内置 running → 锁外调用 → 锁内重读，已取消或 startedAt 变了就丢弃结果）；
+ *         委派在锁内发起并写回 delegationId，因此终态回调总能在锁后看到对应阶段
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
+
+import { OrchestrationConfigError, type CouncilTopicContext } from "council-orchestrator";
+import { CouncilConflictError } from "../errors.js";
+import { logger } from "../logger.js";
+import type { StartWorkItemDelegationInput } from "../orchestration/work-item-delegation-manager.js";
+import type { WorkItemDelegation } from "../orchestration/work-item-delegation-store.js";
+import type { WorkItem } from "../types.js";
+import { parseCouncilBrief, type CouncilBrief } from "./brief-protocol.js";
+import {
+  buildRevisionBrief,
+  currentStage,
+  extractCouncilBrief,
+  isPipelineFinished,
+  parseCouncilReview,
+  PipelineProtocolError,
+  stageOf,
+  withStage,
+  type PipelineDocument,
+  type PipelineStage,
+} from "./pipeline-document.js";
+import {
+  renderBriefInstruction,
+  renderPrototypeDetails,
+  renderReviewInstruction,
+} from "./pipeline-prompts.js";
+import type { PipelineSnapshot, PipelineStateStore } from "./pipeline-state.js";
+import type { PipelineStageId } from "./templates.js";
+
+// ┌─────────────────────────────────────────────────────────────┐
+// │ 端口与常量                                                  │
+// └─────────────────────────────────────────────────────────────┘
+
+export interface PipelineAgentPort {
+  invokeOneShot(input: {
+    adapterId: string;
+    instruction: string;
+    context: CouncilTopicContext;
+    contextMessage: string;
+    invocationPrefix: string;
+    purpose: string;
+    signal?: AbortSignal;
+  }): Promise<{ actorId: string; content: string }>;
+  /** Agent 定义上的 actorId；Agent 已删除时 undefined（写入回落到 human）。 */
+  actorIdOf(agentId: string): string | undefined;
+}
+
+export interface PipelineDelegationPort {
+  start(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation>;
+  cancel(id: string): WorkItemDelegation;
+  get(id: string): WorkItemDelegation | undefined;
+  onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void;
+  stageProjectInputs(
+    root: string,
+    assetIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<Array<{ assetId: string; relativePath: string }>>;
+}
+
+type OneShotStage = "brief" | "review";
+
+const TERMINAL_DELEGATION = new Set<WorkItemDelegation["status"]>(["approved", "failed", "cancelled"]);
+/** 流水线派发的委派一律 workspace_write：图像只写 `.council/out`，原型在隔离工作树内改代码。 */
+const DELEGATION_PERMISSION = "workspace_write" as const;
+const MAX_ERROR_MESSAGE = 1_000;
+const HUMAN = "human";
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  const text = (error instanceof Error ? error.message : String(error)).trim() || fallback;
+  return text.length <= MAX_ERROR_MESSAGE ? text : `${text.slice(0, MAX_ERROR_MESSAGE - 1)}…`;
+}
+
+/** Agent 调用失败码：不可用/不存在 → agent_unavailable；协议尾块问题 → 协议码；其余 → agent_failed。 */
+function oneShotErrorCode(error: unknown): string {
+  if (error instanceof PipelineProtocolError) return error.code;
+  if (error instanceof OrchestrationConfigError) return "agent_unavailable";
+  return "agent_failed";
+}
+
+/** 委派发起失败码：Agent 配置问题 → agent_unavailable；其余（任务状态、资产校验等）→ delegation_rejected。 */
+function startErrorCode(error: unknown): string {
+  return error instanceof OrchestrationConfigError ? "agent_unavailable" : "delegation_rejected";
+}
+
+function stageFields(stage: PipelineStage): Omit<PipelineStage, "id"> {
+  const { id: _id, ...rest } = stage;
+  return rest;
+}
+
+// ┌─────────────────────────────────────────────────────────────┐
+// │ 驱动器                                                      │
+// └─────────────────────────────────────────────────────────────┘
+
+export class PipelineDriver {
+  readonly #store: PipelineStateStore;
+  readonly #agents: PipelineAgentPort;
+  readonly #delegations: PipelineDelegationPort;
+  readonly #maxRevisions: number;
+  /** pipelineId → 正在进行的一次性调用；取消与停机时中止。 */
+  readonly #inflight = new Map<string, AbortController>();
+  #unsubscribe: (() => void) | undefined;
+  #closed = false;
+
+  constructor(deps: {
+    store: PipelineStateStore;
+    agents: PipelineAgentPort;
+    delegations: PipelineDelegationPort;
+    maxRevisions: number;
+  }) {
+    this.#store = deps.store;
+    this.#agents = deps.agents;
+    this.#delegations = deps.delegations;
+    this.#maxRevisions = deps.maxRevisions;
+  }
+
+  /** 订阅委派终态并做一次启动对账；须在委派管理器初始化（含恢复）之后调用。 */
+  async initialize(): Promise<void> {
+    this.#unsubscribe ??= this.#delegations.onSettled(async (delegation) => {
+      await this.#handleSettled(delegation);
+    });
+    await this.#reconcile();
+  }
+
+  /** 停机：不再写文档，中止一次性调用；阶段保持 running，下次启动对账标为 interrupted。 */
+  shutdown(): void {
+    this.#closed = true;
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+    for (const controller of this.#inflight.values()) controller.abort(new Error("服务停止。"));
+    this.#inflight.clear();
+  }
+
+  #actor(agentId: string | undefined): string {
+    return (agentId && this.#agents.actorIdOf(agentId)) || HUMAN;
+  }
+
+  // ---- 以下公开方法：调用方须持有该流水线的锁（store.withLock） ----
+
+  /** 置 brief 阶段 running 并在锁外发起一次性调用。 */
+  startBrief(pipelineId: string, actorId: string): PipelineSnapshot {
+    return this.#launchOneShot(pipelineId, "brief", actorId);
+  }
+
+  /** 首轮生图：用确认后的 brief 与请求参考图派发图像子任务。 */
+  async startImage(pipelineId: string, actorId: string): Promise<PipelineSnapshot> {
+    const { document } = this.#store.load(pipelineId);
+    if (!document.brief) throw new CouncilConflictError("流水线尚未确认 brief。");
+    return await this.#dispatchImage(pipelineId, {
+      brief: document.brief,
+      inputAssetIds: document.request.referenceAssetIds ?? [],
+      title: "生图 第1轮",
+      actorId,
+    });
+  }
+
+  /** 选定终稿后的原型阶段：建原型子任务并发起 kind=code 委派（completionPolicy human）。 */
+  async startPrototype(pipelineId: string, actorId: string): Promise<PipelineSnapshot> {
+    const { task, document } = this.#store.load(pipelineId);
+    if (!document.brief || !document.agents.prototype || !task.projectPath) {
+      throw new CouncilConflictError("流水线缺少原型阶段所需的 brief 或 Agent。");
+    }
+    const child = this.#store.database.createPipelineChildAsActor({
+      parentId: pipelineId,
+      projectPath: task.projectPath,
+      title: "原型实现",
+      details: renderPrototypeDetails(document.request.goal, document.brief),
+      kind: "prototype",
+      actorId,
+    });
+    return await this.#startStageDelegation(pipelineId, "prototype", child.id, actorId, document.finalAssetIds ?? []);
+  }
+
+  /** 只重跑当前 failed 阶段：brief/review 重新调用；image/prototype 为原子任务重新委派，已入库资产不动。 */
+  async retryCurrentStage(pipelineId: string, actorId: string): Promise<PipelineSnapshot> {
+    const { document } = this.#store.load(pipelineId);
+    const stage = currentStage(document);
+    if (stage.status !== "failed") throw new CouncilConflictError("当前阶段没有失败，无需重试。");
+    if (stage.id === "brief" || stage.id === "review") return this.#launchOneShot(pipelineId, stage.id, actorId);
+    if (stage.id === "image") {
+      if (!stage.workItemId) return await this.startImage(pipelineId, actorId);
+      const previous = stage.delegationId ? this.#delegations.get(stage.delegationId) : undefined;
+      const inputs = previous?.inputAssetIds ?? this.#imageInputsFallback(document);
+      return await this.#startStageDelegation(pipelineId, "image", stage.workItemId, actorId, inputs);
+    }
+    if (stage.id === "prototype") {
+      if (!stage.workItemId) return await this.startPrototype(pipelineId, actorId);
+      return await this.#startStageDelegation(
+        pipelineId, "prototype", stage.workItemId, actorId, document.finalAssetIds ?? []);
+    }
+    throw new CouncilConflictError("当前阶段不可重试。");
+  }
+
+  /** 取消：中止一次性调用与运行中的委派；当前阶段 skipped（error.code=cancelled），后续阶段保持 pending。 */
+  cancel(pipelineId: string, actorId: string, expectedVersion: number): PipelineSnapshot {
+    const { task, document } = this.#store.load(pipelineId);
+    this.#store.assertVersion(task, expectedVersion);
+    if (document.status === "cancelled") throw new CouncilConflictError("流水线已取消。");
+    if (isPipelineFinished(document)) throw new CouncilConflictError("流水线已结束，无法取消。");
+    this.#inflight.get(pipelineId)?.abort(new Error("流水线已取消。"));
+    this.#inflight.delete(pipelineId);
+    const stage = currentStage(document);
+    const delegation = stage.delegationId ? this.#delegations.get(stage.delegationId) : undefined;
+    if (delegation && !TERMINAL_DELEGATION.has(delegation.status)) {
+      try {
+        this.#delegations.cancel(delegation.id);
+      } catch (error) {
+        logger.warn("pipeline", `取消流水线委派失败：${pipelineId}`, error);
+      }
+    }
+    const at = now();
+    return this.#store.write(pipelineId, ({ document: current }) => ({
+      ...withStage(current, current.currentStageId, {
+        ...stageFields(currentStage(current)),
+        status: "skipped",
+        endedAt: at,
+        error: { code: "cancelled", message: "流水线已取消。" },
+      }, at),
+      status: "cancelled",
+    }), { actorId, expectedVersion });
+  }
+
+  // ┌───────────────────────────────────────────────────────────┐
+  // │ 一次性调用（brief / review）                              │
+  // └───────────────────────────────────────────────────────────┘
+
+  #launchOneShot(pipelineId: string, stageId: OneShotStage, actorId: string): PipelineSnapshot {
+    const startedAt = now();
+    const snapshot = this.#store.write(pipelineId, ({ document }) => ({
+      ...withStage(document, stageId, { status: "running", startedAt }, startedAt),
+      currentStageId: stageId,
+    }), { actorId });
+    void this.#runOneShot(pipelineId, stageId, startedAt).catch((error: unknown) => {
+      logger.error("pipeline", `流水线一次性调用收尾失败：${pipelineId}`, error);
+    });
+    return snapshot;
+  }
+
+  async #runOneShot(pipelineId: string, stageId: OneShotStage, startedAt: string): Promise<void> {
+    const controller = new AbortController();
+    this.#inflight.get(pipelineId)?.abort(new Error("被新的调用取代。"));
+    this.#inflight.set(pipelineId, controller);
+    let outcome: { ok: true; actorId: string; content: string; review?: ReviewInputs }
+      | { ok: false; code: string; message: string };
+    try {
+      const { task, document } = this.#store.load(pipelineId);
+      if (!task.projectPath) throw new CouncilConflictError("流水线缺少项目路径。");
+      const review = stageId === "review" ? this.#reviewInputs(task, document) : undefined;
+      const staged = await this.#delegations.stageProjectInputs(
+        task.projectPath,
+        review ? review.assetIds : document.request.referenceAssetIds ?? [],
+        controller.signal,
+      );
+      const round = document.reviews.length + 1;
+      const instruction = review
+        ? renderReviewInstruction({
+          round,
+          request: document.request,
+          brief: review.brief,
+          outputs: staged.map((item) => ({
+            ...item,
+            ...(review.prompts.get(item.assetId) ? { prompt: review.prompts.get(item.assetId) } : {}),
+          })),
+        })
+        : renderBriefInstruction({ template: document.template, request: document.request, references: staged });
+      const context: CouncilTopicContext = {
+        topicId: task.id,
+        title: task.title,
+        question: document.request.goal,
+        constraints: document.request.constraints ?? [],
+        projectPath: task.projectPath,
+        messages: [],
+      };
+      const result = await this.#agents.invokeOneShot({
+        adapterId: document.agents.brief,
+        instruction,
+        context,
+        contextMessage: review
+          ? `设计流水线「${task.title}」第 ${String(round)} 轮复盘：只读查看产物并输出 council-review。`
+          : `设计流水线「${task.title}」brief 撰写：只读整理需求并输出 council-brief。`,
+        invocationPrefix: `pipeline_${stageId}`,
+        purpose: stageId === "brief" ? "流水线 brief" : "流水线复盘",
+        signal: controller.signal,
+      });
+      outcome = { ok: true, actorId: result.actorId, content: result.content, ...(review ? { review } : {}) };
+    } catch (error) {
+      outcome = { ok: false, code: oneShotErrorCode(error), message: errorMessage(error, "Agent 调用失败。") };
+    } finally {
+      if (this.#inflight.get(pipelineId) === controller) this.#inflight.delete(pipelineId);
+    }
+    if (this.#closed) return;
+    await this.#store.withLock(pipelineId, async () => {
+      const { document } = this.#store.load(pipelineId);
+      const stage = stageOf(document, stageId);
+      if (document.status === "cancelled" || stage?.status !== "running" || stage.startedAt !== startedAt) return;
+      if (!outcome.ok) {
+        this.#failStage(pipelineId, stageId, outcome.code, outcome.message, HUMAN);
+        return;
+      }
+      if (stageId === "brief") {
+        this.#applyBrief(pipelineId, outcome.content, outcome.actorId);
+        return;
+      }
+      if (outcome.review) await this.#applyReview(pipelineId, outcome.content, outcome.review, outcome.actorId);
+    });
+  }
+
+  #applyBrief(pipelineId: string, content: string, actorId: string): void {
+    const { document } = this.#store.load(pipelineId);
+    let brief: CouncilBrief;
+    try {
+      brief = extractCouncilBrief(content, document.template);
+    } catch (error) {
+      this.#failStage(pipelineId, "brief", oneShotErrorCode(error), errorMessage(error, "brief 无效。"), actorId);
+      return;
+    }
+    const at = now();
+    this.#store.write(pipelineId, ({ document: current }) => ({
+      ...withStage(current, "brief", {
+        status: "waiting_human",
+        ...(stageOf(current, "brief")?.startedAt ? { startedAt: stageOf(current, "brief")?.startedAt } : {}),
+      }, at),
+      draftBrief: brief,
+    }), { actorId });
+  }
+
+  /** 复盘输入：当前图像子任务的 brief 与本轮 output 资产。 */
+  #reviewInputs(task: WorkItem, document: PipelineDocument): ReviewInputs {
+    const imageStage = stageOf(document, "image");
+    if (!imageStage?.workItemId || !task.projectPath) {
+      throw new PipelineProtocolError("review_invalid", "没有可复盘的图像子任务。");
+    }
+    const child = this.#store.database.getWorkItem(imageStage.workItemId);
+    const brief = parseCouncilBrief(child.brief);
+    const assets = this.#store.outputAssets(task.projectPath, child.id);
+    if (assets.length === 0) throw new PipelineProtocolError("review_invalid", "本轮没有可复盘的产物。");
+    return {
+      childId: child.id,
+      brief,
+      assetIds: assets.map((asset) => asset.id),
+      prompts: new Map(assets.flatMap((asset) => asset.prompt ? [[asset.id, asset.prompt] as const] : [])),
+    };
+  }
+
+  async #applyReview(pipelineId: string, content: string, inputs: ReviewInputs, actorId: string): Promise<void> {
+    let review;
+    try {
+      review = parseCouncilReview(content, { brief: inputs.brief, assetIds: inputs.assetIds });
+    } catch (error) {
+      this.#failStage(pipelineId, "review", oneShotErrorCode(error), errorMessage(error, "复盘无效。"), actorId);
+      return;
+    }
+    const at = now();
+    const { document } = this.#store.load(pipelineId);
+    const round = document.reviews.length + 1;
+    const record = { round, verdict: review.verdict, items: review.items };
+    const exhausted = review.verdict === "revise" && document.revisionCount >= this.#maxRevisions;
+    if (review.verdict === "pass" || exhausted) {
+      this.#store.write(pipelineId, ({ document: current }) => {
+        const reviewStage = stageOf(current, "review");
+        const next = withStage(current, "review", {
+          status: "completed",
+          ...(reviewStage?.startedAt ? { startedAt: reviewStage.startedAt } : {}),
+          endedAt: at,
+        }, at);
+        return {
+          ...withStage(next, "select", { status: "waiting_human", startedAt: at }, at),
+          currentStageId: "select",
+          reviews: [...current.reviews, record],
+          ...(exhausted
+            ? { notice: `已达修订上限（${String(this.#maxRevisions)} 轮），复盘仍有不合格项，请人工挑选终稿。` }
+            : {}),
+        };
+      }, { actorId });
+      return;
+    }
+    const revisionCount = document.revisionCount + 1;
+    const revision = buildRevisionBrief(inputs.brief, review);
+    this.#store.write(pipelineId, ({ document: current }) => ({
+      ...withStage(current, "review", { status: "pending" }, at),
+      reviews: [...current.reviews, record],
+      revisionCount,
+    }), { actorId });
+    await this.#dispatchImage(pipelineId, {
+      brief: revision.brief,
+      inputAssetIds: revision.inputAssetIds,
+      title: `生图修订 第${String(revisionCount)}轮`,
+      actorId,
+    });
+  }
+
+  // ┌───────────────────────────────────────────────────────────┐
+  // │ 委派派发与终态                                            │
+  // └───────────────────────────────────────────────────────────┘
+
+  async #dispatchImage(
+    pipelineId: string,
+    input: { brief: CouncilBrief; inputAssetIds: readonly string[]; title: string; actorId: string },
+  ): Promise<PipelineSnapshot> {
+    const { task } = this.#store.load(pipelineId);
+    if (!task.projectPath) throw new CouncilConflictError("流水线缺少项目路径。");
+    const child = this.#store.database.createPipelineChildAsActor({
+      parentId: pipelineId,
+      projectPath: task.projectPath,
+      title: input.title,
+      details: input.brief.goal,
+      kind: "image",
+      brief: { ...input.brief },
+      actorId: input.actorId,
+    });
+    return await this.#startStageDelegation(pipelineId, "image", child.id, input.actorId, input.inputAssetIds);
+  }
+
+  /** 为子任务发起（或重新发起）委派并把阶段置 running；发起失败则阶段 failed（可 resume）。 */
+  async #startStageDelegation(
+    pipelineId: string,
+    stageId: "image" | "prototype",
+    childId: string,
+    actorId: string,
+    inputAssetIds: readonly string[],
+  ): Promise<PipelineSnapshot> {
+    const { document } = this.#store.load(pipelineId);
+    const startedAt = now();
+    try {
+      const child = this.#store.database.getWorkItem(childId);
+      const base = {
+        workItemId: childId,
+        expectedVersion: child.version,
+        requestedPermission: DELEGATION_PERMISSION,
+        inputAssetIds: [...inputAssetIds],
+      };
+      const prototype = document.agents.prototype;
+      const delegation = await this.#delegations.start(stageId === "image"
+        ? { ...base, kind: "image", executorAgentId: document.agents.image }
+        : {
+          ...base,
+          kind: "code",
+          executorAgentId: prototype?.executor ?? document.agents.image,
+          supervisorAgentId: prototype?.supervisor ?? document.agents.brief,
+          completionPolicy: "human",
+        });
+      return this.#store.write(pipelineId, ({ document: current }) => ({
+        ...withStage(current, stageId, {
+          status: "running", workItemId: childId, delegationId: delegation.id, startedAt,
+        }, startedAt),
+        currentStageId: stageId,
+      }), { actorId });
+    } catch (error) {
+      const at = now();
+      logger.warn("pipeline", `流水线 ${stageId} 阶段发起委派失败：${pipelineId}`, error);
+      return this.#store.write(pipelineId, ({ document: current }) => ({
+        ...withStage(current, stageId, {
+          status: "failed",
+          workItemId: childId,
+          startedAt,
+          endedAt: at,
+          error: { code: startErrorCode(error), message: errorMessage(error, "委派发起失败。") },
+        }, at),
+        currentStageId: stageId,
+      }), { actorId });
+    }
+  }
+
+  async #handleSettled(delegation: WorkItemDelegation): Promise<void> {
+    if (this.#closed) return;
+    let child: WorkItem;
+    try {
+      child = this.#store.database.getWorkItem(delegation.workItemId);
+    } catch {
+      return;
+    }
+    if (child.source !== "pipeline" || !child.parentId) return;
+    const pipelineId = child.parentId;
+    try {
+      await this.#store.withLock(pipelineId, async () => {
+        await this.#applySettled(pipelineId, delegation);
+      });
+    } catch (error) {
+      logger.error("pipeline", `流水线推进失败：${pipelineId}`, error);
+    }
+  }
+
+  /** 锁内：委派终态推进对应阶段；阶段已不再指向该委派（被重试或取消）就忽略。 */
+  async #applySettled(pipelineId: string, delegation: WorkItemDelegation): Promise<void> {
+    const { document } = this.#store.load(pipelineId);
+    if (document.status === "cancelled") return;
+    const stage = document.stages.find((item) => item.delegationId === delegation.id && item.status === "running");
+    if (!stage || (stage.id !== "image" && stage.id !== "prototype")) return;
+    const actorId = this.#actor(delegation.executorAgentId);
+    if (delegation.status !== "approved") {
+      const code = delegation.failureCode ?? (delegation.status === "cancelled" ? "delegation_cancelled" : "delegation_failed");
+      this.#failStage(pipelineId, stage.id, code, errorMessage(delegation.error ?? "", "委派未完成。"), actorId);
+      return;
+    }
+    const at = now();
+    this.#store.write(pipelineId, ({ document: current }) =>
+      withStage(current, stage.id, { ...stageFields(stage), status: "completed", endedAt: at }, at), { actorId });
+    if (stage.id === "image") this.#launchOneShot(pipelineId, "review", actorId);
+  }
+
+  #failStage(pipelineId: string, stageId: PipelineStageId, code: string, message: string, actorId: string): void {
+    const at = now();
+    this.#store.write(pipelineId, ({ document }) => {
+      const stage = stageOf(document, stageId);
+      return {
+        ...withStage(document, stageId, {
+          ...(stage ? stageFields(stage) : {}),
+          status: "failed",
+          endedAt: at,
+          error: { code: code.slice(0, 64), message: message.trim() || "阶段失败。" },
+        }, at),
+        currentStageId: stageId,
+      };
+    }, { actorId });
+  }
+
+  /** 无 delegationId 的图像阶段重试时的输入：首轮用请求参考图，修订轮按最近一次复盘重算。 */
+  #imageInputsFallback(document: PipelineDocument): readonly string[] {
+    const last = document.reviews.at(-1);
+    if (document.revisionCount === 0 || !last || !document.brief) return document.request.referenceAssetIds ?? [];
+    return buildRevisionBrief(document.brief, { verdict: last.verdict, items: last.items }).inputAssetIds;
+  }
+
+  /**
+   * 启动对账：上次进程停在 running 的阶段——一次性调用必然已丢失，标 interrupted；
+   * 委派已到终态（终态回调发生在订阅之前）就按终态推进；委派仍在跑则等回调。
+   */
+  async #reconcile(): Promise<void> {
+    for (const parent of this.#store.database.listPipelineParents()) {
+      try {
+        await this.#store.withLock(parent.id, async () => {
+          const { document } = this.#store.load(parent.id);
+          if (isPipelineFinished(document)) return;
+          const stage = currentStage(document);
+          if (stage.status !== "running") return;
+          const delegation = stage.delegationId ? this.#delegations.get(stage.delegationId) : undefined;
+          if (stage.id === "brief" || stage.id === "review" || !delegation) {
+            this.#failStage(parent.id, stage.id, "interrupted", "服务重启中断了该阶段，请重试。", HUMAN);
+            return;
+          }
+          if (TERMINAL_DELEGATION.has(delegation.status)) await this.#applySettled(parent.id, delegation);
+        });
+      } catch (error) {
+        logger.warn("pipeline", `流水线启动对账跳过：${parent.id}`, error);
+      }
+    }
+  }
+}
+
+interface ReviewInputs {
+  childId: string;
+  brief: CouncilBrief;
+  assetIds: string[];
+  prompts: Map<string, string>;
+}

@@ -2,7 +2,9 @@
  * @input  依赖：ClaudeRuntime / CodexRuntime 传入的版本、认证、特性列表或生成参数与 stdin prompt
  * @output 导出：可用性检查、长上下文与 Markdown 交接边界的子进程 E2E 协议响应；
  *         Codex 侧另有 `login status`、`features list`（image_generation stable true）与
- *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单）
+ *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单；
+ *         COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 首次只出清单不写文件）；P3 流水线 brief / 复盘一次性调用替身
+ *         （COUNCIL_PIPELINE_BRIEF 按模板返回合法 council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass）
  * @pos    测试专用的 Claude Code / Codex CLI 最小协议替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -57,6 +59,15 @@ process.stdin.on("end", () => {
     process.stdout.write(JSON.stringify({ type: "result", result: readFileSync("council-probe.txt", "utf8"), model: "fake-probe-model" }));
     return;
   }
+  // 流水线一次性调用要排在 COUNCIL_SEGMENT_E2E 之前：E2E 的流水线 goal 带该标记，好让原型代码委派走分段替身。
+  if (prompt.includes("COUNCIL_PIPELINE_BRIEF") && args.includes("--print")) {
+    fakePipelineResult(fakePipelineBrief(prompt));
+    return;
+  }
+  if (prompt.includes("COUNCIL_PIPELINE_REVIEW") && args.includes("--print")) {
+    fakePipelineResult(fakePipelineReview(prompt));
+    return;
+  }
   if (prompt.includes("COUNCIL_SEGMENT_E2E") && args.includes("--print")) {
     if (prompt.includes("LONG_CONTEXT") && !prompt.includes("COUNCIL_REQUIRED_TASK_TAIL")) {
       process.stderr.write("当前任务正文缺失\n");
@@ -101,7 +112,50 @@ process.stdin.on("end", () => {
   }));
 });
 
-/** Codex 生图替身：按 brief 提示词中的 deliverableId 写产物与清单；参考图必须真实存在。 */
+function fakePipelineResult(result) {
+  process.stdout.write(JSON.stringify({ type: "result", result, session_id: "fake-pipeline-session", model: "fake-pipeline-model" }));
+}
+
+/** 流水线 brief 替身：kind 随首行 `template=<id> kind=<kind>`，goal 带上请求目标，让测试标记流进生图提示词。 */
+function fakePipelineBrief(text) {
+  const header = /COUNCIL_PIPELINE_BRIEF template=([a-z-]+) kind=([a-z-]+)/u.exec(text);
+  const template = header?.[1] ?? "concept-sheet";
+  const kind = header?.[2] ?? "concept-sheet";
+  const goal = (/^目标：(.*)$/mu.exec(text)?.[1] ?? "流水线占位目标").trim().slice(0, 480);
+  const deliverables = template === "game-asset-pack"
+    ? [{ id: "hero-sprite", description: "主角待机 sprite", size: "256x256", transparent: true, count: 6 }]
+    : [
+      { id: "main-screen", description: "主界面设计稿", size: "1024x1024" },
+      { id: "detail-screen", description: "详情页设计稿", size: "1024x1024" },
+    ];
+  const brief = {
+    schemaVersion: 1,
+    kind,
+    goal,
+    deliverables,
+    acceptance: ["画面与目标一致", "交付物齐全"],
+    ...(template === "app-mockup" ? { nextStage: { kind: "prototype", notes: "实现主界面与详情页的可交互原型。" } } : {}),
+  };
+  return `按模板 ${template} 整理 brief。\n\`\`\`council-brief\n${JSON.stringify(brief)}\n\`\`\``;
+}
+
+/** 流水线复盘替身：第 1 轮对第一张产物给出 revise，之后一律 pass。 */
+function fakePipelineReview(text) {
+  const round = Number(/COUNCIL_PIPELINE_REVIEW round=(\d+)/u.exec(text)?.[1] ?? "1");
+  const assetIds = [...text.matchAll(/assetId=([A-Za-z0-9_-]+)/gu)].map((match) => match[1]);
+  const deliverableId = /deliverableId: ([a-z0-9][a-z0-9-]*)/u.exec(text)?.[1] ?? "image";
+  const revise = round === 1 && assetIds.length > 0;
+  const review = revise
+    ? { schemaVersion: 1, verdict: "revise", items: [{ assetId: assetIds[0], deliverableId, ok: false, issue: "构图偏离目标", change: "主体居中并加强对比" }] }
+    : { schemaVersion: 1, verdict: "pass", items: assetIds.map((assetId) => ({ assetId, deliverableId, ok: true })) };
+  return `第 ${String(round)} 轮复盘完成。\n\`\`\`council-review\n${JSON.stringify(review)}\n\`\`\``;
+}
+
+/**
+ * Codex 生图替身：按 brief 提示词中的 deliverableId 写产物与清单；参考图必须真实存在。
+ * 提示词含 COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 时，第一次只输出清单不写文件（触发 outputs_missing），
+ * 计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
+ */
 function fakeImageGeneration(text) {
   const cwd = optionValue("--cd");
   const lastMessagePath = optionValue("-o");
@@ -124,7 +178,10 @@ function fakeImageGeneration(text) {
     { name: `${deliverableId}.png`, hex: PNG_RGB },
     { name: `${deliverableId}-2.png`, hex: PNG_RGBA },
   ];
-  for (const file of files) writeFileSync(path.join(outDir, file.name), Buffer.from(file.hex, "hex"));
+  const onceMarker = path.join(path.dirname(cwd), ".fake-pipeline-no-outputs-once");
+  const skipOutputs = text.includes("COUNCIL_PIPELINE_NO_OUTPUTS_ONCE") && !existsSync(onceMarker);
+  if (skipOutputs) writeFileSync(onceMarker, "1\n");
+  else for (const file of files) writeFileSync(path.join(outDir, file.name), Buffer.from(file.hex, "hex"));
   const manifest = {
     schemaVersion: 1,
     outputs: files.map((file, index) => ({

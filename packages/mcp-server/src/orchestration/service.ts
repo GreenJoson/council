@@ -2,10 +2,11 @@
  * @input  依赖：HTTP/Agent 配置、SQLiteCouncilStore、模型路由、Agent 临时工厂、
  *         增量草稿中心、统一日志、ExecutionManager、AgentRegistry 与 CouncilProductService
  * @output 导出：带配置互斥的编排服务聚合根（装配 store/attention/audit/orchestrator/manager/CycleDriver，
- *         并以同名同签名方法转发到 AgentRegistry 与 CouncilProductService）、生产依赖工厂，
- *         以及从两个协作模块再导出的注册/Run/审批类型与 AVAILABILITY_TTL_MS
+ *         并以同名同签名方法转发到 AgentRegistry 与 CouncilProductService，含一次性调用与 Agent 候选）、
+ *         生产依赖工厂，以及从两个协作模块再导出的注册/Run/审批类型与 AVAILABILITY_TTL_MS
  * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
- *         （Codex 绑定的可用性检查顺带刷新生图探针声明）
+ *         （Codex 绑定的可用性检查顺带刷新生图探针声明；工厂装配并挂载 P3 PipelineService，
+ *         initialize 在委派恢复后启动流水线对账，shutdown/close 同步停止与关闭）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -86,8 +87,11 @@ import {
   type EphemeralAgentFactory,
   type RegisteredAgentAdapter,
 } from "./agent-registry.js";
+import { CouncilDatabase } from "../database.js";
+import { PipelineService } from "../pipelines/pipeline-service.js";
 import {
   CouncilProductService,
+  type AgentCandidate,
   type CreateRunOptions,
   type PublicApprovalInput,
   type PublicRoundInput,
@@ -121,6 +125,8 @@ export class CouncilOrchestrationService {
   /** 决策写入器需要 CouncilDatabase，晚于本服务构造；开局时校验已挂载。 */
   #decisions: CycleDecisionWriter | undefined;
   #reviewLedger: ReviewLedgerWriter | undefined;
+  /** P3 流水线用例；生产工厂在构造后挂载，测试/嵌入场景可缺省（路由返回 503）。 */
+  #pipelines: PipelineService | undefined;
   #configurationTail = Promise.resolve();
   #runtimeBindingIdleTimer: ReturnType<typeof globalThis.setInterval> | undefined;
   #runtimeBindingIdleSweep: Promise<void> | null = null;
@@ -237,6 +243,23 @@ export class CouncilOrchestrationService {
    */
   attachReviewLedger(ledger: ReviewLedgerWriter): void {
     this.#reviewLedger = ledger;
+  }
+
+  /** 挂载流水线用例；它依赖本服务的一次性调用与委派转发，只能在构造后注入。 */
+  attachPipelines(pipelines: PipelineService): void {
+    this.#pipelines = pipelines;
+  }
+
+  get pipelines(): PipelineService | undefined {
+    return this.#pipelines;
+  }
+
+  invokeOneShot(input: Parameters<CouncilProductService["invokeOneShot"]>[0]): Promise<{ actorId: string; content: string }> {
+    return this.#product.invokeOneShot(input);
+  }
+
+  listAgentCandidates(): Promise<AgentCandidate[]> {
+    return this.#product.listAgentCandidates();
   }
 
   async startCycle(input: {
@@ -413,6 +436,8 @@ export class CouncilOrchestrationService {
     await this.#registry.syncDynamicAgents();
     await this.#registry.ensureFreshAvailability(true);
     await this.manager.recoverOnStartup();
+    // 委派管理器已恢复：流水线订阅终态并对账上次停在 running 的阶段。
+    await this.#pipelines?.initialize();
     this.#startRuntimeBindingIdleSweep();
   }
 
@@ -448,6 +473,7 @@ export class CouncilOrchestrationService {
       this.#runtimeBindingIdleTimer = undefined;
     }
     await this.#runtimeBindingIdleSweep;
+    this.#pipelines?.shutdown();
     await this.delegationManager?.shutdown();
     await this.manager.shutdown();
     const bindings = await this.#store.listOpenRuntimeBindings();
@@ -460,6 +486,7 @@ export class CouncilOrchestrationService {
   close(): void {
     this.attention.close();
     this.audit.close();
+    this.#pipelines?.close();
     this.delegationManager?.close();
     this.#store.close();
     this.#fallbackRouterStore?.close();
@@ -520,11 +547,15 @@ export function createProductionOrchestrationService(
           maxContextChars: councilConfig.maxContextChars,
           getModel: () => modelRouter.getAgent(agent.id)?.model || councilConfig.claudeModel,
         }),
+        // 与 Codex 同形：声明 image_input，P3 流水线 brief/review 阶段据此读取参考图与产物。
         checkAvailability: async () => {
           const availability = await claudeRuntime.checkAvailability();
-          return await modelRouter.isAgentReady(agent.id)
-            && availability.available
-            && availability.authenticated;
+          return {
+            available: await modelRouter.isAgentReady(agent.id)
+              && availability.available
+              && availability.authenticated,
+            runtimeCapabilities: declaredCapabilitiesForTransport("claude-resume"),
+          };
         },
         limitationWhenUnavailable:
           "Claude CLI 当前不可用或未登录；请检查本机安装和登录状态。",
@@ -598,7 +629,7 @@ export function createProductionOrchestrationService(
     claudeRuntime,
     codexRuntime,
   );
-  return new CouncilOrchestrationService(
+  const service = new CouncilOrchestrationService(
     httpConfig,
     [],
     modelRouter,
@@ -606,4 +637,27 @@ export function createProductionOrchestrationService(
     factory,
     delegationManager,
   );
+  // P3 流水线：独立数据库连接（schema 已由委派管理器的连接校验），一次性调用与委派都走本服务的转发，
+  // 因而复用配置锁与生图执行者探针校验。
+  service.attachPipelines(new PipelineService({
+    database: new CouncilDatabase(councilConfig.databasePath, councilConfig.sqliteBusyTimeoutMs),
+    agents: {
+      invokeOneShot: async (input) => await service.invokeOneShot(input),
+      listAgentCandidates: async () => await service.listAgentCandidates(),
+      actorIdOf: (agentId) => modelRouter.getAgent(agentId)?.actorId,
+    },
+    delegations: {
+      start: async (input) => await service.startWorkItemDelegation(input),
+      cancel: (id) => service.cancelWorkItemDelegation(id),
+      get: (id) => delegationManager.get(id),
+      onSettled: (listener) => delegationManager.onSettled(listener),
+      stageProjectInputs: async (root, assetIds, signal) =>
+        await delegationManager.stageProjectInputs(root, assetIds, signal),
+    },
+    limits: {
+      maxStages: councilConfig.pipelineMaxStages ?? 6,
+      maxRevisions: councilConfig.pipelineMaxRevisions ?? 3,
+    },
+  }));
+  return service;
 }

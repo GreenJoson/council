@@ -3,7 +3,8 @@
  *         CodexRuntime（生图探针与 generateImages）、brief-protocol（brief/清单/提示词）、委派账本、
  *         调用方注入的 Git 执行器、审计记录器与任务上下文解析
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
- *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid）与常量
+ *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid）与常量；
+ *         共享 helper excludeCouncilDir / copyInputAssets / COUNCIL_INPUT_DIR（代码委派输入资产与流水线复用）
  * @pos    图像委派的唯一执行体：管理器只按 kind 分流到这里；不 import 管理器，所有依赖显式传入。
  *         单段执行、无审核与 brief 生成阶段；产物不提交（headCommit = baseCommit），只入资产库并关联任务。
  *         审计只记数量、字节、去重数与耗时，任何路径都不进 DTO、审计、日志或错误文案
@@ -33,7 +34,7 @@ import {
 } from "../pipelines/brief-protocol.js";
 import { normalizeProjectPath } from "../project-path.js";
 import type { WorkItem } from "../types.js";
-import type { ResolvedDelegationTask } from "./delegation-task-resolver.js";
+import { validateInputImageAssets, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
 import { redactAuditText } from "./runtime-audit-store.js";
 import type { WorkItemDelegationStore } from "./work-item-delegation-store.js";
 
@@ -48,6 +49,8 @@ export const IMAGE_MAX_INPUT_ASSETS = Math.min(MAX_IMAGE_INPUT_ASSETS, BRIEF_PRO
 
 const COUNCIL_DIR = ".council";
 const INPUT_DIR = `${COUNCIL_DIR}/in`;
+/** 输入资产相对工作区根的目录；代码委派输入资产与流水线复用同一位置。 */
+export const COUNCIL_INPUT_DIR = INPUT_DIR;
 const OUTPUT_DIR = `${COUNCIL_DIR}/out`;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 /** Codex thread id 只用于拼兜底目录名；拒绝 `.`/`..` 这类会跳出目录的取值。 */
@@ -86,22 +89,12 @@ export function validateImageDelegationRequest(
   input: { item: WorkItem; projectPath: string; inputAssetIds: readonly string[] },
 ): CouncilBrief {
   const brief = parseTaskBrief(input.item);
-  if (input.inputAssetIds.length > IMAGE_MAX_INPUT_ASSETS) {
-    throw new CouncilValidationError(`图像委派的参考图不能超过 ${String(IMAGE_MAX_INPUT_ASSETS)} 张。`);
-  }
-  if (new Set(input.inputAssetIds).size !== input.inputAssetIds.length) {
-    throw new CouncilValidationError("图像委派的参考图不能重复。");
-  }
-  const project = normalizeProjectPath(input.projectPath);
-  for (const assetId of input.inputAssetIds) {
-    const record = database.getAssetRecord(assetId);
-    if (record.asset.kind !== "image") {
-      throw new CouncilValidationError("图像委派的参考资产必须是图像。");
-    }
-    if (normalizeProjectPath(record.projectPath) !== project) {
-      throw new CouncilValidationError("图像委派的参考资产必须属于任务所在项目。");
-    }
-  }
+  validateInputImageAssets(database, {
+    projectPath: input.projectPath,
+    inputAssetIds: input.inputAssetIds,
+    label: "图像委派",
+    maxAssets: IMAGE_MAX_INPUT_ASSETS,
+  });
   return brief;
 }
 
@@ -203,7 +196,7 @@ export async function executeImageDelegation(
   const inputDir = path.join(workspace.root, INPUT_DIR);
   await mkdir(inputDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
-  await excludeCouncilDir(deps, workspace.root, signal);
+  await excludeCouncilDir(deps.git, workspace.root, signal);
   const inputs = await copyInputAssets(deps.assets, inputDir, delegation.inputAssetIds);
 
   const startedAt = Date.now();
@@ -326,9 +319,16 @@ function imageFailure(
   return new DelegationImageError(code, message);
 }
 
-/** `.council/` 不进入任何提交：写入 `git rev-parse --git-path info/exclude` 解析出的真实文件（worktree 共享仓库级 exclude）。 */
-async function excludeCouncilDir(deps: ImageDelegationDeps, root: string, signal: AbortSignal): Promise<void> {
-  const resolved = (await deps.git(root, ["rev-parse", "--git-path", "info/exclude"], signal)).trim();
+/**
+ * `.council/` 不进入任何提交：写入 `git rev-parse --git-path info/exclude` 解析出的真实文件（worktree 共享仓库级 exclude）。
+ * 图像委派、代码委派的输入资产与流水线 brief/review 阶段共用。
+ */
+export async function excludeCouncilDir(
+  git: (cwd: string, args: string[], signal: AbortSignal) => Promise<string>,
+  root: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const resolved = (await git(root, ["rev-parse", "--git-path", "info/exclude"], signal)).trim();
   if (!resolved) throw new Error("Git 无法解析 exclude 文件。");
   const excludePath = path.resolve(root, resolved);
   const existing = await readFile(excludePath, "utf8").catch(() => "");
@@ -340,7 +340,8 @@ async function excludeCouncilDir(deps: ImageDelegationDeps, root: string, signal
   await appendFile(excludePath, `${prefix}# Council 图像委派的输入与产物目录\n${COUNCIL_DIR}/\n`, "utf8");
 }
 
-async function copyInputAssets(
+/** 把资产字节拷到 inputDir（通常是 `<root>/.council/in`）；relativePath 相对 root，供提示词引用。 */
+export async function copyInputAssets(
   assets: AssetService,
   inputDir: string,
   assetIds: readonly string[],

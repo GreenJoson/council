@@ -3,7 +3,8 @@
  * @output 导出：WorkItemRepository —— 叶子口径的完成度批量查询、议题全量行读取、
  *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点，
  *         project_path 从议题拷贝，kind/source/priority 走 v18 DEFAULT）、
- *         直接任务建项（topic_id NULL、source direct、project_path 必填）、按 id 读取、
+ *         直接任务建项（topic_id NULL、source direct、project_path 必填）、
+ *         流水线子任务建项（source pipeline、parent 为流水线父任务）与流水线文档写入（只改 brief_json 与版本）、按 id 读取、
  *         以 id 为准的乐观版本更新/认领（给了 topicId 时仍校验议题归属；更新可选写入已校验的 brief_json）、祖先状态派生、
  *         议题内过滤列表与按项目列表（走 idx_work_items_project_status，含议题派生项）
  * @pos    实施项（任务）领域仓储，work_items 表唯一数据访问所有者；父任务状态只由子任务派生，
@@ -306,6 +307,108 @@ export class WorkItemRepository {
       return workItemFromRow(this.#context.database
         .prepare("SELECT * FROM work_items WHERE id = ?")
         .get(id) as unknown as WorkItemRow);
+    });
+  }
+
+  /**
+   * 流水线子任务：topic_id NULL、source 'pipeline'、origin manual、parent_id 指向流水线父任务，
+   * project_path 与父任务一致（scope_key 相同）；同一父任务下标题不可重复。创建后按子任务派生父状态。
+   */
+  createPipelineChildAsActor(input: {
+    parentId: string;
+    projectPath: string;
+    title: string;
+    details: string;
+    kind: WorkItemKind;
+    brief?: Record<string, unknown>;
+    actorId: string;
+  }): WorkItem {
+    const title = input.title.trim();
+    if (!title) throw new CouncilConflictError("任务标题不能为空。");
+    const now = new Date().toISOString();
+    return this.#context.transaction(() => {
+      const actor = this.#context.activeActorById(input.actorId);
+      const actorSnapshotJson = serializeActorSnapshot(toActorSnapshot(actor));
+      const parent = this.#context.database.prepare(`
+        SELECT id, kind, project_path, topic_id FROM work_items WHERE id = ?
+      `).get(input.parentId) as unknown as { id: string; kind: string; project_path: string | null; topic_id: string | null } | undefined;
+      if (!parent || parent.kind !== "pipeline" || parent.topic_id !== null || parent.project_path !== input.projectPath) {
+        throw new CouncilNotFoundError("流水线父任务不存在。");
+      }
+      const duplicate = this.#context.database.prepare(`
+        SELECT id FROM work_items WHERE scope_key = ? AND parent_key = ? AND title = ? COLLATE NOCASE
+      `).get(input.projectPath, input.parentId, title);
+      if (duplicate) throw new CouncilConflictError(`流水线子任务“${title}”已经存在。`);
+      const nextSortOrder = this.#context.database.prepare(`
+        SELECT COALESCE(MAX(sort_order), -1) + 1 AS value
+        FROM work_items WHERE scope_key = ? AND parent_key = ?
+      `).get(input.projectPath, input.parentId) as unknown as { value: number };
+      const id = `work_item_${randomUUID()}`;
+      this.#context.database.prepare(`
+        INSERT INTO work_items (
+          id, topic_id, decision_id, parent_id, title, details,
+          status, status_note, version, sort_order, origin, severity,
+          created_by_actor_id, created_by_snapshot_json,
+          updated_by_actor_id, updated_by_snapshot_json,
+          created_at, updated_at, completed_at,
+          kind, source, project_path, brief_json
+        ) VALUES (
+          ?, NULL, NULL, ?, ?, ?,
+          'pending', NULL, 1, ?, 'manual', NULL,
+          ?, ?, ?, ?, ?, ?, NULL,
+          ?, 'pipeline', ?, ?
+        )
+      `).run(
+        id,
+        input.parentId,
+        title,
+        input.details.trim(),
+        nextSortOrder.value,
+        actor.actorId,
+        actorSnapshotJson,
+        actor.actorId,
+        actorSnapshotJson,
+        now,
+        now,
+        input.kind,
+        input.projectPath,
+        input.brief ? JSON.stringify(input.brief) : null,
+      );
+      this.#recomputeAncestors(input.parentId, actor.actorId, actorSnapshotJson, now);
+      return workItemFromRow(this.#context.database
+        .prepare("SELECT * FROM work_items WHERE id = ?")
+        .get(id) as unknown as WorkItemRow);
+    });
+  }
+
+  /**
+   * 流水线文档写入：只改 brief_json/version/updated_by/updated_at，允许父任务（父状态仍只由子任务派生）。
+   * 版本不符抛 CouncilConflictError；只接受 kind=pipeline 的任务。
+   */
+  updatePipelineDocument(input: {
+    workItemId: string;
+    expectedVersion: number;
+    document: Record<string, unknown>;
+    actorId: string;
+  }): WorkItem {
+    const now = new Date().toISOString();
+    return this.#context.transaction(() => {
+      const actor = this.#context.activeActorById(input.actorId);
+      const actorSnapshotJson = serializeActorSnapshot(toActorSnapshot(actor));
+      const current = this.#context.database.prepare(`
+        SELECT kind, version FROM work_items WHERE id = ?
+      `).get(input.workItemId) as unknown as { kind: string; version: number } | undefined;
+      if (!current || current.kind !== "pipeline") throw new CouncilNotFoundError("流水线不存在。");
+      const result = this.#context.database.prepare(`
+        UPDATE work_items
+        SET brief_json = ?, version = version + 1,
+            updated_by_actor_id = ?, updated_by_snapshot_json = ?, updated_at = ?
+        WHERE id = ? AND version = ?
+      `).run(JSON.stringify(input.document), actor.actorId, actorSnapshotJson, now, input.workItemId, input.expectedVersion);
+      if (result.changes !== 1) throw new CouncilConflictError("流水线已被更新，请刷新后重试。");
+      return workItemFromRow(this.#context.database
+        .prepare("SELECT * FROM work_items WHERE id = ?")
+        .get(input.workItemId) as unknown as WorkItemRow);
     });
   }
 
@@ -648,6 +751,15 @@ export class WorkItemRepository {
       WHERE ${conditions.join(" AND ")}
       ORDER BY priority DESC, updated_at DESC, rowid DESC
     `).all(...parameters) as unknown as WorkItemRow[];
+    return rows.map(workItemFromRow);
+  }
+
+  /** 全部流水线父任务（跨项目）；只供流水线驱动启动对账，量级随流水线数增长。 */
+  listPipelineParents(): WorkItem[] {
+    const rows = this.#context.database.prepare(`
+      SELECT * FROM work_items WHERE kind = 'pipeline' AND source = 'direct'
+      ORDER BY updated_at DESC, rowid DESC
+    `).all() as unknown as WorkItemRow[];
     return rows.map(workItemFromRow);
   }
 }

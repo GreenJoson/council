@@ -3,6 +3,8 @@
  * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
  *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
+ *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
+ *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
@@ -15,7 +17,7 @@ import {
   loadAssetConfig,
 } from "../config.js";
 import { runExecutionSegments } from "./delegation-execution-segments.js";
-import { delegationTaskContext } from "./delegation-task-context.js";
+import { delegationInputAssetsContext, delegationTaskContext } from "./delegation-task-context.js";
 import { assertDelegableTask, resolveDelegationTask, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
 import { collectReviewEvidence, parseDelegationReview, DelegationReviewError, type DelegationReview } from "./delegation-review.js";
 import { commitDelegationChanges } from "./delegation-git-delivery.js";
@@ -26,7 +28,10 @@ import { FORBIDDEN_STAGED_PATH, SECRET_DIFF_PATTERN, snapshotUncommittedWork } f
 import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
 import {
+  copyInputAssets,
+  COUNCIL_INPUT_DIR,
   defaultImageSupervisor,
+  excludeCouncilDir,
   executeImageDelegation,
   IMAGE_EXECUTOR_REQUIRED_MESSAGE,
   validateImageDelegationRequest,
@@ -248,6 +253,34 @@ export class WorkItemDelegationManager {
   }
 
   get activeTaskCount(): number { return this.#tasks.size; }
+
+  /** 单条委派公开快照；流水线启动对账用。 */
+  get(id: string): WorkItemDelegation | undefined {
+    return this.#store.get(id);
+  }
+
+  /** 委派进入终态（approved/failed/cancelled）时异步通知一次；返回取消订阅函数。 */
+  onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void {
+    return this.#store.onSettled(listener);
+  }
+
+  /**
+   * 流水线 brief/review 阶段：把资产拷进 `<root>/.council/in/` 并尽量写 exclude（非 Git 目录跳过）；
+   * 返回相对 root 的 posix 路径。复用本管理器持有的资产服务与 Git 执行器，不另起一套。
+   */
+  async stageProjectInputs(
+    root: string,
+    assetIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<Array<{ assetId: string; relativePath: string }>> {
+    if (assetIds.length === 0) return [];
+    const inputDir = path.join(root, COUNCIL_INPUT_DIR);
+    await mkdir(inputDir, { recursive: true });
+    await excludeCouncilDir(async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout, root, signal)
+      .catch(() => undefined);
+    const copied = await copyInputAssets(this.#assets, inputDir, assetIds);
+    return copied.map((item) => ({ assetId: item.assetId, relativePath: item.relativePath }));
+  }
 
   start(input: StartWorkItemDelegationInput): WorkItemDelegation {
     const { item, topicId, projectPath } = assertDelegableTask(this.#database, input, this.#taskLimits);
@@ -751,6 +784,21 @@ export class WorkItemDelegationManager {
     }
   }
 
+  /** 代码委派输入图：写 exclude 后拷贝，返回提示词段落（相对 cwd 路径）；无输入时不碰工作区。 */
+  async #prepareCodeInputAssets(
+    assetIds: readonly string[],
+    workspace: PreparedWorkspace,
+    signal: AbortSignal,
+  ): Promise<string[]> {
+    if (assetIds.length === 0) return [];
+    const inputDir = path.join(workspace.root, COUNCIL_INPUT_DIR);
+    await mkdir(inputDir, { recursive: true });
+    await excludeCouncilDir(async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout, workspace.root, signal);
+    const copied = await copyInputAssets(this.#assets, inputDir, assetIds);
+    return delegationInputAssetsContext(copied.map((item) =>
+      path.relative(workspace.cwd, item.absolutePath).split(path.sep).join("/")));
+  }
+
   async #executeImage(id: string, workspace: PreparedWorkspace, signal: AbortSignal): Promise<string> {
     return executeImageDelegation({
       store: this.#store,
@@ -838,6 +886,8 @@ export class WorkItemDelegationManager {
       status: "executing",
       now: new Date().toISOString(),
     });
+    // 代码委派的输入图（原型任务的终稿等）拷进不被提交的 .council/in/，提示词里只给相对 cwd 的路径。
+    const inputContext = await this.#prepareCodeInputAssets(delegation.inputAssetIds, workspace, signal);
     const fingerprint = createHash("sha256").update(JSON.stringify({
       criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
       permission: delegation.permissionProfile,
@@ -862,6 +912,7 @@ export class WorkItemDelegationManager {
         "",
         `验收标准：${delegation!.acceptanceCriteria}`,
         task.context,
+        ...inputContext,
         ...continuation,
       ].join("\n"),
     });
@@ -933,6 +984,7 @@ export class WorkItemDelegationManager {
               "当前实施项原文：",
               `验收标准：${executionAssignment.acceptanceCriteria}`,
               task.context,
+              ...inputContext,
               ...continuation,
               ...correction,
               segmentContinuation,

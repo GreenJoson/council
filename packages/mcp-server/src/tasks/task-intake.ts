@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilDatabase（实施项写入）、project-path 规范化、共享常量与领域类型、brief-protocol（image 任务的 council-brief 严格校验）
  * @output 导出：normalizeDirectTaskInput、createDirectTask（直接任务入口）、createTopicTasks（议题拆解入口）
- * @pos    任务的两个创建入口：直接任务在此归一化（标题去空白且非空、项目路径规范化、kind/priority 缺省、brief 边界；
+ * @pos    任务的两个创建入口：直接任务在此归一化（标题去空白且非空、项目路径规范化、kind/priority 缺省、拒绝 kind=pipeline（只能经 /api/v1/pipelines 创建）、brief 边界；
  *         image 任务的 brief 与 PUT/council_submit_brief 同规则按协议校验并存归一化结果），议题入口沿用议题拆解语义
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -56,6 +56,8 @@ export function normalizeDirectTaskInput(input: DirectTaskInput): NormalizedDire
   const priority = input.priority ?? 0;
   if (!Number.isSafeInteger(priority)) throw new CouncilValidationError("任务优先级必须是整数。");
   const kind = input.kind ?? "code";
+  // 流水线父任务的 brief_json 存的是流水线文档而非 council-brief，只能由 PipelineService 创建，防止绕过阶段校验。
+  if (kind === "pipeline") throw new CouncilValidationError("请经 /api/v1/pipelines 创建流水线。");
   const brief = input.brief !== undefined ? normalizeBrief(kind, input.brief) : undefined;
   return {
     projectPath,

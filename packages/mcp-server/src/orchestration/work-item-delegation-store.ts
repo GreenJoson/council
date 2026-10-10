@@ -1,7 +1,8 @@
 /**
  * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
  * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单，topicId 对非议题任务缺省）、
- *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新（含图像产物清单写入）
+ *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新（含图像产物清单写入）；
+ *         onSettled：非终态→终态时异步通知一次（流水线据此推进阶段）
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -161,8 +162,13 @@ function privateDelegation(row: DelegationRow): DelegationPrivateState {
   };
 }
 
+function isTerminalStatus(status: WorkItemDelegationStatus): boolean {
+  return status === "approved" || status === "failed" || status === "cancelled";
+}
+
 export class WorkItemDelegationStore {
   readonly #database: DatabaseSync;
+  readonly #settledListeners = new Set<(delegation: WorkItemDelegation) => void | Promise<void>>();
 
   constructor(databasePath: string, busyTimeoutMs: number) {
     this.#database = new DatabaseSync(databasePath);
@@ -314,7 +320,31 @@ export class WorkItemDelegationStore {
     if (result.changes !== 1) {
       throw new Error("委派记录更新失败。");
     }
-    return this.get(id) as WorkItemDelegation;
+    const updated = this.get(id) as WorkItemDelegation;
+    // 只在「非终态 → 终态」时通知一次；终态上的补写（如摘要）不重复触发。
+    if (terminal && !isTerminalStatus(current.status)) this.#emitSettled(updated);
+    return updated;
+  }
+
+  /**
+   * 订阅委派进入终态（approved / failed / cancelled）。每次终态转换恰好通知一次，
+   * 通过 setImmediate 异步派发，不在写事务调用栈内执行；监听器异常只写 stderr，不影响委派本身。
+   */
+  onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void {
+    this.#settledListeners.add(listener);
+    return () => { this.#settledListeners.delete(listener); };
+  }
+
+  #emitSettled(delegation: WorkItemDelegation): void {
+    for (const listener of this.#settledListeners) {
+      setImmediate(() => {
+        Promise.resolve()
+          .then(() => listener(delegation))
+          .catch((error: unknown) => {
+            process.stderr.write(`[delegation-store] 终态监听器执行失败：${error instanceof Error ? error.message : String(error)}\n`);
+          });
+      });
+    }
   }
 
   markInterrupted(now: string): string[] {
@@ -325,6 +355,10 @@ export class WorkItemDelegationStore {
       WHERE status IN ('queued', 'executing', 'reviewing', 'changes_requested')
       RETURNING id
     `).all(now, now) as Array<{ id: string }>;
+    for (const row of rows) {
+      const delegation = this.get(row.id);
+      if (delegation) this.#emitSettled(delegation);
+    }
     return rows.map((row) => row.id);
   }
 
