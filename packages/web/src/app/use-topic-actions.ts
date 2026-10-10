@@ -1,6 +1,6 @@
 /**
  * @input  依赖：React、CouncilRepository、OrchestrationRepository、内容与编排控制器、界面语言、实施项类型
- * @output 导出：useTopicActions —— 发帖（含 @ 召唤语法糖）与实施项拆分/新增/状态更新/认领/批量委派（单项委派与取消已迁到任务详情），
+ * @output 导出：useTopicActions —— 发帖（含 @ 召唤语法糖；发布后把正文 council-asset: 引用挂到消息）与实施项拆分/新增/状态更新/认领/批量委派（单项委派与取消已迁到任务详情），
  *         以及 isPublishing、workItemBusyAction 忙碌状态
  * @pos    App 壳里横跨内容仓储与编排仓储的议题内写操作；错误统一写入内容错误条，成功走共享 toast
  *
@@ -10,6 +10,7 @@
 import { useState } from "react";
 import type { MentionPublishRequest } from "../features/discussion/Composer";
 import { getErrorMessage } from "../data/error-message";
+import { linkReferencedAssetsToMessage } from "../data/markdown-images";
 import type { OrchestrationRepository } from "../data/orchestration-repository";
 import type { CouncilRepository } from "../data/repository";
 import { useI18n } from "../i18n/I18nProvider";
@@ -73,16 +74,20 @@ export function useTopicActions({
         kind,
         content: text,
       });
-      if (!mention) {
-        setToastMessage(t("回复已发布并同步"));
-        return true;
-      }
       const requestMessageId = published.topics
         .find((topic) => topic.id === activeTopicId)
         ?.messages
         .filter((message) => message.author === "human" && message.content === text)
         .at(-1)
         ?.id;
+      // 桌面模式人工发帖直写 SQLite，服务端不会自动挂接；这里统一补挂（幂等），失败不影响已发布消息。
+      if (requestMessageId) {
+        await linkReferencedAssetsToMessage(text, requestMessageId);
+      }
+      if (!mention) {
+        setToastMessage(t("回复已发布并同步"));
+        return true;
+      }
       if (!requestMessageId) {
         throw new Error(t("公开请求已发布，但无法冻结对应消息，Agent 调用未启动。"));
       }

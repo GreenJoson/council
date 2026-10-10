@@ -1,6 +1,6 @@
 /**
  * @input  依赖：DesktopBridge 编排命令、OrchestrationRepository 协议与可注入的 HTTP 委托工厂
- * @output 导出：DesktopOrchestrationRepository、AI 实施计划、显式接续权限、离线快照构造与桥接子接口
+ * @output 导出：DesktopOrchestrationRepository、AI 实施计划、显式接续权限、客户端接入直通、离线快照构造与桥接子接口
  * @pos    桌面模式的自动轮次接入层——探测本地 Agent 服务并在其可达时切换为 HTTP 直连，
  *         不可达时保持诚实的离线快照并周期重试，服务起来后自动转 LIVE，无需重启应用
  *
@@ -9,6 +9,7 @@
 
 import type { WorkAttention } from "./work-attention";
 import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+import type { ClientConfigClient, ClientConfigStatus } from "./client-config-api";
 
 import type {
   DesktopOrchestrationConfig,
@@ -234,6 +235,19 @@ export class DesktopOrchestrationRepository implements OrchestrationRepository {
 
   async testAgent(agentId: string): Promise<AgentConnectionTest> {
     return (await this.#requireLive()).testAgent(agentId);
+  }
+
+  // 客户端接入直通本地 Agent 服务；服务未就绪时 #requireLive 抛出诚实的离线说明。
+  async listClientConfigs(): Promise<ClientConfigStatus[]> {
+    return (await this.#requireLive()).listClientConfigs();
+  }
+
+  async applyClientConfig(client: ClientConfigClient, options?: { force?: boolean }): Promise<ClientConfigStatus> {
+    return (await this.#requireLive()).applyClientConfig(client, options);
+  }
+
+  async restoreClientConfig(client: ClientConfigClient): Promise<ClientConfigStatus> {
+    return (await this.#requireLive()).restoreClientConfig(client);
   }
 
   async resumeWorkItemDelegation(id: string, expectedVersion: number, requestedPermission?: WorkItemDelegation["permissionProfile"]): Promise<WorkItemDelegation> {

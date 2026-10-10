@@ -1,6 +1,9 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流、委派 Git 检查预算、流水线阶段/修订上限与原型权限档、Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算、流水线阶段/修订上限与原型权限档、Codex 生图开关/沙箱/超时/张数上限/产物兜底目录（codexHome）、Worker 团队并行上限的 CouncilConfig、
+ *         绑定调用者身份、本机 HTTP 转发地址与团队 Lead 委派 id 的 McpCouncilConfig、isLoopbackHost、
+ *         MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig、团队 Lead MCP 子进程透传用的 collectCouncilEnv、
+ *         客户端配置分发路径与 MCP 注册环境 loadClientConfigSettings
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,7 +15,13 @@ import { isIP } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import { ASSET_SNIFFABLE_MIMES, MAX_LIST_LIMIT } from "./constants.js";
-import type { AssetConfig, CouncilConfig, McpCouncilConfig, PipelinePrototypePermission } from "./types.js";
+import type {
+  AssetConfig,
+  ClientConfigSettings,
+  CouncilConfig,
+  McpCouncilConfig,
+  PipelinePrototypePermission,
+} from "./types.js";
 
 const MAX_NODE_TIMER_MS = 2_147_483_647;
 const REQUIRED_PERMISSION_MODE = "plan";
@@ -477,6 +486,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
     pipelineMaxStages: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_STAGES", env, 6),
     pipelineMaxRevisions: parseOptionalPositiveInteger("COUNCIL_PIPELINE_MAX_REVISIONS", env, 3),
     pipelinePrototypePermission: parsePipelinePrototypePermission("COUNCIL_PIPELINE_PROTOTYPE_PERMISSION", env),
+    workerMaxParallel: parseWorkerMaxParallel(env),
     claudeReviewMaxTurns: parseOptionalPositiveInteger("COUNCIL_CLAUDE_REVIEW_MAX_TURNS", env, 48),
     delegationWorktreeRoot,
     delegationGitMaxOutputChars: parseOptionalPositiveInteger(
@@ -529,5 +539,96 @@ export function loadMcpConfig(env: NodeJS.ProcessEnv = process.env): McpCouncilC
     callerActorAlias: requireEnv("COUNCIL_CALLER_ACTOR_ALIAS", env),
     httpServiceUrl: loadHttpServiceUrl(env),
     httpForwardTimeoutMs: parseOptionalTimer("COUNCIL_MCP_HTTP_TIMEOUT_MS", env, DEFAULT_MCP_HTTP_TIMEOUT_MS),
+    ...(env.COUNCIL_TEAM_LEAD_DELEGATION_ID?.trim()
+      ? { teamLeadDelegationId: env.COUNCIL_TEAM_LEAD_DELEGATION_ID.trim() }
+      : {}),
+  };
+}
+
+/** Worker 并行上限：1–16；超过 16 多半是笔误，同机并行太多 Agent 只会互相抢资源。 */
+function parseWorkerMaxParallel(env: NodeJS.ProcessEnv): number {
+  const value = parseOptionalPositiveInteger("COUNCIL_WORKER_MAX_PARALLEL", env, 3);
+  if (value > 16) {
+    throw new Error("环境变量 COUNCIL_WORKER_MAX_PARALLEL 不能超过 16。");
+  }
+  return value;
+}
+
+/**
+ * 团队 Lead 的 MCP 子进程要连同一个库、同一个后台服务，需原样继承本进程的 COUNCIL_* 配置。
+ * 只在启动装配时调用一次；调用方再覆盖身份、HTTP 地址与 Lead 委派 id。
+ * 凭据走钥匙串，不经 COUNCIL_* 环境变量；名字像凭据的键仍保守跳过。
+ * 团队相关的调用者身份 / Lead id 不从父进程继承，避免把父进程自己的身份带进 Lead。
+ */
+export function collectCouncilEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith("COUNCIL_") || value === undefined) continue;
+    if (key === "COUNCIL_CALLER_ACTOR_ALIAS" || key === "COUNCIL_TEAM_LEAD_DELEGATION_ID") continue;
+    // 这些值会进入 CLI 参数（Codex --config / Claude --mcp-config），进程列表可见；凭据类键名一律不透传。
+    if (/(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/u.test(key)) continue;
+    result[key] = value;
+  }
+  return result;
+}
+
+/*
+ * ── 客户端配置分发（P4） ──────────────────────────────────────────────
+ * 写进 Claude/Codex 客户端的 stdio MCP 注册只带 loadMcpConfig 必需的键；
+ * 这些键都不是凭据（命令名、预算、数据目录、本机 HTTP 地址），不会写入任何密钥。
+ */
+const CLIENT_CONFIG_MCP_REQUIRED_ENV = [
+  "COUNCIL_DATA_DIR",
+  "COUNCIL_DEFAULT_MESSAGE_LIMIT",
+  "COUNCIL_CLAUDE_PERMISSION_MODE",
+  "COUNCIL_CLAUDE_COMMAND",
+  "COUNCIL_CLAUDE_TIMEOUT_MS",
+  "COUNCIL_CLAUDE_KILL_GRACE_MS",
+  "COUNCIL_CLAUDE_MAX_TURNS",
+  "COUNCIL_SQLITE_BUSY_TIMEOUT_MS",
+  "COUNCIL_SCHEMA_MIGRATION_MAX_ATTEMPTS",
+  "COUNCIL_MAX_CONTEXT_CHARS",
+  "COUNCIL_MAX_OUTPUT_CHARS",
+  "COUNCIL_HTTP_HOST",
+  "COUNCIL_HTTP_PORT",
+] as const;
+
+function optionalAbsolutePath(name: string, env: NodeJS.ProcessEnv): string | undefined {
+  const raw = env[name]?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  if (!path.isAbsolute(raw)) {
+    throw new Error(`${name} 必须是绝对路径。`);
+  }
+  return path.resolve(raw);
+}
+
+/** 四个目标路径留空即缺省：Claude 走 <home>/.claude.json 与 <home>/.claude/skills，Codex 走 <codex-home>。 */
+export function loadClientConfigSettings(env: NodeJS.ProcessEnv, dataDir: string): ClientConfigSettings {
+  const home = homedir();
+  const codexHome = resolveCodexHome(env);
+  const mcpEnv: Record<string, string> = {};
+  const missingMcpEnv: string[] = [];
+  for (const name of CLIENT_CONFIG_MCP_REQUIRED_ENV) {
+    const value = name === "COUNCIL_DATA_DIR" ? dataDir : env[name]?.trim();
+    if (value) {
+      mcpEnv[name] = value;
+    } else {
+      missingMcpEnv.push(name);
+    }
+  }
+  return {
+    rootDir: path.join(dataDir, "client-config"),
+    claudeFile: optionalAbsolutePath("COUNCIL_CLIENT_CONFIG_CLAUDE_FILE", env)
+      ?? path.join(home, ".claude.json"),
+    claudeSkillsDir: optionalAbsolutePath("COUNCIL_CLIENT_CONFIG_CLAUDE_SKILLS_DIR", env)
+      ?? path.join(home, ".claude", "skills", "council"),
+    codexFile: optionalAbsolutePath("COUNCIL_CLIENT_CONFIG_CODEX_FILE", env)
+      ?? path.join(codexHome, "config.toml"),
+    codexSkillsDir: optionalAbsolutePath("COUNCIL_CLIENT_CONFIG_CODEX_SKILLS_DIR", env)
+      ?? path.join(codexHome, "skills", "council"),
+    mcpEnv,
+    missingMcpEnv,
   };
 }

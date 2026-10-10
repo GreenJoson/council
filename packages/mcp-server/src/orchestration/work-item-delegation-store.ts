@@ -1,8 +1,9 @@
 /**
- * @input  依赖：canonical v18 work_item_delegations 表与 SQLite busy timeout
+ * @input  依赖：canonical v20 work_item_delegations 表（含 team_worker 列）与 SQLite busy timeout
  * @output 导出：WorkItemDelegationStore、公开阶段快照（含 v18 kind/输入素材/产出清单，topicId 对非议题任务缺省）、
  *         按议题/按任务/按项目（JOIN work_items.project_path）列表、私有检查点与原子状态更新（含图像产物清单写入）；
- *         onSettled：非终态→终态时异步通知一次（流水线据此推进阶段）
+ *         onSettled：非终态→终态时异步通知一次（流水线据此推进阶段）；
+ *         v20 Worker 子委派（team_worker=1）不进入按议题/任务/项目的列表，只经团队接口按 id 读取
  * @pos    跨 Agent 任务委派的唯一持久化层；worktree 路径只供本地执行，不进入公开 DTO
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -55,6 +56,8 @@ export interface WorkItemDelegation {
   kind: WorkItemKind;
   inputAssetIds: string[];
   outputManifest?: Record<string, unknown>;
+  /** v20：Worker 团队子委派才出现，值恒为 true。 */
+  teamWorker?: true;
 }
 
 interface DelegationRow {
@@ -87,6 +90,7 @@ interface DelegationRow {
   kind: WorkItemKind;
   input_asset_ids_json: string;
   output_manifest_json: string | null;
+  team_worker: number;
 }
 
 function publicDelegation(row: DelegationRow): WorkItemDelegation {
@@ -122,6 +126,7 @@ function publicDelegation(row: DelegationRow): WorkItemDelegation {
     ...(row.output_manifest_json
       ? { outputManifest: JSON.parse(row.output_manifest_json) as Record<string, unknown> }
       : {}),
+    ...(row.team_worker === 1 ? { teamWorker: true as const } : {}),
   };
 }
 
@@ -149,6 +154,8 @@ export interface CreateWorkItemDelegationInput {
   /** 缺省 code；P1 只有 code，资产通道（P2）前不写入非空素材。 */
   kind?: WorkItemKind;
   inputAssetIds?: readonly string[];
+  /** v20：Worker 团队子委派；不受单活跃委派索引约束，也不出现在普通委派列表里。 */
+  teamWorker?: boolean;
   now: string;
 }
 
@@ -182,9 +189,9 @@ export class WorkItemDelegationStore {
         id, topic_id, work_item_id, supervisor_agent_id, executor_agent_id,
         permission_profile, status, attempt, max_attempts, branch_name,
         created_at, updated_at, completion_policy, acceptance_criteria, resumed_from_id,
-        kind, input_asset_ids_json
+        kind, input_asset_ids_json, team_worker
         -- output_manifest_json 走 v18 列默认值 NULL。
-      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.topicId ?? null,
@@ -201,6 +208,7 @@ export class WorkItemDelegationStore {
       input.resumedFromId ?? null,
       input.kind ?? "code",
       JSON.stringify(input.inputAssetIds ?? []),
+      input.teamWorker ? 1 : 0,
     );
   }
 
@@ -241,7 +249,7 @@ export class WorkItemDelegationStore {
   list(topicId: string): WorkItemDelegation[] {
     return (this.#database.prepare(`
       SELECT * FROM work_item_delegations
-      WHERE topic_id = ?
+      WHERE topic_id = ? AND team_worker = 0
       ORDER BY created_at DESC, rowid DESC
     `).all(topicId) as unknown as DelegationRow[]).map(publicDelegation);
   }
@@ -250,7 +258,7 @@ export class WorkItemDelegationStore {
   listForWorkItem(workItemId: string): WorkItemDelegation[] {
     return (this.#database.prepare(`
       SELECT * FROM work_item_delegations
-      WHERE work_item_id = ?
+      WHERE work_item_id = ? AND team_worker = 0
       ORDER BY created_at DESC, rowid DESC
     `).all(workItemId) as unknown as DelegationRow[]).map(publicDelegation);
   }
@@ -260,7 +268,7 @@ export class WorkItemDelegationStore {
     return (this.#database.prepare(`
       SELECT d.* FROM work_item_delegations AS d
       JOIN work_items AS w ON w.id = d.work_item_id
-      WHERE w.project_path = ?
+      WHERE w.project_path = ? AND d.team_worker = 0
       ORDER BY d.created_at DESC, d.rowid DESC
     `).all(projectPath) as unknown as DelegationRow[]).map(publicDelegation);
   }

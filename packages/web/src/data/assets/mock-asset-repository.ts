@@ -3,6 +3,7 @@
  * @output 导出：MockAssetRepository 与其构造参数类型
  * @pos    mock 模式的资产仓储：内存夹具、刷新即重置；同构模拟分页、kind/target/unlinked 筛选、
  *         导入（按扩展名推断 kind、同路径视为同 sha256 返回既有资产、拒绝绝对路径与 ..）、
+ *         浏览器图片上传（FileReader 读成 data URI 当缩略图/原图，同名同大小视为同内容）、本机入库直接拒绝、
  *         挂接/解除挂接（主键去重）与软删除（之后不再出现在列表，URL 返回 undefined）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -43,6 +44,15 @@ const IMPORT_TYPES: Record<string, { kind: AssetKind; mime: string }> = {
 
 function delay(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, MOCK_DELAY_MS));
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("无法读取所选图片。"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function sameLink(left: AssetLinkTarget, right: AssetLinkTarget): boolean {
@@ -129,6 +139,39 @@ export class MockAssetRepository implements AssetRepository {
       this.#images[id] = mockPlaceholderImage(name);
     }
     return structuredClone(asset);
+  }
+
+  async uploadImage(file: File): Promise<Asset> {
+    await delay();
+    if (!file.type.startsWith("image/")) {
+      throw new Error("只能引用图片文件。");
+    }
+    const sha256 = mockSha256(`upload:${file.name}:${String(file.size)}`);
+    const existing = this.#assets.find((asset) => asset.sha256 === sha256 && !asset.deletedAt);
+    if (existing) {
+      return structuredClone(existing);
+    }
+    const dataUrl = await readAsDataUrl(file);
+    this.#sequence += 1;
+    const id = `asset_mock_upload_${String(this.#sequence)}`;
+    const asset: Asset = {
+      id,
+      kind: "image",
+      mime: file.type,
+      byteSize: file.size,
+      sha256,
+      origin: {},
+      createdAt: new Date().toISOString(),
+      links: [],
+    };
+    this.#assets.push(asset);
+    this.#images[id] = dataUrl;
+    return structuredClone(asset);
+  }
+
+  async ingestLocalFile(_sourcePath: string): Promise<Asset> {
+    await delay();
+    throw new Error("演示模式不能读取本机文件；请在桌面应用中使用「引用图片」。");
   }
 
   async addLink(assetId: string, link: AssetLinkTarget): Promise<Asset> {

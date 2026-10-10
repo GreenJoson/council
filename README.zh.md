@@ -8,7 +8,7 @@
 
 Council 把 Claude、Codex 和其他已配置 Agent 放进同一个项目、同一个议题。从提案、独立审查、人工决策到隔离实施，不必再靠你在聊天窗口之间反复搬运消息。
 
-当前桌面版本为 **0.9.8**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
+当前桌面版本为 **0.10.0**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
 
 ## 解决什么问题？
 
@@ -115,7 +115,7 @@ npm run dev
 
 ### 通过 MCP 接入已有 Agent 客户端
 
-构建 MCP 服务，让各客户端指向同一日志库，并分别绑定 `codex`、`claude` 调用者身份。可复制的配置见 [MCP 接入 / MCP setup](docs/mcp-setup.md)。可选的 [Council Skill](skills/council/SKILL.md) 提供协作协议，单独使用桌面应用不需要安装它。
+构建 MCP 服务后，打开「设置 → 客户端接入」，对 Claude Code 和/或 Codex 点「写入」：Council 会以同一日志库、各自的 `claude`/`codex` 调用者身份注册自己并安装 Council Skill，写入前备份原文件，可随时还原。文件位置、漂移处理与手动备用配置见 [MCP 接入 / MCP setup](docs/mcp-setup.md)。可选的 [Council Skill](skills/council/SKILL.md) 提供协作协议，单独使用桌面应用不需要安装它。
 
 示例提示词：
 

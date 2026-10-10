@@ -1,6 +1,6 @@
 /**
  * @input  依赖：types/assets 的资产 DTO、查询与挂接类型
- * @output 导出：AssetRepository 资产列表/详情/导入/挂接/解除挂接/软删除与缩略图/原文 URL 契约
+ * @output 导出：AssetRepository 资产列表/详情/导入/浏览器图片上传/本机图片入库/挂接/解除挂接/软删除与缩略图/原文 URL 契约
  * @pos    资产领域的前端数据边界；http/desktop/mock 三套实现由 create-asset-repository.ts 选择
  *
  * 刷新约定：与 TaskRepository 相同，刻意不提供 subscribe。资产写入推进内容 revision
@@ -28,6 +28,10 @@ export interface AssetRepository {
   getAsset(assetId: string): Promise<Asset>;
   /** 从当前项目目录导入；relativePath 相对项目根。同 sha256 时返回既有资产。 */
   importAsset(relativePath: string): Promise<Asset>;
+  /** 浏览器选择/粘贴的图片字节入库（只进资产库，不写项目目录）；同内容返回既有资产。 */
+  uploadImage(file: File): Promise<Asset>;
+  /** 桌面壳：按原生选择器给出的绝对路径把本机图片读入资产库，原文件不复制不移动；浏览器/mock 实现抛诚实指引。 */
+  ingestLocalFile(sourcePath: string): Promise<Asset>;
   /** 挂接后返回最新资产（含新 links）。 */
   addLink(assetId: string, link: AssetLinkTarget): Promise<Asset>;
   removeLink(assetId: string, link: AssetLinkTarget): Promise<Asset>;

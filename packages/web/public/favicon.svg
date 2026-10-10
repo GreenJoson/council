@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Council favicon：与应用图标、BrandLogo 同一符号；静态文件读不到 theme.css，颜色按其浅/深色值写死 -->
+  <style>
+    .plate { fill: #ffffff; stroke: rgba(16, 20, 28, 0.14); }
+    .ink { fill: #1c1f26; }
+    .ring { fill: none; stroke: #1c1f26; }
+    .core { fill: #3f4c66; }
+    @media (prefers-color-scheme: dark) {
+      .plate { fill: #1d2127; stroke: rgba(255, 255, 255, 0.14); }
+      .ink { fill: #eceef2; }
+      .ring { stroke: #eceef2; }
+      .core { fill: #9fb0d4; }
+    }
+  </style>
+  <rect class="plate" x="1" y="1" width="30" height="30" rx="8" stroke-width="1"/>
+  <circle class="ring" cx="16" cy="17.6" r="5.4" stroke-width="1.7"/>
+  <circle class="core" cx="16" cy="17.6" r="1.6"/>
+  <circle class="ink" cx="16" cy="7.2" r="2.2"/>
+  <circle class="ink" cx="6.99" cy="22.8" r="2.2"/>
+  <circle class="ink" cx="25.01" cy="22.8" r="2.2"/>
+</svg>

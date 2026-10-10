@@ -1,7 +1,7 @@
 /**
  * @input  依赖：Express Response 与 Zod 校验结果
- * @output 导出：统一 JSON 响应和 HTTP 错误类型
- * @pos    REST 契约与内部错误之间的安全隔离层
+ * @output 导出：统一 JSON 响应、二进制内联出站（sendInlineBytes）和 HTTP 错误类型
+ * @pos    REST 契约与内部错误之间的安全隔离层；资产原图/缩略图与项目图片共用同一套出站响应头
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -42,6 +42,24 @@ export function sendSuccess<T>(
   status = 200,
 ): void {
   response.status(status).json({ code: 0, message, data, timestamp: Date.now() });
+}
+
+export interface InlineBytesPayload {
+  mime: string;
+  filename: string;
+  bytes: Uint8Array;
+}
+
+/** 字节只经这里出站：固定 no-store/nosniff；SVG 可内嵌脚本，沙箱化并禁止脚本，即使被直接打开也不会在同源执行。 */
+export function sendInlineBytes(response: Response, payload: InlineBytesPayload): void {
+  response.setHeader("Content-Type", payload.mime);
+  response.setHeader("Content-Disposition", `inline; filename="${payload.filename.replace(/["\\\r\n]/gu, "_")}"`);
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  if (payload.mime === "image/svg+xml") {
+    response.setHeader("Content-Security-Policy", "sandbox; script-src 'none'");
+  }
+  response.status(200).end(payload.bytes);
 }
 
 export function sendError(

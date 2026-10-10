@@ -13,6 +13,7 @@
 | `cycle-preferences.ts` | 偏好 | 圆桌轮次上限的 localStorage 读写与订阅（`useCycleRoundBudget`），默认 3、夹取 1–10 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
 | `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页、`agent.output` 草稿事件与项目活动计数（`activeAgents`/`attention`） |
+| `client-config-api.ts` | 协议 | 严格解析客户端接入（`/api/v1/settings/client-config`）状态：client、`~` 折叠路径、四态 state 与可选 appliedAt/stashPath/detail/notice |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
@@ -24,7 +25,7 @@
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
 | `mock-repository.ts` | 原型 | 同构模拟选题、创建、关闭、发帖、同步、Human / Accepted 人工结束（同时写入 decidedAt 供架构档案 ADR 编号排序）和只读议题详情加载 |
 | `mock-orchestration-repository.ts` | 原型 | 同构模拟逻辑绑定、AI 实施计划、三种圆桌审查范围、关闭/重开、运行操作和系统身份约束；每次发布快照时按活动 Run 与执行/审核中委派数同步 `activity` |
-| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task`/`list_assets`/`get_asset` |
+| `desktop-bridge.ts` | 原生边界 | 严格封装 Tauri invoke、event、目录选择器、引用图片的原生文件选择器 `chooseImageFile`、本地 Agent 服务配置/健康命令与只读 `list_tasks`/`get_task`/`list_assets`/`get_asset` |
 | `native-repository.ts` | 桌面 | 直接调用 Rust core，用事件/轮询校准外部写入，归档静止议题、提交用户绑定的 accepted 人工决策，并提供不参与设置世代的只读议题详情加载 |
 | `desktop-orchestration-repository.ts` | 桌面编排 | 探测本地 Agent 服务：可达时委托 HTTP 编排仓储及 AI 实施计划，离线时保持诚实快照并周期重试、服务恢复后自动转 LIVE |
 | `error-message.ts` | 边界 | 把 Tauri 字符串 reject、普通对象与 Error 归一成可展示文案；只认 Error 会在启动失败时吞掉唯一的线索 |
@@ -35,7 +36,7 @@
 | `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |
 | `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 | `decision-package.ts` | 查询 | 计算议题 proposed/accepted 决策包状态，支持逐条或批量接受而不把列表压成单条结论 |
-| `assets/` | 资产域 | P2 资产库仓储接口、协议解析、http/desktop/mock 三实现与选择入口（页大小 `VITE_COUNCIL_ASSET_PAGE_SIZE`），详见 `assets/_README.md` |
+| `assets/` | 资产域 | P2 资产库仓储接口、协议解析、http/desktop/mock 三实现与选择入口（页大小 `VITE_COUNCIL_ASSET_PAGE_SIZE`），含浏览器上传与本机图片入库，详见 `assets/_README.md` |
 | `pipelines/` | 流水线域 | P3 流水线仓储接口、`council-pipeline` 协议解析、http/desktop/mock 三实现与选择入口；不新增 SSE，靠两路 revision 重读，详见 `pipelines/_README.md` |
 | `tasks/` | 任务域 | v18 任务（直接任务 + 议题实施项）仓储接口、协议解析、http/desktop/mock 三实现与选择入口，详见 `tasks/_README.md` |
 
@@ -65,4 +66,5 @@ HTTP 和桌面仓储透传可选接续权限；未选择时不发送覆盖值。
 
 任务域（`tasks/`）不新增 SSE 事件，也不在 `TaskRepository` 上提供 subscribe：任务写入递增 content revision，由内容仓储发布新快照；委派写入递增 orchestration revision，体现在编排快照 `revision`。任务视图的 hook 监听这两个既有信号后重读任务，写操作直接返回最新行，避免第三条 EventSource 或轮询。桌面模式读走 Tauri `list_tasks`/`get_task`（离线可用），委派列表与所有写入走本地 Agent 服务 HTTP；离线时 `getTask` 返回空委派加 `limitation`，写入抛出与编排面板一致的离线指引；项目路径每次从 Rust 设置读取并在读后复核，不另建设置世代。
 
-| `project-files.ts` | 文件引用 | 从 Markdown AST 聚合项目附件；本地链接分类、预览协议校验与 HTTP/桌面文件服务接入 |
+| `project-files.ts` | 文件引用 | 从 Markdown AST 聚合项目附件；本地链接分类、预览协议校验与 HTTP/桌面文件服务接入；`resolveApiBaseUrl` 为文件预览与图片出站提供本地服务地址 |
+| `markdown-images.ts` | 图片解析 | Markdown 图片 src 解析（直链 / `council-asset:` 经资产仓储 / 项目内相对路径经议题图片接口）与发布后把正文引用的资产挂到消息（幂等、失败不阻塞发布） |

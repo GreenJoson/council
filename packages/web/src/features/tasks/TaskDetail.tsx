@@ -1,9 +1,11 @@
 /**
  * @input  依赖：界面语言、TaskRepository、AssetRepository、taskId、两路 revision、可用 Agent 列表、打开议题回调；
- *         use-task-detail、TaskStatusForm、BriefSection、TaskAssetsSection、TaskDelegationSection 与状态文案表
+ *         use-task-detail、use-task-team、TaskStatusForm、BriefSection、TaskAssetsSection、TaskDelegationSection、
+ *         TaskTeamPanel 与状态文案表
  * @output 导出：TaskDetail —— 单个任务的详情：元信息、正文、简报（展示/编辑）、产物区、状态更新、议题跳转、
- *         诚实限制提示、委派（代码/图像）面板与历史
- * @pos    #/tasks/<taskId> 的主体；读取失败（含任务不存在）时显示占位与返回列表链接，不白屏
+ *         诚实限制提示、委派（代码/图像，代码委派可选团队模式）面板与历史；有团队时右栏显示「团队」
+ * @pos    #/tasks/<taskId> 的主体；读取失败（含任务不存在）时显示占位与返回列表链接，不白屏。
+ *         布局为「主列 + 右栏」网格（宽屏两列，窄屏右栏落到主列下方），没有团队时只有主列
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -21,7 +23,9 @@ import { KIND_LABELS, SOURCE_LABELS } from "./task-labels";
 import { TaskAssetsSection } from "./TaskAssetsSection";
 import { TaskDelegationSection } from "./TaskDelegationSection";
 import { TaskStatusForm } from "./TaskStatusForm";
+import { TaskTeamPanel } from "./TaskTeamPanel";
 import { useTaskDetail } from "./use-task-detail";
+import { useTaskTeam } from "./use-task-team";
 
 export interface TaskDetailProps {
   repository: TaskRepository;
@@ -46,6 +50,7 @@ export function TaskDetail({
 }: TaskDetailProps) {
   const { t } = useI18n();
   const state = useTaskDetail(repository, taskId, revision, executionRevision);
+  const teamState = useTaskTeam(repository, taskId, revision, executionRevision);
   const { detail } = state;
 
   if (!detail) {
@@ -75,9 +80,11 @@ export function TaskDetail({
     ? councilBrief.acceptance.join("\n")
     : task.details || task.title;
   const showAssets = task.kind === "image" || delegations.some((entry) => entry.kind === "image");
+  const { team } = teamState;
+  const leadDelegation = team ? delegations.find((entry) => entry.id === team.leadDelegationId) : undefined;
 
   return (
-    <main className="tasks-view task-detail" id="main-content" data-task-id={task.id}>
+    <main className={`tasks-view task-detail${team ? " has-team" : ""}`} id="main-content" data-task-id={task.id}>
       <a className="tasks-back-link" href={LIST_HASH}><ArrowLeft size={14} />{t("返回任务列表")}</a>
       <header className="task-detail-header">
         <h1>{task.title}</h1>
@@ -113,60 +120,83 @@ export function TaskDetail({
         <p className="task-notice is-warning" role="note"><AlertTriangle size={13} />{t(limitation)}</p>
       ) : null}
 
-      <section className="task-detail-section" aria-label={t("任务内容")}>
-        {task.details ? <p className="task-details-text">{task.details}</p> : <p className="task-muted">{t("没有补充说明。")}</p>}
-        {task.statusNote ? <blockquote>{task.statusNote}</blockquote> : null}
-        {task.fixCommit ? <small className="task-commit"><GitCommitHorizontal size={12} />{task.fixCommit}</small> : null}
-      </section>
+      <div className="task-detail-layout">
+        <div className="task-detail-main">
+          <section className="task-detail-section" aria-label={t("任务内容")}>
+            {task.details ? <p className="task-details-text">{task.details}</p> : <p className="task-muted">{t("没有补充说明。")}</p>}
+            {task.statusNote ? <blockquote>{task.statusNote}</blockquote> : null}
+            {task.fixCommit ? <small className="task-commit"><GitCommitHorizontal size={12} />{task.fixCommit}</small> : null}
+          </section>
 
-      <BriefSection
-        key={`${task.id}:brief`}
-        task={task}
-        isSaving={state.busyAction === "brief"}
-        disabled={busy}
-        saveError={state.actionError?.kind === "brief" ? state.actionError.message : undefined}
-        onSave={state.saveBrief}
-      />
+          <BriefSection
+            key={`${task.id}:brief`}
+            task={task}
+            isSaving={state.busyAction === "brief"}
+            disabled={busy}
+            saveError={state.actionError?.kind === "brief" ? state.actionError.message : undefined}
+            onSave={state.saveBrief}
+          />
 
-      {showAssets ? (
-        <TaskAssetsSection
-          repository={assetRepository}
-          taskId={task.id}
-          revision={revision}
-          executionRevision={executionRevision}
-        />
-      ) : null}
+          {showAssets ? (
+            <TaskAssetsSection
+              repository={assetRepository}
+              taskId={task.id}
+              revision={revision}
+              executionRevision={executionRevision}
+            />
+          ) : null}
 
-      <section className="task-detail-section" aria-labelledby="task-status-heading">
-        <h2 id="task-status-heading">{t("更新状态")}</h2>
-        {state.actionError?.kind === "update" ? (
-          <p className="task-notice is-danger" role="alert">
-            <AlertTriangle size={13} />
-            {t("保存失败：{message}。已重新读取最新任务，请确认后再提交。", { message: t(state.actionError.message) })}
-          </p>
+          <section className="task-detail-section" aria-labelledby="task-status-heading">
+            <h2 id="task-status-heading">{t("更新状态")}</h2>
+            {state.actionError?.kind === "update" ? (
+              <p className="task-notice is-danger" role="alert">
+                <AlertTriangle size={13} />
+                {t("保存失败：{message}。已重新读取最新任务，请确认后再提交。", { message: t(state.actionError.message) })}
+              </p>
+            ) : null}
+            <TaskStatusForm
+              key={`${task.id}:${task.version}`}
+              task={task}
+              latestDelegation={latestDelegation}
+              isSaving={state.busyAction === "update"}
+              disabled={busy}
+              onSubmit={state.updateStatus}
+            />
+          </section>
+
+          <TaskDelegationSection
+            task={task}
+            delegations={delegations}
+            adapters={delegationAgents}
+            assetRepository={assetRepository}
+            defaultAcceptance={defaultAcceptance}
+            busyAction={state.busyAction}
+            actionError={state.actionError && (state.actionError.kind === "delegate" || state.actionError.kind === "cancel")
+              ? state.actionError.message : undefined}
+            onStart={state.startDelegation}
+            onCancel={state.cancelDelegation}
+            onStartTeam={async (input) => {
+              const started = await state.startTeam(input);
+              if (started) teamState.applyTeam(started);
+            }}
+            hasActiveTeam={team?.status === "active"}
+          />
+        </div>
+
+        {team ? (
+          <TaskTeamPanel
+            team={team}
+            leadDelegation={leadDelegation}
+            busyAction={teamState.busyAction}
+            actionError={teamState.actionError}
+            loadError={teamState.loadError}
+            onFocus={teamState.focusWorker}
+            onInterrupt={teamState.interruptWorker}
+            onArchive={teamState.archiveWorker}
+            onEndTeam={teamState.endTeam}
+          />
         ) : null}
-        <TaskStatusForm
-          key={`${task.id}:${task.version}`}
-          task={task}
-          latestDelegation={latestDelegation}
-          isSaving={state.busyAction === "update"}
-          disabled={busy}
-          onSubmit={state.updateStatus}
-        />
-      </section>
-
-      <TaskDelegationSection
-        task={task}
-        delegations={delegations}
-        adapters={delegationAgents}
-        assetRepository={assetRepository}
-        defaultAcceptance={defaultAcceptance}
-        busyAction={state.busyAction}
-        actionError={state.actionError && (state.actionError.kind === "delegate" || state.actionError.kind === "cancel")
-          ? state.actionError.message : undefined}
-        onStart={state.startDelegation}
-        onCancel={state.cancelDelegation}
-      />
+      </div>
     </main>
   );
 }

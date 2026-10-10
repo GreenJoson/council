@@ -1,15 +1,17 @@
 /**
  * @input  依赖：HttpRouteContext（HTTP 配置、CouncilDatabase、可选编排服务、项目文件预览服务）、项目路径规范化、Zod schema 与统一响应
- * @output 导出：注册议题列表/详情/创建/更正/关闭、项目文件只读预览、消息发布与决策记录/接受 REST 的 registerTopicRoutes
- * @pos    WebUI 与桌面壳访问议题 canonical 内容数据的 HTTP 路由模块
+ * @output 导出：注册议题列表/详情/创建/更正/关闭、项目文件只读预览与项目图片出站、消息发布（自动关联正文引用的资产库图片）
+ *         与决策记录/接受 REST 的 registerTopicRoutes
+ * @pos    WebUI 与桌面壳访问议题 canonical 内容数据的 HTTP 路由模块；桌面模式人类消息经 Rust 直写 SQLite 不经这里，
+ *         其资产关联由前端发布后补调资产链接接口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import type { Express } from "express";
-import { z } from "zod/v4";
+import { linkReferencedAssets } from "../../assets/asset-references.js";
 import { normalizeProjectPath } from "../../project-path.js";
-import { sendSuccess } from "../responses.js";
+import { sendInlineBytes, sendSuccess } from "../responses.js";
 import {
   acceptDecisionsBodySchema,
   createDecisionBodySchema,
@@ -17,6 +19,7 @@ import {
   createTopicBodySchema,
   emptyActionBodySchema,
   listTopicsQuerySchema,
+  projectFileReferenceSchema,
   topicDetailQuerySchema,
   topicParamsSchema,
   updateTopicBodySchema,
@@ -66,12 +69,17 @@ export function registerTopicRoutes(app: Express, context: HttpRouteContext): vo
 
   app.post("/api/v1/topics/:topicId/files/preview", async (request, response) => {
     const { topicId } = parse(topicParamsSchema, request.params);
-    const input = parse(z.object({
-      href: z.string().trim().min(1).max(4096),
-      basePath: z.string().trim().min(1).max(4096).optional(),
-    }).strict(), request.body);
+    const input = parse(projectFileReferenceSchema, request.body);
     response.set("Cache-Control", "no-store");
     sendSuccess(response, await projectFiles.preview(database.getTopic(topicId).projectPath, input.href, input.basePath));
+  });
+
+  // 消息正文里 `![](docs/x.png)` 这类项目相对路径图片：浏览器 <img> 直接取字节，只读、不入库。
+  app.get("/api/v1/topics/:topicId/files/image", async (request, response) => {
+    const { topicId } = parse(topicParamsSchema, request.params);
+    const input = parse(projectFileReferenceSchema, request.query);
+    const image = await projectFiles.image(database.getTopic(topicId).projectPath, input.href, input.basePath);
+    sendInlineBytes(response, { mime: image.mime, filename: image.name, bytes: image.bytes });
   });
 
   app.put("/api/v1/topics/:topicId", (request, response) => {
@@ -113,6 +121,7 @@ export function registerTopicRoutes(app: Express, context: HttpRouteContext): vo
       content: input.content,
       ...(input.parentMessageId ? { parentMessageId: input.parentMessageId } : {}),
     });
+    linkReferencedAssets(database, input.content, "message", message.id);
     sendSuccess(response, message, "消息已发布。", 201);
   });
 

@@ -38,7 +38,11 @@ export interface BrandLogoProps {
   size?: number;
 }
 
-/** 圆桌 + 三席位的品牌标识；颜色走主题变量，深浅色主题下都成立 */
+/**
+ * 圆桌 + 三席位 + 共识点的品牌标识，与桌面应用图标同一符号。
+ * 几何正本：packages/desktop/src-tauri/icons/source/council-icon.svg（同一套 32 单位坐标），改一处请同步另一处。
+ * 颜色全部走主题变量：底板随表面色、符号随主色、共识点随 Council 语义色，深浅色主题下都成立。
+ */
 export function BrandLogo({ size = 26 }: BrandLogoProps) {
   return (
     <svg
@@ -49,18 +53,28 @@ export function BrandLogo({ size = 26 }: BrandLogoProps) {
       role="img"
       aria-hidden="true"
     >
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--color-primary)" />
+      <rect
+        x="1"
+        y="1"
+        width="30"
+        height="30"
+        rx="8"
+        fill="var(--color-surface)"
+        stroke="var(--color-border-strong)"
+        strokeWidth="1"
+      />
       <circle
         cx="16"
-        cy="17.4"
-        r="5.2"
+        cy="17.6"
+        r="5.4"
         fill="none"
-        stroke="var(--color-text-on-primary)"
-        strokeWidth="2.1"
+        stroke="var(--color-primary)"
+        strokeWidth="1.7"
       />
-      <circle cx="16" cy="7.4" r="2.5" fill="var(--color-text-on-primary)" />
-      <circle cx="8.2" cy="22.8" r="2.5" fill="var(--color-text-on-primary)" />
-      <circle cx="23.8" cy="22.8" r="2.5" fill="var(--color-text-on-primary)" />
+      <circle cx="16" cy="17.6" r="1.6" fill="var(--color-agent-council)" />
+      <circle cx="16" cy="7.2" r="2.2" fill="var(--color-primary)" />
+      <circle cx="6.99" cy="22.8" r="2.2" fill="var(--color-primary)" />
+      <circle cx="25.01" cy="22.8" r="2.2" fill="var(--color-primary)" />
     </svg>
   );
 }

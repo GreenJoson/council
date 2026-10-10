@@ -1,7 +1,7 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
-@pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
 """
@@ -9,14 +9,18 @@
 import json
 import os
 import re
+import struct
 import subprocess
 import time
+import zlib
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from playwright.sync_api import ConsoleMessage, sync_playwright
+
+from client_config_smoke import verify_client_config
 
 
 WEB_URL = os.environ["COUNCIL_WEB_URL"].rstrip("/")
@@ -64,6 +68,59 @@ def api_expect_error(
         assert envelope["code"] == expected_status, envelope
         return envelope
     raise AssertionError(f"API {method} {path} 应返回 {expected_status}")
+
+
+def tiny_png(rgb: tuple[int, int, int]) -> bytes:
+    """1×1 真 PNG：服务端按文件头嗅探并解析 IHDR，不同颜色得到不同 sha256 以区分去重用例。"""
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"\x00" + bytes(rgb))) + chunk(b"IEND", b"")
+
+
+def api_upload(path: str, data: bytes, content_type: str):
+    """浏览器上传入口：请求正文就是文件字节；返回 (HTTP 状态, 资产)。"""
+    request = Request(f"{API_URL}{path}", data=data, headers={"Origin": WEB_ORIGIN, "Content-Type": content_type}, method="POST")
+    try:
+        with LOCAL_OPENER.open(request, timeout=10) as response:
+            status = response.status
+            envelope = json.load(response)
+    except HTTPError as error:
+        detail = error.read().decode(errors="replace")
+        raise AssertionError(f"上传 {path} 失败：{error.code} {detail}") from error
+    assert envelope["code"] == 0, envelope
+    return status, envelope["data"]
+
+
+def api_upload_expect_error(path: str, data: bytes, content_type: str, expected_status: int):
+    request = Request(f"{API_URL}{path}", data=data, headers={"Origin": WEB_ORIGIN, "Content-Type": content_type}, method="POST")
+    try:
+        LOCAL_OPENER.open(request, timeout=10)
+    except HTTPError as error:
+        envelope = json.loads(error.read().decode(errors="replace"))
+        assert error.code == expected_status, envelope
+        return envelope
+    raise AssertionError(f"上传 {path} 应返回 {expected_status}")
+
+
+def wait_for_image_loaded(image) -> None:
+    """消息内嵌图片是 loading=lazy，先滚进视口，再等真正解码出尺寸；失败占位会替换掉 img，所以要限时。"""
+    image.scroll_into_view_if_needed()
+    image.evaluate(
+        """async (element) => {
+          const settled = element.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                element.addEventListener("load", resolve, { once: true });
+                element.addEventListener("error", resolve, { once: true });
+              });
+          await Promise.race([
+            settled,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("图片加载超时：" + element.currentSrc)), 10000)),
+          ]);
+          if (!(element.naturalWidth > 0)) throw new Error("图片未加载：" + element.currentSrc);
+        }"""
+    )
 
 
 def create_and_start_run(
@@ -117,9 +174,18 @@ def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 60
     )
 
 
+# 团队契约：GET /api/v1/tasks/:taskId/team 以 404 表示「没有团队」，任务详情每次重读都会触发；
+# 浏览器把它记成资源加载失败，这是约定内的状态而非页面错误，只放过这一条路径的 404。
+TEAM_NOT_FOUND_URL = re.compile(r"/api/v1/tasks/[^/]+/team$")
+
+
 def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
-    if message.type == "error":
-        errors.append(message.text)
+    if message.type != "error":
+        return
+    location_url = urlsplit(message.location.get("url") or "").path
+    if "status of 404" in message.text and TEAM_NOT_FOUND_URL.search(location_url):
+        return
+    errors.append(message.text)
 
 
 with sync_playwright() as playwright:
@@ -195,6 +261,57 @@ with sync_playwright() as playwright:
     failure_page.get_by_role("button", name="已删除文件", exact=True).click()
     failure_page.get_by_role("dialog", name="文件预览：missing.json", exact=True).get_by_role("alert").filter(has_text="可能已移动或删除").wait_for()
     failure_page.close()
+
+    # 消息图片：项目内相对路径经议题只读图片接口出站；council-asset: 引用经资产接口渲染并自动挂到消息。
+    api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": "项目内架构草图：\n\n![架构草图](docs/logo.png)",
+    })
+    project_image = page.locator("img.markdown-image[alt='架构草图']")
+    wait_for_image_loaded(project_image)
+    project_image_src = project_image.get_attribute("src") or ""
+    assert f"/api/v1/topics/{topic_id}/files/image?" in project_image_src and "docs%2Flogo.png" in project_image_src, project_image_src
+
+    upload_path = f"/api/v1/assets/upload?project={quote(PROJECT_PATH, safe='')}"
+    upload_status, uploaded = api_upload(upload_path, tiny_png((200, 30, 30)), "image/png")
+    assert upload_status == 201 and uploaded["kind"] == "image", (upload_status, uploaded)
+    duplicate_status, duplicate = api_upload(upload_path, tiny_png((200, 30, 30)), "image/png")
+    assert duplicate_status == 200 and duplicate["id"] == uploaded["id"], (duplicate_status, duplicate)
+    asset_message = api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": f"API 上传的参考图：\n\n![上传图](council-asset:{uploaded['id']})",
+    })
+    asset_image = page.locator("img.markdown-image[alt='上传图']")
+    wait_for_image_loaded(asset_image)
+    assert f"/api/v1/assets/{uploaded['id']}/" in (asset_image.get_attribute("src") or "")
+    linked = api_request("GET", f"/api/v1/assets/{uploaded['id']}")
+    assert any(
+        link["targetKind"] == "message" and link["targetId"] == asset_message["id"] and link["role"] == "reference"
+        for link in linked["links"]
+    ), linked["links"]
+
+    # 编辑器「引用图片」：浏览器端经隐藏文件输入上传，正文插入 council-asset: 引用，发布后内嵌渲染并挂到新消息。
+    page.get_by_label("选择要引用的图片").set_input_files(
+        {"name": "composer-upload.png", "mimeType": "image/png", "buffer": tiny_png((30, 30, 200))}
+    )
+    page.wait_for_function(
+        "() => /council-asset:asset_[A-Za-z0-9_-]+/.test(document.querySelector('textarea[placeholder^=\"写下公开结论\"]')?.value ?? '')"
+    )
+    composer_value = page.get_by_placeholder("写下公开结论、证据或回应…").input_value()
+    composer_asset_id = re.search(r"council-asset:(asset_[A-Za-z0-9_-]+)", composer_value).group(1)
+    assert composer_asset_id != uploaded["id"]
+    page.get_by_role("button", name="Critique", exact=True).click()
+    page.get_by_role("button", name="发布 Critique", exact=True).click()
+    page.get_by_text("回复已发布并同步", exact=True).wait_for()
+    wait_for_image_loaded(page.locator("img.markdown-image[alt='composer-upload']"))
+    detail = api_request("GET", f"/api/v1/topics/{topic_id}")
+    composer_message = next(message for message in detail["messages"] if composer_asset_id in message["content"])
+    composer_links = api_request("GET", f"/api/v1/assets/{composer_asset_id}")["links"]
+    assert any(
+        link["targetKind"] == "message" and link["targetId"] == composer_message["id"] for link in composer_links
+    ), composer_links
+
+    for href, status in [("../outside.png", 403), ("docs/missing.png", 404), ("docs/design.md", 415)]:
+        api_expect_error("GET", f"/api/v1/topics/{topic_id}/files/image?href={quote(href, safe='')}", status)
+    api_upload_expect_error(upload_path, b"not an image", "text/plain", 415)
 
     capabilities = api_request("GET", "/api/v1/orchestration/capabilities")
     claude_adapter = next(
@@ -1151,6 +1268,96 @@ with sync_playwright() as playwright:
     page.locator(".topic-row", has_text="惰性详情验收").click()
     page.get_by_role("heading", name="惰性详情验收", exact=True).wait_for()
     assert second_topic["id"] != topic_id
+
+    # P4 Worker 团队闭环（真实 HTTP + Git + 子进程替身）：组队 → Lead（替身）真实拉起注入的 council MCP 核对工具面 →
+    # 派发 3 个 Worker（第 4 个超并行上限 409）→ 中断 1 个 → 另 2 个 done → 逐个合并 → Lead 收尾 → 全团队只审一次。
+    team_started = time.monotonic()
+    team_item = api_request("POST", f"/api/v1/topics/{topic_id}/work-items", {
+        "items": [{"title": "Worker 团队闭环", "details": "COUNCIL_TEAM_E2E 团队并行交付"}],
+    })[0]
+    team_base = f"/api/v1/tasks/{team_item['id']}/team"
+    api_expect_error("GET", team_base, 404)
+    team_payload = {
+        "expectedVersion": team_item["version"], "executorAgentId": completed["executorAgentId"],
+        "supervisorAgentId": completed["supervisorAgentId"], "requestedPermission": "workspace_write",
+        "acceptanceCriteria": "COUNCIL_TEAM_E2E 团队并行交付", "completionPolicy": "human",
+    }
+    started_team = api_request("POST", team_base, team_payload)
+    lead_id = started_team["leadDelegation"]["id"]
+    assert started_team["team"]["leadDelegationId"] == lead_id and started_team["team"]["status"] == "active", started_team
+    api_expect_error("POST", team_base, 409, team_payload)
+
+    def dispatch_worker(label, brief):
+        # Lead 工作区在执行阶段前才建好；之前派发返回 409「尚未就绪」，短暂重试。
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                return api_request("POST", f"{team_base}/workers", {"label": label, "brief": brief, "scopePaths": [label]})
+            except AssertionError as error:
+                if "尚未就绪" not in str(error) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
+
+    worker_a = dispatch_worker("team-a", "COUNCIL_TEAM_E2E dir=team-a delay=2500")
+    worker_b = dispatch_worker("team-b", "COUNCIL_TEAM_E2E dir=team-b delay=2500")
+    worker_slow = dispatch_worker("team-slow", "COUNCIL_TEAM_E2E dir=team-slow delay=4000")
+    assert all(worker["id"].startswith("worker-") and worker["branchName"] for worker in (worker_a, worker_b, worker_slow))
+    over_limit = api_expect_error("POST", f"{team_base}/workers", 409, {"label": "team-extra", "brief": "COUNCIL_TEAM_E2E dir=x delay=0"})
+    assert "上限" in over_limit["message"], over_limit
+    interrupted = api_request("POST", f"{team_base}/workers/{worker_slow['id']}/actions/interrupt")
+    assert interrupted["status"] == "error", interrupted
+    done_workers = []
+    for worker in (worker_a, worker_b):
+        settled = api_request("GET", f"{team_base}/workers/{worker['id']}/wait?timeoutMs=20000", timeout=25)
+        assert settled["status"] == "done" and settled["delegation"]["headCommit"], settled
+        done_workers.append(settled)
+    api_expect_error("POST", f"{team_base}/workers/{worker_slow['id']}/actions/merge", 409)
+    for worker in done_workers:
+        try:
+            merged = api_request("POST", f"{team_base}/workers/{worker['id']}/actions/merge")
+        except AssertionError as error:
+            # 合并失败时带上团队视图（含 Lead failureCode），便于定位 Lead 为何提前结束。
+            raise AssertionError(f"{error}; team={api_request('GET', team_base)}") from error
+        assert merged["mergedCommit"], merged
+
+    deadline = time.monotonic() + 40
+    while True:
+        team_view = api_request("GET", team_base)
+        lead_status = team_view["delegation"]["status"]
+        if lead_status in {"approved", "failed", "cancelled"}:
+            break
+        assert time.monotonic() < deadline, team_view
+        time.sleep(0.2)
+    assert lead_status == "approved", team_view
+    lead_head = team_view["delegation"]["headCommit"]
+    assert team_view["status"] == "ended" and team_view.get("endedAt"), team_view
+    workers_by_id = {worker["id"]: worker for worker in team_view["workers"]}
+    slow_view = workers_by_id[worker_slow["id"]]
+    assert slow_view["status"] == "error" and not slow_view.get("mergedCommit"), slow_view
+    assert slow_view["delegation"]["status"] == "cancelled", slow_view
+    for worker in done_workers:
+        view = workers_by_id[worker["id"]]
+        assert view["status"] == "done" and view["mergedCommit"], view
+        # Lead 交付分支同时包含 Worker 自己的提交与合并提交。
+        for commit in (view["delegation"]["headCommit"], view["mergedCommit"]):
+            subprocess.run(["git", "-C", PROJECT_PATH, "merge-base", "--is-ancestor", commit, lead_head], check=True)
+    for filename in ["team-lead.txt", "team-a/worker.txt", "team-b/worker.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{lead_head}:{filename}"]).strip()
+    slow_listing = subprocess.run(["git", "-C", PROJECT_PATH, "show", f"{lead_head}:team-slow/worker.txt"], capture_output=True)
+    assert slow_listing.returncode != 0, "被中断的 Worker 不应进入 Lead 交付"
+
+    def audit_kinds(source_id):
+        events = api_request("GET", f"/api/v1/topics/{topic_id}/runtime-audit?sourceKind=delegation&sourceId={source_id}")
+        return [event["kind"] for event in events["events"]]
+
+    # 全团队只审一次：Lead 一次审核材料，Worker 一次都没有。
+    assert audit_kinds(lead_id).count("review.evidence") == 1, audit_kinds(lead_id)
+    for worker in team_view["workers"]:
+        assert "review.evidence" not in audit_kinds(worker["delegationId"]), worker
+    # Worker 不进委派列表：任务委派只有 Lead 一条。
+    assert [run["id"] for run in api_request("GET", f"/api/v1/tasks/{team_item['id']}/delegations")] == [lead_id]
+    print(f"P4 Worker 团队闭环通过，耗时 {time.monotonic() - team_started:.1f}s")
+    verify_client_config(api_request, api_expect_error)
 
     assert not console_errors, console_errors
     page.close()

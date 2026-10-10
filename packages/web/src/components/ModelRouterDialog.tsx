@@ -1,7 +1,7 @@
 /**
- * @input  依赖：界面语言上下文、OrchestrationRepository 的 ModelRouter CRUD、BrandGlyph 与单项编辑器
- * @output 导出：ModelRouterDialog 固定高度模型路由台与系统/模板身份判定
- * @pos    Council 桌面/Web 的 Provider 连接、受控品牌身份、Agent 模型和 @alias 管理入口
+ * @input  依赖：界面语言上下文、OrchestrationRepository 的 ModelRouter CRUD、BrandGlyph、单项编辑器与 ClientConfigPanel
+ * @output 导出：ModelRouterDialog 固定高度模型路由台（含「客户端接入」分区）与系统/模板身份判定
+ * @pos    Council 桌面/Web 的 Provider 连接、受控品牌身份、Agent 模型、@alias 与 Claude/Codex 客户端接入管理入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Cloud,
   LoaderCircle,
+  Plug,
   Plus,
   ShieldCheck,
   X,
@@ -28,6 +29,7 @@ import type {
 } from "../types/model-router";
 import { useModelDiagnostics } from "../hooks/useModelDiagnostics";
 import { BrandGlyph } from "./BrandGlyph";
+import { ClientConfigPanel } from "./ClientConfigPanel";
 import {
   AgentDefinitionEditor,
   type AgentDefinitionDraft,
@@ -46,7 +48,8 @@ type Selection =
   | { kind: "agent"; id: string }
   | { kind: "provider"; id: string }
   | { kind: "new-agent"; providerId: string }
-  | { kind: "new-provider"; templateId: string };
+  | { kind: "new-provider"; templateId: string }
+  | { kind: "client-config" };
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "模型路由操作失败";
@@ -275,6 +278,17 @@ export function ModelRouterDialog({
     setResultMessage(null);
   }
 
+  // 客户端接入不依赖 Model Router 表单：清空两侧编辑器，由面板自取状态
+  function selectClientConfig(): void {
+    setSelection({ kind: "client-config" });
+    setAgentForm(null);
+    setProviderForm(null);
+    setCatalogOpen(false);
+    setRemoveConfirming(false);
+    setErrorMessage(null);
+    setResultMessage(null);
+  }
+
   function beginProvider(template: ProviderCatalogEntry): void {
     setSelection({ kind: "new-provider", templateId: template.templateId });
     setProviderForm(newProviderDraft(template));
@@ -490,6 +504,22 @@ export function ModelRouterDialog({
                     ))}
                   </div>
                 </div>
+                <div className="model-router-nav-section">
+                  <span className="model-router-nav-label">CLIENT ACCESS</span>
+                  <div className="model-router-list">
+                    <button
+                      className={`model-router-list-item ${selection?.kind === "client-config" ? "is-selected" : ""}`}
+                      type="button"
+                      aria-pressed={selection?.kind === "client-config"}
+                      onClick={selectClientConfig}
+                    >
+                      <span className="model-router-list-icon"><Plug size={17} /></span>
+                      <span className="model-router-list-copy"><strong>{t("客户端接入")}</strong><small>Claude Code · Codex</small></span>
+                      <span />
+                      <ChevronRight className="model-router-list-chevron" size={15} />
+                    </button>
+                  </div>
+                </div>
                 <div className="agent-provider-catalog">
                   <button className="agent-provider-add-button" type="button" aria-expanded={catalogOpen} onClick={() => setCatalogOpen((open) => !open)}>
                     <Plus size={16} /><span>{t("连接 Provider")}</span><em>{String(snapshot.catalog.providers.length)}</em>
@@ -516,7 +546,9 @@ export function ModelRouterDialog({
                 <div className="model-router-security-note"><ShieldCheck size={15} /><span>{t("API Key 只进入系统 Keychain")}</span></div>
               </aside>
               <main className="model-router-workbench">
-                {agentForm && agentProvider ? (
+                {selection?.kind === "client-config" ? (
+                  <ClientConfigPanel repository={repository} />
+                ) : agentForm && agentProvider ? (
                   <AgentDefinitionEditor
                     agent={selectedAgent}
                     provider={agentProvider}

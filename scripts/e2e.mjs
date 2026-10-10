@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已构建的 Council API/Web、显式迁移/RuntimeBinding 配置、Playwright 与 Agent 替身
- * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、带命名空间工作簿预览、本机/远程 Agent 调用、图像委派闭环（隔离 codex-home）、P3 流水线闭环及 mock 布局的浏览器验收（限流上限按多段轮询放宽）
+ * @output 导出：隔离 schema 迁移、真实 HTTP/SSE、带命名空间工作簿预览、本机/远程 Agent 调用、图像委派闭环（隔离 codex-home）、P3 流水线闭环、客户端接入写入/漂移/还原（四个目标路径全部落在隔离数据目录）及 mock 布局的浏览器验收（限流上限按多段轮询放宽）
  * @pos    根目录跨进程 E2E 启动、隔离数据与子进程收口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -179,6 +179,17 @@ async function runCommand(label, command, args, env) {
   }
 }
 
+// 客户端接入的四个目标路径：API 与冒烟脚本共用同一份，绝不能落到真实家目录的 Claude/Codex 配置。
+function clientConfigEnvironment(dataDirectory) {
+  const root = path.join(dataDirectory, "client-targets");
+  return {
+    COUNCIL_CLIENT_CONFIG_CLAUDE_FILE: path.join(root, "claude", "claude.json"),
+    COUNCIL_CLIENT_CONFIG_CLAUDE_SKILLS_DIR: path.join(root, "claude", "skills", "council"),
+    COUNCIL_CLIENT_CONFIG_CODEX_FILE: path.join(root, "codex", "config.toml"),
+    COUNCIL_CLIENT_CONFIG_CODEX_SKILLS_DIR: path.join(root, "codex", "skills", "council"),
+  };
+}
+
 function apiEnvironment(dataDirectory) {
   const webOrigin = `http://localhost:${String(HTTP_WEB_PORT)}`;
   return {
@@ -194,6 +205,7 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CODEX_TIMEOUT_MS: "5000",
     // 生图产物兜底目录指向隔离数据目录，绝不读取真实 <codex-home>。
     COUNCIL_CODEX_HOME: path.join(dataDirectory, "codex-home"),
+    ...clientConfigEnvironment(dataDirectory),
     COUNCIL_CODEX_IMAGE_TIMEOUT_MS: "20000",
     COUNCIL_CLAUDE_PERMISSION_MODE: "plan",
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
@@ -302,6 +314,8 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
   writeFileSync(path.join(docs, "design.md"), '# 设计文档\n\n[参数配置](model.json)\n');
   writeFileSync(path.join(docs, "results.csv"), '名称,备注\n示例,"含逗号,和换行\n第二行"\n');
   writeFileSync(path.join(docs, "bad.xlsx"), 'invalid workbook');
+  // 1×1 真 PNG：消息里 `![架构草图](docs/logo.png)` 经议题只读图片接口出站。
+  writeFileSync(path.join(docs, "logo.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
   writeFileSync(path.join(projectPath, ".gitignore"), '.env\n');
   writeFileSync(path.join(projectPath, ".env"), 'COUNCIL_E2E_PRIVATE=placeholder\n');
   const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" };
@@ -352,6 +366,8 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         COUNCIL_API_URL: `http://localhost:${String(API_PORT)}`,
         COUNCIL_PROJECT_PATH: projectPath,
         COUNCIL_FAKE_PROVIDER_URL: `http://localhost:${String(REMOTE_PROVIDER_PORT)}/v1`,
+        COUNCIL_DATA_DIR: dataDirectory,
+        ...clientConfigEnvironment(dataDirectory),
       },
     );
   } finally {

@@ -28,8 +28,9 @@
 | `i18n-coverage.test.ts` | 国际化守卫 | 扫描 src 下所有 `t("中文")` 字面量，缺英文条目即失败；防止新文案只有中文 |
 | `work-item-tree.test.ts` | 树结构单测 | 验证父状态派生优先级（受阻 > 进行中 > 全完成）、按 sortOrder 父前子后排序、父级缺失条目回落顶层，以及完成度只数叶子与阻断发现单独计数 |
 | `conversation-list-progress.test.tsx` | 会话列表回归 | 验证完成度渲染在时间右侧并按受阻/完成切换色调，未拆分实施项的议题不渲染徽标（`0/0` 与「还没拆」不是一回事）|
-| `webui-smoke.py` | 浏览器测试 | 验证人工决策零 Agent Run、圆桌三段审查范围、Composer `@Agent` 单一当前调用、Model Router 身份只读、实时草稿、议题隔离、大屏讨论列、移动端抽屉与控制台错误 |
-| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、远程 Provider 双 Agent 在圆桌名册热加载、HTTP 安全失败原因展示、别名/停用/删除恢复边界、Provider 滚动、外部 API 回帖经 SSE 自动出现、Claude 子进程编排、人工门与 Web 回写 |
+| `webui-smoke.py` | 浏览器测试 | 验证人工决策零 Agent Run、圆桌三段审查范围、Composer `@Agent` 单一当前调用、编辑器引用图片（mock 上传 → `council-asset:` 引用 → 发布后内嵌渲染）、Model Router 身份只读、客户端接入写入/还原徽标、实时草稿、议题隔离、大屏讨论列、移动端抽屉与控制台错误 |
+| `client_config_smoke.py` | 端到端分段 | 由 `webui-http-smoke.py` 调用：在 e2e.mjs 注入的隔离目标路径上预置用户 Claude/Codex 配置，走写入 → 漂移 409 → 还原，校验 Codex 保留用户追加行、Claude 逐字节回放、applied.json 与 stash |
+| `webui-http-smoke.py` | 端到端测试 | 验证项目隔离、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415 失败）、远程 Provider 双 Agent 在圆桌名册热加载、HTTP 安全失败原因展示、别名/停用/删除恢复边界、Provider 滚动、外部 API 回帖经 SSE 自动出现、Claude 子进程编排、人工门与 Web 回写 |
 | `error-message.test.ts` | 单元测试 | 验证启动失败路径的文案归一化：Tauri 字符串 reject 与对象 message 必须保留，只有空白值才回落到通用文案 |
 
 HTTP/SSE 浏览器验收覆盖运行审计展开、待处理导航及确认后的自动消退；HTTP 和 Mock 浏览器显式设置 zh-CN，嵌套审计折叠区使用精确父级定位。

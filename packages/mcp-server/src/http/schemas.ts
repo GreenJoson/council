@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库与 P3 流水线）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库、P3 流水线、P4 Worker 团队与客户端接入）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -514,6 +514,26 @@ export const importAssetBodySchema = z
   })
   .strict();
 
+/** 浏览器上传图片字节：项目路径走查询串，请求正文是原始文件内容（路由级 raw 解析）。 */
+export const uploadAssetQuerySchema = z.object({ project: taskProjectPathSchema }).strict();
+
+/** 桌面壳把用户在原生文件选择器里选中的本机绝对路径交给服务入库，原文件不复制不移动。 */
+export const ingestAssetBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    sourcePath: nonBlankString(MAX_PATH_CHARS),
+  })
+  .strict();
+
+// ---- 项目文件引用（议题预览 body 与图片出站 query 共用） ----
+
+export const projectFileReferenceSchema = z
+  .object({
+    href: z.string().trim().min(1).max(4096),
+    basePath: z.string().trim().min(1).max(4096).optional(),
+  })
+  .strict();
+
 export const addAssetLinkBodySchema = z
   .object({
     targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
@@ -673,3 +693,42 @@ export const lastEventIdSchema = z
   .transform(Number)
   .refine((value) => Number.isSafeInteger(value), "Last-Event-ID 超出安全范围")
   .optional();
+
+// ---- P4 Worker 团队（/api/v1/tasks/:taskId/team）：并行上限、检查点与合并规则在 teams/，这里只校验形状 ----
+
+const teamEntityIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS)
+  .regex(/^[A-Za-z0-9_-]+$/, "id 格式无效");
+
+export const teamWorkerParamsSchema = z.object({ taskId: workItemIdSchema, workerId: teamEntityIdSchema }).strict();
+
+/** 组队即发起 Lead 代码委派：形状同任务入口代码委派，审核者可省略（服务层取默认 Claude），另加并行上限。 */
+export const startTeamBodySchema = startWorkItemDelegationBodySchema.extend({
+  supervisorAgentId: routerIdSchema.optional(),
+  maxParallel: z.number().int().min(1).max(16).optional(),
+}).strict();
+
+export const dispatchWorkerBodySchema = z
+  .object({
+    label: nonBlankString(80),
+    role: z.string().max(80).optional(),
+    brief: nonBlankString(4_000),
+    scopePaths: z.array(nonBlankString(500)).max(50).optional(),
+    requestedPermission: z.enum(["workspace_write", "danger_full_access"]).optional(),
+  })
+  .strict();
+
+export const waitWorkerQuerySchema = z
+  .object({ timeoutMs: z.coerce.number().int().min(0).max(600_000).optional() })
+  .strict();
+
+export const focusWorkerBodySchema = z.object({ focused: z.boolean() }).strict();
+/** 客户端接入（P4 配置分发）：client 只允许 claude|codex；apply 可带 force 覆盖漂移。 */
+export const clientConfigParamsSchema = z
+  .object({ client: z.enum(["claude", "codex"]) })
+  .strict();
+
+export const applyClientConfigBodySchema = z
+  .object({ force: z.boolean().optional() })
+  .strict();

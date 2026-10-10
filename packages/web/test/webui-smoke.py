@@ -1,13 +1,15 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、Agent 动态、大屏流体讨论列、
+@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、编辑器引用图片（mock 上传 → council-asset 引用 → 发布后内嵌渲染）、系统 Agent 身份只读、客户端接入写入/还原徽标、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、P3 流水线页（分组、选定 final、失败恢复、新建确认 brief）、
+         P4 任务详情右栏「团队」（两列布局、Worker 聚焦切换、打断、归档、结束团队）、
          移动端布局（含 #/pipelines 无横向溢出）和控制台错误的浏览器验收
 @pos    Operator Console A 版的端到端冒烟测试
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
 """
 
+import base64
 import os
 from pathlib import Path
 
@@ -287,6 +289,27 @@ def verify_system_agent_identity_lock(page) -> None:
     dialog.get_by_role("button", name="关闭模型路由").click()
 
 
+def verify_client_config(page) -> None:
+    """mock 模式只走内存三态：设置 → 客户端接入 → 写入 → 已写入 → 还原 → 未写入。"""
+    page.get_by_role("button", name="打开模型与 Provider 设置").click()
+    dialog = page.get_by_role("dialog", name="Provider 与 Agent")
+    dialog.wait_for()
+    dialog.locator(".model-router-list-item", has_text="客户端接入").click()
+    card = dialog.locator(".client-config-card[data-client='claude']")
+    badge = card.locator(".client-config-badge")
+    card.wait_for()
+    assert badge.inner_text() == "未写入", badge.inner_text()
+    assert "~/.claude.json" in card.inner_text()
+    card.get_by_role("button", name="写入", exact=True).click()
+    card.locator(".client-config-badge[data-state='applied']").wait_for()
+    assert badge.inner_text() == "已写入", badge.inner_text()
+    card.get_by_role("button", name="还原", exact=True).click()
+    card.locator(".client-config-badge[data-state='not_applied']").wait_for()
+    assert badge.inner_text() == "未写入", badge.inner_text()
+    assert card.get_by_role("button", name="还原", exact=True).count() == 0
+    dialog.get_by_role("button", name="关闭模型路由").click()
+
+
 def verify_media_preview_and_lightbox(page) -> None:
     page.locator(".topic-row", has_text="对账任务分片策略").click()
     page.get_by_role("heading", name="对账任务分片策略", exact=True).wait_for()
@@ -413,6 +436,104 @@ def verify_pipeline_page(page) -> None:
     wait_stage(page, "image", ("running",))
 
 
+TEAM_TASK_ID = "work_item_task_channel_adapter_split"
+
+
+def worker_row(page, worker_id: str):
+    return page.locator(f".task-team-panel [data-worker-id='{worker_id}']")
+
+
+def verify_task_team(page) -> None:
+    """P4 团队：mock 预置 3 个 Worker（运行中且聚焦 / 已完成已合并 / 出错），走通聚焦切换、打断、归档与结束团队。"""
+    page.evaluate(f"location.hash = '#/tasks/{TEAM_TASK_ID}'")
+    panel = page.locator(".task-team-panel")
+    panel.wait_for()
+    assert panel.get_attribute("data-team-status") == "active"
+    assert panel.locator(".task-worker").count() == 3
+
+    # 宽屏两列：右栏在主列右侧
+    main_box = page.locator(".task-detail-main").bounding_box()
+    panel_box = panel.bounding_box()
+    assert main_box and panel_box and panel_box["x"] >= main_box["x"] + main_box["width"], "团队右栏未与主列并排"
+
+    gateway = worker_row(page, "worker_channel_gateway")
+    reconcile = worker_row(page, "worker_reconcile_parser")
+    assert gateway.get_attribute("data-worker-status") == "running"
+    gateway_focus = page.get_by_role("button", name="聚焦 Worker：渠道下单适配", exact=True)
+    reconcile_focus = page.get_by_role("button", name="聚焦 Worker：对账文件解析", exact=True)
+    assert gateway_focus.get_attribute("aria-pressed") == "true"
+    gateway.locator(".task-worker-focus").wait_for()
+
+    # 聚焦单选：切到另一个 Worker，原聚焦取消
+    reconcile_focus.click()
+    page.wait_for_function(
+        "document.querySelector(\".task-team-panel [data-worker-id='worker_reconcile_parser'] "
+        "button[aria-pressed]\")?.getAttribute('aria-pressed') === 'true'"
+    )
+    assert gateway_focus.get_attribute("aria-pressed") == "false"
+    reconcile.locator(".task-worker-focus").wait_for()
+
+    # 打断运行中的 Worker：内联确认后变为出错
+    page.get_by_role("button", name="打断 Worker：渠道下单适配", exact=True).click()
+    gateway.get_by_role("button", name="确认打断", exact=True).click()
+    page.wait_for_function(
+        "document.querySelector(\".task-team-panel [data-worker-id='worker_channel_gateway']\")"
+        "?.dataset.workerStatus === 'error'"
+    )
+    assert gateway.locator(".task-worker-status").inner_text() == "出错"
+
+    # 归档：默认视图隐藏，可展开找回
+    page.get_by_role("button", name="归档 Worker：渠道下单适配", exact=True).click()
+    gateway.wait_for(state="detached")
+    assert panel.locator(".task-worker").count() == 2
+    page.get_by_role("button", name="显示已归档（1）", exact=True).click()
+    gateway.wait_for()
+    assert gateway.get_attribute("data-worker-status") == "archived"
+
+    # 结束团队：确认后徽章变为已结束，结束入口消失
+    panel.get_by_role("button", name="结束团队", exact=True).click()
+    panel.get_by_role("button", name="确认结束团队", exact=True).click()
+    page.wait_for_function("document.querySelector('.task-team-panel')?.dataset.teamStatus === 'ended'")
+    assert panel.locator(".task-team-status").inner_text() == "已结束"
+    assert panel.get_by_role("button", name="结束团队", exact=True).count() == 0
+
+
+# 1×1 真 PNG：mock 上传按 File 读成 data URI，渲染出来的 img 必须有自然尺寸。
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
+
+
+def verify_composer_image_attachment(page) -> None:
+    """编辑器「引用图片」：mock 上传 → 正文插入 council-asset: 引用 → 发布后内嵌渲染。"""
+    page.get_by_label("选择要引用的图片").set_input_files(
+        {"name": "settlement-empty-state.png", "mimeType": "image/png", "buffer": TINY_PNG}
+    )
+    page.wait_for_function(
+        "() => (document.querySelector('textarea[placeholder^=\"写下公开结论\"]')?.value ?? '').includes('council-asset:asset_mock_upload_')"
+    )
+    page.get_by_role("button", name="Critique", exact=True).click()
+    page.get_by_role("button", name="发布 Critique", exact=True).click()
+    page.get_by_text("回复已发布并同步", exact=True).wait_for()
+    image = page.locator("img.markdown-image[alt='settlement-empty-state']")
+    image.scroll_into_view_if_needed()
+    image.evaluate(
+        """async (element) => {
+          const settled = element.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                element.addEventListener("load", resolve, { once: true });
+                element.addEventListener("error", resolve, { once: true });
+              });
+          await Promise.race([
+            settled,
+            new Promise((_, reject) => setTimeout(() => reject(new Error("图片加载超时")), 10000)),
+          ]);
+          if (!(element.naturalWidth > 0)) throw new Error("图片未加载：" + element.currentSrc.slice(0, 40));
+        }"""
+    )
+
+
 def verify_desktop(browser) -> list[str]:
     errors: list[str] = []
     page = browser.new_page(viewport={"width": 1536, "height": 1024}, locale="zh-CN")
@@ -423,6 +544,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
     assert page.get_by_role("button", name="展开议题", exact=True).count() == 0
     verify_system_agent_identity_lock(page)
+    verify_client_config(page)
     verify_fluid_discussion_width(page)
     verify_message_jump_rail(page)
     verify_card_bottom_collapse_control(page)
@@ -447,6 +569,7 @@ def verify_desktop(browser) -> list[str]:
     page.locator(".topic-row", has_text="支付回调幂等方案").click()
     page.get_by_text("等待 Agent", exact=True).wait_for()
     verify_agent_reply_activity(page)
+    verify_composer_image_attachment(page)
 
     page.get_by_placeholder("写下公开结论、证据或回应…").fill(
         """补充验证：重复回调和乱序回调必须分别覆盖。
@@ -525,6 +648,7 @@ def verify_desktop(browser) -> list[str]:
     verify_topic_question_collapse_control(page)
     verify_manual_decision_without_agent_run(page)
     verify_pipeline_page(page)
+    verify_task_team(page)
 
     page.close()
     return errors

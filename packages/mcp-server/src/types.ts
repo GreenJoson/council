@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限与原型权限档、v19 资产库的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、P3 流水线上限与原型权限档、v19 资产库与客户端接入分发（ClientConfigSettings）的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -61,6 +61,8 @@ export interface CouncilConfig {
   pipelineMaxRevisions?: number;
   /** P3 原型代码委派请求的权限档（默认 workspace_write）；实际权限仍与执行 Agent 的权限档取交集。 */
   pipelinePrototypePermission?: PipelinePrototypePermission;
+  /** P4 Worker 团队：单个团队同时运行的 Worker 上限（默认 3），创建团队时冻结进 task_teams.max_parallel。 */
+  workerMaxParallel?: number;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;
@@ -127,11 +129,15 @@ export interface McpCouncilConfig extends CouncilConfig {
   /** 同机 HTTP 服务基址（仅回环）；任务委派等需要后台执行的 MCP 工具经它转发。 */
   httpServiceUrl: string;
   httpForwardTimeoutMs: number;
+  /** P4：Council 只给团队 Lead 注入的 MCP 进程带上该值，团队工具据此定位团队；普通 MCP 会话缺省。 */
+  teamLeadDelegationId?: string;
 }
 
 export interface CouncilHttpConfig {
   /** loadHttpConfig 总会提供；测试夹具手工构造时缺省，由 app 按数据库目录回落。 */
   assets?: AssetConfig;
+  /** 客户端配置分发（P4）；测试夹具缺省时对应路由返回 503，绝不回落到真实家目录。 */
+  clientConfig?: ClientConfigSettings;
   filePreview?: import("./project-file-preview-config.js").ProjectFilePreviewConfig;
   databasePath: string;
   sqliteBusyTimeoutMs: number;
@@ -322,4 +328,19 @@ export interface PaginatedAssets {
   count: number;
   offset: number;
   hasMore: boolean;
+}
+
+/**
+ * 客户端配置分发（P4 magpie 式）：Council 向 Claude/Codex 客户端写入 MCP 注册与 Skill 的目标路径
+ * 与注册内容所需环境。mcpEnv 只含 loadMcpConfig 必需的非敏感键；缺失的键列入 missingMcpEnv。
+ */
+export interface ClientConfigSettings {
+  /** <data-dir>/client-config：applied.json 与 stash/ 所在目录 */
+  rootDir: string;
+  claudeFile: string;
+  claudeSkillsDir: string;
+  codexFile: string;
+  codexSkillsDir: string;
+  mcpEnv: Record<string, string>;
+  missingMcpEnv: string[];
 }

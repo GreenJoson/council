@@ -1,7 +1,9 @@
 /**
  * @input  依赖：Markdown AST、议题详情、HTTP/桌面桥与文件预览响应
- * @output 导出：本地文件引用聚合、预览类型与数据访问入口
- * @pos    附件以项目文件引用存在；不上传、复制或隐式读取整棵目录
+ * @output 导出：本地文件引用聚合、预览类型、文件/图片接口服务地址解析 resolveApiBaseUrl 与预览数据访问入口
+ * @pos    附件以项目文件引用存在；不上传、复制或隐式读取整棵目录；图片出站地址由 markdown-images.ts 复用 resolveApiBaseUrl 拼出
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import { unified } from "unified";
 import remarkParse from "remark-parse";
@@ -99,15 +101,24 @@ function parsePreview(value: unknown): ProjectFilePreview {
   return data;
 }
 
-export async function loadProjectFilePreview(reference: ProjectFileReference): Promise<ProjectFilePreview> {
+/**
+ * 文件预览/图片接口的服务地址：mock 没有服务返回 undefined；桌面模式确保本地 Agent 服务可达
+ * （不可达先拉起）后取其地址；http 模式读 VITE_COUNCIL_API_URL。
+ */
+export async function resolveApiBaseUrl(): Promise<string | undefined> {
   const mode = import.meta.env.VITE_COUNCIL_DATA_MODE ?? "mock";
-  if (mode === "mock") throw new Error("演示模式没有本地文件；请连接项目后查看附件。");
-  let baseUrl = import.meta.env.VITE_COUNCIL_API_URL?.trim();
+  if (mode === "mock") return undefined;
   if (mode === "desktop") {
     const bridge = createDesktopBridge();
     if (!(await bridge.checkOrchestrationService()).reachable) await bridge.startOrchestrationService();
-    baseUrl = (await bridge.getOrchestrationConfig()).baseUrl;
+    return (await bridge.getOrchestrationConfig()).baseUrl;
   }
+  return import.meta.env.VITE_COUNCIL_API_URL?.trim() || undefined;
+}
+
+export async function loadProjectFilePreview(reference: ProjectFileReference): Promise<ProjectFilePreview> {
+  if ((import.meta.env.VITE_COUNCIL_DATA_MODE ?? "mock") === "mock") throw new Error("演示模式没有本地文件；请连接项目后查看附件。");
+  const baseUrl = await resolveApiBaseUrl();
   if (!baseUrl) throw new Error("未配置项目文件服务。");
   return requestApiData(globalThis.fetch.bind(globalThis),
     createApiUrl(baseUrl, `/api/v1/topics/${encodeURIComponent(reference.topicId)}/files/preview`), parsePreview,

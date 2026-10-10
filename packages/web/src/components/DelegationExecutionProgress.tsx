@@ -1,4 +1,4 @@
-/** @input 服务端持久阶段、实际进度及审核意见；@output 初次执行与审核修正区分、阶段预算及活动；@pos 无证据的指标不显示。 */
+/** @input 服务端持久阶段、实际进度及审核意见（进度块只读 execution，团队 Worker 的委派摘要也可复用）；@output 初次执行与审核修正区分、阶段预算及活动；@pos 无证据的指标不显示。 */
 import { useI18n } from "../i18n/I18nProvider";
 import { delegationReview } from "./DelegationDeliveryEvidence";
 import type { WorkItemDelegation } from "../types/orchestration";
@@ -13,7 +13,8 @@ export function delegationStatusLabel(run: WorkItemDelegation): string {
   if (["executing", "reviewing"].includes(run.status) && run.execution) return PHASES[run.execution.phase];
   return ({ queued: "等待执行", executing: "正在执行", reviewing: "正在审核", changes_requested: "审核退回", approved: "审核通过", failed: "执行失败", cancelled: "已取消" } as const)[run.status];
 }
-export function DelegationExecutionProgress({ delegation }: { delegation: WorkItemDelegation }) {
+// 只读 execution：团队 Worker 的委派摘要（不是完整委派）也能复用。
+export function DelegationExecutionProgress({ delegation }: { delegation: Pick<WorkItemDelegation, "execution"> }) {
   const { t, locale } = useI18n();
   const progress = delegation.execution;
   if (!progress) return null;

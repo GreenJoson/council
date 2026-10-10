@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE、Agent 增量草稿、状态 revision 与严格解析器
- * @output 导出：HttpOrchestrationRepository 运行、按 decisionId 生成 AI 实施计划、持久会话、显式权限委派恢复、审计/待处理与临时草稿仓储
+ * @output 导出：HttpOrchestrationRepository 运行、按 decisionId 生成 AI 实施计划、持久会话、显式权限委派恢复、审计/待处理、客户端接入与临时草稿仓储
  * @pos    revision 变化时校准运行/会话列表，并把 agent.output 直接归入对应议题
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -69,6 +69,12 @@ import type {
   OrchestrationRepository,
 } from "./orchestration-repository";
 import { parseCouncilStatusRevisions } from "./status-revisions";
+import {
+  parseClientConfigList,
+  parseClientConfigStatus,
+  type ClientConfigClient,
+  type ClientConfigStatus,
+} from "./client-config-api";
 
 export interface HttpOrchestrationRepositoryOptions {
   baseUrl: string;
@@ -532,6 +538,32 @@ export class HttpOrchestrationRepository implements OrchestrationRepository {
         `/api/v1/settings/agents/${encodeURIComponent(agentId)}/actions/test`,
       ),
       parseAgentConnectionTest,
+      jsonRequest({}),
+    );
+  }
+
+  async listClientConfigs(): Promise<ClientConfigStatus[]> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/settings/client-config"),
+      parseClientConfigList,
+    );
+  }
+
+  async applyClientConfig(client: ClientConfigClient, options: { force?: boolean } = {}): Promise<ClientConfigStatus> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, `/api/v1/settings/client-config/${client}/actions/apply`),
+      parseClientConfigStatus,
+      jsonRequest(options.force ? { force: true } : {}),
+    );
+  }
+
+  async restoreClientConfig(client: ClientConfigClient): Promise<ClientConfigStatus> {
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, `/api/v1/settings/client-config/${client}/actions/restore`),
+      parseClientConfigStatus,
       jsonRequest({}),
     );
   }

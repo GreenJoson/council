@@ -99,6 +99,18 @@ schema v15 增加完成条件，v16 增加审计、失败分类与恢复来源�
 
 每轮验证后的提交追加在上一份 Council 提交之上。Git 交付复用恢复的安全快照检查，确认路径、文本内容和文件类型后才更新真实索引；第二轮检查失败不会撤销上一份提交。阶段摘要先于提交持久化，提交成功即保存 SHA，之后审核失败仍能从提交恢复。提交不是审核通过，审核通过不是人工验收。
 
+## Worker 团队
+
+代码任务可以「组队」执行：团队 = 一条普通代码委派（Lead）+ 若干由 Lead 派发的 Worker 子委派，挂在同一任务上，每个任务同时最多一个活跃团队。
+
+- 组队：`POST /api/v1/tasks/:taskId/team`，参数与单项委派相同，监督者可省略（取默认 Claude），另可设 `maxParallel`（不超过 `COUNCIL_WORKER_MAX_PARALLEL`，默认 3）。执行者必须是带 @别名的系统 Claude/Codex CLI Agent，否则 409「团队模式需要系统 Claude/Codex Agent 作为执行者」。桌面单文件 sidecar 以自身可执行 + `--council-stdio-mcp` 作为 Lead 的 MCP 入口，同样支持组队。
+- Lead 注入：只有 Lead 的执行阶段会拿到 Council MCP（dev 为 `process.execPath` + `dist/src/index.js`，桌面为 sidecar 自身 + `--council-stdio-mcp`，与客户端接入写入的注册同源，继承 `COUNCIL_*` 配置，固定调用者别名、`COUNCIL_TEAM_LEAD_DELEGATION_ID` 与回环 `COUNCIL_HTTP_HOST/PORT`，工具超时 900 秒）。这个 MCP 进程只注册六个团队工具：`council_dispatch_worker` / `council_list_workers` / `council_wait_worker` / `council_interrupt_worker` / `council_merge_worker` / `council_archive_worker`。执行提示词追加「团队模式」段。Brief 与审核阶段、Worker 都不注入 MCP。
+- 派发：Council 先把 Lead 工作区未提交的改动做成检查点提交（与交付提交同一套敏感扫描），再从这个提交 `worktree add` 出 `codex/council-worker-*` 分支。Worker 用 Lead 的执行者和权限交集执行，可以分段接续，完成后由 Council 提交到自己分支。Worker 不认领实施项、不单独审核、不进委派列表与工作注意力。同时运行的 Worker 超过上限时返回 409。
+- 合并：只合并 done 且未合并的 Worker；先做检查点提交，再 `merge --no-ff`，成功后回写 Lead HEAD。冲突时撤销本次合并，409 返回冲突文件与「请 Lead 自行在工作区合并」。
+- 中断与归档：中断即取消，Worker 进入 error，不能再合并；归档会先取消仍在运行的 Worker，archived 状态粘性。人工「结束团队」会中断所有运行中的 Worker，但不取消 Lead。
+- 收尾：Lead 进入终态时团队自动结束。Lead 收尾后的那次审核覆盖 Lead 与所有已合并 Worker 的提交，全团队只审一次。服务重启时，Lead 已不活跃的团队会被对账结束。
+- 已知限制：检查点和合并与 Lead 正在写文件并发时，正在写的文件可能被收进检查点提交。Worker 只在 Lead 活跃期间存在，不支持跨 Lead 接续保留。
+
 ## 模块职责与后续边界
 
 - `work-item-delegation-manager.ts`：任务权限/CAS、生命周期和执行审核次序。
@@ -111,6 +123,7 @@ schema v15 增加完成条件，v16 增加审计、失败分类与恢复来源�
 - `delegation-git-delivery.ts` / `delegation-workspace-snapshot.ts`：安全扫描、追加提交与无损快照。
 - `delegation-recovery.ts`：恢复工作区身份、HEAD、阶段证据与权限前置检查。
 - `DelegationDeliveryEvidence.tsx`：从真实记录展示已有提交与审核问题，不推算完成比例。
+- `teams/`（`team-service.ts` / `team-git.ts` / `team-store.ts` / `lead-mcp-config.ts` / `team-lead-brief.ts`）与 `delegation-worker-execution.ts`：Worker 团队用例、检查点/分叉/合并、Lead MCP 注入和 Worker 子委派执行。
 
 后台 Worker 仍在本机 Node 进程内提供 REST/SSE 与任务驱动，不引入 Go 或 PostgreSQL，也不把任意写入异常当作可自动重试。服务崩溃、系统重启与硬超时后的任务保留现场并要求显式恢复；无法证明原 CLI 已停止时拒绝接管。自动接续复用当前工作区，不执行重置、清理、自动合并或部署。真实模型的交接质量与验证真实性仍须独立审核和人工验收。
 
@@ -118,6 +131,12 @@ schema v15 增加完成条件，v16 增加审计、失败分类与恢复来源�
 
 - `npm run test:e2e`：临时 Git 项目、真实 API/SSE、CLI 协议替身、浏览器关闭/重连、两段交接、回合耗尽接续、连续无进展暂停，以及提交后的人工验收边界。不会调用真实模型或修改开发项目。
 - 交接和长上下文的 HTTP E2E 包含：带说明/围栏的两段交付、损坏交接不得提交、长背景不能遮掉实施正文、关键要求超限时零委派写入。
+- Worker 团队的 HTTP E2E 覆盖以下链路：
+  - 组队；Lead 替身真实拉起注入的 MCP，核对只有六个团队工具；
+  - 派发 3 个 Worker；第 4 个超出并行上限，返回 409；
+  - 中断 1 个；另 2 个 done 后逐个合并；
+  - Lead 收尾后全团队只审一次；
+  - 被中断的 Worker 状态为 error，没有合并提交，也不进 Lead 交付。
 - `npm run check`：类型检查及 Rust 编译检查；现有委派/恢复测试只运行相关部分。
 - 后台进程的启动者退出、同库不同端口重复启动、空闲退出、身份不匹配拒绝停止，以及崩溃后残留 CLI 拒绝接管，使用仓库外临时脚本执行真实进程验证。
 

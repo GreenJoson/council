@@ -8,7 +8,7 @@ English · [简体中文](README.zh.md)
 
 Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-The current desktop release is **0.9.8**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
+The current desktop release is **0.10.0**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
 ## Why Council?
 
@@ -115,7 +115,7 @@ The desktop service and a standalone development API must not both own Model Rou
 
 ### Connect existing agent clients through MCP
 
-Build the MCP server, point each client at the same data library, and bind a distinct caller identity (`codex` or `claude`). See [MCP setup / MCP 接入](docs/mcp-setup.md) for configuration examples. The optional [Council skill](skills/council/SKILL.md) supplies the discussion protocol; it is not required for the desktop UI.
+Build the MCP server, then open Settings → Client access and click Write for Claude Code and/or Codex: Council registers itself against the same data library with a distinct caller identity (`claude` or `codex`), installs the Council skill, backs up the original files, and can restore them. See [MCP setup / MCP 接入](docs/mcp-setup.md) for the file locations, drift handling and the manual fallback. The optional [Council skill](skills/council/SKILL.md) supplies the discussion protocol; it is not required for the desktop UI.
 
 Example prompts:
 

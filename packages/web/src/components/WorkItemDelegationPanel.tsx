@@ -1,5 +1,6 @@
 /**
- * @input  依赖：当前实施项、可用 Agent 权限/职责、最新委派记录与启动/取消回调
+ * @input  依赖：当前实施项、可用 Agent 权限/职责、最新委派记录与启动/取消回调；可选 formExtras（任务详情插入团队模式选项，
+ *         不传时表单与议题页行为不变）
  * @output 导出：WorkItemDelegationPanel、验收条件、执行阶段、已有提交与审核问题、本次权限和恢复入口
  * @pos    任务卡内的显式 supervisor→executor 委派入口与可审计进度摘要
  *
@@ -12,7 +13,7 @@ import { DelegationDeliveryEvidence } from "./DelegationDeliveryEvidence";
 import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
 
 import { AlertTriangle, Bot, GitBranch, GitCommitHorizontal, LoaderCircle, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n/I18nProvider";
 import type { CouncilWorkItem } from "../types/council";
 import type {
@@ -30,6 +31,7 @@ export function WorkItemDelegationPanel({
   busyAction,
   onStart,
   onCancel,
+  formExtras,
 }: {
   item: CouncilWorkItem;
   adapters: OrchestrationAdapter[];
@@ -44,6 +46,8 @@ export function WorkItemDelegationPanel({
     createInitialBaseline?: boolean;
   }) => Promise<void>;
   onCancel: (delegationId: string) => Promise<void>;
+  /** 表单内、提交按钮前的附加选项；调用方自持状态并在 onStart 里决定走哪条发起路径。 */
+  formExtras?: ReactNode;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -213,6 +217,7 @@ export function WorkItemDelegationPanel({
         />
         <span><GitCommitHorizontal size={12} />{t("新项目没有初始提交：先建立安全基线")}</span>
       </label>
+      {formExtras}
       <button
         className="work-item-submit"
         type="button"
