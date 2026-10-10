@@ -8,7 +8,7 @@ English · [简体中文](README.zh.md)
 
 Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-The current desktop release is **0.9.8**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
+The current desktop release is **0.10.0**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
 ## Why Council?
 

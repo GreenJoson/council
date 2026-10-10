@@ -8,7 +8,7 @@
 
 Council 把 Claude、Codex 和其他已配置 Agent 放进同一个项目、同一个议题。从提案、独立审查、人工决策到隔离实施，不必再靠你在聊天窗口之间反复搬运消息。
 
-当前桌面版本为 **0.9.8**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
+当前桌面版本为 **0.10.0**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
 
 ## 解决什么问题？
 
