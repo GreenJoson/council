@@ -21,8 +21,8 @@ import {
   Wrench,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement } from "react";
-import { useCycleRoundBudget } from "../data/cycle-preferences";
-import { useI18n, type TranslationParams } from "../i18n/I18nProvider";
+import { useCycleRoundBudget } from "../../data/cycle-preferences";
+import { useI18n, type TranslationParams } from "../../i18n/I18nProvider";
 import type {
   CycleMetrics,
   CycleReviewScope,
@@ -31,8 +31,8 @@ import type {
   DiscussionCycleView,
   OrchestrationAdapter,
   OrchestrationSnapshot,
-} from "../types/orchestration";
-import { BrandGlyph } from "./BrandGlyph";
+} from "../../types/orchestration";
+import { BrandGlyph } from "../../components/BrandGlyph";
 
 const STAGE_LABELS: Readonly<Record<CycleStage, string>> = {
   proposal: "提案",

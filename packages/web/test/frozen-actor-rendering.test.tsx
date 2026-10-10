@@ -8,8 +8,8 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { DecisionRecordArticle } from "../src/components/DecisionRecordsView";
-import { InspectorPanel } from "../src/components/InspectorPanel";
+import { DecisionRecordArticle } from "../src/features/decisions/DecisionRecordsView";
+import { InspectorPanel } from "../src/features/discussion/InspectorPanel";
 import type {
   ActorSnapshot,
   Participant,

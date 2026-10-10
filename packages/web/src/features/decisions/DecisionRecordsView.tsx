@@ -20,16 +20,16 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useTopicDetails } from "../hooks/useTopicDetails";
-import { useI18n } from "../i18n/I18nProvider";
-import type { Participant, TopicDetail, TopicSummary } from "../types/council";
-import { DecisionCard } from "./DecisionCard";
-import { MarkdownContent } from "./MarkdownContent";
+import { useTopicDetails } from "../../hooks/useTopicDetails";
+import { useI18n } from "../../i18n/I18nProvider";
+import type { Participant, TopicDetail, TopicSummary } from "../../types/council";
+import { DecisionCard } from "../../components/DecisionCard";
+import { MarkdownContent } from "../../components/MarkdownContent";
 import {
   AgentAvatar,
   participantFromActorSnapshot,
   StatusBadge,
-} from "./presentation";
+} from "../../components/presentation";
 
 /** 外部触发的定位请求：nonce 保证重复点击同一 ADR 也能重新生效（见 App.tsx handleOpenDecisionRecord） */
 export interface DecisionRecordFocusRequest {

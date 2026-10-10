@@ -8,7 +8,7 @@ import { fileReferenceName, fileReferenceType, type ArchitectureAttachment } fro
 import type { SectionId } from "../../data/section-collapse";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useOpenProjectFile } from "../../hooks/useProjectFiles";
-import { ProjectFileIcon } from "../files/ProjectFileIcon";
+import { ProjectFileIcon } from "../../components/files/ProjectFileIcon";
 import { ArchitectureSection } from "./ArchitectureSection";
 
 export function ArchitectureAttachments({ attachments, isCollapsed, onToggleCollapse, onOpenTopic }: {

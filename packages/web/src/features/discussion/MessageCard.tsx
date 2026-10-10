@@ -10,12 +10,12 @@
  */
 
 import { GitCommitHorizontal, Reply } from "lucide-react";
-import { extractCommitAssociation } from "../data/commit-association";
-import { extractLeadingMentionChip } from "../data/mention-parser";
-import type { CouncilMessage, Participant } from "../types/council";
-import { useI18n } from "../i18n/I18nProvider";
-import { MarkdownContent } from "./MarkdownContent";
-import { AgentAvatar, messageKindLabels } from "./presentation";
+import { extractCommitAssociation } from "../../data/commit-association";
+import { extractLeadingMentionChip } from "../../data/mention-parser";
+import type { CouncilMessage, Participant } from "../../types/council";
+import { useI18n } from "../../i18n/I18nProvider";
+import { MarkdownContent } from "../../components/MarkdownContent";
+import { AgentAvatar, messageKindLabels } from "../../components/presentation";
 
 export interface MessageCardProps {
   topicId?: string;

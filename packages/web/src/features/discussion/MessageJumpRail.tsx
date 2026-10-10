@@ -7,9 +7,9 @@
  */
 
 import { useLayoutEffect, useRef } from "react";
-import type { CouncilMessage } from "../types/council";
-import { useI18n } from "../i18n/I18nProvider";
-import { messageKindLabels } from "./presentation";
+import type { CouncilMessage } from "../../types/council";
+import { useI18n } from "../../i18n/I18nProvider";
+import { messageKindLabels } from "../../components/presentation";
 
 export interface MessageJumpRailProps {
   messages: CouncilMessage[];

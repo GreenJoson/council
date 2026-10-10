@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ManualDecisionDraft } from "../components/ManualDecisionDialog";
+import type { ManualDecisionDraft } from "../features/discussion/ManualDecisionDialog";
 import { getErrorMessage } from "../data/error-message";
 import type { NativeCouncilRepository } from "../data/native-repository";
 import type { CouncilRepository } from "../data/repository";

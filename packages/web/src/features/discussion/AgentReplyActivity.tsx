@@ -6,15 +6,15 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import type { AgentId } from "../types/council";
+import type { AgentId } from "../../types/council";
 import { useEffect, useRef, useState } from "react";
-import { useI18n } from "../i18n/I18nProvider";
+import { useI18n } from "../../i18n/I18nProvider";
 import type {
   OrchestrationRun,
   OrchestrationSnapshot,
-} from "../types/orchestration";
-import { BrandGlyph } from "./BrandGlyph";
-import { AgentAvatar } from "./presentation";
+} from "../../types/orchestration";
+import { BrandGlyph } from "../../components/BrandGlyph";
+import { AgentAvatar } from "../../components/presentation";
 
 export interface AgentReplyActivityState {
   runId: string;

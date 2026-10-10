@@ -14,27 +14,27 @@
 
 import { Bot, FolderGit2, GitCommitHorizontal, Link2, ListTodo, MessagesSquare, Plus, Send, TriangleAlert, Workflow, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useI18n } from "../i18n/I18nProvider";
+import { useI18n } from "../../i18n/I18nProvider";
 import {
   buildCommitAssociationContent,
   expandCommitAssociationDrafts,
   MAX_COMMIT_ASSOCIATIONS,
   type CommitAssociationDraft,
   validateCommitAssociationDrafts,
-} from "../data/commit-association";
+} from "../../data/commit-association";
 import {
   findActiveMentionQuery,
   getMentionToken,
   hasMentionAttempt,
   parseMention,
-} from "../data/mention-parser";
-import type { MessageKind, SyncState } from "../types/council";
-import type { OrchestrationAdapter, OrchestrationSnapshot } from "../types/orchestration";
+} from "../../data/mention-parser";
+import type { MessageKind, SyncState } from "../../types/council";
+import type { OrchestrationAdapter, OrchestrationSnapshot } from "../../types/orchestration";
 import {
   getCreateRunBlockedReason,
   getTopicAgentCallBlockedReason,
 } from "./AutoRoundsPanel";
-import { messageKindLabels } from "./presentation";
+import { messageKindLabels } from "../../components/presentation";
 
 const composerKinds: MessageKind[] = ["proposal", "critique", "rebuttal", "synthesis"];
 

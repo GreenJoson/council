@@ -8,7 +8,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MessageCard } from "../src/components/MessageCard";
+import { MessageCard } from "../src/features/discussion/MessageCard";
 import {
   buildCommitAssociationContent,
   expandCommitAssociationDrafts,

@@ -13,11 +13,11 @@
 
 import { useMemo, useState } from "react";
 import { ConversationList } from "../components/ConversationList";
-import { CreateTopicDialog } from "../components/CreateTopicDialog";
-import type { DecisionRecordFocusRequest } from "../components/DecisionRecordsView";
+import { CreateTopicDialog } from "../features/discussion/CreateTopicDialog";
+import type { DecisionRecordFocusRequest } from "../features/decisions/DecisionRecordsView";
 import { DesktopSetup } from "../components/DesktopSetup";
 import { ProjectFilesProvider } from "../components/files/ProjectFilesProvider";
-import { ManualDecisionDialog } from "../components/ManualDecisionDialog";
+import { ManualDecisionDialog } from "../features/discussion/ManualDecisionDialog";
 import { ModelRouterDialog } from "../components/ModelRouterDialog";
 import { NavRail } from "../components/NavRail";
 import { PreferencesDialog } from "../components/PreferencesDialog";

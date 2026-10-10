@@ -8,12 +8,12 @@
  */
 
 import { Images } from "lucide-react";
-import type { LightboxContent } from "../Lightbox";
-import { MermaidDiagram } from "../MermaidDiagram";
+import type { LightboxContent } from "../../components/Lightbox";
+import { MermaidDiagram } from "../../components/MermaidDiagram";
 import type { ArchitectureDiagramSource } from "../../data/selectors";
 import type { Participant } from "../../types/council";
 import type { SectionId } from "../../data/section-collapse";
-import { AgentAvatar } from "../presentation";
+import { AgentAvatar } from "../../components/presentation";
 import { useI18n } from "../../i18n/I18nProvider";
 import { ArchitectureSection } from "./ArchitectureSection";
 

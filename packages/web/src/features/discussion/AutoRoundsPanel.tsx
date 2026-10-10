@@ -7,7 +7,7 @@
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { RuntimeAuditDetails } from "./RuntimeAuditDetails";
+import { RuntimeAuditDetails } from "../../components/RuntimeAuditDetails";
 
 import {
   CheckCircle2,
@@ -24,9 +24,9 @@ import type {
   OrchestrationRun,
   OrchestrationSnapshot,
   RuntimeBinding,
-} from "../types/orchestration";
-import { useI18n } from "../i18n/I18nProvider";
-import { BrandGlyph } from "./BrandGlyph";
+} from "../../types/orchestration";
+import { useI18n } from "../../i18n/I18nProvider";
+import { BrandGlyph } from "../../components/BrandGlyph";
 
 const STATUS_LABELS: Readonly<Record<OrchestrationRun["status"], string>> = {
   idle: "待启动",

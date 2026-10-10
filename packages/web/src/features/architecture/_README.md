@@ -1,9 +1,12 @@
-# architecture - 架构档案视图子组件
+# architecture - 架构档案视图与区块子组件
 
 > ⚠️ 一旦本文件夹有所变化，请更新本文件
 
+跨功能域共用的基础件（`MarkdownContent`、`presentation`、`BrandGlyph`、`DecisionCard`、`ImplementationProgress` 等）仍在 `components/`，本目录按相对路径引用。
+
 | 文件名 | 地位 | 功能 |
 |---|---|---|
+| `ArchitectureView.tsx` | 视图 | 项目架构档案：从讨论决策聚合生成的架构沉淀页（项目概览/演进时间线/不变量/图集四区块，拆分为同目录的 `Architecture*.tsx` 子组件），经 `useTopicDetails` 一次性加载全部议题详情；后三个长区块可点标题栏收起，折叠状态跨会话保留 |
 | `ArchitectureSection.tsx` | 外壳 | 区块 2/3/4/附件 共用的可折叠外壳：标题栏整条就是开关，右侧箭头随折叠旋转；折叠时正文不挂载（只用 CSS 藏起来，长清单照样要渲染几十条）|
 | `ArchitectureOverview.tsx` | 区块 1 | 项目名/路径（原生模式才有路径）与议题数/已接受决策数/提案中数统计，含详情加载进度提示 |
 | `ArchitectureTimeline.tsx` | 区块 2 | 架构演进时间线：已接受/被取代决策按接受时间升序显示稳定 ADR 编号，提案中条目追加在末尾；点击已决策条目跳转决策记录、点击提案中条目跳转讨论；被取代条目显示"已被 ADR-xxx 取代"徽章并可跳转 |

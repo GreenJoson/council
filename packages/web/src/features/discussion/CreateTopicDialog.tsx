@@ -8,9 +8,9 @@
 
 import { Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { DesktopSettings } from "../data/desktop-bridge";
-import type { CreateTopicInput } from "../types/council";
-import { useI18n } from "../i18n/I18nProvider";
+import type { DesktopSettings } from "../../data/desktop-bridge";
+import type { CreateTopicInput } from "../../types/council";
+import { useI18n } from "../../i18n/I18nProvider";
 
 const BROWSE_OPTION_VALUE = "__browse__";
 

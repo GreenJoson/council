@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { MentionPublishRequest } from "../components/Composer";
+import type { MentionPublishRequest } from "../features/discussion/Composer";
 import { getErrorMessage } from "../data/error-message";
 import type { OrchestrationRepository } from "../data/orchestration-repository";
 import { useWorkItemDelegations } from "../hooks/useWorkItemDelegations";

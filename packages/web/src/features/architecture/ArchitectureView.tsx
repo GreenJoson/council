@@ -7,33 +7,33 @@
  *         由项目概览、项目附件、架构演进时间线、架构不变量、架构图/业务解析图集五个区块组成；
  *         后四个区块可折叠，折叠状态跨会话保留
  * @pos    Operator Console 架构档案视图：只读聚合已加载数据，不改变全局选中状态；
- *         五个内容区块拆分在 components/architecture/ 下，本文件只做数据编排、折叠状态与 Lightbox 状态
+ *         五个内容区块与本文件同在 features/architecture/ 一层，本文件只做数据编排、折叠状态与 Lightbox 状态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { Boxes, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { ArchitectureConstraints } from "./architecture/ArchitectureConstraints";
-import { ArchitectureDiagramGallery } from "./architecture/ArchitectureDiagramGallery";
-import { ArchitectureOverview } from "./architecture/ArchitectureOverview";
-import { ArchitectureTimeline } from "./architecture/ArchitectureTimeline";
-import { ArchitectureAttachments } from "./architecture/ArchitectureAttachments";
-import { collectProjectAttachments } from "../data/project-files";
-import { Lightbox, type LightboxContent } from "./Lightbox";
-import { useTopicDetails } from "../hooks/useTopicDetails";
+import { ArchitectureConstraints } from "./ArchitectureConstraints";
+import { ArchitectureDiagramGallery } from "./ArchitectureDiagramGallery";
+import { ArchitectureOverview } from "./ArchitectureOverview";
+import { ArchitectureTimeline } from "./ArchitectureTimeline";
+import { ArchitectureAttachments } from "./ArchitectureAttachments";
+import { collectProjectAttachments } from "../../data/project-files";
+import { Lightbox, type LightboxContent } from "../../components/Lightbox";
+import { useTopicDetails } from "../../hooks/useTopicDetails";
 import {
   aggregateConstraints,
   buildArchitectureTimeline,
   collectArchitectureDiagrams,
-} from "../data/selectors";
+} from "../../data/selectors";
 import {
   readCollapsedSections,
   writeCollapsedSections,
   type SectionId,
-} from "../data/section-collapse";
-import type { Participant, TopicDetail, TopicSummary } from "../types/council";
-import { useI18n } from "../i18n/I18nProvider";
+} from "../../data/section-collapse";
+import type { Participant, TopicDetail, TopicSummary } from "../../types/council";
+import { useI18n } from "../../i18n/I18nProvider";
 
 export interface ArchitectureViewProps {
   projectName: string;

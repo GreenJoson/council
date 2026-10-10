@@ -11,10 +11,10 @@
  */
 
 import { Plus } from "lucide-react";
-import { ArchitectureView } from "../components/ArchitectureView";
-import { DecisionRecordsView, type DecisionRecordFocusRequest } from "../components/DecisionRecordsView";
-import { DiscussionPanel } from "../components/DiscussionPanel";
-import { InspectorPanel } from "../components/InspectorPanel";
+import { ArchitectureView } from "../features/architecture/ArchitectureView";
+import { DecisionRecordsView, type DecisionRecordFocusRequest } from "../features/decisions/DecisionRecordsView";
+import { DiscussionPanel } from "../features/discussion/DiscussionPanel";
+import { InspectorPanel } from "../features/discussion/InspectorPanel";
 import { WorkAttentionView } from "../components/WorkAttentionView";
 import { AssetsView } from "../features/assets/AssetsView";
 import { PipelinesView } from "../features/pipelines/PipelinesView";

@@ -19,27 +19,27 @@ import type {
   SyncState,
   TopicDetail,
   WorkItemStatus,
-} from "../types/council";
+} from "../../types/council";
 import type {
   OrchestrationAdapter,
   OrchestrationSnapshot,
   WorkItemDelegation,
-} from "../types/orchestration";
-import { pendingDecisions, summarizeDecisionPackage } from "../data/decision-package";
-import { summarizeWorkItemProgress } from "../data/work-item-tree";
-import { useI18n } from "../i18n/I18nProvider";
-import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "./presentation";
+} from "../../types/orchestration";
+import { pendingDecisions, summarizeDecisionPackage } from "../../data/decision-package";
+import { summarizeWorkItemProgress } from "../../data/work-item-tree";
+import { useI18n } from "../../i18n/I18nProvider";
+import { AgentAvatar, participantFromActorSnapshot, StatusBadge } from "../../components/presentation";
 import {
   AgentReplyActivity,
   selectAgentReplyActivity,
 } from "./AgentReplyActivity";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
-import { DecisionCard } from "./DecisionCard";
-import { ImplementationProgress } from "./ImplementationProgress";
-import { MarkdownContent } from "./MarkdownContent";
+import { DecisionCard } from "../../components/DecisionCard";
+import { ImplementationProgress } from "../../components/ImplementationProgress";
+import { MarkdownContent } from "../../components/MarkdownContent";
 import { MessageCard } from "./MessageCard";
 import { MessageJumpRail } from "./MessageJumpRail";
-import type { BatchDelegationOptions } from "./BatchWorkItemDelegationPanel";
+import type { BatchDelegationOptions } from "../../components/BatchWorkItemDelegationPanel";
 
 export interface DiscussionPanelProps {
   projectName: string;

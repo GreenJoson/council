@@ -20,24 +20,24 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import type { Participant, TopicDetail } from "../types/council";
-import { selectDecisionPackageLead, summarizeDecisionPackage } from "../data/decision-package";
-import type { InspectorSectionId } from "../data/section-collapse";
+import type { Participant, TopicDetail } from "../../types/council";
+import { selectDecisionPackageLead, summarizeDecisionPackage } from "../../data/decision-package";
+import type { InspectorSectionId } from "../../data/section-collapse";
 import type {
   CycleReviewScope,
   OrchestrationRun,
   OrchestrationSnapshot,
-} from "../types/orchestration";
-import { useI18n } from "../i18n/I18nProvider";
+} from "../../types/orchestration";
+import { useI18n } from "../../i18n/I18nProvider";
 import { AutoRoundsPanel } from "./AutoRoundsPanel";
 import { CyclePanel } from "./CyclePanel";
-import { ImplementationSummary } from "./ImplementationProgress";
+import { ImplementationSummary } from "../../components/ImplementationProgress";
 import {
   AgentAvatar,
   DecisionStatusBadge,
   participantFromActorSnapshot,
   StatusBadge,
-} from "./presentation";
+} from "../../components/presentation";
 
 export interface InspectorPanelProps {
   topic: TopicDetail;
