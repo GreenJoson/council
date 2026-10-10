@@ -7,6 +7,7 @@
 | `native-runtime-progress.ts` | 协议边界 | 原生 CLI 会话、回合、工具计数白名单与结构化失败分类 |
 | `schema-v17-migration.ts` | 迁移步骤 | 追加私有委派检查点，保留旧记录 |
 | `schema-v19-migration.ts` | 迁移步骤 | 资产库：新增 assets/asset_links 两表、两索引与内容 revision 触发器，不动旧表 |
+| `schema-v20-migration.ts` | 迁移步骤 | Worker 团队：新增 task_teams/task_workers 两表、索引与编排 revision 触发器；委派表追加 team_worker 列，单活跃委派索引只约束主委派 |
 | `schema-v18-migration.ts` | 迁移步骤 | 任务一等化：重建实施项/委派/审计三表，topic_id 可空，追加 kind/source/priority/project_path/brief 与 scope_key 树唯一性 |
 | `schema-v15-migration.ts` | 迁移步骤 | 冻结完成策略与验收标准，约束人工验收；历史记录保留审核即完成语义 |
 | `schema-v16-migration.ts` | 迁移步骤 | 增加追加审计、失败分类、恢复来源及审计 revision |
@@ -15,7 +16,7 @@
 | `server.ts` | MCP 入口 | 绑定不可伪造的 MCP 调用者 Actor，按 topic → message → work-item → task → asset → claude → status 固定顺序装配 `mcp/` 工具模块；工具实现见 `mcp/_README.md` |
 | `actor-identity.ts` | 身份正本 | 只定义 Human/Council/Claude/Codex/Legacy 永久 Actor 种子，以及动态 Actor、别名和冻结快照工具；品牌资源不进入领域层 |
 | `legacy-dynamic-actors.ts` | 历史兼容 | 仅在旧设置、Session 或冻结 Run 仍引用时识别历史 Kimi/DeepSeek 固定 Actor 种子，禁止新 Agent 复用 |
-| `schema-definitions.ts` | Schema 正本 | 保存 v1–v19 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
+| `schema-definitions.ts` | Schema 正本 | 保存 v1–v20 已发布 required objects、冻结 DDL 与 canonical schema 常量，不含迁移副作用 |
 | `schema-migrator.ts` | 迁移边界 | 镜像版本、验证冻结 schema、逐版本事务迁移、备份与失败关闭 |
 | `schema-migration-values.ts` | 迁移值边界 | 严格读取历史行字段并映射旧作者/Agent 身份，不接触迁移事务 |
 | `schema-storage.ts` | 存储边界 | 提供迁移共用的 pragma/完整性/行数校验、schema 快照、在线备份验证和文件保护 |

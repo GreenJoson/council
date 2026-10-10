@@ -20,6 +20,8 @@ import { migrateCouncilSchema } from "../src/schema-migrator.js";
  */
 function downgradeTaskTablesToV17(raw: DatabaseSync): void {
   raw.exec(`
+    DROP TABLE task_workers;
+    DROP TABLE task_teams;
     DROP TABLE asset_links;
     DROP TABLE assets;
     DROP INDEX idx_work_items_project_status;
