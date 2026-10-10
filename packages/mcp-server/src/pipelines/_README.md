@@ -6,10 +6,10 @@
 |---|---|---|
 | `brief-protocol.ts` | 协议正本 | `council-brief` 与 `council-asset-manifest` 的严格解析（未知字段拒绝、schemaVersion 1、路径必须相对 worktree 且规范）、给 `codex exec --output-schema` 的清单 JSON Schema、按 Codex imagegen 规则渲染生图提示词 |
 | `templates.ts` | 模板正本 | 三个流水线模板（`app-mockup` / `game-asset-pack` / `concept-sheet`）的阶段序列与 brief 要求（kind、nextStage、最少交付物、透明度） |
-| `pipeline-document.ts` | 协议正本 | `council-pipeline` 文档（父任务 `brief_json`）严格解析与阶段读写 helper、brief 与模板一致性校验、`council-brief`/`council-review` 尾块提取（取最后一个围栏）、修订 brief 生成、`PIPELINE_DOCUMENT_LIMITS`（HTTP/MCP 入口共用） |
-| `pipeline-prompts.ts` | 提示词 | brief / review 一次性调用指令（首行机器标记 `COUNCIL_PIPELINE_BRIEF` / `COUNCIL_PIPELINE_REVIEW`）与原型子任务说明；用户输入作为数据段，只出现相对路径 |
+| `pipeline-document.ts` | 协议正本 | `council-pipeline` 文档（父任务 `brief_json`）严格解析与阶段读写 helper、brief 与模板一致性校验、`council-brief`/`council-review` 尾块提取（取最后一个围栏）、修订 brief 生成（只留不合格交付物，goal 开头声明本轮范围）、`PIPELINE_DOCUMENT_LIMITS`（HTTP/MCP 入口共用） |
+| `pipeline-prompts.ts` | 提示词 | brief / review 一次性调用指令（首行机器标记 `COUNCIL_PIPELINE_BRIEF` / `COUNCIL_PIPELINE_REVIEW`）与原型子任务说明；用户输入作为数据段，只出现相对路径；复盘产物行带生图清单标注的 deliverableId 提示 |
 | `pipeline-state.ts` | 状态读写 | 每条流水线一把串行锁；文档写入一律锁内重读父任务后用刚读到的版本写（子任务派生会让父版本 +1） |
-| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机 |
+| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机；复盘只看本次图像委派入库的产物（委派 `outputManifest.assetIds`），resume 重跑不把失败尝试入库的图混进本轮，选定阶段仍可从子任务全部 output 资产里挑 |
 | `pipeline-service.ts` | 用例 | create/list/get/confirmBrief/selectFinal/resume/cancel：校验版本、阶段可操作性、brief 模板约束、终稿归属与数量、默认 Agent 选择后交给驱动器 |
 
 ## 职责

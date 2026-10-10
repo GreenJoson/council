@@ -3,7 +3,8 @@
  * @output 导出：brief 阶段指令 renderBriefInstruction、review 阶段指令 renderReviewInstruction、
  *         原型子任务说明 renderPrototypeDetails，以及指令首行机器标记常量
  * @pos    流水线一次性 Agent 调用的提示词正本：纯函数，不读写文件；所有用户输入作为「数据」段给出，
- *         不覆盖工作规则；路径一律相对项目根目录（`.council/in/…`），不出现绝对路径
+ *         不覆盖工作规则；路径一律相对项目根目录（`.council/in/…`），不出现绝对路径；
+ *         复盘产物行带生图清单标注的 deliverableId 提示，复盘者直接沿用而不必自己猜对应关系
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -77,7 +78,7 @@ export function renderReviewInstruction(input: {
   round: number;
   request: PipelineRequest;
   brief: CouncilBrief;
-  outputs: ReadonlyArray<{ assetId: string; relativePath: string; prompt?: string }>;
+  outputs: ReadonlyArray<{ assetId: string; relativePath: string; prompt?: string; deliverableId?: string }>;
 }): string {
   return [
     `${PIPELINE_REVIEW_MARKER} round=${String(input.round)}`,
@@ -86,7 +87,8 @@ export function renderReviewInstruction(input: {
     "# 工作规则",
     "1. 只读：不要修改、创建或删除任何文件。",
     "2. 先用 Read 查看每张产物图片（路径相对当前工作目录），再逐条对照 acceptance。",
-    "3. 每张产物给出一项结论：assetId 用下面给出的 id，deliverableId 填它对应的 brief 交付物 id；",
+    "3. 每张产物给出一项结论：assetId 用下面给出的 id，deliverableId 填它对应的 brief 交付物 id",
+    "   （产物行给出「清单标注 deliverableId」时直接沿用）；",
     "   不合格时 ok=false，issue 写问题，change 写给生图执行者的一句具体修改要求。",
     "4. 全部合格 verdict=pass；任一不合格 verdict=revise。",
     "",
@@ -104,7 +106,9 @@ export function renderReviewInstruction(input: {
     "",
     `# 本轮产物（第 ${String(input.round)} 轮，路径相对当前工作目录）`,
     ...input.outputs.map((item) =>
-      `- assetId=${item.assetId} 路径=${item.relativePath}${item.prompt ? ` 生成提示=${item.prompt.slice(0, 300)}` : ""}`),
+      `- assetId=${item.assetId} 路径=${item.relativePath}`
+      + `${item.deliverableId ? ` 清单标注 deliverableId=${item.deliverableId}` : ""}`
+      + `${item.prompt ? ` 生成提示=${item.prompt.slice(0, 300)}` : ""}`),
     "",
     "# 最终输出",
     `先简述结论，然后在回复末尾输出且只输出一个 \`\`\`${PIPELINE_REVIEW_FENCE} 围栏，内容为严格 JSON：`,

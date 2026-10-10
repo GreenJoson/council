@@ -3,7 +3,10 @@
  *         CodexRuntime（生图探针与 generateImages）、brief-protocol（brief/清单/提示词）、委派账本、
  *         调用方注入的 Git 执行器、审计记录器与任务上下文解析
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
- *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid）与常量；
+ *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因）与常量；
+ *         清单里超出 brief 的产物（修订轮常见的「多报」）只丢弃并记审计，不让整轮失败；
+ *         委派 outputManifest 的公开形状 ImageOutputManifest（清单 + 本次入库的 assetIds、逐张 assetId）与读取 helper
+ *         readImageOutputManifest（流水线复盘据此只看本次委派入库的产物）；
  *         共享 helper excludeCouncilDir / copyInputAssets / COUNCIL_INPUT_DIR（代码委派输入资产与流水线复用）
  * @pos    图像委派的唯一执行体：管理器只按 kind 分流到这里；不 import 管理器，所有依赖显式传入。
  *         单段执行、无审核与 brief 生成阶段；产物不提交（headCommit = baseCommit），只入资产库并关联任务。
@@ -30,6 +33,7 @@ import {
   parseCouncilBrief,
   renderImageBriefPrompt,
   type CouncilAssetManifest,
+  type CouncilAssetManifestOutput,
   type CouncilBrief,
 } from "../pipelines/brief-protocol.js";
 import { normalizeProjectPath } from "../project-path.js";
@@ -162,6 +166,39 @@ interface CollectedFile {
   sha256: string;
   bytes: number;
   prompt: string;
+  /** 清单声明的相对路径（只有清单路①收到的文件有）：入库后用它把 assetId 写回清单。 */
+  manifestPath?: string;
+}
+
+/**
+ * 生图委派 `outputManifest` 的公开形状：清单原文（prompt/notes 脱敏）加上本次执行实际入库的资产。
+ * resume 会对同一子任务重新委派，而失败尝试（清单无效）已入库的产物仍以 output 挂在子任务上；
+ * 流水线复盘只看这里的 assetIds，才不会把上一次尝试的产物当成本轮结果。
+ */
+export type ImageOutputManifest = {
+  schemaVersion: 1;
+  outputs: Array<CouncilAssetManifestOutput & { assetId?: string }>;
+  /** 本次执行入库的资产 id（sha256 命中既有资产时为既有 id），顺序同清单；清单漏报、`.council/out` 收回的也在内。 */
+  assetIds: string[];
+  notes: string;
+};
+
+/**
+ * 从委派 DTO 的 outputManifest 读回本次入库的资产与每张对应的 deliverableId。
+ * 旧记录、非图像委派或形状不符返回 undefined，调用方退回「子任务全部 output 资产」。
+ */
+export function readImageOutputManifest(
+  value: Record<string, unknown> | undefined,
+): { assetIds: string[]; deliverableIds: Map<string, string> } | undefined {
+  if (!value || !Array.isArray(value["assetIds"]) || !Array.isArray(value["outputs"])) return undefined;
+  const assetIds = value["assetIds"].filter((item): item is string => typeof item === "string");
+  const deliverableIds = new Map<string, string>();
+  for (const output of value["outputs"]) {
+    if (typeof output !== "object" || output === null) continue;
+    const { assetId, deliverableId } = output as Record<string, unknown>;
+    if (typeof assetId === "string" && typeof deliverableId === "string") deliverableIds.set(assetId, deliverableId);
+  }
+  return { assetIds, deliverableIds };
 }
 
 /**
@@ -236,17 +273,13 @@ export async function executeImageDelegation(
   }
   if (signal.aborted) throw abortError();
 
-  let manifest: CouncilAssetManifest | undefined;
-  try {
-    manifest = parseCouncilAssetManifest(lastMessage, { brief });
-  } catch (error) {
-    if (!(error instanceof CouncilProtocolError)) throw error;
-    manifest = undefined;
-  }
+  const parsed = parseManifestForBrief(deps, lastMessage, brief);
+  const manifest = parsed.manifest;
   const collected = await collectOutputs({
     root: workspace.root,
     outputDir,
     manifest,
+    ignoredPaths: parsed.ignoredPaths,
     brief,
     ...(deps.config.codexHome ? { codexHome: deps.config.codexHome } : {}),
     threadId,
@@ -273,9 +306,10 @@ export async function executeImageDelegation(
     deps.record("image.outputs_skipped", { skipped: ingest.skipped, maxOutputs: deps.config.maxOutputs });
   }
   if (!manifest) {
+    const reason = parsed.reason ? `（${parsed.reason}）` : "";
     throw imageFailure(deps, "manifest_invalid", ingest.assetIds.length > 0
-      ? `图像清单无效：已入库找到的 ${String(ingest.assetIds.length)} 张产物，请检查后重新委派。`
-      : "图像清单无效且没有找到可入库的产物，请检查后重新委派。");
+      ? `图像清单无效${reason}：已入库找到的 ${String(ingest.assetIds.length)} 张产物，请检查后重新委派。`
+      : `图像清单无效${reason}且没有找到可入库的产物，请检查后重新委派。`);
   }
   if (ingest.assetIds.length === 0) {
     throw imageFailure(deps, "outputs_missing", "图像委派没有找到可入库的产物，请检查后重新委派。");
@@ -283,9 +317,14 @@ export async function executeImageDelegation(
 
   const deduplicated = collected.localDuplicates + ingest.deduplicated;
   // 清单是模型自述：notes 与逐张 prompt 落库前统一脱敏；path 已被协议约束为相对路径。
-  const publicManifest = {
+  // 逐张写回入库后的 assetId（本地 sha256 重复的那张没有），并记下本次入库的全部资产供流水线复盘圈定范围。
+  const publicManifest: ImageOutputManifest = {
     schemaVersion: manifest.schemaVersion,
-    outputs: manifest.outputs.map((output) => ({ ...output, prompt: redactAuditText(output.prompt) })),
+    outputs: manifest.outputs.map((output) => {
+      const assetId = ingest.assetIdByManifestPath.get(output.path);
+      return { ...output, prompt: redactAuditText(output.prompt), ...(assetId ? { assetId } : {}) };
+    }),
+    assetIds: ingest.assetIds,
     notes: redactAuditText(manifest.notes),
   };
   const statusNote = compact(
@@ -308,6 +347,43 @@ export async function executeImageDelegation(
     now: new Date().toISOString(),
   });
   return workspace.baseCommit;
+}
+
+/**
+ * 解析清单并对齐 brief。修订轮的 brief 只含不合格交付物，而真实 Codex 常把已通过的交付物也重做一遍写进清单：
+ * 这种「多报」只丢弃多出的产物（记审计、不入库），不让整轮失败；清单本身损坏或没有一张对得上 brief 才视为无效。
+ * reason 只含协议定位文案（字段路径），不含文件路径，可进错误文案。
+ */
+function parseManifestForBrief(
+  deps: ImageDelegationDeps,
+  lastMessage: string,
+  brief: CouncilBrief,
+): { manifest?: CouncilAssetManifest; ignoredPaths: readonly string[]; reason?: string } {
+  try {
+    return { manifest: parseCouncilAssetManifest(lastMessage, { brief }), ignoredPaths: [] };
+  } catch (error) {
+    if (!(error instanceof CouncilProtocolError)) throw error;
+    const reason = compact(redactAuditText(error.message), 200);
+    let loose: CouncilAssetManifest;
+    try {
+      loose = parseCouncilAssetManifest(lastMessage);
+    } catch {
+      return { ignoredPaths: [], reason };
+    }
+    const deliverableIds = new Set(brief.deliverables.map((item) => item.id));
+    const kept = loose.outputs.filter((output) => deliverableIds.has(output.deliverableId));
+    const dropped = loose.outputs.filter((output) => !deliverableIds.has(output.deliverableId));
+    if (kept.length === 0 || dropped.length === 0) return { ignoredPaths: [], reason };
+    const keptPaths = new Set(kept.map((output) => output.path));
+    const outputs = kept.map((output) => (
+      output.variantOf && !keptPaths.has(output.variantOf) ? { ...output, variantOf: undefined } : output
+    )).map(({ variantOf, ...rest }) => ({ ...rest, ...(variantOf ? { variantOf } : {}) }));
+    deps.record("image.manifest_outputs_dropped", { dropped: dropped.length, kept: kept.length });
+    return {
+      manifest: { schemaVersion: 1, outputs, notes: loose.notes },
+      ignoredPaths: dropped.map((output) => output.path),
+    };
+  }
 }
 
 function imageFailure(
@@ -407,6 +483,8 @@ async function collectOutputs(input: {
   root: string;
   outputDir: string;
   manifest: CouncilAssetManifest | undefined;
+  /** 清单里超出 brief 的产物路径：既不入库，也不当作「漏报」从 `.council/out` 收回。 */
+  ignoredPaths?: readonly string[];
   brief: CouncilBrief;
   codexHome?: string;
   threadId: string;
@@ -415,7 +493,7 @@ async function collectOutputs(input: {
   const seen = new Set<string>();
   let localDuplicates = 0;
   let rejected = 0;
-  const add = async (absolutePath: string, prompt: string): Promise<void> => {
+  const add = async (absolutePath: string, prompt: string, manifestPath?: string): Promise<void> => {
     const image = await regularImage(absolutePath);
     if (!image) {
       rejected += 1;
@@ -427,10 +505,14 @@ async function collectOutputs(input: {
       return;
     }
     seen.add(sha256);
-    files.push({ absolutePath, sha256, bytes: image.bytes.length, prompt });
+    files.push({ absolutePath, sha256, bytes: image.bytes.length, prompt, ...(manifestPath ? { manifestPath } : {}) });
   };
   const realOutputDir = await realpath(input.outputDir);
   const claimed = new Set<string>();
+  for (const ignored of input.ignoredPaths ?? []) {
+    const absolutePath = await manifestOutputPath(input.root, realOutputDir, ignored);
+    if (absolutePath) claimed.add(absolutePath);
+  }
   // ① 清单声明的产物优先：保留模型给出的逐张 prompt。
   for (const output of input.manifest?.outputs ?? []) {
     const absolutePath = await manifestOutputPath(input.root, realOutputDir, output.path);
@@ -439,7 +521,7 @@ async function collectOutputs(input: {
       continue;
     }
     claimed.add(absolutePath);
-    await add(absolutePath, output.prompt);
+    await add(absolutePath, output.prompt, output.path);
   }
   // ② `.council/out/` 里实际存在、清单漏报的文件。
   for (const absolutePath of await listImages(input.outputDir)) {
@@ -461,8 +543,17 @@ async function collectOutputs(input: {
 async function ingestOutputs(
   deps: ImageDelegationDeps,
   input: { delegationId: string; workItemId: string; projectPath: string; files: readonly CollectedFile[] },
-): Promise<{ assetIds: string[]; deduplicated: number; rejected: number; skipped: number; bytes: number }> {
+): Promise<{
+  assetIds: string[];
+  /** 清单相对路径 → 入库 assetId，只含清单路①收到的文件。 */
+  assetIdByManifestPath: Map<string, string>;
+  deduplicated: number;
+  rejected: number;
+  skipped: number;
+  bytes: number;
+}> {
   const assetIds: string[] = [];
+  const assetIdByManifestPath = new Map<string, string>();
   let deduplicated = 0;
   let rejected = 0;
   let bytes = 0;
@@ -479,6 +570,7 @@ async function ingestOutputs(
       if (result.deduplicated) deduplicated += 1;
       bytes += result.asset.byteSize;
       assetIds.push(result.asset.id);
+      if (file.manifestPath) assetIdByManifestPath.set(file.manifestPath, result.asset.id);
     } catch (error) {
       // 单张被资产库拒绝（嗅探不符、超限、配额）不拖垮其余产物；数量进审计。
       if (error instanceof CouncilValidationError) {
@@ -488,5 +580,5 @@ async function ingestOutputs(
       throw error;
     }
   }
-  return { assetIds, deduplicated, rejected, skipped: input.files.length - accepted.length, bytes };
+  return { assetIds, assetIdByManifestPath, deduplicated, rejected, skipped: input.files.length - accepted.length, bytes };
 }

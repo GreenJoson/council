@@ -3,8 +3,9 @@
  * @output 导出：可用性检查、长上下文与 Markdown 交接边界的子进程 E2E 协议响应；
  *         Codex 侧另有 `login status`、`features list`（image_generation stable true）与
  *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单；
- *         COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 首次只出清单不写文件）；P3 流水线 brief / 复盘一次性调用替身
- *         （COUNCIL_PIPELINE_BRIEF 按模板返回合法 council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass）
+ *         COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 首次只出清单不写文件，COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 首次写一张
+ *         草稿图但清单损坏）；P3 流水线 brief / 复盘一次性调用替身（COUNCIL_PIPELINE_BRIEF 按模板返回合法
+ *         council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass，deliverableId 优先取产物行的清单标注）
  * @pos    测试专用的 Claude Code / Codex CLI 最小协议替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,6 +18,8 @@ const args = process.argv.slice(2);
 // 2x2 最小合法 PNG：一张 RGB、一张带 alpha（RGBA），内容不同以免被 sha256 去重。
 const PNG_RGB = "89504e470d0a1a0a0000000d4948445200000002000000020802000000fdd49a73000000104944415478da63d0cabf06440c100a00258205bd8c994e360000000049454e44ae426082";
 const PNG_RGBA = "89504e470d0a1a0a0000000d494844520000000200000002080600000072b60d24000000114944415478da637810a5dd00c20c30060046e40795e9ff745a0000000049454e44ae426082";
+// 3x3 RGBA：BAD_MANIFEST_ONCE 那次写的草稿图，字节与上面两张都不同，才能验证失败尝试的产物不进下一次复盘。
+const PNG_DRAFT = "89504e470d0a1a0a0000000d49484452000000030000000308060000005628b5bf000000234944415478da63606038f13f008817003103830d9003c40b6c409c0a2007881700310072a414ec95df58920000000049454e44ae426082";
 
 function optionValue(name) {
   const index = args.indexOf(name);
@@ -139,22 +142,27 @@ function fakePipelineBrief(text) {
   return `按模板 ${template} 整理 brief。\n\`\`\`council-brief\n${JSON.stringify(brief)}\n\`\`\``;
 }
 
-/** 流水线复盘替身：第 1 轮对第一张产物给出 revise，之后一律 pass。 */
+/**
+ * 流水线复盘替身：第 1 轮对第一张产物给出 revise，之后一律 pass。
+ * deliverableId 优先取产物行上的清单标注（`清单标注 deliverableId=…`），没有才退回 brief 的第一个交付物。
+ */
 function fakePipelineReview(text) {
   const round = Number(/COUNCIL_PIPELINE_REVIEW round=(\d+)/u.exec(text)?.[1] ?? "1");
-  const assetIds = [...text.matchAll(/assetId=([A-Za-z0-9_-]+)/gu)].map((match) => match[1]);
-  const deliverableId = /deliverableId: ([a-z0-9][a-z0-9-]*)/u.exec(text)?.[1] ?? "image";
-  const revise = round === 1 && assetIds.length > 0;
+  const fallbackDeliverableId = /deliverableId: ([a-z0-9][a-z0-9-]*)/u.exec(text)?.[1] ?? "image";
+  const outputs = [...text.matchAll(/assetId=([A-Za-z0-9_-]+)(?:[^\n]*? deliverableId=([a-z0-9][a-z0-9-]*))?/gu)]
+    .map((match) => ({ assetId: match[1], deliverableId: match[2] ?? fallbackDeliverableId }));
+  const revise = round === 1 && outputs.length > 0;
   const review = revise
-    ? { schemaVersion: 1, verdict: "revise", items: [{ assetId: assetIds[0], deliverableId, ok: false, issue: "构图偏离目标", change: "主体居中并加强对比" }] }
-    : { schemaVersion: 1, verdict: "pass", items: assetIds.map((assetId) => ({ assetId, deliverableId, ok: true })) };
+    ? { schemaVersion: 1, verdict: "revise", items: [{ ...outputs[0], ok: false, issue: "构图偏离目标", change: "主体居中并加强对比" }] }
+    : { schemaVersion: 1, verdict: "pass", items: outputs.map((item) => ({ ...item, ok: true })) };
   return `第 ${String(round)} 轮复盘完成。\n\`\`\`council-review\n${JSON.stringify(review)}\n\`\`\``;
 }
 
 /**
  * Codex 生图替身：按 brief 提示词中的 deliverableId 写产物与清单；参考图必须真实存在。
- * 提示词含 COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 时，第一次只输出清单不写文件（触发 outputs_missing），
- * 计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
+ * 提示词含 COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 时，第一次只输出清单不写文件（触发 outputs_missing）；
+ * 含 COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 时，第一次写一张字节不同的草稿图但清单 variantOf 指向自己
+ * （触发 manifest_invalid，草稿图已入库挂在子任务上）。计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
  */
 function fakeImageGeneration(text) {
   const cwd = optionValue("--cd");
@@ -180,21 +188,40 @@ function fakeImageGeneration(text) {
   ];
   const onceMarker = path.join(path.dirname(cwd), ".fake-pipeline-no-outputs-once");
   const skipOutputs = text.includes("COUNCIL_PIPELINE_NO_OUTPUTS_ONCE") && !existsSync(onceMarker);
+  const badManifestMarker = path.join(path.dirname(cwd), ".fake-pipeline-bad-manifest-once");
+  const badManifest = !skipOutputs && text.includes("COUNCIL_PIPELINE_BAD_MANIFEST_ONCE") && !existsSync(badManifestMarker);
   if (skipOutputs) writeFileSync(onceMarker, "1\n");
-  else for (const file of files) writeFileSync(path.join(outDir, file.name), Buffer.from(file.hex, "hex"));
-  const manifest = {
-    schemaVersion: 1,
-    outputs: files.map((file, index) => ({
-      deliverableId: ids[index] ?? deliverableId,
-      path: `.council/out/${file.name}`,
-      mime: "image/png",
-      width: 2,
-      height: 2,
-      prompt: `fake image ${String(index + 1)}${inputs.length > 0 ? " with reference" : ""}`,
-      variantOf: null,
-    })),
-    notes: `生成 ${String(files.length)} 张占位图，参考图 ${String(inputs.length)} 张。`,
-  };
+  else if (badManifest) {
+    writeFileSync(badManifestMarker, "1\n");
+    writeFileSync(path.join(outDir, `${deliverableId}-draft.png`), Buffer.from(PNG_DRAFT, "hex"));
+  } else for (const file of files) writeFileSync(path.join(outDir, file.name), Buffer.from(file.hex, "hex"));
+  const manifest = badManifest
+    ? {
+      schemaVersion: 1,
+      outputs: [{
+        deliverableId,
+        path: `.council/out/${deliverableId}-draft.png`,
+        mime: "image/png",
+        width: 3,
+        height: 3,
+        prompt: "fake draft image",
+        variantOf: `.council/out/${deliverableId}-draft.png`,
+      }],
+      notes: "草稿清单损坏：variantOf 指向自己。",
+    }
+    : {
+      schemaVersion: 1,
+      outputs: files.map((file, index) => ({
+        deliverableId: ids[index] ?? deliverableId,
+        path: `.council/out/${file.name}`,
+        mime: "image/png",
+        width: 2,
+        height: 2,
+        prompt: `fake image ${String(index + 1)}${inputs.length > 0 ? " with reference" : ""}`,
+        variantOf: null,
+      })),
+      notes: `生成 ${String(files.length)} 张占位图，参考图 ${String(inputs.length)} 张。`,
+    };
   const message = JSON.stringify(manifest);
   writeFileSync(lastMessagePath, message);
   process.stdout.write([

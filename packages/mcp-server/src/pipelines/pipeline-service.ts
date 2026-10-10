@@ -78,7 +78,7 @@ const FINAL_NOTE = "已在流水线中选定终稿";
 const MAX_PIPELINE_REVISIONS = 31;
 
 const AGENT_HINTS = {
-  brief: "流水线需要一个已启用且可用的 Claude CLI Agent 撰写 brief 与复盘；请在设置中启用并登录 Claude CLI 后重试，或在 agents.brief 指定可用 Agent。",
+  brief: "流水线需要一个已启用、已填写模型且可用的 Claude CLI Agent 撰写 brief 与复盘；请在设置中启用 Claude CLI、填写模型并登录后重试，或在 agents.brief 指定可用 Agent。",
   image: "流水线需要一个通过生图探针的 Codex CLI Agent（本机 ChatGPT 登录）；请在设置中启用并检测 Codex 后重试，或在 agents.image 指定。",
   prototype: "原型阶段需要可用的执行与监督 Agent；请在 agents.prototype 指定或启用 Claude CLI / Codex CLI Agent。",
 } as const;

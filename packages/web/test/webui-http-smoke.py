@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、取消、409/400）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、取消、409/400）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -943,7 +943,8 @@ with sync_playwright() as playwright:
     assert {asset["id"] for asset in variant_assets["items"]} == first_ids, (variant_assets, first_ids)
 
     # P3 流水线闭环：brief（Claude 替身）→ 人工确认 → 生图（Codex 替身）→ 复盘首轮 revise 自动修订 → 次轮 pass
-    # → 人工选终稿 → 原型代码委派；另一条 concept-sheet 首轮生图无产物失败后 resume，再取消。
+    # → 人工选终稿 → 原型代码委派；另一条 concept-sheet 首轮生图无产物失败后 resume，
+    # 第二次清单损坏（草稿图已入库）再 resume，复盘只看本次入库的产物，最后取消。
     pipeline_started = time.monotonic()
 
     def wait_pipeline(pipeline_id, predicate, description, timeout=60):
@@ -1023,7 +1024,7 @@ with sync_playwright() as playwright:
 
     concept = api_request("POST", "/api/v1/pipelines", {
         "project": PROJECT_PATH, "template": "concept-sheet",
-        "goal": "COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 概念设定：森林守卫",
+        "goal": "COUNCIL_PIPELINE_NO_OUTPUTS_ONCE COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 概念设定：森林守卫",
     })["pipeline"]
     concept_id = concept["task"]["id"]
     concept = wait_pipeline(concept_id, waiting_at("brief"), " brief 待确认")
@@ -1034,13 +1035,31 @@ with sync_playwright() as playwright:
     assert pipeline_stage(concept, "image")["error"]["code"] == "outputs_missing", concept["document"]
     failed_child = pipeline_stage(concept, "image")["workItemId"]
     concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/resume", {"expectedVersion": concept["task"]["version"]})
+    # 第二次重跑：替身写了一张草稿图但清单损坏 → manifest_invalid；草稿图已入库，以 output 挂在同一子任务上。
+    concept = wait_pipeline(
+        concept_id,
+        lambda detail: pipeline_stage(detail, "image")["status"] == "failed"
+        and pipeline_stage(detail, "image")["error"]["code"] == "manifest_invalid",
+        "清单损坏失败",
+    )
+    assert pipeline_stage(concept, "image")["workItemId"] == failed_child, concept["document"]
+    draft_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{failed_child}")
+    assert draft_assets["total"] == 1, draft_assets
+    draft_asset_id = draft_assets["items"][0]["id"]
+    concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/resume", {"expectedVersion": concept["task"]["version"]})
     concept = wait_pipeline(concept_id, waiting_at("select"), "选定终稿")
     concept_images = [child for child in concept["children"] if child["kind"] == "image"]
-    # resume 只对原子任务重新委派，不新建子任务；同一子任务的产物不因重跑翻倍。
+    # resume 只对原子任务重新委派，不新建子任务；同一子任务的产物不因重跑翻倍（草稿 1 张 + 本次 2 张）。
     assert len(concept_images) == 2 and concept_images[0]["id"] == failed_child, concept["children"]
     rerun_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{failed_child}")
-    assert rerun_assets["total"] == 2, rerun_assets
-    assert len(concept["outputAssetIds"]) == len(set(concept["outputAssetIds"])) == 2, concept
+    assert rerun_assets["total"] == 3, rerun_assets
+    # 复盘只看本次委派入库的产物：失败尝试留下的草稿图不进复盘，也不会被当成修订对象。
+    reviewed_asset_ids = {item["assetId"] for review in concept["document"]["reviews"] for item in review["items"]}
+    assert reviewed_asset_ids and draft_asset_id not in reviewed_asset_ids, concept["document"]["reviews"]
+    assert all(item["deliverableId"] == "main-screen" for item in concept["document"]["reviews"][0]["items"]), concept["document"]["reviews"]
+    # 选定阶段仍能从子任务全部 output 资产里挑，草稿图也在并排对比之列。
+    assert len(concept["outputAssetIds"]) == len(set(concept["outputAssetIds"])) == 3, concept
+    assert draft_asset_id in concept["outputAssetIds"], concept
     concept = api_request("POST", f"/api/v1/pipelines/{concept_id}/cancel", {"expectedVersion": concept["task"]["version"]})
     assert concept["document"]["status"] == "cancelled", concept["document"]
     select_stage = pipeline_stage(concept, "select")

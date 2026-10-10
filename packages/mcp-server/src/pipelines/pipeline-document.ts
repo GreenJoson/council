@@ -3,7 +3,7 @@
  * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
- *         修订 brief 生成 buildRevisionBrief、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
+ *         修订 brief 生成 buildRevisionBrief（只保留不合格交付物，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
  * @pos    流水线驱动状态的协议正本：纯函数，不起进程、不读写数据库；与 brief-protocol 同一严格度
  *         （未知字段拒绝、尾块取最后一个围栏、损坏即失败关闭）
  *
@@ -344,8 +344,16 @@ export function buildRevisionBrief(
     const text = `[${item.deliverableId}] ${item.change}`.slice(0, BRIEF_PROTOCOL_LIMITS.maxShortText);
     if (!constraints.includes(text)) constraints.push(text);
   }
+  // 真实 Codex 会按 goal 里描述的整套界面重做全部交付物，再把已通过的也写进清单；
+  // goal 开头先声明本轮范围，交付物列表与清单校验才不会「答非所问」。
+  const narrowed = deliverables.length > 0 && deliverables.length < brief.deliverables.length;
+  const goal = narrowed
+    ? `【修订】本轮只重做交付物 ${deliverables.map((item) => item.id).join("、")}；其余交付物已通过复盘，不要重新生成。原目标：${brief.goal}`
+      .slice(0, BRIEF_PROTOCOL_LIMITS.maxShortText)
+    : brief.goal;
   const revised = parseCouncilBrief({
     ...brief,
+    goal,
     deliverables: deliverables.length > 0 ? deliverables : brief.deliverables,
     style: { ...(brief.style ?? {}), constraints },
   });

@@ -1,11 +1,14 @@
 /**
  * @input  依赖：PipelineStateStore（锁与文档读写）、Agent 端口（一次性只读调用、agentId→actorId）、
- *         委派端口（发起/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts
+ *         委派端口（发起/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts、
+ *         delegation-image-execution 的 readImageOutputManifest（复盘只看本次图像委派入库的产物）
  * @output 导出：PipelineDriver（阶段推进：brief/review 一次性调用、图像/修订/原型委派派发、委派终态推进、
  *         失败阶段重试、取消、启动对账与停机），以及 PipelineAgentPort / PipelineDelegationPort
  * @pos    流水线状态机的唯一推进者：HTTP 用例只做校验后调用这里；
  *         一次性调用不持锁（锁内置 running → 锁外调用 → 锁内重读，已取消或 startedAt 变了就丢弃结果）；
- *         委派在锁内发起并写回 delegationId，因此终态回调总能在锁后看到对应阶段
+ *         委派在锁内发起并写回 delegationId，因此终态回调总能在锁后看到对应阶段；
+ *         复盘范围 = 图像委派 outputManifest.assetIds（resume 重跑不把上一次失败尝试入库的产物混进本轮），
+ *         每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -13,6 +16,7 @@
 import { OrchestrationConfigError, type CouncilTopicContext } from "council-orchestrator";
 import { CouncilConflictError } from "../errors.js";
 import { logger } from "../logger.js";
+import { readImageOutputManifest } from "../orchestration/delegation-image-execution.js";
 import type { StartWorkItemDelegationInput } from "../orchestration/work-item-delegation-manager.js";
 import type { WorkItemDelegation } from "../orchestration/work-item-delegation-store.js";
 import type { WorkItem } from "../types.js";
@@ -270,10 +274,11 @@ export class PipelineDriver {
           round,
           request: document.request,
           brief: review.brief,
-          outputs: staged.map((item) => ({
-            ...item,
-            ...(review.prompts.get(item.assetId) ? { prompt: review.prompts.get(item.assetId) } : {}),
-          })),
+          outputs: staged.map((item) => {
+            const prompt = review.prompts.get(item.assetId);
+            const deliverableId = review.deliverableIds.get(item.assetId);
+            return { ...item, ...(prompt ? { prompt } : {}), ...(deliverableId ? { deliverableId } : {}) };
+          }),
         })
         : renderBriefInstruction({ template: document.template, request: document.request, references: staged });
       const context: CouncilTopicContext = {
@@ -337,7 +342,12 @@ export class PipelineDriver {
     }), { actorId });
   }
 
-  /** 复盘输入：当前图像子任务的 brief 与本轮 output 资产。 */
+  /**
+   * 复盘输入：当前图像子任务的 brief 与本次委派入库的 output 资产。
+   * resume 对同一子任务重新委派，而上一次失败尝试（清单无效）已入库的产物仍挂在子任务上：
+   * 只按委派 outputManifest.assetIds 圈定本轮，复盘才不会对着不属于本轮 brief 的图给结论；
+   * 没有清单记录（旧委派）时退回子任务全部 output 资产。
+   */
   #reviewInputs(task: WorkItem, document: PipelineDocument): ReviewInputs {
     const imageStage = stageOf(document, "image");
     if (!imageStage?.workItemId || !task.projectPath) {
@@ -345,13 +355,18 @@ export class PipelineDriver {
     }
     const child = this.#store.database.getWorkItem(imageStage.workItemId);
     const brief = parseCouncilBrief(child.brief);
-    const assets = this.#store.outputAssets(task.projectPath, child.id);
+    const linked = this.#store.outputAssets(task.projectPath, child.id);
+    const manifest = imageStage.delegationId
+      ? readImageOutputManifest(this.#delegations.get(imageStage.delegationId)?.outputManifest)
+      : undefined;
+    const assets = manifest ? linked.filter((asset) => manifest.assetIds.includes(asset.id)) : linked;
     if (assets.length === 0) throw new PipelineProtocolError("review_invalid", "本轮没有可复盘的产物。");
     return {
       childId: child.id,
       brief,
       assetIds: assets.map((asset) => asset.id),
       prompts: new Map(assets.flatMap((asset) => asset.prompt ? [[asset.id, asset.prompt] as const] : [])),
+      deliverableIds: manifest?.deliverableIds ?? new Map<string, string>(),
     };
   }
 
@@ -563,6 +578,9 @@ export class PipelineDriver {
 interface ReviewInputs {
   childId: string;
   brief: CouncilBrief;
+  /** 本轮复盘的产物：只含本次图像委派入库的资产。 */
   assetIds: string[];
   prompts: Map<string, string>;
+  /** assetId → 清单标注的 deliverableId，给复盘者作提示；清单漏报收回的产物没有。 */
+  deliverableIds: Map<string, string>;
 }
