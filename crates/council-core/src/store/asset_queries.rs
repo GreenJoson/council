@@ -92,7 +92,8 @@ impl CouncilStore {
             values.push(target.id.clone());
         }
         if unlinked {
-            clause.push_str(" AND NOT EXISTS (SELECT 1 FROM asset_links l WHERE l.asset_id = a.id)");
+            clause
+                .push_str(" AND NOT EXISTS (SELECT 1 FROM asset_links l WHERE l.asset_id = a.id)");
         }
         let total: i64 = self.connection.query_row(
             &format!("SELECT COUNT(*) FROM assets a WHERE {clause}"),
