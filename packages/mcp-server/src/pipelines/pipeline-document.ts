@@ -1,7 +1,7 @@
 /**
  * @input  依赖：brief-protocol（CouncilBrief 解析与限制）、templates（模板/阶段 id 与模板要求）
  * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument、初始文档 createPipelineDocument、
- *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate、
+ *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
  *         修订 brief 生成 buildRevisionBrief（只保留不合格交付物，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
  * @pos    流水线驱动状态的协议正本：纯函数，不起进程、不读写数据库；与 brief-protocol 同一严格度
@@ -236,8 +236,25 @@ export function extractFencedBlock(content: string, fence: string): string | und
   return last;
 }
 
+/**
+ * brief 的运行时上限：交付物 count 合计不得超过单次图像委派能入库的张数（COUNCIL_CODEX_IMAGE_MAX_OUTPUTS）。
+ * 超出的产物会被生图侧丢弃、复盘必然打回，流水线只会在修订轮里空转，所以在 brief 阶段就拒绝。
+ */
+export interface PipelineBriefLimits {
+  maxImageOutputs: number;
+}
+
+/** brief 交付物合计张数（count 缺省为 1）。 */
+export function briefOutputCount(brief: CouncilBrief): number {
+  return brief.deliverables.reduce((sum, item) => sum + (item.count ?? 1), 0);
+}
+
 /** 模板对 brief 的硬要求；人工确认与模型产出走同一套校验。 */
-export function assertBriefMatchesTemplate(brief: CouncilBrief, template: PipelineTemplateId): void {
+export function assertBriefMatchesTemplate(
+  brief: CouncilBrief,
+  template: PipelineTemplateId,
+  limits?: PipelineBriefLimits,
+): void {
   const spec = pipelineTemplate(template);
   if (brief.kind !== spec.briefKind) {
     throw new PipelineProtocolError("brief_invalid", `brief.kind 必须为 ${spec.briefKind}。`);
@@ -245,16 +262,27 @@ export function assertBriefMatchesTemplate(brief: CouncilBrief, template: Pipeli
   if (spec.requiresPrototype && brief.nextStage?.kind !== "prototype") {
     throw new PipelineProtocolError("brief_invalid", "该模板的 brief 必须包含 nextStage（kind=prototype）。");
   }
+  const total = briefOutputCount(brief);
+  if (limits && total > limits.maxImageOutputs) {
+    throw new PipelineProtocolError(
+      "brief_invalid",
+      `交付物合计 ${String(total)} 张，超过单次生图上限 ${String(limits.maxImageOutputs)} 张`
+        + "（COUNCIL_CODEX_IMAGE_MAX_OUTPUTS）；请减少交付物或 count，或拆成多条流水线。",
+    );
+  }
   if (template === "game-asset-pack") {
-    const sprites = brief.deliverables.reduce((sum, item) => sum + (item.count ?? 1), 0);
-    if (sprites < 6 || brief.deliverables.some((item) => item.transparent !== true)) {
+    if (total < 6 || brief.deliverables.some((item) => item.transparent !== true)) {
       throw new PipelineProtocolError("brief_invalid", "游戏素材包至少需要 6 张 sprite，且全部 transparent: true。");
     }
   }
 }
 
 /** 解析并校验 brief（对象或 JSON 字符串）；协议错误统一转成 brief_invalid。 */
-export function parsePipelineBrief(value: unknown, template: PipelineTemplateId): CouncilBrief {
+export function parsePipelineBrief(
+  value: unknown,
+  template: PipelineTemplateId,
+  limits?: PipelineBriefLimits,
+): CouncilBrief {
   let brief: CouncilBrief;
   try {
     brief = parseCouncilBrief(value);
@@ -262,16 +290,20 @@ export function parsePipelineBrief(value: unknown, template: PipelineTemplateId)
     if (error instanceof CouncilProtocolError) throw new PipelineProtocolError("brief_invalid", error.message);
     throw error;
   }
-  assertBriefMatchesTemplate(brief, template);
+  assertBriefMatchesTemplate(brief, template, limits);
   return brief;
 }
 
-export function extractCouncilBrief(content: string, template: PipelineTemplateId): CouncilBrief {
+export function extractCouncilBrief(
+  content: string,
+  template: PipelineTemplateId,
+  limits?: PipelineBriefLimits,
+): CouncilBrief {
   const block = extractFencedBlock(content, PIPELINE_BRIEF_FENCE);
   if (block === undefined) {
     throw new PipelineProtocolError("brief_invalid", "回复末尾缺少 ```council-brief``` 围栏 JSON。");
   }
-  return parsePipelineBrief(block, template);
+  return parsePipelineBrief(block, template, limits);
 }
 
 // ┌─────────────────────────────────────────────────────────────┐

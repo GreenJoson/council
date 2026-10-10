@@ -85,6 +85,11 @@ process.stdin.on("end", () => {
         result = '代码尚未完成。\n```json\nCOUNCIL_CHECKPOINT\n{"remaining":[]}\n```';
       } else if (prompt.includes("NO_PROGRESS")) {
         result = 'COUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: [], validation: ["检查后没有文件变化"], remaining: ["仍未完成"], canContinue: true });
+      } else if (prompt.includes("PIPELINE_HANDOFF_ONCE") && !existsSync("stage-one.txt")) {
+        // 流水线原型：第一段把骨架存下来后以 canContinue:false 交接（沙箱不许起服务/浏览器验证），
+        // 委派停在 execution_checkpoint；流水线「恢复」接续到新工作区后走下面的第二段。
+        writeFileSync("stage-one.txt", "first segment\n");
+        result = '原型骨架已保存，验证需要用户放行。\n```json\nCOUNCIL_CHECKPOINT\n' + JSON.stringify({ completed: ["原型骨架已写入"], validation: ["未启动服务"], remaining: ["需要允许监听端口后再做浏览器验证"], canContinue: false }) + '\n```';
       } else if (!existsSync("stage-one.txt")) {
         writeFileSync("stage-one.txt", "first segment\n");
         turnLimit = prompt.includes("TURN_LIMIT");
@@ -161,8 +166,8 @@ function fakePipelineReview(text) {
 /**
  * Codex 生图替身：按 brief 提示词中的 deliverableId 写产物与清单；参考图必须真实存在。
  * 提示词含 COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 时，第一次只输出清单不写文件（触发 outputs_missing）；
- * 含 COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 时，第一次写一张字节不同的草稿图但清单 variantOf 指向自己
- * （触发 manifest_invalid，草稿图已入库挂在子任务上）。计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
+ * 含 COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 时，第一次写一张字节不同的草稿图但清单 path 写成绝对路径
+ * （真实 Codex 常见的清单损坏；触发 manifest_invalid，草稿图已入库挂在子任务上）。计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
  */
 function fakeImageGeneration(text) {
   const cwd = optionValue("--cd");
@@ -200,14 +205,14 @@ function fakeImageGeneration(text) {
       schemaVersion: 1,
       outputs: [{
         deliverableId,
-        path: `.council/out/${deliverableId}-draft.png`,
+        path: path.join(outDir, `${deliverableId}-draft.png`),
         mime: "image/png",
         width: 3,
         height: 3,
         prompt: "fake draft image",
-        variantOf: `.council/out/${deliverableId}-draft.png`,
+        variantOf: null,
       }],
-      notes: "草稿清单损坏：variantOf 指向自己。",
+      notes: "草稿清单损坏：path 写成了绝对路径。",
     }
     : {
       schemaVersion: 1,

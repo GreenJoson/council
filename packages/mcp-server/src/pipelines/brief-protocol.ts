@@ -4,7 +4,8 @@
  *         给 `--output-schema` 的 assetManifestJsonSchema()、按 Codex imagegen 规则生成提示词的 renderImageBriefPrompt
  *         以及协议错误 CouncilProtocolError
  * @pos    图像/原型阶段的结构化协议正本：纯函数，不起进程、不读写文件、不读配置；
- *         与 `council-work-plan` 同一严格度（严格 JSON、未知字段拒绝、损坏清单不能当成完成）
+ *         与 `council-work-plan` 同一严格度（严格 JSON、未知字段拒绝、损坏清单不能当成完成）；
+ *         variantOf 只是出处提示：指向清单外（修订轮引用上一轮原图）或自身时折叠为缺省，不判无效
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -205,8 +206,9 @@ export function parseCouncilBrief(value: unknown): CouncilBrief {
 }
 
 /**
- * 严格解析生图清单。传入 brief 时额外核对 deliverableId 都来自 brief、variantOf 指向本清单内的 path，
- * 让「损坏或答非所问的清单」在入库前失败关闭，而不是被当成完成摘要。
+ * 严格解析生图清单。传入 brief 时额外核对 deliverableId 都来自 brief，让「损坏或答非所问的清单」在入库前失败关闭，
+ * 而不是被当成完成摘要。variantOf 只是模型自述的出处：修订轮按提示词用 `-v2` 兄弟名时它指向上一轮的原图，
+ * 不在本清单内是正常情况；指向自身则无意义。两者都折叠为缺省（下游无人消费 variantOf），不让整轮失败。
  */
 export function parseCouncilAssetManifest(
   value: unknown,
@@ -232,14 +234,9 @@ export function parseCouncilAssetManifest(
         `council-asset-manifest 无效：outputs.${String(index)}.deliverableId 不在 brief 中`,
       );
     }
-    if (item.variantOf && (!paths.has(item.variantOf) || item.variantOf === item.path)) {
-      throw new CouncilProtocolError(
-        "manifest_invalid",
-        `council-asset-manifest 无效：outputs.${String(index)}.variantOf 必须指向清单内的另一个 path`,
-      );
-    }
     const { variantOf, ...rest } = item;
-    return { ...rest, ...(variantOf ? { variantOf } : {}) };
+    const linked = variantOf && paths.has(variantOf) && variantOf !== item.path;
+    return { ...rest, ...(linked ? { variantOf } : {}) };
   });
   return { schemaVersion: 1, outputs, notes: result.data.notes };
 }

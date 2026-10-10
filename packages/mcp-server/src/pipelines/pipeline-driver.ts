@@ -1,6 +1,6 @@
 /**
  * @input  依赖：PipelineStateStore（锁与文档读写）、Agent 端口（一次性只读调用、agentId→actorId）、
- *         委派端口（发起/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts、
+ *         委派端口（发起/接续/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts、
  *         delegation-image-execution 的 readImageOutputManifest（复盘只看本次图像委派入库的产物）
  * @output 导出：PipelineDriver（阶段推进：brief/review 一次性调用、图像/修订/原型委派派发、委派终态推进、
  *         失败阶段重试、取消、启动对账与停机），以及 PipelineAgentPort / PipelineDelegationPort
@@ -8,7 +8,9 @@
  *         一次性调用不持锁（锁内置 running → 锁外调用 → 锁内重读，已取消或 startedAt 变了就丢弃结果）；
  *         委派在锁内发起并写回 delegationId，因此终态回调总能在锁后看到对应阶段；
  *         复盘范围 = 图像委派 outputManifest.assetIds（resume 重跑不把上一次失败尝试入库的产物混进本轮），
- *         每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑
+ *         每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑；
+ *         brief 指令与草稿校验都带单次生图上限 maxImageOutputs（交付物合计超过即 brief_invalid，可 resume 重写）；
+ *         原型阶段停在交接类失败（execution_checkpoint 等）时 resume 走委派接续，保留隔离工作区里的工作，不从头重做
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -61,6 +63,12 @@ export interface PipelineAgentPort {
 
 export interface PipelineDelegationPort {
   start(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation>;
+  /** 从停在交接点的代码委派接续（新委派带 resumedFromId）；图像委派不支持。 */
+  resume(
+    id: string,
+    expectedVersion: number,
+    requestedPermission?: WorkItemDelegation["permissionProfile"],
+  ): Promise<WorkItemDelegation>;
   cancel(id: string): WorkItemDelegation;
   get(id: string): WorkItemDelegation | undefined;
   onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void;
@@ -76,6 +84,13 @@ type OneShotStage = "brief" | "review";
 const TERMINAL_DELEGATION = new Set<WorkItemDelegation["status"]>(["approved", "failed", "cancelled"]);
 /** 流水线派发的委派一律 workspace_write：图像只写 `.council/out`，原型在隔离工作树内改代码。 */
 const DELEGATION_PERMISSION = "workspace_write" as const;
+/** 代码委派把工作存在隔离工作区后停下的失败码：重试时接续而不是重新委派。 */
+const CHECKPOINT_FAILURES = new Set([
+  "execution_checkpoint",
+  "execution_time_limit",
+  "execution_segment_limit",
+  "execution_no_progress",
+]);
 const MAX_ERROR_MESSAGE = 1_000;
 const HUMAN = "human";
 
@@ -114,6 +129,8 @@ export class PipelineDriver {
   readonly #agents: PipelineAgentPort;
   readonly #delegations: PipelineDelegationPort;
   readonly #maxRevisions: number;
+  /** 单次图像委派能入库的张数；brief 指令告知模型，草稿与人工确认都按它校验。 */
+  readonly #maxImageOutputs: number;
   /** pipelineId → 正在进行的一次性调用；取消与停机时中止。 */
   readonly #inflight = new Map<string, AbortController>();
   #unsubscribe: (() => void) | undefined;
@@ -124,11 +141,13 @@ export class PipelineDriver {
     agents: PipelineAgentPort;
     delegations: PipelineDelegationPort;
     maxRevisions: number;
+    maxImageOutputs: number;
   }) {
     this.#store = deps.store;
     this.#agents = deps.agents;
     this.#delegations = deps.delegations;
     this.#maxRevisions = deps.maxRevisions;
+    this.#maxImageOutputs = deps.maxImageOutputs;
   }
 
   /** 订阅委派终态并做一次启动对账；须在委派管理器初始化（含恢复）之后调用。 */
@@ -188,7 +207,10 @@ export class PipelineDriver {
     return await this.#startStageDelegation(pipelineId, "prototype", child.id, actorId, document.finalAssetIds ?? []);
   }
 
-  /** 只重跑当前 failed 阶段：brief/review 重新调用；image/prototype 为原子任务重新委派，已入库资产不动。 */
+  /**
+   * 只重跑当前 failed 阶段：brief/review 重新调用；image 为原子任务重新委派，已入库资产不动；
+   * prototype 停在交接点时接续上一次委派（保留工作区里的代码），其余失败重新委派。
+   */
   async retryCurrentStage(pipelineId: string, actorId: string): Promise<PipelineSnapshot> {
     const { document } = this.#store.load(pipelineId);
     const stage = currentStage(document);
@@ -202,8 +224,12 @@ export class PipelineDriver {
     }
     if (stage.id === "prototype") {
       if (!stage.workItemId) return await this.startPrototype(pipelineId, actorId);
+      const previous = stage.delegationId ? this.#delegations.get(stage.delegationId) : undefined;
+      const resumable = previous?.kind === "code" && previous.status === "failed"
+        && CHECKPOINT_FAILURES.has(previous.failureCode ?? "");
       return await this.#startStageDelegation(
-        pipelineId, "prototype", stage.workItemId, actorId, document.finalAssetIds ?? []);
+        pipelineId, "prototype", stage.workItemId, actorId, document.finalAssetIds ?? [],
+        resumable ? previous.id : undefined);
     }
     throw new CouncilConflictError("当前阶段不可重试。");
   }
@@ -280,7 +306,12 @@ export class PipelineDriver {
             return { ...item, ...(prompt ? { prompt } : {}), ...(deliverableId ? { deliverableId } : {}) };
           }),
         })
-        : renderBriefInstruction({ template: document.template, request: document.request, references: staged });
+        : renderBriefInstruction({
+          template: document.template,
+          request: document.request,
+          references: staged,
+          maxImageOutputs: this.#maxImageOutputs,
+        });
       const context: CouncilTopicContext = {
         topicId: task.id,
         title: task.title,
@@ -327,7 +358,7 @@ export class PipelineDriver {
     const { document } = this.#store.load(pipelineId);
     let brief: CouncilBrief;
     try {
-      brief = extractCouncilBrief(content, document.template);
+      brief = extractCouncilBrief(content, document.template, { maxImageOutputs: this.#maxImageOutputs });
     } catch (error) {
       this.#failStage(pipelineId, "brief", oneShotErrorCode(error), errorMessage(error, "brief 无效。"), actorId);
       return;
@@ -439,13 +470,17 @@ export class PipelineDriver {
     return await this.#startStageDelegation(pipelineId, "image", child.id, input.actorId, input.inputAssetIds);
   }
 
-  /** 为子任务发起（或重新发起）委派并把阶段置 running；发起失败则阶段 failed（可 resume）。 */
+  /**
+   * 为子任务发起（或重新发起）委派并把阶段置 running；发起失败则阶段 failed（可 resume）。
+   * 传入 resumeFromId 时改为接续该委派（沿用其 kind 与输入图），只用于停在交接点的原型代码委派。
+   */
   async #startStageDelegation(
     pipelineId: string,
     stageId: "image" | "prototype",
     childId: string,
     actorId: string,
     inputAssetIds: readonly string[],
+    resumeFromId?: string,
   ): Promise<PipelineSnapshot> {
     const { document } = this.#store.load(pipelineId);
     const startedAt = now();
@@ -458,15 +493,17 @@ export class PipelineDriver {
         inputAssetIds: [...inputAssetIds],
       };
       const prototype = document.agents.prototype;
-      const delegation = await this.#delegations.start(stageId === "image"
-        ? { ...base, kind: "image", executorAgentId: document.agents.image }
-        : {
-          ...base,
-          kind: "code",
-          executorAgentId: prototype?.executor ?? document.agents.image,
-          supervisorAgentId: prototype?.supervisor ?? document.agents.brief,
-          completionPolicy: "human",
-        });
+      const delegation = resumeFromId
+        ? await this.#delegations.resume(resumeFromId, child.version, DELEGATION_PERMISSION)
+        : await this.#delegations.start(stageId === "image"
+          ? { ...base, kind: "image", executorAgentId: document.agents.image }
+          : {
+            ...base,
+            kind: "code",
+            executorAgentId: prototype?.executor ?? document.agents.image,
+            supervisorAgentId: prototype?.supervisor ?? document.agents.brief,
+            completionPolicy: "human",
+          });
       return this.#store.write(pipelineId, ({ document: current }) => ({
         ...withStage(current, stageId, {
           status: "running", workItemId: childId, delegationId: delegation.id, startedAt,
@@ -517,7 +554,10 @@ export class PipelineDriver {
     const actorId = this.#actor(delegation.executorAgentId);
     if (delegation.status !== "approved") {
       const code = delegation.failureCode ?? (delegation.status === "cancelled" ? "delegation_cancelled" : "delegation_failed");
-      this.#failStage(pipelineId, stage.id, code, errorMessage(delegation.error ?? "", "委派未完成。"), actorId);
+      const message = errorMessage(delegation.error ?? "", "委派未完成。");
+      // 交接类失败不是白干：工作区里的代码还在，提示“恢复”会接续而不是重做。
+      const hint = stage.id === "prototype" && CHECKPOINT_FAILURES.has(code) ? "「恢复」将从交接点接续，已保留的改动不丢。" : "";
+      this.#failStage(pipelineId, stage.id, code, `${message}${hint}`, actorId);
       return;
     }
     const at = now();

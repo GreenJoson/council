@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、取消、409/400）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -967,7 +967,7 @@ with sync_playwright() as playwright:
     api_expect_error("POST", "/api/v1/tasks", 400, {"projectPath": PROJECT_PATH, "title": "绕过入口", "kind": "pipeline"})
     mockup_payload = {
         "project": PROJECT_PATH, "template": "app-mockup",
-        "goal": "COUNCIL_SEGMENT_E2E 流水线：记账 App 首页与详情页",
+        "goal": "COUNCIL_SEGMENT_E2E PIPELINE_HANDOFF_ONCE 流水线：记账 App 首页与详情页",
         "agents": {"prototype": {
             "executor": completed["executorAgentId"], "supervisor": completed["supervisorAgentId"],
         }},
@@ -983,6 +983,11 @@ with sync_playwright() as playwright:
     version = mockup["task"]["version"]
     api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 400,
                      {"brief": {**draft, "kind": "concept-sheet"}, "expectedVersion": version})
+    # 交付物 count 合计超过单次生图上限（默认 16）也在确认时拒绝
+    oversized = {**draft, "deliverables": [{**item, "count": 16} for item in draft["deliverables"]]}
+    assert sum(item["count"] for item in oversized["deliverables"]) > 16, oversized
+    api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 400,
+                     {"brief": oversized, "expectedVersion": version})
     api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/brief", 409,
                      {"brief": draft, "expectedVersion": version + 1})
     api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/final", 409,
@@ -1014,9 +1019,22 @@ with sync_playwright() as playwright:
         if child["kind"] == "image":
             assert child["status"] == "completed" and child["statusNote"] == "已在流水线中选定终稿", child
     prototype_child = next(child for child in mockup["children"] if child["kind"] == "prototype")
+    # 原型第一段以 canContinue:false 交接（沙箱不许起服务验证）→ 委派 execution_checkpoint、阶段 failed 带接续提示；
+    # 流水线「恢复」接续上一次委派而不是重做：新委派带 resumedFromId、沿用输入图，第一段的文件保留进最终提交。
+    prototype_paused = wait_task_delegation(prototype_child["id"], "failed", timeout=30)
+    assert prototype_paused["failureCode"] == "execution_checkpoint" and not prototype_paused.get("headCommit"), prototype_paused
+    mockup = wait_pipeline(mockup_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "failed", "原型交接暂停")
+    prototype_error = pipeline_stage(mockup, "prototype")["error"]
+    assert prototype_error["code"] == "execution_checkpoint" and "接续" in prototype_error["message"], prototype_error
+    mockup = api_request("POST", f"/api/v1/pipelines/{mockup_id}/resume", {"expectedVersion": mockup["task"]["version"]})
+    assert pipeline_stage(mockup, "prototype")["status"] == "running", mockup["document"]
     prototype_done = wait_task_delegation(prototype_child["id"], "approved", timeout=30)
+    assert prototype_done["id"] != prototype_paused["id"], prototype_done
+    assert prototype_done["resumedFromId"] == prototype_paused["id"], prototype_done
     assert prototype_done["kind"] == "code" and prototype_done["inputAssetIds"] == final_ids, prototype_done
     assert prototype_done["completionPolicy"] == "human", prototype_done
+    for filename in ["stage-one.txt", "stage-two.txt"]:
+        assert subprocess.check_output(["git", "-C", PROJECT_PATH, "show", f"{prototype_done['headCommit']}:{filename}"]).strip()
     mockup = wait_pipeline(mockup_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "completed", "原型完成")
     prototype_task = next(child for child in mockup["children"] if child["id"] == prototype_child["id"])
     assert prototype_task["status"] == "in_progress", prototype_task

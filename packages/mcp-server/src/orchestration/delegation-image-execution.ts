@@ -3,7 +3,8 @@
  *         CodexRuntime（生图探针与 generateImages）、brief-protocol（brief/清单/提示词）、委派账本、
  *         调用方注入的 Git 执行器、审计记录器与任务上下文解析
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
- *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因）与常量；
+ *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因；
+ *         image_unavailable 沿用 Codex 运行时的脱敏文案并在审计记 diagnosticCode，超时与出错可区分）与常量；
  *         清单里超出 brief 的产物（修订轮常见的「多报」）只丢弃并记审计，不让整轮失败；
  *         委派 outputManifest 的公开形状 ImageOutputManifest（清单 + 本次入库的 assetIds、逐张 assetId）与读取 helper
  *         readImageOutputManifest（流水线复盘据此只看本次委派入库的产物）；
@@ -20,7 +21,7 @@ import { appendFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, wri
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AssetService } from "../assets/asset-service.js";
-import type { CodexRuntime } from "../codex-runtime.js";
+import { CodexRuntimeError, type CodexRuntime } from "../codex-runtime.js";
 import { MAX_IMAGE_INPUT_ASSETS, MAX_WORK_ITEM_STATUS_NOTE_CHARS } from "../constants.js";
 import type { CouncilDatabase } from "../database.js";
 import { CouncilValidationError } from "../errors.js";
@@ -266,7 +267,16 @@ export async function executeImageDelegation(
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;
       if (signal.aborted) throw abortError();
-      throw imageFailure(deps, "image_unavailable", "图像生成失败：Codex 执行出错或超时，请检查本机 Codex 后重新委派。");
+      // 运行时文案本身不含路径（超时/未登录/进程退出分类），再脱敏一次只为兜底；审计记诊断码便于区分超时与出错。
+      const reason = error instanceof Error && error.message.trim()
+        ? redactAuditText(error.message.trim())
+        : "Codex 执行出错或超时，请检查本机 Codex 后重新委派。";
+      throw imageFailure(
+        deps,
+        "image_unavailable",
+        `图像生成失败：${reason}`,
+        error instanceof CodexRuntimeError ? error.diagnosticCode : "runtime_error",
+      );
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -390,8 +400,9 @@ function imageFailure(
   deps: ImageDelegationDeps,
   code: DelegationImageFailureCode,
   message: string,
+  diagnosticCode?: string,
 ): DelegationImageError {
-  deps.record(`image.${code}`, { failureCode: code });
+  deps.record(`image.${code}`, { failureCode: code, ...(diagnosticCode ? { diagnosticCode } : {}) });
   return new DelegationImageError(code, message);
 }
 

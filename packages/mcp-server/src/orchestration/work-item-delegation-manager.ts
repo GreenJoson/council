@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Model Router 权限/职责、Claude/Codex headless runtime、CouncilDatabase、Git、委派账本与任务上下文解析
- * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复、显式权限及优雅关闭
+ * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复（沿用原 kind 与输入图）、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
  *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
  *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
@@ -452,8 +452,10 @@ export class WorkItemDelegationManager {
     }
     let created: WorkItemDelegation;
     try {
+      // 接续沿用原委派的产出类型与输入图：P3 原型委派靠输入图（选定终稿）进入 `.council/in/`，丢了就等于换题。
       created = this.#store.create({
         id: `delegation-${randomUUID()}`, ...(previous.topicId ? { topicId: previous.topicId } : {}), workItemId: previous.workItemId,
+        kind: previous.kind, inputAssetIds: [...previous.inputAssetIds],
         supervisorAgentId: previous.supervisorAgentId, executorAgentId: previous.executorAgentId,
         permissionProfile: assignment.permission, completionPolicy: previous.completionPolicy,
         acceptanceCriteria: previous.acceptanceCriteria, maxAttempts: this.config.maxAttempts,

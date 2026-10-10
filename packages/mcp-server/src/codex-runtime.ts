@@ -1,7 +1,7 @@
 /**
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输、可选 AbortSignal 与 Codex 生图配置
  * @output 导出：CodexRuntime（讨论/委派 generate、可用性与生图探针 checkAvailability、生图 generateImages）、
- *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类
+ *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS）
  * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -100,6 +100,12 @@ const PROCESS_MESSAGES: BoundedProcessMessages = {
   outputLimit: "Codex 输出超过配置上限，请缩小问题或提高 COUNCIL_MAX_OUTPUT_CHARS。",
   commandNotFound: "找不到 Codex 可执行程序，请安装 CLI 或设置 COUNCIL_CODEX_COMMAND。",
   spawnFailed: "无法启动 Codex，请检查可执行权限和项目目录配置。",
+};
+
+/** 生图走 COUNCIL_CODEX_IMAGE_TIMEOUT_MS，超时文案要点名它而不是普通调用的超时项；真实生图每张约需 1 分钟。 */
+const IMAGE_PROCESS_MESSAGES: BoundedProcessMessages = {
+  ...PROCESS_MESSAGES,
+  timeout: "Codex 生图超时（COUNCIL_CODEX_IMAGE_TIMEOUT_MS），请减少交付物张数或调大该超时。",
 };
 
 // 实测（codex-cli 0.144.6）：--json 事件流首行为
@@ -283,6 +289,7 @@ export class CodexRuntime {
     onStdoutChunk?: (chunk: string) => void,
     maxTotalOutputChars?: number,
     timeoutMs: number = this.config.codexTimeoutMs,
+    messages: BoundedProcessMessages = PROCESS_MESSAGES,
   ): Promise<ProcessResult> {
     try {
       return await runBoundedProcess({
@@ -297,7 +304,7 @@ export class CodexRuntime {
         stdoutOverflow: "truncate",
         ...(onStdoutChunk ? { onStdoutChunk } : {}),
         ...(maxTotalOutputChars ? { maxTotalOutputChars } : {}),
-        messages: PROCESS_MESSAGES,
+        messages,
       });
     } catch (error) {
       if (error instanceof ProcessOutputLimitError && maxTotalOutputChars !== undefined) {
@@ -436,6 +443,7 @@ export class CodexRuntime {
       (chunk) => decoder.push(chunk),
       this.config.cliMaxStreamChars,
       input.timeoutMs,
+      IMAGE_PROCESS_MESSAGES,
     );
     decoder.flush();
     if (input.signal?.aborted) {

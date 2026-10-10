@@ -3,7 +3,7 @@
  *         Agent 候选目录（默认 Agent 选择）、委派端口、模板与文档协议、参考图校验
  * @output 导出：PipelineService（create/list/get/confirmBrief/selectFinal/resume/cancel 与生命周期）、
  *         PipelineSummary、PipelineDetail、CreatePipelineInput、PipelineAgentCatalog
- * @pos    流水线用例层：校验人工输入（版本、阶段可操作性、brief 模板约束、终稿归属与数量上限、Agent 可用性）后交给驱动器推进；
+ * @pos    流水线用例层：校验人工输入（版本、阶段可操作性、brief 模板约束与交付物合计 ≤ 单次生图上限、终稿归属与数量上限、Agent 可用性）后交给驱动器推进；
  *         HTTP 路由与（经回环 HTTP 的）MCP 工具只做协议适配
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -105,23 +105,27 @@ export class PipelineService {
   readonly #driver: PipelineDriver;
   readonly #catalog: PipelineAgentCatalog;
   readonly #maxStages: number;
+  /** 单次图像委派能入库的张数（COUNCIL_CODEX_IMAGE_MAX_OUTPUTS）；人工确认的 brief 合计不得超过。 */
+  readonly #maxImageOutputs: number;
 
   constructor(deps: {
     database: CouncilDatabase;
     agents: PipelineAgentPort & PipelineAgentCatalog;
     delegations: PipelineDelegationPort;
-    limits: { maxStages: number; maxRevisions: number };
+    limits: { maxStages: number; maxRevisions: number; maxImageOutputs: number };
   }) {
     this.#database = deps.database;
     this.#store = new PipelineStateStore(deps.database);
     this.#catalog = deps.agents;
     this.#maxStages = deps.limits.maxStages;
+    this.#maxImageOutputs = deps.limits.maxImageOutputs;
     this.#driver = new PipelineDriver({
       store: this.#store,
       agents: deps.agents,
       delegations: deps.delegations,
       // 文档 reviews 最多 32 条（修订轮数 + 1），上限据此收紧。
       maxRevisions: Math.min(deps.limits.maxRevisions, MAX_PIPELINE_REVISIONS),
+      maxImageOutputs: deps.limits.maxImageOutputs,
     });
   }
 
@@ -288,7 +292,7 @@ export class PipelineService {
       }
       let brief;
       try {
-        brief = parsePipelineBrief(input.brief, document.template);
+        brief = parsePipelineBrief(input.brief, document.template, { maxImageOutputs: this.#maxImageOutputs });
       } catch (error) {
         if (error instanceof PipelineProtocolError) throw new CouncilValidationError(error.message);
         throw error;

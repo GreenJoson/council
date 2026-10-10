@@ -12,6 +12,7 @@
  */
 
 import { RuntimeAuditStore } from "./runtime-audit-store.js";
+import { DEFAULT_CODEX_IMAGE_MAX_OUTPUTS } from "../config.js";
 import { WorkAttentionStore } from "./work-attention-store.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -648,6 +649,8 @@ export function createProductionOrchestrationService(
     },
     delegations: {
       start: async (input) => await service.startWorkItemDelegation(input),
+      resume: async (id, expectedVersion, requestedPermission) =>
+        await service.resumeWorkItemDelegation(id, expectedVersion, requestedPermission),
       cancel: (id) => service.cancelWorkItemDelegation(id),
       get: (id) => delegationManager.get(id),
       onSettled: (listener) => delegationManager.onSettled(listener),
@@ -657,6 +660,8 @@ export function createProductionOrchestrationService(
     limits: {
       maxStages: councilConfig.pipelineMaxStages ?? 6,
       maxRevisions: councilConfig.pipelineMaxRevisions ?? 3,
+      // brief 交付物合计不得超过单次图像委派能入库的张数，与委派管理器的 imageMaxOutputs 同源。
+      maxImageOutputs: councilConfig.codexImageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     },
   }));
   return service;
