@@ -144,7 +144,7 @@ flowchart TB
 
 | Module | Responsibility |
 |---|---|
-| [`packages/web`](packages/web) | React UI, repository adapters, runtime status, decisions, tasks, and attention views. |
+| [`packages/web`](packages/web) | React UI (icon rail + conversation stream + context column shell), repository adapters, topic discussion, tasks / assets / pipelines, decisions, and attention views. |
 | [`packages/desktop`](packages/desktop) | Tauri shell, native directory selection, local settings, and background worker connection. |
 | [`crates/council-core`](crates/council-core) | Rust content reads/writes and validation of the shared SQLite schema. |
 | [`packages/mcp-server`](packages/mcp-server) | MCP/HTTP boundaries, the sole schema migrator, provider routing, credentials, runtime adapters, and delegation. |
