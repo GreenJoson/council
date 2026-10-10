@@ -386,6 +386,72 @@ VITE_COUNCIL_ASSET_PAGE_SIZE=60                      # web
    - 把 Codex 指向无 image 工具的 Provider 时，探针标记不可用，创建图像委派被拒绝并给出可执行提示。
    - 资产配额超限入库被拒且有清晰提示；符号链接/伪扩展名文件被拒。
 
+   > P2 落地契约（2026-10-10，派发前冻结；实现偏离必须回写本节）
+   >
+   > **分工与文件**
+   > - A 后端资产：`schema-v19-migration.ts`（账本名 `asset-library`）并在 `schema-definitions.ts`/`schema-migrator.ts` 登记；`database/asset-repository.ts`（SQL，经 `CouncilDatabase` 门面暴露，与 `work-item-repository.ts` 同模式）；`assets/{asset-storage,asset-ingest,asset-preview,asset-service}.ts` + `_README.md`；`http/routes/asset-routes.ts`；`mcp/tools/asset-tools.ts`；`config.ts` 资产键；Rust `types.rs`/`store.rs` 镜像 19 与 Tauri 只读命令 `list_assets`/`get_asset`。
+   > - B 运行时与协议：`RUNTIME_CAPABILITY_KEYS` 追加 `image_generate`/`image_input`；`codex-runtime.ts` 生图探针与 `generateImages`；`pipelines/brief-protocol.ts` + `_README.md`（templates/driver 留给 P3）；`config.ts` Codex 生图键；`-i` 端到端验证结论记入 README。
+   > - C 图像委派：`orchestration/delegation-image-execution.ts`；`work-item-delegation-manager.ts` 只按 kind 分流；REST/MCP 放开 `kind=image` 与 `inputAssetIds`；`PUT /tasks/:id` 与 `council_submit_brief` 写 brief；失败分类；e2e 假 Codex 生图路径。
+   > - D Web：`data/assets/`、`features/assets/`、`styles/assets.css`、路由 `#/assets[/<assetId>]`；任务详情 brief 与产物区；新建任务 kind 与 reference；委派表单 kind=image。
+   >
+   > **schema v19 `asset-library`**（只新增两张表与索引，不动旧表；外键删除动作由 A 按既有表约定定；Rust `SUPPORTED_SCHEMA_VERSION = 19`，只读 `id/kind/mime/byte_size/width/height/prompt/created_at/deleted_at/origin_*` 与 links，不读 `storage_rel_path`）
+   >
+   > ```sql
+   > CREATE TABLE assets (
+   >   id TEXT PRIMARY KEY,
+   >   project_path TEXT NOT NULL,                -- 与 work_items.project_path 同一锚点（规范化绝对路径）
+   >   kind TEXT NOT NULL CHECK (kind IN ('image','model3d','document','archive')),
+   >   mime TEXT NOT NULL,
+   >   byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+   >   sha256 TEXT NOT NULL,
+   >   storage_rel_path TEXT NOT NULL,            -- 相对资产根目录；公开 DTO 不含
+   >   width INTEGER, height INTEGER,
+   >   origin_delegation_id TEXT REFERENCES work_item_delegations(id),
+   >   origin_actor_id TEXT REFERENCES actor_identities(id),
+   >   prompt TEXT,                               -- 脱敏后的生成提示词
+   >   created_at TEXT NOT NULL,
+   >   deleted_at TEXT,
+   >   UNIQUE (project_path, sha256)
+   > );
+   > CREATE INDEX idx_assets_project_kind ON assets(project_path, kind, created_at);
+   > CREATE TABLE asset_links (
+   >   asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+   >   target_kind TEXT NOT NULL CHECK (target_kind IN ('work_item','message','decision')),
+   >   target_id TEXT NOT NULL,
+   >   role TEXT NOT NULL CHECK (role IN ('reference','output','final','brief')),
+   >   created_at TEXT NOT NULL,
+   >   PRIMARY KEY (asset_id, target_kind, target_id, role)
+   > );
+   > CREATE INDEX idx_asset_links_target ON asset_links(target_kind, target_id);
+   > ```
+   >
+   > **资产落盘（A）**：根目录 `COUNCIL_ASSET_DIR`（留空为 `<COUNCIL_DATA_DIR>/assets`），文件放 `<sha256 前 2 位>/<sha256>.<ext>`，ext 由 MIME 决定；先写临时文件再 rename；配额按未删除行的 `byte_size` 求和。MIME 按文件头嗅探（PNG/JPEG/WebP/GIF 魔数、SVG 文本探测、glb `glTF`、PDF `%PDF`），不信扩展名；白名单 `COUNCIL_ASSET_MIME_ALLOWLIST`；拒绝符号链接（`lstat`）、超 `COUNCIL_ASSET_MAX_BYTES`、超总配额；宽高从 PNG/JPEG/WebP 头解析，纯 JS 不加原生依赖（sidecar 是 Node SEA 单文件）。缩略图由外部命令 `COUNCIL_ASSET_THUMBNAIL_COMMAND`（默认 `sips`，超时 `COUNCIL_ASSET_THUMBNAIL_TIMEOUT_MS`）生成 PNG，最长边 `COUNCIL_ASSET_THUMBNAIL_MAX_EDGE`，缓存在 `<asset-root>/thumbnails/<sha256>.png`；SVG 直接返回原文；非图像 404。
+   >
+   > **公开 DTO `Asset`**：`{ id, kind, mime, byteSize, sha256, width?, height?, prompt?, origin: { delegationId?, actorId? }, createdAt, deletedAt?, links: [{ targetKind, targetId, role, createdAt }] }`，不含任何路径。
+   >
+   > **REST（`/api/v1`，A；放开委派与 brief 的两条由 C）**
+   > - `GET /assets?project=<abs>&kind=&target=<work_item|message|decision>:<id>&limit=&offset=` → `{ items, total, count, offset, hasMore }`，默认不含已删除
+   > - `GET /assets/:assetId` → Asset
+   > - `GET /assets/:assetId/content` → 原始字节；`Content-Type` 取库中 mime（必在白名单），`Content-Disposition: inline; filename="<id>.<ext>"`，`Cache-Control: no-store`，`X-Content-Type-Options: nosniff`，SVG 额外 `Content-Security-Policy: sandbox; script-src 'none'`
+   > - `GET /assets/:assetId/thumbnail` → `image/png`，不可用时 404
+   > - `POST /assets/import` `{ projectPath, relativePath }` → 从项目目录导入（走 `project-path-policy` 的 realpath/越界/敏感路径拒绝），201 新建或 200 返回同 sha256 既有资产
+   > - `POST /assets/:assetId/links` `{ targetKind, targetId, role }` → 201；`DELETE /assets/:assetId/links/:targetKind/:targetId/:role` → 204
+   > - `DELETE /assets/:assetId` → 软删除 204，之后 content/thumbnail 404
+   > - `POST /tasks/:taskId/delegations` 放开 `kind: "image"` 与 `inputAssetIds`（须同项目、kind=image、未删除，最多 8 个）；`PUT /tasks/:taskId` 新增可选 `brief`（按 `council-brief` 校验）
+   > - 资产写入推进内容 revision，沿用 `council.changed`，不新增 SSE 事件类型；请求体上限不变，P2 不做上传接口
+   >
+   > **MCP**：`council_list_assets`、`council_get_asset`、`council_import_asset`、`council_attach_asset`（A）；`council_delegate_task` 接受 `kind`/`inputAssetIds`，`council_submit_brief`（C）。stdio 进程直连数据库（与任务工具同模式），委派仍转发 loopback HTTP。
+   >
+   > **能力与 Codex 生图（B）**：`RUNTIME_CAPABILITY_KEYS` 追加 `image_generate`、`image_input`，所有枚举消费者同步。探针：`codex features list` 每行 `<name> <stage> <enabled>`，`image_generation stable true` 且 Council 传给 Codex 的参数未覆盖 `model_provider` 时声明 `image_generate` 与 `image_input`；结果随现有可用性缓存。`CodexRuntime.generateImages({ worktreeDir, prompt, outputSchemaPath, lastMessagePath, inputImagePaths, model?, timeoutMs, onEvent })` → `{ threadId, lastMessage }`，参数固定 `exec --sandbox workspace-write --cd <worktree> --skip-git-repo-check --ignore-user-config --enable image_generation --json --output-schema <path> -o <path> [-i <path>]...`；`COUNCIL_CODEX_IMAGE_SANDBOX_MODE` 只接受 `workspace-write`；`COUNCIL_CODEX_IMAGE_ENABLED=false` 时探针直接不可用。
+   >
+   > **brief-protocol（B）**：`parseCouncilBrief(value: unknown)`（严格 JSON、未知字段拒绝）、`parseCouncilAssetManifest(value)`、`assetManifestJsonSchema()`（给 `--output-schema`，`additionalProperties: false`）、`renderImageBriefPrompt(brief, { outputDir: ".council/out", inputs: [{ assetId, relativePath }] })`：按 imagegen 规则写提示（不覆盖已有文件、变体用 `-v2` 兄弟名、最终产物复制进 outputDir、按 schema 输出清单）。
+   >
+   > **图像委派（C）**：单段（`maxSegments = 1`、无自动接续、无草稿快照）、不进 reviewer 三角、`completionPolicy` 固定 `human`；启动前校验执行者 granted 含 `image_generate`，否则拒绝并提示「生图需要本机 ChatGPT 登录的 Codex」；worktree 内建 `.council/in/`（输入资产拷贝）与 `.council/out/`，写入 `.git/info/exclude`；产物收集三路并集（清单 path → `.council/out/` 扫描 → `$CODEX_HOME/generated_images/<threadId>/`），sha256 去重后经 `asset-ingest` 入库（origin_delegation_id/actor/prompt），`asset_links` 挂 `work_item` role=`output`，`output_manifest_json` 存校验后的清单；失败分类新增 `image_unavailable` / `outputs_missing` / `manifest_invalid`；审计记产物数与字节数，日志不出现 `$CODEX_HOME` 或绝对路径；最多入库 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`。
+   >
+   > **Web（D）**：路由 `#/assets[/<assetId>]`；`data/assets/` 三种模式仓储（http 直连 REST；desktop 列表/详情走 Tauri 只读命令、内容与写入走 sidecar HTTP，沿用任务页桥接方式；mock 内存夹具）；`features/assets/`：网格（kind 筛选、分页）、详情（元数据、links、Lightbox 看原图、设为 final、删除）、导入对话框；任务详情：brief 展示/编辑（BriefEditor 生成 council-brief）、产物区（output/final 缩略图网格 + Lightbox）、委派表单 kind 选择（image 时只列 granted 含 `image_generate` 的执行者、无审核者、可选 reference 资产）；新建任务 kind（code/image）与 brief；`styles/assets.css`；i18n；`<img src>` 指向 `/api/v1/assets/:id/thumbnail|content`。
+   >
+   > **新增配置（同步 `.env.example`）**：`COUNCIL_CODEX_IMAGE_ENABLED=true`、`COUNCIL_CODEX_IMAGE_SANDBOX_MODE=workspace-write`、`COUNCIL_CODEX_IMAGE_TIMEOUT_MS=900000`、`COUNCIL_CODEX_IMAGE_MAX_OUTPUTS=16`、`COUNCIL_ASSET_DIR=`、`COUNCIL_ASSET_MAX_BYTES=26214400`、`COUNCIL_ASSET_MAX_TOTAL_BYTES=5368709120`、`COUNCIL_ASSET_MIME_ALLOWLIST=image/png,image/jpeg,image/webp,image/svg+xml,model/gltf-binary,application/pdf`、`COUNCIL_ASSET_THUMBNAIL_MAX_EDGE=512`、`COUNCIL_ASSET_THUMBNAIL_COMMAND=sips`、`COUNCIL_ASSET_THUMBNAIL_TIMEOUT_MS=10000`；web `VITE_COUNCIL_ASSET_PAGE_SIZE=60`。
+
 ### P3 流水线 + 并排对照（4～5 天）
 
 1. `pipelines/`：模板（app-mockup、game-asset-pack、concept-sheet）、driver（阶段推进、产物传递、修订上限）。
