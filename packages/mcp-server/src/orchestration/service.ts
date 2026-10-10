@@ -645,7 +645,11 @@ export function createProductionOrchestrationService(
     agents: {
       invokeOneShot: async (input) => await service.invokeOneShot(input),
       listAgentCandidates: async () => await service.listAgentCandidates(),
-      actorIdOf: (agentId) => modelRouter.getAgent(agentId)?.actorId,
+      // getAgent 不过滤已删除的 Agent，而删除会把对应 actor 停用：按端口约定返回 undefined，让写入回落到 human。
+      actorIdOf: (agentId) => {
+        const agent = modelRouter.getAgent(agentId);
+        return agent && !agent.deletedAt ? agent.actorId : undefined;
+      },
     },
     delegations: {
       start: async (input) => await service.startWorkItemDelegation(input),

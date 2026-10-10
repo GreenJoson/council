@@ -345,7 +345,6 @@ export class PipelineService {
       if (hasPrototype && assetIds.length > MAX_IMAGE_INPUT_ASSETS) {
         throw new CouncilValidationError(`含原型阶段的流水线最多选定 ${MAX_IMAGE_INPUT_ASSETS} 张终稿。`);
       }
-      for (const assetId of assetIds) this.#database.addAssetLink(assetId, "work_item", task.id, "final");
       const at = new Date().toISOString();
       this.#store.write(input.pipelineId, ({ document: current }) => ({
         ...withStage(current, "select", {
@@ -355,6 +354,8 @@ export class PipelineService {
         }, at),
         finalAssetIds: assetIds,
       }), { actorId: input.actorId, expectedVersion: input.expectedVersion });
+      // final 链接在文档写入（带版本校验）成功后再加：写入失败时不能在父任务上留下孤立的 final 链接。
+      for (const assetId of assetIds) this.#database.addAssetLink(assetId, "work_item", task.id, "final");
       // 先建原型子任务再收尾图像子任务：否则父任务会被短暂派生为 completed。
       if (hasPrototype) await this.#driver.startPrototype(input.pipelineId, input.actorId);
       this.#completeImageChildren(children, input.actorId);

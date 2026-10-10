@@ -11,7 +11,9 @@
  *         产物按清单顺序列出（资产表同毫秒入库的顺序会抖动），每张带清单标注的 deliverableId 提示；选定阶段仍可从子任务全部 output 资产里挑；
  *         brief 指令与草稿校验都带单次生图上限 maxImageOutputs（交付物合计超过即 brief_invalid，可 resume 重写）；
  *         原型阶段停在交接类失败（execution_checkpoint 等）或审核类失败（review_revision_limit / review_incomplete）时 resume 走委派接续，保留隔离工作区里的工作与审核意见，不从头重做
- *         原型委派的权限档来自配置 prototypePermission（默认 workspace_write，可放宽为 danger_full_access 让执行者自行起服务验证）
+ *         原型委派的权限档来自配置 prototypePermission（默认 workspace_write，可放宽为 danger_full_access 让执行者自行起服务验证），
+ *         接续不再传该配置值（沿用原委派已求交集的权限），接续发起失败时阶段保留原 delegationId 以便再次接续；
+ *         派发在建子任务时失败把 image 阶段记成 failed，重试经 startImage 按文档状态重建首轮或修订简报
  *         修订简报以确认后的原 brief 为基线，只带本轮复盘的改法（不逐轮累加撞协议上限，goal 前缀不嵌套）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -192,10 +194,23 @@ export class PipelineDriver {
     return this.#launchOneShot(pipelineId, "brief", actorId);
   }
 
-  /** 首轮生图：用确认后的 brief 与请求参考图派发图像子任务。 */
+  /**
+   * 图像阶段尚无子任务时按文档状态派发：首轮用确认后的 brief 与请求参考图；最近一次复盘为 revise 且已计入
+   * 修订轮数（修订派发在建子任务时失败、重试走到这里）则重建修订简报，不能退回原 brief 把改法丢掉。
+   */
   async startImage(pipelineId: string, actorId: string): Promise<PipelineSnapshot> {
     const { document } = this.#store.load(pipelineId);
     if (!document.brief) throw new CouncilConflictError("流水线尚未确认 brief。");
+    const lastReview = document.reviews[document.reviews.length - 1];
+    if (lastReview?.verdict === "revise" && document.revisionCount > 0) {
+      const revision = buildRevisionBrief(document.brief, lastReview);
+      return await this.#dispatchImage(pipelineId, {
+        brief: revision.brief,
+        inputAssetIds: revision.inputAssetIds,
+        title: `生图修订 第${String(document.revisionCount)}轮`,
+        actorId,
+      });
+    }
     return await this.#dispatchImage(pipelineId, {
       brief: document.brief,
       inputAssetIds: document.request.referenceAssetIds ?? [],
@@ -476,15 +491,32 @@ export class PipelineDriver {
   ): Promise<PipelineSnapshot> {
     const { task } = this.#store.load(pipelineId);
     if (!task.projectPath) throw new CouncilConflictError("流水线缺少项目路径。");
-    const child = this.#store.database.createPipelineChildAsActor({
-      parentId: pipelineId,
-      projectPath: task.projectPath,
-      title: input.title,
-      details: input.brief.goal,
-      kind: "image",
-      brief: { ...input.brief },
-      actorId: input.actorId,
-    });
+    let child: WorkItem;
+    try {
+      child = this.#store.database.createPipelineChildAsActor({
+        parentId: pipelineId,
+        projectPath: task.projectPath,
+        title: input.title,
+        details: input.brief.goal,
+        kind: "image",
+        brief: { ...input.brief },
+        actorId: input.actorId,
+      });
+    } catch (error) {
+      // 调用方先把上一阶段写成 completed/pending 才派发：建子任务失败（actor 停用、标题重复等）若不记成
+      // image 失败，流水线会停在既不能确认简报也不能重试的状态；记失败后重试经 startImage 重新建子任务。
+      const at = now();
+      logger.warn("pipeline", `流水线 image 阶段创建子任务失败：${pipelineId}`, error);
+      return this.#store.write(pipelineId, ({ document: current }) => ({
+        ...withStage(current, "image", {
+          status: "failed",
+          startedAt: at,
+          endedAt: at,
+          error: { code: startErrorCode(error), message: errorMessage(error, "图像子任务创建失败。") },
+        }, at),
+        currentStageId: "image",
+      }), { actorId: input.actorId });
+    }
     return await this.#startStageDelegation(pipelineId, "image", child.id, input.actorId, input.inputAssetIds);
   }
 
@@ -512,8 +544,10 @@ export class PipelineDriver {
         inputAssetIds: [...inputAssetIds],
       };
       const prototype = document.agents.prototype;
+      // 接续不再传配置里的原型权限：首次发起已按执行者上限求过交集，再传配置值会被判「超过上限」而失败；
+      // 传 undefined 由委派管理器沿用原委派权限。
       const delegation = resumeFromId
-        ? await this.#delegations.resume(resumeFromId, child.version, permission)
+        ? await this.#delegations.resume(resumeFromId, child.version)
         : await this.#delegations.start(stageId === "image"
           ? { ...base, kind: "image", executorAgentId: document.agents.image }
           : {
@@ -536,6 +570,8 @@ export class PipelineDriver {
         ...withStage(current, stageId, {
           status: "failed",
           workItemId: childId,
+          // 接续失败时保留原委派 id：下次重试仍能从交接点接续，而不是新开委派丢掉工作区里的检查点。
+          ...(resumeFromId ? { delegationId: resumeFromId } : {}),
           startedAt,
           endedAt: at,
           error: { code: startErrorCode(error), message: errorMessage(error, "委派发起失败。") },

@@ -24,7 +24,7 @@
   → 等人选终稿（给父任务挂 `final` 链接，图像子任务以 human 身份完成）→ prototype（仅 app-mockup：kind=prototype 子任务按
   `kind=code` 委派，`inputAssetIds` = 终稿，`completionPolicy=human`，权限档取 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`，默认 workspace_write，
   放宽为 danger_full_access 时 Codex 不带沙箱运行以便自行起服务与浏览器验证；实际权限仍与执行 Agent 的权限档取交集）。
-- 失败阶段 `resume` 只重跑当前阶段（brief/review 重新调用，image 对同一子任务重新委派，prototype 停在交接类或审核类失败（修订轮次用尽、审核未确认补查）时接续原委派、否则重新委派，已入库资产不动）；
+- 失败阶段 `resume` 只重跑当前阶段（brief/review 重新调用，image 对同一子任务重新委派，prototype 停在交接类或审核类失败（修订轮次用尽、审核未确认补查）时接续原委派、否则重新委派，已入库资产不动；接续发起失败保留原委派 id，可再次接续；修订派发在建子任务时失败记为 image 失败，重试按文档状态重建修订简报）；
   `cancel` 取消运行中的委派，当前阶段 `skipped` 且 `error.code=cancelled`，文档 `status=cancelled`。
 - 启动对账：停在 running 的 brief/review 或找不到委派的阶段标 `interrupted`；委派已到终态则按终态推进。
 - 默认 Agent：brief/review 取可用 claude-cli（优先 alias `claude`）；image 取带 `image_generate` 的可用 codex-cli 执行者

@@ -439,7 +439,9 @@ export async function copyInputAssets(
     // AssetPayload.filename 固定为 <assetId>.<ext>，不含原始文件名。
     const filename = path.basename(payload.filename);
     const absolutePath = path.join(inputDir, filename);
-    await writeFile(absolutePath, payload.bytes);
+    // 先删后独占创建：目标若已被换成指向项目外的符号链接，直接 writeFile 会跟随链接写到项目外。
+    await rm(absolutePath, { force: true });
+    await writeFile(absolutePath, payload.bytes, { flag: "wx" });
     copied.push({ assetId, relativePath: `${INPUT_DIR}/${filename}`, absolutePath });
   }
   return copied;
@@ -568,8 +570,11 @@ async function ingestOutputs(
   let deduplicated = 0;
   let rejected = 0;
   let bytes = 0;
-  const accepted = input.files.slice(0, deps.config.maxOutputs);
-  for (const file of accepted) {
+  // 名额只给真正入库的产物：被拒的文件不占名额，否则前几张无效文件会把后面的合法产物挤掉。
+  let attempted = 0;
+  for (const file of input.files) {
+    if (assetIds.length >= deps.config.maxOutputs) break;
+    attempted += 1;
     try {
       const result = await deps.assets.ingestFile({
         projectPath: input.projectPath,
@@ -591,5 +596,5 @@ async function ingestOutputs(
       throw error;
     }
   }
-  return { assetIds, assetIdByManifestPath, deduplicated, rejected, skipped: input.files.length - accepted.length, bytes };
+  return { assetIds, assetIdByManifestPath, deduplicated, rejected, skipped: input.files.length - attempted, bytes };
 }
