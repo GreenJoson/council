@@ -12,9 +12,10 @@ pub use error::{CouncilError, CouncilResult};
 pub use store::CouncilStore;
 pub use types::{
     AcceptDecisionsInput, ActorSnapshot, Asset, AssetKind, AssetLink, AssetLinkRole,
-    AssetLinkTargetKind, AssetOrigin, ClaimWorkItemInput, CloseTopicInput, CouncilMessage,
-    CouncilRevisions, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, Decision,
-    DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic,
-    TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem, WorkItemKind, WorkItemOrigin,
-    WorkItemProgress, WorkItemSeverity, WorkItemSource, WorkItemStatus,
+    AssetLinkTargetKind, AssetOrigin, AssetTargetFilter, ClaimWorkItemInput, CloseTopicInput,
+    CouncilMessage, CouncilRevisions, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput,
+    Decision, DecisionStatus, MessageKind, PaginatedAssets, PaginatedTopics, PostMessageInput,
+    RecordDecisionInput, Topic, TopicDetail, TopicStatus, UpdateWorkItemInput, WorkItem,
+    WorkItemKind, WorkItemOrigin, WorkItemProgress, WorkItemSeverity, WorkItemSource,
+    WorkItemStatus,
 };

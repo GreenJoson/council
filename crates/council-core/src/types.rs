@@ -1,5 +1,5 @@
 //! @input 依赖：Council TypeScript 内容协议与 serde
-//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项（v18 含 kind/source/priority/project_path/brief，topic_id 可空）、v19 资产（Asset/AssetLink，不含存储路径）、分页、revision 和写入输入类型
+//! @output 导出：Topic、Message、Decision、议题关闭、决策包接受、实施项（v18 含 kind/source/priority/project_path/brief，topic_id 可空）、v19 资产（Asset/AssetLink/AssetTargetFilter/PaginatedAssets，不含存储路径）、分页、revision 和写入输入类型
 //! @pos Rust 与现有 MCP/HTTP camelCase 领域模型的同构类型正本
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -478,6 +478,30 @@ impl AssetLinkTargetKind {
     }
 }
 
+/// 资产列表的链接目标过滤；编码与 REST `target=<targetKind>:<targetId>` 一致。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetTargetFilter {
+    pub kind: AssetLinkTargetKind,
+    pub id: String,
+}
+
+impl AssetTargetFilter {
+    /// 与 Node listAssetsQuerySchema 同规则：kind 为 work_item|message|decision，id 仅 [A-Za-z0-9_-] 且不超过 250 字符。
+    pub fn parse(value: &str) -> Option<Self> {
+        let (kind, id) = value.split_once(':')?;
+        let kind = AssetLinkTargetKind::from_db(kind)?;
+        let valid_id = !id.is_empty()
+            && id.len() <= 250
+            && id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            });
+        valid_id.then(|| Self {
+            kind,
+            id: id.to_string(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetLink {
@@ -515,6 +539,17 @@ pub struct Asset {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
     pub links: Vec<AssetLink>,
+}
+
+/// 与 REST `GET /api/v1/assets` 同形的分页结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaginatedAssets {
+    pub items: Vec<Asset>,
+    pub total: u64,
+    pub count: u64,
+    pub offset: u32,
+    pub has_more: bool,
 }
 
 #[cfg(test)]

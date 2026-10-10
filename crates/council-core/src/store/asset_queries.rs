@@ -1,5 +1,5 @@
 //! @input 依赖：CouncilStore 的只读连接、v19 assets/asset_links 表与资产领域类型
-//! @output 为 CouncilStore 增加 list_assets / get_asset 两个只读查询
+//! @output 为 CouncilStore 增加 list_assets（kind/target 过滤 + limit/offset 分页，返回 PaginatedAssets）/ get_asset 两个只读查询
 //! @pos 桌面端资产库的只读入口：写入、入库校验与字节读取都只在 Node 侧，
 //!      这里不读 storage_rel_path，返回的 DTO 与 Node 公开 Asset 同构
 //!
@@ -9,7 +9,10 @@ use rusqlite::{OptionalExtension, Row, params};
 
 use super::CouncilStore;
 use crate::error::{CouncilError, CouncilResult};
-use crate::types::{Asset, AssetKind, AssetLink, AssetLinkRole, AssetLinkTargetKind, AssetOrigin};
+use crate::types::{
+    Asset, AssetKind, AssetLink, AssetLinkRole, AssetLinkTargetKind, AssetOrigin,
+    AssetTargetFilter, PaginatedAssets,
+};
 
 const ASSET_SELECT_COLUMNS: &str = "id, kind, mime, byte_size, sha256, width, height, \
      origin_delegation_id, origin_actor_id, prompt, created_at, deleted_at";
@@ -46,37 +49,72 @@ fn read_asset_row(row: &Row<'_>) -> rusqlite::Result<AssetRow> {
     })
 }
 
+fn target_kind_db(kind: AssetLinkTargetKind) -> &'static str {
+    match kind {
+        AssetLinkTargetKind::WorkItem => "work_item",
+        AssetLinkTargetKind::Message => "message",
+        AssetLinkTargetKind::Decision => "decision",
+    }
+}
+
 fn invalid(message: &str) -> CouncilError {
     CouncilError::InvalidData(message.into())
 }
 
 impl CouncilStore {
-    /// 按项目列出未删除资产（新到旧），可按类型过滤；顺序贴合 idx_assets_project_kind。
+    /// 按项目分页列出未删除资产（新到旧），可按类型与链接目标过滤；语义与 Node AssetRepository.list 一致。
     pub fn list_assets(
         &self,
         project_path: &str,
         kind: Option<AssetKind>,
-    ) -> CouncilResult<Vec<Asset>> {
+        target: Option<&AssetTargetFilter>,
+        limit: u32,
+        offset: u32,
+    ) -> CouncilResult<PaginatedAssets> {
         let project_path = project_path.trim();
         if project_path.is_empty() {
             return Err(CouncilError::InvalidData("资产项目路径不能为空。".into()));
         }
-        let mut sql = format!(
-            "SELECT {ASSET_SELECT_COLUMNS} FROM assets WHERE project_path = ?1 AND deleted_at IS NULL"
-        );
-        let mut values: Vec<&str> = vec![project_path];
+        let mut clause = String::from("a.project_path = ? AND a.deleted_at IS NULL");
+        let mut values: Vec<String> = vec![project_path.to_string()];
         if let Some(kind) = kind {
-            values.push(kind.as_db());
-            sql.push_str(" AND kind = ?2");
+            clause.push_str(" AND a.kind = ?");
+            values.push(kind.as_db().to_string());
         }
-        sql.push_str(" ORDER BY created_at DESC, id DESC");
+        if let Some(target) = target {
+            clause.push_str(
+                " AND EXISTS (SELECT 1 FROM asset_links l \
+                 WHERE l.asset_id = a.id AND l.target_kind = ? AND l.target_id = ?)",
+            );
+            values.push(target_kind_db(target.kind).to_string());
+            values.push(target.id.clone());
+        }
+        let total: i64 = self.connection.query_row(
+            &format!("SELECT COUNT(*) FROM assets a WHERE {clause}"),
+            rusqlite::params_from_iter(values.iter()),
+            |row| row.get(0),
+        )?;
+        let sql = format!(
+            "SELECT {ASSET_SELECT_COLUMNS} FROM assets a WHERE {clause} \
+             ORDER BY a.created_at DESC, a.id DESC LIMIT {limit} OFFSET {offset}"
+        );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement
-            .query_map(rusqlite::params_from_iter(values), read_asset_row)?
+            .query_map(rusqlite::params_from_iter(values.iter()), read_asset_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        rows.into_iter()
+        let items = rows
+            .into_iter()
             .map(|row| self.asset_from_row(row))
-            .collect()
+            .collect::<CouncilResult<Vec<_>>>()?;
+        let total = u64::try_from(total).unwrap_or(0);
+        let count = items.len() as u64;
+        Ok(PaginatedAssets {
+            items,
+            total,
+            count,
+            offset,
+            has_more: u64::from(offset) + count < total,
+        })
     }
 
     /// 按 id 取资产；与 Node 一致，已软删除视为不存在。

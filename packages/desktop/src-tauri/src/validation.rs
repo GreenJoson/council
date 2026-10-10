@@ -1,6 +1,6 @@
 /**
  * @input  依赖：来自 Tauri IPC 的路径、分页、决策包/实施项 ID、内容参数与设置文件里的服务地址
- * @output 导出：与现有 HTTP/MCP 决策批量上限一致的输入校验函数和 loopback 服务地址解析
+ * @output 导出：与现有 HTTP/MCP 决策批量上限、资产分页（默认 60/上限 200）一致的输入校验函数和 loopback 服务地址解析
  * @pos    未验证外部输入（前端 IPC 与用户可编辑设置）进入 Rust core 前的唯一边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,6 +9,9 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 pub const MAX_LIST_LIMIT: u32 = 100;
+/// 与 Node DEFAULT_ASSET_PAGE_LIMIT / MAX_ASSET_PAGE_LIMIT 保持一致。
+pub const DEFAULT_ASSET_PAGE_LIMIT: u32 = 60;
+pub const MAX_ASSET_PAGE_LIMIT: u32 = 200;
 pub const MAX_TITLE_CHARS: usize = 200;
 pub const MAX_QUESTION_CHARS: usize = 12_000;
 pub const MAX_MESSAGE_CHARS: usize = 30_000;
@@ -32,6 +35,17 @@ pub fn page(limit: u32) -> Result<(), String> {
         return Err(format!("分页上限必须在 1 到 {MAX_LIST_LIMIT} 之间"));
     }
     Ok(())
+}
+
+/// 资产分页：缺省 60，范围 1..=200（与 REST 一致）。
+pub fn asset_page(limit: Option<u32>) -> Result<u32, String> {
+    let limit = limit.unwrap_or(DEFAULT_ASSET_PAGE_LIMIT);
+    if limit == 0 || limit > MAX_ASSET_PAGE_LIMIT {
+        return Err(format!(
+            "资产分页上限必须在 1 到 {MAX_ASSET_PAGE_LIMIT} 之间"
+        ));
+    }
+    Ok(limit)
 }
 
 pub fn identifier(value: &str, prefix: &str, name: &str) -> Result<(), String> {
