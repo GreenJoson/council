@@ -1,0 +1,760 @@
+/*
+ * 资产库（features/assets）与任务页资产相关区块：#/assets 网格/详情、导入对话框差异，
+ * 任务详情的 brief 编辑器、产物区缩略图与图像委派表单。只用 theme.css 语义 token。
+ */
+
+/* ============================== */
+/* 单栏容器：与 tasks-view 同一留白方式 */
+/* ============================== */
+
+.assets-view {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+  overflow: auto;
+  padding: 28px;
+  color: var(--color-text);
+}
+
+.assets-view > * {
+  width: 100%;
+  max-width: 1120px;
+}
+
+.assets-view h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 22px;
+}
+
+.assets-view-header,
+.asset-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-detail-header {
+  justify-content: flex-start;
+}
+
+.assets-view-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.assets-view-actions > button:not(.primary-button),
+.assets-placeholder button,
+.asset-pagination button,
+.asset-actions button:not(.danger-button),
+.task-assets-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.assets-view button:disabled,
+.task-assets-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.assets-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.assets-filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.assets-filters select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.assets-count {
+  padding-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.assets-placeholder {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.assets-placeholder h1 {
+  color: var(--color-text);
+}
+
+.asset-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  font-size: 12px;
+}
+
+.asset-notice.is-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.asset-notice.is-danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.asset-muted {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+/* ============================== */
+/* 缩略图（网格卡片、详情预览、任务产物区共用） */
+/* ============================== */
+
+.asset-thumbnail {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+}
+
+.asset-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.asset-thumbnail.is-placeholder {
+  gap: 6px;
+  align-content: center;
+  color: var(--color-text-muted);
+}
+
+.asset-thumbnail.is-placeholder small {
+  max-width: 90%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-thumbnail.is-large {
+  aspect-ratio: auto;
+  min-height: 240px;
+  max-height: 480px;
+}
+
+.asset-thumbnail.is-large img {
+  max-height: 480px;
+}
+
+/* ============================== */
+/* 网格 */
+/* ============================== */
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.asset-card {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.asset-card:hover,
+.asset-card:focus-visible {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
+}
+
+.asset-card-meta {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.asset-card-meta span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.asset-final-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.asset-card .asset-final-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.asset-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+/* ============================== */
+/* 详情 */
+/* ============================== */
+
+.assets-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  width: auto;
+  color: var(--color-primary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.assets-back-link:hover {
+  text-decoration: underline;
+}
+
+.asset-detail-header code {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.asset-deleted-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 11px;
+}
+
+.asset-detail-body {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.asset-preview,
+.asset-meta {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.asset-preview-button {
+  position: relative;
+  display: grid;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.asset-preview-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  box-shadow: var(--shadow-small);
+}
+
+.asset-open-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+  font-size: 13px;
+}
+
+.asset-meta h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.asset-meta dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.asset-meta dl > div {
+  display: grid;
+  grid-template-columns: minmax(70px, 100px) minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12px;
+}
+
+.asset-meta dt {
+  color: var(--color-text-muted);
+}
+
+.asset-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.asset-sha {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.asset-prompt {
+  white-space: pre-wrap;
+}
+
+.asset-links {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.asset-links li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-links a {
+  color: var(--color-primary);
+}
+
+.asset-role-pill {
+  padding: 1px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.asset-role-pill.is-final {
+  border-color: var(--color-positive);
+  color: var(--color-positive);
+}
+
+.asset-role-pill.is-output {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.asset-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-danger);
+  font-size: 12px;
+}
+
+.asset-import-dialog small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+/* ============================== */
+/* 任务页：产物区 */
+/* ============================== */
+
+.task-assets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-assets-item {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+}
+
+.task-assets-item.is-final {
+  border-color: var(--color-positive);
+}
+
+.task-assets-item > button {
+  display: grid;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.task-assets-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.task-assets-caption a {
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+}
+
+.task-assets-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.task-assets-actions button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* ============================== */
+/* 任务页：brief 编辑器与只读展示 */
+/* ============================== */
+
+.brief-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.brief-editor-modes {
+  display: inline-flex;
+  justify-self: start;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.brief-editor-modes button {
+  padding: 4px 12px;
+  border: 0;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.brief-editor-modes button[aria-pressed="true"] {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.brief-editor label,
+.brief-editor fieldset {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.brief-editor fieldset {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.brief-editor legend {
+  padding: 0 4px;
+}
+
+.brief-editor input,
+.brief-editor select,
+.brief-editor textarea,
+.task-delegation-form select,
+.task-delegation-form textarea {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.brief-editor textarea,
+.task-delegation-form textarea {
+  resize: vertical;
+}
+
+.brief-editor .brief-json {
+  min-height: 220px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.brief-deliverable {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(140px, 2fr) minmax(90px, 1fr) 70px auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.brief-editor .brief-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 8px;
+}
+
+.brief-editor .brief-checkbox input {
+  min-height: auto;
+}
+
+.brief-editor .brief-row-button,
+.brief-editor-actions button:not(.primary-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.brief-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.brief-view {
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.brief-view h3 {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.brief-view p {
+  margin: 0;
+}
+
+.brief-view ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.brief-view code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ============================== */
+/* 任务页：委派类型切换与图像委派表单 */
+/* ============================== */
+
+.task-delegation-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.task-delegation-kind select {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.task-delegation-form {
+  display: grid;
+  gap: 10px;
+}
+
+.task-delegation-form > label,
+.task-delegation-form fieldset {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.task-delegation-form fieldset {
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.task-reference-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.task-reference-option {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+
+.task-reference-option:has(input:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.task-reference-option span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.task-delegation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.brief-issues {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 24px;
+  list-style: disc;
+}
+
+header.task-delegation-kind > button {
+  margin-left: auto;
+}
+
+/* 新建任务对话框：image 任务附带简报时内容变高，对话框内部滚动 */
+.task-create-dialog {
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.task-create-dialog .brief-checkbox {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-create-dialog .brief-checkbox input {
+  width: auto;
+  padding: 0;
+}
+
+@media (max-width: 860px) {
+  .assets-view {
+    padding: 18px 16px;
+  }
+
+  .asset-detail-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brief-deliverable {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
