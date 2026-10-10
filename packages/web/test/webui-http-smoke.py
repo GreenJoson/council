@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）与客户端接入（隔离目标路径上的写入 → 漂移 409 → 还原，Codex 保留用户追加行、Claude 精确回放）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -64,6 +64,66 @@ def api_expect_error(
         assert envelope["code"] == expected_status, envelope
         return envelope
     raise AssertionError(f"API {method} {path} 应返回 {expected_status}")
+
+
+def verify_client_config() -> None:
+    """客户端接入：四个目标路径由 e2e.mjs 指向隔离数据目录，绝不触碰真实家目录配置。"""
+    data_dir = Path(os.environ["COUNCIL_DATA_DIR"])
+    claude_file = Path(os.environ["COUNCIL_CLIENT_CONFIG_CLAUDE_FILE"])
+    claude_skills = Path(os.environ["COUNCIL_CLIENT_CONFIG_CLAUDE_SKILLS_DIR"])
+    codex_file = Path(os.environ["COUNCIL_CLIENT_CONFIG_CODEX_FILE"])
+    codex_skills = Path(os.environ["COUNCIL_CLIENT_CONFIG_CODEX_SKILLS_DIR"])
+    for target in (claude_file, claude_skills, codex_file, codex_skills):
+        assert data_dir in target.parents, target
+
+    def states() -> dict[str, str]:
+        clients = api_request("GET", "/api/v1/settings/client-config")["clients"]
+        return {item["client"]: item["state"] for item in clients}
+
+    assert states() == {"claude": "not_applied", "codex": "not_applied"}
+
+    # 预置用户已有配置：Claude 带另一个 MCP 服务，Codex 带模型与另一个服务
+    claude_file.parent.mkdir(parents=True, exist_ok=True)
+    codex_file.parent.mkdir(parents=True, exist_ok=True)
+    claude_original = json.dumps({"numStartups": 3, "mcpServers": {"other": {"command": "other-mcp"}}}) + "\n"
+    codex_original = 'model = "e2e-model"\n\n[mcp_servers.other]\ncommand = "other-mcp"\n'
+    claude_file.write_text(claude_original, encoding="utf-8")
+    codex_file.write_text(codex_original, encoding="utf-8")
+
+    for client in ("claude", "codex"):
+        applied = api_request("POST", f"/api/v1/settings/client-config/{client}/actions/apply", {})
+        assert applied["state"] == "applied" and applied.get("appliedAt"), applied
+
+    claude_doc = json.loads(claude_file.read_text(encoding="utf-8"))
+    assert claude_doc["numStartups"] == 3 and "other" in claude_doc["mcpServers"], claude_doc
+    claude_entry = claude_doc["mcpServers"]["council"]
+    assert claude_entry["env"]["COUNCIL_CALLER_ACTOR_ALIAS"] == "claude", claude_entry
+    assert claude_entry["env"]["COUNCIL_DATA_DIR"] == str(data_dir), claude_entry
+    codex_text = codex_file.read_text(encoding="utf-8")
+    assert codex_text.startswith(codex_original), codex_text
+    assert "# >>> council managed (do not edit) >>>" in codex_text and "[mcp_servers.council]" in codex_text, codex_text
+    assert 'COUNCIL_CALLER_ACTOR_ALIAS = "codex"' in codex_text, codex_text
+    assert (claude_skills / "SKILL.md").is_file() and (codex_skills / "SKILL.md").is_file()
+    ledger = data_dir / "client-config"
+    applied_records = json.loads((ledger / "applied.json").read_text(encoding="utf-8"))
+    assert set(applied_records) >= {"claude", "codex"}, applied_records
+    for client in ("claude", "codex"):
+        assert any((ledger / "stash" / client).iterdir()), client
+
+    # 用户在 Codex 文件里追加一行 → 漂移；未带 force 的写入被 409 拒绝
+    with codex_file.open("a", encoding="utf-8") as handle:
+        handle.write("# e2e user line\n")
+    assert states() == {"claude": "applied", "codex": "drifted"}
+    api_expect_error("POST", "/api/v1/settings/client-config/codex/actions/apply", 409, {})
+
+    for client in ("codex", "claude"):
+        restored = api_request("POST", f"/api/v1/settings/client-config/{client}/actions/restore", {})
+        assert restored["state"] == "not_applied", restored
+    assert codex_file.read_text(encoding="utf-8") == codex_original + "# e2e user line\n"
+    assert claude_file.read_text(encoding="utf-8") == claude_original
+    assert not claude_skills.exists() and not codex_skills.exists()
+    assert states() == {"claude": "not_applied", "codex": "not_applied"}
+    print("客户端接入写入/漂移/还原通过")
 
 
 def create_and_start_run(
@@ -1151,6 +1211,8 @@ with sync_playwright() as playwright:
     page.locator(".topic-row", has_text="惰性详情验收").click()
     page.get_by_role("heading", name="惰性详情验收", exact=True).wait_for()
     assert second_topic["id"] != topic_id
+
+    verify_client_config()
 
     assert not console_errors, console_errors
     page.close()
