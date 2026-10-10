@@ -8,6 +8,7 @@
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -573,7 +574,7 @@ with sync_playwright() as playwright:
         screenshot = Path(SCREENSHOT_PATH)
         screenshot.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(screenshot.with_name("audit-expanded.png")), full_page=True)
-    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_role("button", name=re.compile(r"^需要我处理")).click()  # 徽标会把可访问名拼成「需要我处理 · N 个…」，只按前缀匹配
     page.get_by_role("heading", name="需要我处理", exact=True).wait_for()
     page.locator(".work-attention-view").get_by_text("等待回复或确认 1", exact=False).wait_for()
     if SCREENSHOT_PATH:
@@ -582,7 +583,7 @@ with sync_playwright() as playwright:
     page.get_by_role("button", name="确认并完成", exact=True).click()
     page.get_by_text("确认已提交，自动轮次继续", exact=True).wait_for()
     wait_for_run_status(claude_run["id"], "completed")
-    page.get_by_role("button", name="需要我处理", exact=True).click()
+    page.get_by_role("button", name=re.compile(r"^需要我处理")).click()  # 徽标会把可访问名拼成「需要我处理 · N 个…」，只按前缀匹配
     page.get_by_text("当前没有需要处理的事项。", exact=True).wait_for()
     page.get_by_role("button", name="议题", exact=True).click()
 
