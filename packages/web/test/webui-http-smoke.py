@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、取消、409/400）检查
+@output 导出：项目隔离、附件内部预览、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、取消、409/400）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -100,6 +100,20 @@ def wait_for_run_status(run_id: str, expected_status: str, timeout: float = 10):
             break
         time.sleep(0.05)
     raise AssertionError(f"Run {run_id} 未进入 {expected_status}：{last_run}")
+
+
+def stage_status(page, stage_id: str) -> str | None:
+    return page.locator(f".pipeline-track [data-stage-id='{stage_id}']").get_attribute("data-stage-status")
+
+
+def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 60000) -> None:
+    """等阶段轨道上某阶段进入给定状态之一；真实后端经替身 Agent 推进，比 mock 慢，默认 60 秒。"""
+    page.wait_for_function(
+        "([id, statuses]) => statuses.includes("
+        "document.querySelector(`.pipeline-track [data-stage-id='${id}']`)?.dataset.stageStatus)",
+        arg=[stage_id, list(statuses)],
+        timeout=timeout,
+    )
 
 
 def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
@@ -1036,6 +1050,53 @@ with sync_playwright() as playwright:
                      {"assetIds": concept["outputAssetIds"][:1], "expectedVersion": cancelled_version})
     api_expect_error("POST", f"/api/v1/pipelines/{concept_id}/resume", 409, {"expectedVersion": cancelled_version})
     print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
+
+    # P3 流水线界面（http 模式，真实后端 + 替身 Agent）：列表分组与取消徽标 → 已完成详情 →
+    # 界面新建 concept-sheet → 确认 brief → 自动修订后并排勾选 → 选定收尾（无原型阶段，父任务直接完成）
+    ui_started = time.monotonic()
+    page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
+    page.get_by_role("heading", name="流水线", exact=True).wait_for()
+    page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{mockup_id}']").wait_for()
+    cancelled_row = page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{concept_id}']")
+    cancelled_row.wait_for()
+    assert "已取消" in cancelled_row.locator(".pipeline-stage-badge").inner_text()
+    page.locator(f"[data-pipeline-id='{mockup_id}']").click()
+    page.locator(f"[data-pipeline-detail='{mockup_id}']").wait_for()
+    for stage_id in ("brief", "image", "review", "select", "prototype"):
+        wait_stage(page, stage_id, ("completed",))
+    assert page.locator("[data-pipeline-final] code").count() == len(final_ids)
+
+    page.get_by_role("link", name="返回流水线列表").click()
+    page.get_by_role("button", name="新建流水线", exact=True).click()
+    dialog = page.locator("dialog.pipeline-create-dialog")
+    dialog.get_by_role("radio", name="概念设定图").check()
+    dialog.get_by_role("textbox", name="目标").fill("界面新建：概念设定图冒烟")
+    dialog.get_by_role("button", name="创建流水线", exact=True).click()
+    page.wait_for_function("location.hash.startsWith('#/pipelines/')")
+    ui_pipeline_id = page.locator("[data-pipeline-detail]").get_attribute("data-pipeline-detail")
+    assert ui_pipeline_id and ui_pipeline_id not in (mockup_id, concept_id), ui_pipeline_id
+    wait_stage(page, "brief", ("waiting_human",))
+    brief_control = page.locator("[data-pipeline-control='brief']")
+    brief_control.locator(".brief-editor").wait_for()
+    brief_control.get_by_role("button", name="确认简报", exact=True).click()
+    wait_stage(page, "brief", ("completed",))
+    wait_stage(page, "select", ("waiting_human",))
+    assert stage_status(page, "image") == "completed" and stage_status(page, "review") == "completed"
+    compare = page.locator(".pipeline-compare")
+    compare.wait_for()
+    final_boxes = compare.get_by_role("checkbox", name="选为最终稿")
+    assert final_boxes.count() >= 1
+    final_boxes.nth(0).check()
+    page.get_by_role("button", name="选定", exact=True).click()
+    wait_stage(page, "select", ("completed",))
+    page.locator("[data-pipeline-final] code").first.wait_for()
+    ui_detail = api_request("GET", f"/api/v1/pipelines/{ui_pipeline_id}")
+    assert ui_detail["task"]["status"] == "completed" and ui_detail["document"]["template"] == "concept-sheet", ui_detail["task"]
+    assert len(ui_detail["document"]["reviews"]) == 2 and ui_detail["document"]["revisionCount"] == 1, ui_detail["document"]
+    assert len(ui_detail["document"]["finalAssetIds"]) == 1, ui_detail["document"]
+    page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
+    page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{ui_pipeline_id}']").wait_for()
+    print(f"P3 流水线界面通过，耗时 {time.monotonic() - ui_started:.1f}s")
     page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 
     second_topic = api_request(

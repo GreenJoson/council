@@ -1,7 +1,7 @@
 /**
  * @input  依赖：界面语言上下文、议题列表（含实施完成度）、选中状态、状态筛选、app/routes 的 WorkspaceView 与关闭回调
  * @output 导出：TopicSidebar 项目和议题导航（时间与完成度左右分列），activeView 直接取 WorkspaceView
- * @pos    Operator Console 左侧高密度导航区域，七个工作区视图共用；视图切换只回调，由 App 壳写入 hash 路由
+ * @pos    Operator Console 左侧高密度导航区域，七个工作区视图共用（含 P3 流水线）；视图切换只回调，由 App 壳写入 hash 路由
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */

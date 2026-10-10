@@ -2,16 +2,18 @@
  * @input  依赖：types/pipelines 的模板/阶段/阶段状态联合类型与列表项
  * @output 导出：TEMPLATE_LABELS、TEMPLATE_HINTS、STAGE_LABELS、STAGE_STATUS_LABELS 中文文案表（同时作 i18n 键）、
  *         PipelineGroup 分组与 pipelineGroupOf()、PIPELINE_GROUP_ORDER、PIPELINE_GROUP_LABELS、formatPipelineTime()
- * @pos    流水线视图内部共享的展示常量与纯函数；新增文案时同步 i18n/catalog.en.ts 的「P3：流水线」段
+ * @pos    流水线视图内部共享的展示常量与纯函数；分组以「已取消 / 父任务完成 / 末阶段完成」为已完成，
+ *         因为 app-mockup 的原型子任务要等人验收，父任务派生状态不会自动到 completed；新增文案时同步 i18n/catalog.en.ts 的「P3：流水线」段
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import type {
-  PipelineStageId,
-  PipelineStageStatus,
-  PipelineSummary,
-  PipelineTemplate,
+import {
+  PIPELINE_TEMPLATE_STAGES,
+  type PipelineStageId,
+  type PipelineStageStatus,
+  type PipelineSummary,
+  type PipelineTemplate,
 } from "../../types/pipelines";
 
 export const TEMPLATE_LABELS: Record<PipelineTemplate, string> = {
@@ -58,6 +60,10 @@ export const PIPELINE_GROUP_LABELS: Record<PipelineGroup, string> = {
 /** 取消的流水线与完成的一起归入「已完成」，靠阶段徽标区分。 */
 export function pipelineGroupOf(summary: PipelineSummary): PipelineGroup {
   if (summary.cancelled || summary.taskStatus === "completed") return "done";
+  // 末阶段完成即流水线走完：app-mockup 的原型子任务在委派通过后仍等人验收（任务页），
+  // 父任务按子任务派生会停在 in_progress，不能只看 taskStatus。
+  const stages = PIPELINE_TEMPLATE_STAGES[summary.template];
+  if (summary.currentStageId === stages[stages.length - 1] && summary.currentStageStatus === "completed") return "done";
   if (summary.currentStageStatus === "waiting_human") return "waiting";
   if (summary.currentStageStatus === "failed") return "failed";
   return "running";
