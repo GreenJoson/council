@@ -1,8 +1,10 @@
 /**
  * @input  依赖：mock-tasks 夹具、mock-data Actor 快照、workspace-mapper 行映射、council-brief 校验与浏览器随机 ID
- * @output 导出：MockTaskRepository（内存任务与任务委派的同构原型实现）
+ * @output 导出：MockTaskRepository（内存任务、任务委派与 P4 团队的同构原型实现）
  * @pos    mock 模式任务仓储：排序、标题去重、乐观版本、brief 校验与 P2 委派约束（code/image、输入资产上限、
- *         图像委派无审核者）与服务端契约保持同一语义；输入资产是否同项目、kind=image 由服务端校验，mock 不模拟
+ *         图像委派无审核者）与服务端契约保持同一语义；输入资产是否同项目、kind=image 由服务端校验，mock 不模拟。
+ *         团队：一任务至多一个活动团队；聚焦单选、打断仅 idle/running→error、归档仅 done/error、合并仅未合并的 done、
+ *         结束团队把仍在跑的 Worker 记为被打断；团队模式发起只建 Lead 委派与空团队，Worker 由 Lead 经 MCP 派发，mock 不模拟
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -14,6 +16,7 @@ import { mapWorkItem } from "../workspace-mapper";
 import { createMockTaskFixtures, MOCK_TASK_PROJECT_PATH, type MockTaskFixtures } from "./mock-tasks";
 import type { TaskRepository } from "./task-repository";
 import type { CouncilWorkItem } from "../../types/council";
+import type { StartTaskTeamInput, StartTaskTeamResult, TaskTeam, TaskWorker } from "../../types/team";
 import type {
   StartTaskDelegationInput,
   WorkItemDelegation,
@@ -33,6 +36,8 @@ const RESUMABLE_DELEGATION_STATUSES: readonly WorkItemDelegation["status"][] = [
 ];
 /** 契约：图像委派的输入资产最多 8 个。 */
 const MAX_INPUT_ASSETS = 8;
+/** 与界面一致的并行上限范围；服务端以 COUNCIL_WORKER_MAX_PARALLEL 为准。 */
+const MAX_PARALLEL_RANGE = { min: 1, max: 6 } as const;
 const MOCK_TOPIC_SUMMARY = { id: "topic-idempotency", title: "支付回调幂等方案", status: "open" } as const;
 
 export interface MockTaskRepositoryOptions {
@@ -45,12 +50,14 @@ export class MockTaskRepository implements TaskRepository {
   readonly #projectPath: string;
   readonly #tasks: ApiWorkItem[];
   readonly #delegations: WorkItemDelegation[];
+  readonly #teams: TaskTeam[];
 
   constructor(options: MockTaskRepositoryOptions = {}) {
     const fixtures = structuredClone(options.fixtures ?? createMockTaskFixtures());
     this.#projectPath = options.projectPath ?? MOCK_TASK_PROJECT_PATH;
     this.#tasks = fixtures.tasks;
     this.#delegations = fixtures.delegations;
+    this.#teams = fixtures.teams ?? [];
   }
 
   async listTasks(filter: TaskListFilter = {}): Promise<CouncilWorkItem[]> {
@@ -227,6 +234,149 @@ export class MockTaskRepository implements TaskRepository {
       ...(previous.branchName ? { branchName: previous.branchName } : {}),
       ...(previous.headCommit ? { baseCommit: previous.headCommit } : {}),
     });
+  }
+
+  // ---------- P4 团队 ----------
+
+  async getTaskTeam(taskId: string): Promise<TaskTeam | null> {
+    this.#requireTask(taskId);
+    const team = this.#latestTeam(taskId);
+    return team ? structuredClone(team) : null;
+  }
+
+  async startTaskTeam(taskId: string, input: StartTaskTeamInput): Promise<StartTaskTeamResult> {
+    const maxParallel = input.maxParallel ?? 3;
+    if (!Number.isInteger(maxParallel)
+      || maxParallel < MAX_PARALLEL_RANGE.min || maxParallel > MAX_PARALLEL_RANGE.max) {
+      throw new Error("并行上限必须是 1–6 的整数。");
+    }
+    const item = this.#requireTask(taskId);
+    if (item.kind !== "code") {
+      throw new Error("只有代码任务可以使用团队模式。");
+    }
+    if (this.#teams.some((team) => team.workItemId === taskId && team.status === "active")) {
+      throw new Error("该任务已有活动团队。");
+    }
+    // Lead 委派与普通代码委派同一套校验（版本、未完成、无进行中委派、审核者）。
+    const leadDelegation = await this.startTaskDelegation(taskId, {
+      expectedVersion: input.expectedVersion,
+      executorAgentId: input.executorAgentId,
+      ...(input.supervisorAgentId ? { supervisorAgentId: input.supervisorAgentId } : {}),
+      requestedPermission: input.requestedPermission,
+      ...(input.completionPolicy ? { completionPolicy: input.completionPolicy } : {}),
+      ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+      kind: "code",
+      inputAssetIds: [],
+    });
+    const team: TaskTeam = {
+      id: `team_${crypto.randomUUID()}`,
+      workItemId: item.id,
+      leadDelegationId: leadDelegation.id,
+      status: "active",
+      maxParallel,
+      createdAt: new Date().toISOString(),
+      workers: [],
+    };
+    this.#teams.unshift(team);
+    return { team: structuredClone(team), leadDelegation };
+  }
+
+  async focusWorker(taskId: string, workerId: string, focused: boolean): Promise<TaskWorker> {
+    const { team, worker } = this.#requireWorker(taskId, workerId);
+    const now = new Date().toISOString();
+    if (focused) {
+      // 单选：聚焦一个即取消其余。
+      for (const other of team.workers) {
+        if (other.id !== worker.id && other.focused) {
+          other.focused = false;
+          other.updatedAt = now;
+        }
+      }
+    }
+    worker.focused = focused;
+    worker.updatedAt = now;
+    return structuredClone(worker);
+  }
+
+  async interruptWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    const { team, worker } = this.#requireWorker(taskId, workerId);
+    if (team.status !== "active") {
+      throw new Error("团队已结束。");
+    }
+    if (worker.status !== "idle" && worker.status !== "running") {
+      throw new Error("只有待命或运行中的 Worker 可以打断。");
+    }
+    this.#markInterrupted(worker, new Date().toISOString());
+    return structuredClone(worker);
+  }
+
+  async archiveWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    const { worker } = this.#requireWorker(taskId, workerId);
+    if (worker.status !== "done" && worker.status !== "error") {
+      throw new Error("只有已完成或出错的 Worker 可以归档。");
+    }
+    worker.status = "archived";
+    worker.focused = false;
+    worker.updatedAt = new Date().toISOString();
+    return structuredClone(worker);
+  }
+
+  async mergeWorker(taskId: string, workerId: string): Promise<TaskWorker> {
+    const { team, worker } = this.#requireWorker(taskId, workerId);
+    if (team.status !== "active") {
+      throw new Error("团队已结束。");
+    }
+    if (worker.status !== "done" || worker.mergedCommit) {
+      throw new Error("只有已完成且未合并的 Worker 可以合并。");
+    }
+    worker.mergedCommit = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+    worker.updatedAt = new Date().toISOString();
+    return structuredClone(worker);
+  }
+
+  async endTeam(taskId: string): Promise<TaskTeam> {
+    this.#requireTask(taskId);
+    const team = this.#teams.find((entry) => entry.workItemId === taskId && entry.status === "active");
+    if (!team) {
+      throw new Error("该任务没有活动团队。");
+    }
+    const now = new Date().toISOString();
+    for (const worker of team.workers) {
+      if (worker.status === "idle" || worker.status === "running") this.#markInterrupted(worker, now);
+    }
+    team.status = "ended";
+    team.endedAt = now;
+    return structuredClone(team);
+  }
+
+  /** 活动团队优先，否则取最近创建的已结束团队。 */
+  #latestTeam(taskId: string): TaskTeam | undefined {
+    const teams = this.#teams.filter((team) => team.workItemId === taskId);
+    return teams.find((team) => team.status === "active")
+      ?? [...teams].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  }
+
+  #requireWorker(taskId: string, workerId: string): { team: TaskTeam; worker: TaskWorker } {
+    this.#requireTask(taskId);
+    const team = this.#latestTeam(taskId);
+    const worker = team?.workers.find((entry) => entry.id === workerId);
+    if (!team || !worker) {
+      throw new Error("Worker 不存在");
+    }
+    return { team, worker };
+  }
+
+  #markInterrupted(worker: TaskWorker, now: string): void {
+    worker.status = "error";
+    worker.updatedAt = now;
+    worker.delegation = {
+      ...worker.delegation,
+      status: "cancelled",
+      failureCode: "interrupted",
+      execution: undefined,
+      headCommit: worker.delegation?.headCommit,
+      error: "已在团队面板中打断该 Worker。",
+    };
   }
 
   #pushDelegation(

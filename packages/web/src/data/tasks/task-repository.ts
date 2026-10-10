@@ -1,6 +1,7 @@
 /**
  * @input  依赖：任务领域类型（types/tasks.ts）与委派类型（types/orchestration.ts）
- * @output 导出：TaskRepository 任务列表/详情/创建/更新与任务委派发起/取消/接续契约
+ * @output 导出：TaskRepository 任务列表/详情/创建/更新、任务委派发起/取消/接续，以及 P4 团队（读取、团队模式发起、
+ *         Worker 聚焦/打断/归档/合并、结束团队）契约
  * @pos    任务领域的前端数据边界；http/desktop/mock 三套实现由 create-task-repository.ts 选择
  *
  * 刷新约定：本接口刻意不提供 subscribe。服务端 SSE 只有 council.changed {revision}，
@@ -17,6 +18,7 @@ import type {
   WorkItemDelegation,
 } from "../../types/orchestration";
 import type { CouncilWorkItem } from "../../types/council";
+import type { StartTaskTeamInput, StartTaskTeamResult, TaskTeam, TaskWorker } from "../../types/team";
 import type {
   CreateTaskInput,
   TaskDetail,
@@ -42,4 +44,19 @@ export interface TaskRepository {
     expectedVersion: number,
     requestedPermission?: WorkItemDelegation["permissionProfile"],
   ): Promise<WorkItemDelegation>;
+
+  // ---------- P4 团队（/api/v1/tasks/:taskId/team） ----------
+  /** 任务当前团队（含已结束的最近一个）；没有团队时返回 null（服务端 404），不是错误。 */
+  getTaskTeam(taskId: string): Promise<TaskTeam | null>;
+  /** 以团队模式发起 Lead 委派；已有活动团队或进行中委派时 reject（服务端 409）。 */
+  startTaskTeam(taskId: string, input: StartTaskTeamInput): Promise<StartTaskTeamResult>;
+  /** 聚焦是团队内单选：focused=true 时服务端负责取消其他 Worker 的聚焦。 */
+  focusWorker(taskId: string, workerId: string, focused: boolean): Promise<TaskWorker>;
+  /** 只对 idle/running 的 Worker 有效；打断后 Worker 进入 error，不影响其他 Worker。 */
+  interruptWorker(taskId: string, workerId: string): Promise<TaskWorker>;
+  /** 只对 done/error 的 Worker 有效。 */
+  archiveWorker(taskId: string, workerId: string): Promise<TaskWorker>;
+  /** 受控合并 Worker 分支到 Lead 分支；Web 暂不提供入口（由 Lead 经 MCP 调用），仓储保留以与契约对齐。 */
+  mergeWorker(taskId: string, workerId: string): Promise<TaskWorker>;
+  endTeam(taskId: string): Promise<TaskTeam>;
 }
