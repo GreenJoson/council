@@ -115,7 +115,7 @@ The desktop service and a standalone development API must not both own Model Rou
 
 ### Connect existing agent clients through MCP
 
-Build the MCP server, point each client at the same data library, and bind a distinct caller identity (`codex` or `claude`). See [MCP setup / MCP 接入](docs/mcp-setup.md) for configuration examples. The optional [Council skill](skills/council/SKILL.md) supplies the discussion protocol; it is not required for the desktop UI.
+Build the MCP server, then open Settings → Client access and click Write for Claude Code and/or Codex: Council registers itself against the same data library with a distinct caller identity (`claude` or `codex`), installs the Council skill, backs up the original files, and can restore them. See [MCP setup / MCP 接入](docs/mcp-setup.md) for the file locations, drift handling and the manual fallback. The optional [Council skill](skills/council/SKILL.md) supplies the discussion protocol; it is not required for the desktop UI.
 
 Example prompts:
 

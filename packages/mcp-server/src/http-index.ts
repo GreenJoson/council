@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * @input  依赖：COUNCIL_HTTP_* 配置、内部只读 Git MCP 标记、Node schema 迁移器与本地客户端
- * @output 导出：先取得单实例锁和端口，再迁移、驱动任务和 REST/SSE；另支持只读 stdio MCP
+ * @input  依赖：COUNCIL_HTTP_* 配置、内部只读 Git MCP 标记、council stdio MCP 标记（客户端接入注册）、Node schema 迁移器与本地客户端
+ * @output 导出：先取得单实例锁和端口，再迁移、驱动任务和 REST/SSE；另支持只读 Git stdio MCP 与 council stdio MCP
  * @pos    独立后台 Worker 与 delegated Git 工具共用入口；桌面只连接控制面
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -21,6 +21,7 @@ import {
   READ_ONLY_GIT_MCP_FLAG,
   runReadOnlyGitMcp,
 } from "./read-only-git-mcp.js";
+import { COUNCIL_STDIO_MCP_FLAG, runStdioMcp } from "./stdio-mcp.js";
 
 async function main(): Promise<void> {
   const config = loadHttpConfig();
@@ -95,9 +96,12 @@ async function main(): Promise<void> {
   });
 }
 
+// 桌面 sidecar 是单文件程序：同一可执行按标记分派为只读 Git MCP、council stdio MCP 或 HTTP 服务。
 const entry = process.argv.includes(READ_ONLY_GIT_MCP_FLAG)
   ? runReadOnlyGitMcp()
-  : main();
+  : process.argv.includes(COUNCIL_STDIO_MCP_FLAG)
+    ? runStdioMcp()
+    : main();
 
 void entry.catch((error: unknown) => {
   logger.error("http-server", "Council HTTP 启动失败", error);

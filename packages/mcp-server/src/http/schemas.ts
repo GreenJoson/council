@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库、P3 流水线与 P4 Worker 团队）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口、资产库、P3 流水线、P4 Worker 团队与客户端接入）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -704,3 +704,11 @@ export const waitWorkerQuerySchema = z
   .strict();
 
 export const focusWorkerBodySchema = z.object({ focused: z.boolean() }).strict();
+/** 客户端接入（P4 配置分发）：client 只允许 claude|codex；apply 可带 force 覆盖漂移。 */
+export const clientConfigParamsSchema = z
+  .object({ client: z.enum(["claude", "codex"]) })
+  .strict();
+
+export const applyClientConfigBodySchema = z
+  .object({ force: z.boolean().optional() })
+  .strict();

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：已安装的 Node.js、Rust host triple、esbuild、postject 与 MCP 服务源码
- * @output 生成：供 Tauri externalBin 打包的 Council Agent Service 单文件可执行程序（内嵌表格解析 Worker 及许可证）
+ * @output 生成：供 Tauri externalBin 打包的 Council Agent Service 单文件可执行程序（内嵌表格解析 Worker、客户端接入分发用的 skills/council 文件及许可证）
  * @pos    桌面构建链中把 Node 编排服务封装为免安装 sidecar 的唯一入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -11,7 +11,9 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -37,6 +39,11 @@ const BUNDLE_LEGAL_FILE = `${BUNDLE_FILE}.LEGAL.txt`;
 const SEA_CONFIG_FILE = join(BUILD_DIR, "sea-config.json");
 const SEA_BLOB_FILE = join(BUILD_DIR, "agent-service.blob");
 const BUILD_CONFIG_FILE = join(DESKTOP_DIR, "sidecar-build.json");
+const COUNCIL_SKILL_DIR = join(ROOT_DIR, "skills", "council");
+const COUNCIL_SKILL_MANIFEST_FILE = join(BUILD_DIR, "council-skill-manifest.json");
+// 与 mcp-server/src/client-config/client-config-sources.ts 的 SEA_SKILL_* 键一致
+const SEA_SKILL_MANIFEST_KEY = "council-skill/manifest.json";
+const SEA_SKILL_FILE_PREFIX = "council-skill/files/";
 const SEA_SENTINEL = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
 
 const desktopRequire = createRequire(join(DESKTOP_DIR, "package.json"));
@@ -145,6 +152,32 @@ async function prepareOfficialNode() {
   return { nodeBinary, nodeLicense };
 }
 
+/** 客户端接入在 sidecar 内没有仓库目录可读：把 skills/council 逐文件作为 SEA 资源内嵌，并附相对路径清单。 */
+function councilSkillAssets() {
+  const names = [];
+  const walk = (current, prefix) => {
+    for (const name of readdirSync(current).sort()) {
+      const absolute = join(current, name);
+      const relative = prefix ? `${prefix}/${name}` : name;
+      const stat = lstatSync(absolute);
+      if (stat.isDirectory()) {
+        walk(absolute, relative);
+      } else if (stat.isFile()) {
+        names.push(relative);
+      }
+    }
+  };
+  walk(COUNCIL_SKILL_DIR, "");
+  if (!names.includes("SKILL.md")) {
+    throw new Error("skills/council/SKILL.md 不存在，无法内嵌客户端接入 Skill。");
+  }
+  writeFileSync(COUNCIL_SKILL_MANIFEST_FILE, `${JSON.stringify(names)}\n`, "utf8");
+  return Object.fromEntries([
+    [SEA_SKILL_MANIFEST_KEY, COUNCIL_SKILL_MANIFEST_FILE],
+    ...names.map((name) => [`${SEA_SKILL_FILE_PREFIX}${name}`, join(COUNCIL_SKILL_DIR, ...name.split("/"))]),
+  ]);
+}
+
 async function main() {
   const targetTriple = output("rustc", ["--print", "host-tuple"]);
   validateBuildHost(targetTriple);
@@ -186,7 +219,7 @@ async function main() {
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: false,
-      assets: { "spreadsheet-worker.cjs": SPREADSHEET_WORKER_FILE },
+      assets: { "spreadsheet-worker.cjs": SPREADSHEET_WORKER_FILE, ...councilSkillAssets() },
     }, null, 2)}\n`,
     "utf8",
   );

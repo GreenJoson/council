@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council Web、Playwright Chromium 和可选环境变量
-@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、Agent 动态、大屏流体讨论列、
+@output 导出：桌面交互、人工零调用决策、圆桌范围布局、@Agent 单一当前调用/历史、系统 Agent 身份只读、客户端接入写入/还原徽标、Agent 动态、大屏流体讨论列、
          媒体缩略/大图浏览、卡片底部折叠、P3 流水线页（分组、选定 final、失败恢复、新建确认 brief）、
          P4 任务详情右栏「团队」（两列布局、Worker 聚焦切换、打断、归档、结束团队）、
          移动端布局（含 #/pipelines 无横向溢出）和控制台错误的浏览器验收
@@ -288,6 +288,27 @@ def verify_system_agent_identity_lock(page) -> None:
     dialog.get_by_role("button", name="关闭模型路由").click()
 
 
+def verify_client_config(page) -> None:
+    """mock 模式只走内存三态：设置 → 客户端接入 → 写入 → 已写入 → 还原 → 未写入。"""
+    page.get_by_role("button", name="打开模型与 Provider 设置").click()
+    dialog = page.get_by_role("dialog", name="Provider 与 Agent")
+    dialog.wait_for()
+    dialog.locator(".model-router-list-item", has_text="客户端接入").click()
+    card = dialog.locator(".client-config-card[data-client='claude']")
+    badge = card.locator(".client-config-badge")
+    card.wait_for()
+    assert badge.inner_text() == "未写入", badge.inner_text()
+    assert "~/.claude.json" in card.inner_text()
+    card.get_by_role("button", name="写入", exact=True).click()
+    card.locator(".client-config-badge[data-state='applied']").wait_for()
+    assert badge.inner_text() == "已写入", badge.inner_text()
+    card.get_by_role("button", name="还原", exact=True).click()
+    card.locator(".client-config-badge[data-state='not_applied']").wait_for()
+    assert badge.inner_text() == "未写入", badge.inner_text()
+    assert card.get_by_role("button", name="还原", exact=True).count() == 0
+    dialog.get_by_role("button", name="关闭模型路由").click()
+
+
 def verify_media_preview_and_lightbox(page) -> None:
     page.locator(".topic-row", has_text="对账任务分片策略").click()
     page.get_by_role("heading", name="对账任务分片策略", exact=True).wait_for()
@@ -486,6 +507,7 @@ def verify_desktop(browser) -> list[str]:
     page.get_by_role("heading", name="支付回调幂等方案", exact=True).wait_for()
     assert page.get_by_role("button", name="展开议题", exact=True).count() == 0
     verify_system_agent_identity_lock(page)
+    verify_client_config(page)
     verify_fluid_discussion_width(page)
     verify_message_jump_rail(page)
     verify_card_bottom_collapse_control(page)

@@ -13,6 +13,7 @@
 | `cycle-preferences.ts` | 偏好 | 圆桌轮次上限的 localStorage 读写与订阅（`useCycleRoundBudget`），默认 3、夹取 1–10 |
 | `api-types.ts` | 协议 | 严格解析 canonical API 未知 JSON，并拒绝索引 Actor ID 与冻结快照不一致 |
 | `orchestration-api.ts` | 协议 | 严格解析 Capabilities（能力词表含 `image_generate`/`image_input`）、Run、任务委派、圆桌视图、公开 RuntimeBinding、审批结果、分页、`agent.output` 草稿事件与项目活动计数（`activeAgents`/`attention`） |
+| `client-config-api.ts` | 协议 | 严格解析客户端接入（`/api/v1/settings/client-config`）状态：client、`~` 折叠路径、四态 state 与可选 appliedAt/stashPath/detail/notice |
 | `model-router-api.ts` | 协议 | 严格解析不含密钥的 Provider/Agent/BrandAsset/catalog 快照与连接测试响应 |
 | `api-constants.ts` | 协议 | 定义 HTTP v1 分页和浏览器定时器配置边界 |
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |

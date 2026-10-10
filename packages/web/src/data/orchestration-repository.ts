@@ -1,6 +1,6 @@
 /**
  * @input  依赖：自动轮次领域类型
- * @output 导出：OrchestrationRepository 运行、AI 实施计划、可选接续权限与持久会话数据访问契约
+ * @output 导出：OrchestrationRepository 运行、AI 实施计划、可选接续权限、持久会话与客户端接入数据访问契约
  * @pos    将运行状态与 TopicDetail 解耦的前端持久化边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,7 @@
 
 import type { WorkAttention } from "./work-attention";
 import type { RuntimeAuditPage, RuntimeAuditQuery } from "./runtime-audit";
+import type { ClientConfigClient, ClientConfigStatus } from "./client-config-api";
 
 import type {
   AnswerCycleQuestionInput,
@@ -69,6 +70,10 @@ export interface OrchestrationRepository {
   removeAgent(agentId: string): Promise<AgentDefinition>;
   listProviderModels(providerId: string): Promise<ProviderModels>;
   testAgent(agentId: string): Promise<AgentConnectionTest>;
+  /** 客户端接入（P4 配置分发）：Claude/Codex 的 MCP 注册与 Skill 写入状态。 */
+  listClientConfigs(): Promise<ClientConfigStatus[]>;
+  applyClientConfig(client: ClientConfigClient, options?: { force?: boolean }): Promise<ClientConfigStatus>;
+  restoreClientConfig(client: ClientConfigClient): Promise<ClientConfigStatus>;
   listWorkItemDelegations(topicId: string): Promise<WorkItemDelegation[]>;
   startWorkItemDelegation(input: StartWorkItemDelegationInput): Promise<WorkItemDelegation>;
   startWorkItemDelegationBatch(input: StartWorkItemDelegationBatchInput): Promise<WorkItemDelegation[]>;

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：theme.css 语义变量、通用按钮与 Dialog 基础样式
- * @output 导出：Provider/Agent 模型路由台、离线品牌图形与移动视觉
- * @pos    ModelRouterDialog/ModelRouterEditor 的独立样式模块
+ * @output 导出：Provider/Agent 模型路由台、客户端接入卡片、离线品牌图形与移动视觉
+ * @pos    ModelRouterDialog/ModelRouterEditor/ClientConfigPanel 的独立样式模块
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -977,3 +977,143 @@
 .model-diagnostics [data-status="failed"] > strong { color: var(--color-danger); }
 
 .model-diagnostic-note { margin: 0 24px 16px; font-size: 12px; color: var(--color-text-muted); }
+
+/* ============================================================
+ * 客户端接入：Claude / Codex 两张卡（状态徽标 + 目标路径 + 写入/还原）
+ * ============================================================ */
+
+.client-config-panel {
+  display: grid;
+  max-width: 620px;
+  margin: 0 auto;
+  gap: 16px;
+}
+
+.client-config-intro {
+  display: grid;
+  gap: 6px;
+}
+
+.client-config-intro strong {
+  font-size: 15px;
+}
+
+.client-config-intro p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.client-config-cards {
+  display: grid;
+  gap: 14px;
+}
+
+.client-config-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-canvas);
+  box-shadow: var(--shadow-small);
+}
+
+.client-config-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-config-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.client-config-badge.is-applied {
+  border-color: color-mix(in srgb, var(--color-positive) 40%, var(--color-border));
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+}
+
+.client-config-badge.is-drifted {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.client-config-badge.is-missing {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.client-config-paths {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.client-config-paths > div {
+  display: grid;
+  gap: 3px;
+}
+
+.client-config-paths dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.client-config-paths dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.client-config-meta,
+.client-config-detail,
+.client-config-notice,
+.client-config-error {
+  margin: 0;
+  font-size: 12px;
+}
+
+.client-config-meta {
+  color: var(--color-text-muted);
+}
+
+.client-config-detail,
+.client-config-notice {
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--color-warning-soft);
+  color: var(--color-text-secondary);
+}
+
+.client-config-error {
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.client-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-config-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
