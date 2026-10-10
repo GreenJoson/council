@@ -2,7 +2,7 @@
  * @input  依赖：隔离 SQLite、真实 HTTP 服务与运行记录存储
  * @output 验证：审计不可覆盖/分页/脱敏、项目隔离、待办消退和迁移回滚
  * @pos    交付状态与可追溯证据的跨层回归
- * 包含 v16 到 v17 失败回滚与历史逐字段保留；旧版本起点先经 v18→v17 形状退回再伪造
+ * 包含 v16 到 v17 失败回滚与历史逐字段保留；旧版本起点先经 v19→v17 形状退回（先删资产表）再伪造
  */
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -20,6 +20,8 @@ import { migrateCouncilSchema } from "../src/schema-migrator.js";
  */
 function downgradeTaskTablesToV17(raw: DatabaseSync): void {
   raw.exec(`
+    DROP TABLE asset_links;
+    DROP TABLE assets;
     DROP INDEX idx_work_items_project_status;
     DROP INDEX idx_work_items_parent_title;
     DROP INDEX idx_work_items_parent_order;
@@ -73,7 +75,7 @@ function downgradeTaskTablesToV17(raw: DatabaseSync): void {
     CREATE TRIGGER trg_work_item_delegations_revision_delete AFTER DELETE ON work_item_delegations BEGIN SELECT 1; END;
     CREATE TRIGGER trg_runtime_audit_revision_insert AFTER INSERT ON runtime_audit_events BEGIN SELECT 1; END;
     CREATE TRIGGER trg_runtime_audit_immutable BEFORE UPDATE ON runtime_audit_events BEGIN SELECT 1; END;
-    DELETE FROM schema_migrations WHERE version = 18;
+    DELETE FROM schema_migrations WHERE version >= 18;
     PRAGMA user_version = 17;
   `);
 }

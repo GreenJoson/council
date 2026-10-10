@@ -1,6 +1,6 @@
 /**
  * @input  依赖：MCP SDK CallToolResult、Zod、共享常量、委派状态枚举、CouncilValidationError、logger 与领域类型
- * @output 导出：council_* 工具共用的 Zod 字段/输出 schema（实施项含 v18 任务字段、委派 topicId 可选）、success/publicError/executeTool 包装与文本格式化函数（含任务与委派）
+ * @output 导出：council_* 工具共用的 Zod 字段/输出 schema（实施项含 v18 任务字段、委派 topicId 可选）、success/publicError（资产与链接目标的领域错误文案可透传）/executeTool 包装与文本格式化函数（含任务与委派）
  * @pos    MCP 工具模块的共享件，不注册任何工具
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -188,6 +188,8 @@ export function publicError(error: unknown): string {
     "实施项",
     "任务",
     "直接任务",
+    "资产",
+    "链接目标",
     "当前议题没有可绑定的 Accepted 决策",
   ];
   return safePrefixes.some((prefix) => error.message.startsWith(prefix))

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：constants.ts 的协议枚举
- * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算的配置类型
+ * @output 导出：领域模型（含 v18 任务一等化的实施项 kind/source/projectPath、v19 公开资产 DTO）与含迁移策略、文件预览、独立 CLI 事件流与委派 Git 检查预算、v19 资产库的配置类型
  * @pos    MCP 服务的共享类型边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -8,6 +8,9 @@
  */
 
 import type {
+  ASSET_KINDS,
+  ASSET_LINK_ROLES,
+  ASSET_LINK_TARGET_KINDS,
   DECISION_STATUSES,
   MESSAGE_KINDS,
   TOPIC_STATUSES,
@@ -29,6 +32,10 @@ export type WorkItemSeverity = (typeof WORK_ITEM_SEVERITIES)[number];
 export type WorkItemKind = (typeof WORK_ITEM_KINDS)[number];
 /** v18 起实施项来源：议题拆解、直接创建或流水线生成；只有 topic 来源挂议题。 */
 export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
+/** v19 资产类型、链接目标与角色；与 assets / asset_links 的 CHECK 一致。 */
+export type AssetKind = (typeof ASSET_KINDS)[number];
+export type AssetLinkTargetKind = (typeof ASSET_LINK_TARGET_KINDS)[number];
+export type AssetLinkRole = (typeof ASSET_LINK_ROLES)[number];
 
 export interface CouncilConfig {
   dataDir: string;
@@ -82,6 +89,20 @@ export interface CouncilConfig {
   maxOutputChars: number;
   cliMaxStreamChars: number;
   defaultMessageLimit: number;
+  /** loadConfig 总会提供；手工构造配置的旧调用方缺省时按 <data-dir>/assets 与默认预算回落。 */
+  assets?: AssetConfig;
+}
+
+/** v19 资产库配置：由 config.ts 的 loadAssetConfig 集中加载校验，assets/ 领域只读这里。 */
+export interface AssetConfig {
+  /** 资产根目录（绝对路径）；COUNCIL_ASSET_DIR 留空时为 <data-dir>/assets。 */
+  rootDir: string;
+  maxBytes: number;
+  maxTotalBytes: number;
+  mimeAllowlist: readonly string[];
+  thumbnailMaxEdge: number;
+  thumbnailCommand: string;
+  thumbnailTimeoutMs: number;
 }
 
 export interface McpCouncilConfig extends CouncilConfig {
@@ -92,6 +113,8 @@ export interface McpCouncilConfig extends CouncilConfig {
 }
 
 export interface CouncilHttpConfig {
+  /** loadHttpConfig 总会提供；测试夹具手工构造时缺省，由 app 按数据库目录回落。 */
+  assets?: AssetConfig;
   filePreview?: import("./project-file-preview-config.js").ProjectFilePreviewConfig;
   databasePath: string;
   sqliteBusyTimeoutMs: number;
@@ -248,4 +271,38 @@ export interface ClaudeResponse {
 export interface CodexResponse {
   content: string;
   sessionId?: string;
+}
+
+export interface AssetLink {
+  targetKind: AssetLinkTargetKind;
+  targetId: string;
+  role: AssetLinkRole;
+  createdAt: string;
+}
+
+/**
+ * 公开资产 DTO（REST / MCP / Tauri 共用形状）。刻意不含 project_path 与 storage_rel_path：
+ * 客户端只经 /assets/:id/content 取字节，不应知道文件落在哪里。
+ */
+export interface Asset {
+  id: string;
+  kind: AssetKind;
+  mime: string;
+  byteSize: number;
+  sha256: string;
+  width?: number;
+  height?: number;
+  prompt?: string;
+  origin: { delegationId?: string; actorId?: string };
+  createdAt: string;
+  deletedAt?: string;
+  links: AssetLink[];
+}
+
+export interface PaginatedAssets {
+  items: Asset[];
+  total: number;
+  count: number;
+  offset: number;
+  hasMore: boolean;
 }
