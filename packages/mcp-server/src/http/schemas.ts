@@ -1,6 +1,6 @@
 /**
  * @input  依赖：canonical 协议枚举与输入上限
- * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项与任务入口）的 Zod schema
+ * @output 导出：REST path、query、body（含议题更正、Agent 权限/职责、接续权限、决策包接受、AI 实施计划、实施项、任务入口与资产库）的 Zod schema
  * @pos    HTTP 边界全部外部输入的集中校验层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -17,7 +17,12 @@ import {
 } from "council-orchestrator";
 import { z } from "zod/v4";
 import {
+  ASSET_KINDS,
+  ASSET_LINK_ROLES,
+  ASSET_LINK_TARGET_KINDS,
   DECISION_STATUSES,
+  DEFAULT_ASSET_PAGE_LIMIT,
+  MAX_ASSET_PAGE_LIMIT,
   MAX_ALTERNATIVE_COUNT,
   MAX_CONSTRAINT_CHARS,
   MAX_CONSTRAINT_COUNT,
@@ -375,6 +380,69 @@ export const startTaskDelegationBodySchema = startWorkItemDelegationBodySchema.e
   kind: z.enum(WORK_ITEM_KINDS).default("code"),
   inputAssetIds: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_WORK_ITEM_BATCH).default([]),
 }).strict();
+
+// ---- 资产库（/api/v1/assets）：入库规则在 assets/，这里只校验形状 ----
+
+export const assetIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS, "assetId 过长")
+  .regex(/^asset_[A-Za-z0-9-]+$/, "assetId 格式无效");
+
+const assetTargetIdSchema = z
+  .string()
+  .min(1)
+  .max(MAX_ID_CHARS)
+  .regex(/^[A-Za-z0-9_-]+$/, "targetId 格式无效");
+
+export const assetParamsSchema = z.object({ assetId: assetIdSchema }).strict();
+
+export const assetLinkParamsSchema = z
+  .object({
+    assetId: assetIdSchema,
+    targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
+    targetId: assetTargetIdSchema,
+    role: z.enum(ASSET_LINK_ROLES),
+  })
+  .strict();
+
+/** target 形如 work_item:<id>；拆成结构化字段后再交给仓储。 */
+export const listAssetsQuerySchema = z
+  .object({
+    project: taskProjectPathSchema,
+    kind: z.enum(ASSET_KINDS).optional(),
+    target: z
+      .string()
+      .max(MAX_ID_CHARS + 16)
+      .transform((value, context) => {
+        const separator = value.indexOf(":");
+        const kind = ASSET_LINK_TARGET_KINDS.find((item) => item === value.slice(0, separator));
+        const id = value.slice(separator + 1);
+        if (separator <= 0 || !kind || !/^[A-Za-z0-9_-]+$/.test(id) || id.length > MAX_ID_CHARS) {
+          context.addIssue({ code: "custom", message: "target 必须形如 work_item|message|decision:<id>" });
+          return z.NEVER;
+        }
+        return { kind, id };
+      })
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_ASSET_PAGE_LIMIT).default(DEFAULT_ASSET_PAGE_LIMIT),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+
+export const importAssetBodySchema = z
+  .object({
+    projectPath: taskProjectPathSchema,
+    relativePath: nonBlankString(MAX_PATH_CHARS),
+  })
+  .strict();
+
+export const addAssetLinkBodySchema = z
+  .object({
+    targetKind: z.enum(ASSET_LINK_TARGET_KINDS),
+    targetId: assetTargetIdSchema,
+    role: z.enum(ASSET_LINK_ROLES),
+  })
+  .strict();
 
 export const listRunsQuerySchema = z
   .object({

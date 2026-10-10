@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Tauri、SettingsStore、sidecar ready/数据库身份与动态 Actor Rust Store
- * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/议题关闭/决策包接受/实施项、只读任务查询（list_tasks/get_task）、设置和编排服务命令
+ * @output 导出：迁移 ready + 身份门后的 Actor alias 内容/议题关闭/决策包接受/实施项、只读任务查询（list_tasks/get_task）、只读资产查询（list_assets 与 REST 同参同形分页 / get_asset）、设置和编排服务命令
  * @pos    React 进入 Rust 桌面能力的 IPC 边界，禁止 Rust 抢先建表或连接错误日志库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,10 +10,11 @@ mod settings;
 mod validation;
 
 use council_core::{
-    AcceptDecisionsInput, ClaimWorkItemInput, CloseTopicInput, CouncilError, CouncilRevisions,
-    CouncilStore, CreateTopicInput, CreateWorkItemEntry, CreateWorkItemsInput, Decision,
-    DecisionStatus, MessageKind, PaginatedTopics, PostMessageInput, RecordDecisionInput, Topic,
-    TopicDetail, UpdateWorkItemInput, WorkItem, WorkItemKind, WorkItemStatus,
+    AcceptDecisionsInput, Asset, AssetKind, AssetTargetFilter, ClaimWorkItemInput, CloseTopicInput,
+    CouncilError, CouncilRevisions, CouncilStore, CreateTopicInput, CreateWorkItemEntry,
+    CreateWorkItemsInput, Decision, DecisionStatus, MessageKind, PaginatedAssets, PaginatedTopics,
+    PostMessageInput, RecordDecisionInput, Topic, TopicDetail, UpdateWorkItemInput, WorkItem,
+    WorkItemKind, WorkItemStatus,
 };
 use serde::{Deserialize, Serialize};
 use settings::{DesktopSettings, SettingsStore};
@@ -341,6 +342,44 @@ fn list_tasks(
 fn get_task(id: String, state: tauri::State<'_, AppState>) -> Result<Option<WorkItem>, String> {
     validation::identifier(&id, "work_item_", "id")?;
     with_store(&state, |store| store.get_task(&id))
+}
+
+/// 按项目分页列资产元数据（不含已删除），参数与返回同 REST GET /api/v1/assets。
+/// 字节、缩略图与写入只走 Node HTTP /api/v1/assets。
+#[tauri::command]
+fn list_assets(
+    project_path: String,
+    kind: Option<AssetKind>,
+    target: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    state: tauri::State<'_, AppState>,
+) -> Result<PaginatedAssets, String> {
+    validation::directory(std::path::Path::new(&project_path), "项目目录")?;
+    let limit = validation::asset_page(limit)?;
+    let target = match target.as_deref() {
+        Some(value) => Some(
+            AssetTargetFilter::parse(value)
+                .ok_or_else(|| "target 必须形如 work_item|message|decision:<id>".to_string())?,
+        ),
+        None => None,
+    };
+    with_store(&state, |store| {
+        store.list_assets(
+            &project_path,
+            kind,
+            target.as_ref(),
+            limit,
+            offset.unwrap_or(0),
+        )
+    })
+}
+
+/// 按 id 取资产元数据与链接；不存在或已删除返回 null。
+#[tauri::command]
+fn get_asset(id: String, state: tauri::State<'_, AppState>) -> Result<Option<Asset>, String> {
+    validation::identifier(&id, "asset_", "id")?;
+    with_store(&state, |store| store.get_asset(&id))
 }
 
 #[tauri::command]
@@ -794,6 +833,8 @@ pub fn run() {
             get_topic,
             list_tasks,
             get_task,
+            list_assets,
+            get_asset,
             create_topic,
             close_topic,
             post_message,

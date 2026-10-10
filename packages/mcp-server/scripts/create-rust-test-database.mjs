@@ -96,6 +96,8 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TABLE IF EXISTS asset_links;
+      DROP TABLE IF EXISTS assets;
       DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
       DROP TABLE IF EXISTS runtime_audit_events;
       DROP TABLE work_item_delegations;
@@ -171,6 +173,8 @@ if (mode === "fresh") {
   const database = new DatabaseSync(databasePath);
   try {
     database.exec(`
+      DROP TABLE IF EXISTS asset_links;
+      DROP TABLE IF EXISTS assets;
       DROP TRIGGER IF EXISTS trg_work_items_delegation_acceptance;
       DROP TABLE IF EXISTS runtime_audit_events;
       DROP TABLE work_item_delegations;

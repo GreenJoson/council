@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Actor 快照解析与领域类型
- * @output 导出：topics/messages/decisions/work_items（含 v18 任务列）/actor_identities 等表的行接口、
+ * @output 导出：topics/messages/decisions/work_items（含 v18 任务列）/assets/asset_links/actor_identities 等表的行接口、
  *         行 → 领域对象的映射函数、实施项叶子完成度汇总与父状态派生规则
  * @pos    database/ 各仓储共享的纯映射层，不持有连接；快照与索引身份不一致时直接抛错，不做修复
  *
@@ -9,6 +9,11 @@
 
 import { parseActorSnapshot, type ActorIdentity } from "../actor-identity.js";
 import type {
+  Asset,
+  AssetKind,
+  AssetLink,
+  AssetLinkRole,
+  AssetLinkTargetKind,
   CouncilMessage,
   Decision,
   DecisionStatus,
@@ -310,6 +315,61 @@ export function workItemFromRow(row: WorkItemRow): WorkItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+  };
+}
+
+// v19 资产：行接口只给仓储用；storage_rel_path 只出现在 AssetRow，不进公开 DTO。
+export interface AssetRow {
+  id: string;
+  project_path: string;
+  kind: AssetKind;
+  mime: string;
+  byte_size: number;
+  sha256: string;
+  storage_rel_path: string;
+  width: number | null;
+  height: number | null;
+  origin_delegation_id: string | null;
+  origin_actor_id: string | null;
+  prompt: string | null;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export interface AssetLinkRow {
+  asset_id: string;
+  target_kind: AssetLinkTargetKind;
+  target_id: string;
+  role: AssetLinkRole;
+  created_at: string;
+}
+
+export function assetLinkFromRow(row: AssetLinkRow): AssetLink {
+  return {
+    targetKind: row.target_kind,
+    targetId: row.target_id,
+    role: row.role,
+    createdAt: row.created_at,
+  };
+}
+
+export function assetFromRow(row: AssetRow, links: readonly AssetLinkRow[]): Asset {
+  return {
+    id: row.id,
+    kind: row.kind,
+    mime: row.mime,
+    byteSize: row.byte_size,
+    sha256: row.sha256,
+    ...(row.width === null ? {} : { width: row.width }),
+    ...(row.height === null ? {} : { height: row.height }),
+    ...(row.prompt === null ? {} : { prompt: row.prompt }),
+    origin: {
+      ...(row.origin_delegation_id ? { delegationId: row.origin_delegation_id } : {}),
+      ...(row.origin_actor_id ? { actorId: row.origin_actor_id } : {}),
+    },
+    createdAt: row.created_at,
+    ...(row.deleted_at ? { deletedAt: row.deleted_at } : {}),
+    links: links.map(assetLinkFromRow),
   };
 }
 

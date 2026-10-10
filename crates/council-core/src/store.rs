@@ -1,5 +1,5 @@
-//! @input 依赖：已由 Node 迁移器准备的 v18 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
-//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v18 schema（任务一等化：实施项/委派/审计 topic_id 可空）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）和 revision API
+//! @input 依赖：已由 Node 迁移器准备的 v19 Actor/Model Router/RuntimeBinding/Cycle/决策包/Agent 委派 SQLite、rusqlite 和领域类型
+//! @output 导出：CouncilStore Actor alias/冻结快照一致性、v19 schema（v18 任务一等化 + v19 资产库 assets/asset_links）、议题关闭、内容与实施项查询写入、按项目只读任务查询（list_tasks/get_task）、只读资产查询（list_assets/get_asset，见 store/asset_queries.rs）和 revision API
 //! @pos council.sqlite3 与 Rust 桌面调用方之间的只消费、身份失败关闭边界
 //!
 //! ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -15,6 +15,8 @@ use rusqlite::{
 use uuid::Uuid;
 
 use crate::error::{CouncilError, CouncilResult};
+
+mod asset_queries;
 use crate::types::{
     AcceptDecisionsInput, ActorSnapshot, ClaimWorkItemInput, CloseTopicInput, CouncilMessage,
     CouncilRevisions, CreateTopicInput, CreateWorkItemsInput, Decision, DecisionStatus,
@@ -23,7 +25,7 @@ use crate::types::{
     WorkItemSeverity, WorkItemSource, WorkItemStatus,
 };
 
-const SUPPORTED_SCHEMA_VERSION: i64 = 18;
+const SUPPORTED_SCHEMA_VERSION: i64 = 19;
 const REQUIRED_TABLES: &[&str] = &[
     "runtime_audit_events",
     "topics",
@@ -44,6 +46,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "discussion_cycles",
     "blocking_questions",
     "work_item_delegations",
+    "assets",
+    "asset_links",
     "schema_migrations",
 ];
 const REQUIRED_INDEXES: &[&str] = &[
@@ -75,6 +79,8 @@ const REQUIRED_INDEXES: &[&str] = &[
     "idx_work_item_delegations_topic_updated",
     "idx_work_item_delegations_work_item",
     "idx_work_item_delegations_one_active",
+    "idx_assets_project_kind",
+    "idx_asset_links_target",
 ];
 const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_runtime_audit_immutable",
@@ -108,7 +114,29 @@ const REQUIRED_TRIGGERS: &[&str] = &[
     "trg_work_item_delegations_revision_insert",
     "trg_work_item_delegations_revision_update",
     "trg_work_item_delegations_revision_delete",
+    "trg_assets_revision_insert",
+    "trg_assets_revision_update",
+    "trg_assets_revision_delete",
+    "trg_asset_links_revision_insert",
+    "trg_asset_links_revision_delete",
 ];
+const ASSET_COLUMNS: &[&str] = &[
+    "id",
+    "project_path",
+    "kind",
+    "mime",
+    "byte_size",
+    "sha256",
+    "storage_rel_path",
+    "width",
+    "height",
+    "origin_delegation_id",
+    "origin_actor_id",
+    "prompt",
+    "created_at",
+    "deleted_at",
+];
+const ASSET_LINK_COLUMNS: &[&str] = &["asset_id", "target_kind", "target_id", "role", "created_at"];
 const TOPIC_COLUMNS: &[&str] = &[
     "id",
     "title",
@@ -586,7 +614,19 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         "council_identity",
         &["singleton", "instance_id"],
     )?;
+    assert_table_columns(connection, "assets", ASSET_COLUMNS)?;
+    assert_table_columns(connection, "asset_links", ASSET_LINK_COLUMNS)?;
     assert_foreign_key(connection, "messages", "topic_id", "topics", "id")?;
+    // v19：资产是独立产物，来源委派被级联删除时只置空来源，不连带删除资产。
+    assert_foreign_key_action(
+        connection,
+        "assets",
+        "origin_delegation_id",
+        "work_item_delegations",
+        "id",
+        "SET NULL",
+    )?;
+    assert_foreign_key(connection, "asset_links", "asset_id", "assets", "id")?;
     assert_foreign_key(connection, "decisions", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "topic_id", "topics", "id")?;
     assert_foreign_key(connection, "work_items", "decision_id", "decisions", "id")?;
@@ -733,6 +773,16 @@ fn validate_schema(connection: &Connection) -> CouncilResult<()> {
         connection,
         "idx_work_item_delegations_one_active",
         &["work_item_id"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_assets_project_kind",
+        &["project_path", "kind", "created_at"],
+    )?;
+    assert_index_columns(
+        connection,
+        "idx_asset_links_target",
+        &["target_kind", "target_id"],
     )?;
     assert_index_sql_contains(
         connection,

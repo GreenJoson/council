@@ -1,6 +1,6 @@
 /**
  * @input  依赖：COUNCIL_* 环境变量与本地文件系统
- * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost
+ * @output 导出：含独立 CLI 事件流、委派 Git 检查预算与 Codex 生图开关/沙箱/超时/张数上限的 CouncilConfig、绑定调用者身份与本机 HTTP 转发地址的 McpCouncilConfig、isLoopbackHost、MCP/HTTP 共用的 v19 资产库配置 loadAssetConfig
  * @pos    MCP 服务的集中式配置加载入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,8 +10,8 @@
 import { mkdirSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
-import { MAX_LIST_LIMIT } from "./constants.js";
-import type { CouncilConfig, McpCouncilConfig } from "./types.js";
+import { ASSET_SNIFFABLE_MIMES, MAX_LIST_LIMIT } from "./constants.js";
+import type { AssetConfig, CouncilConfig, McpCouncilConfig } from "./types.js";
 
 const MAX_NODE_TIMER_MS = 2_147_483_647;
 const REQUIRED_PERMISSION_MODE = "plan";
@@ -227,6 +227,65 @@ function parseArgsJson(
   return parsed;
 }
 
+// ---------------------------------------------------------------------------
+// v19 资产库：MCP 与 HTTP 两个入口共用同一个加载函数，assets/ 领域只读结果。
+// ---------------------------------------------------------------------------
+const DEFAULT_ASSET_MAX_BYTES = 26_214_400;
+const DEFAULT_ASSET_MAX_TOTAL_BYTES = 5_368_709_120;
+const DEFAULT_ASSET_MIME_ALLOWLIST = [
+  "image/png", "image/jpeg", "image/webp", "image/svg+xml", "model/gltf-binary", "application/pdf",
+] as const;
+const DEFAULT_ASSET_THUMBNAIL_MAX_EDGE = 512;
+const DEFAULT_ASSET_THUMBNAIL_COMMAND = "sips";
+const DEFAULT_ASSET_THUMBNAIL_TIMEOUT_MS = 10_000;
+/** 缩略图最长边上限：再大就不是缩略图了，也会让外部命令长时间占用 CPU。 */
+const MAX_ASSET_THUMBNAIL_EDGE = 4_096;
+
+export function loadAssetConfig(env: NodeJS.ProcessEnv, dataDir: string): AssetConfig {
+  const rootDir = env.COUNCIL_ASSET_DIR?.trim() || path.join(dataDir, "assets");
+  if (!path.isAbsolute(rootDir)) {
+    throw new Error("COUNCIL_ASSET_DIR 必须是绝对路径。");
+  }
+  const maxBytes = parseOptionalPositiveInteger("COUNCIL_ASSET_MAX_BYTES", env, DEFAULT_ASSET_MAX_BYTES);
+  const maxTotalBytes = parseOptionalPositiveInteger(
+    "COUNCIL_ASSET_MAX_TOTAL_BYTES",
+    env,
+    DEFAULT_ASSET_MAX_TOTAL_BYTES,
+  );
+  if (maxBytes > maxTotalBytes) {
+    throw new Error("COUNCIL_ASSET_MAX_BYTES 不能大于 COUNCIL_ASSET_MAX_TOTAL_BYTES。");
+  }
+  const rawAllowlist = env.COUNCIL_ASSET_MIME_ALLOWLIST?.trim();
+  const mimeAllowlist = rawAllowlist
+    ? [...new Set(rawAllowlist.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean))]
+    : [...DEFAULT_ASSET_MIME_ALLOWLIST];
+  const sniffable: readonly string[] = ASSET_SNIFFABLE_MIMES;
+  if (mimeAllowlist.length === 0 || mimeAllowlist.some((mime) => !sniffable.includes(mime))) {
+    throw new Error(`COUNCIL_ASSET_MIME_ALLOWLIST 只能取 ${sniffable.join(", ")} 的非空子集。`);
+  }
+  const thumbnailMaxEdge = parseOptionalPositiveInteger(
+    "COUNCIL_ASSET_THUMBNAIL_MAX_EDGE",
+    env,
+    DEFAULT_ASSET_THUMBNAIL_MAX_EDGE,
+  );
+  if (thumbnailMaxEdge > MAX_ASSET_THUMBNAIL_EDGE) {
+    throw new Error(`COUNCIL_ASSET_THUMBNAIL_MAX_EDGE 不能超过 ${String(MAX_ASSET_THUMBNAIL_EDGE)}。`);
+  }
+  return {
+    rootDir,
+    maxBytes,
+    maxTotalBytes,
+    mimeAllowlist,
+    thumbnailMaxEdge,
+    thumbnailCommand: env.COUNCIL_ASSET_THUMBNAIL_COMMAND?.trim() || DEFAULT_ASSET_THUMBNAIL_COMMAND,
+    thumbnailTimeoutMs: parseOptionalTimer(
+      "COUNCIL_ASSET_THUMBNAIL_TIMEOUT_MS",
+      env,
+      DEFAULT_ASSET_THUMBNAIL_TIMEOUT_MS,
+    ),
+  };
+}
+
 export const EXECUTION_DEFAULTS = {
   workerHeartbeatMs: 5_000, workerIdleTimeoutMs: 300_000,
   maxSegments: 4, timeoutMs: 7_200_000,
@@ -403,6 +462,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       DEFAULT_CLI_MAX_STREAM_CHARS,
     ),
     defaultMessageLimit,
+    assets: loadAssetConfig(env, dataDir),
   };
 }
 

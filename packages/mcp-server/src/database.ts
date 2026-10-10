@@ -2,7 +2,7 @@
  * @input  依赖：已由 Node 迁移器准备的 SQLite、database/ 下的领域仓储与行映射、安全错误语义
  * @output 导出：CouncilDatabase（连接与 PRAGMA、BEGIN IMMEDIATE 事务、动态 Actor alias/可信 actorId
  *         解析、无损 Session 历史、计数/revision/圆桌度量）及同名同签名转发到仓储的议题、消息、
- *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表）；CouncilRevisions
+ *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表）与 v19 资产行读写；CouncilRevisions
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问入口；领域 SQL 住在 database/ 各仓储，
  *         调用方签名不变；身份漂移或停用时失败关闭
  *
@@ -24,6 +24,9 @@ import {
   type CouncilMigrationOptions,
 } from "./schema-migrator.js";
 import type {
+  Asset,
+  AssetLinkRole,
+  AssetLinkTargetKind,
   CouncilMessage,
   Decision,
   DecisionStatus,
@@ -39,6 +42,12 @@ import type {
   WorkItemSource,
   WorkItemStatus,
 } from "./types.js";
+import {
+  AssetRepository,
+  type AssetListFilter,
+  type AssetStorageRecord,
+  type NewAssetRecord,
+} from "./database/asset-repository.js";
 import type { DatabaseContext, TopicLookup } from "./database/context.js";
 import { DecisionRepository } from "./database/decision-repository.js";
 import { MessageRepository } from "./database/message-repository.js";
@@ -64,6 +73,7 @@ export class CouncilDatabase {
   readonly #messages: MessageRepository;
   readonly #decisions: DecisionRepository;
   readonly #workItems: WorkItemRepository;
+  readonly #assets: AssetRepository;
 
   static async open(
     databasePath: string,
@@ -101,6 +111,7 @@ export class CouncilDatabase {
     this.#messages = new MessageRepository(context, topics);
     this.#decisions = new DecisionRepository(context, topics);
     this.#workItems = new WorkItemRepository(context, topics);
+    this.#assets = new AssetRepository(context);
     this.#topics = new TopicRepository(context, {
       messages: this.#messages,
       decisions: this.#decisions,
@@ -395,6 +406,50 @@ export class CouncilDatabase {
     source?: WorkItemSource;
   }): WorkItem[] {
     return this.#workItems.listByProject(input);
+  }
+
+  // ------------------------------------------------------------
+  // v19 资产：转发到 AssetRepository；文件落盘在 assets/ 领域
+  // ------------------------------------------------------------
+
+  getAsset(assetId: string, options?: { includeDeleted?: boolean }): Asset {
+    return this.#assets.get(assetId, options);
+  }
+
+  getAssetRecord(assetId: string, options?: { includeDeleted?: boolean }): AssetStorageRecord {
+    return this.#assets.getRecord(assetId, options);
+  }
+
+  findAssetByContent(projectPath: string, sha256: string): AssetStorageRecord | undefined {
+    return this.#assets.findByContent(projectPath, sha256);
+  }
+
+  totalActiveAssetBytes(): number {
+    return this.#assets.totalActiveBytes();
+  }
+
+  insertAsset(record: NewAssetRecord): Asset {
+    return this.#assets.insert(record);
+  }
+
+  restoreAsset(assetId: string): Asset {
+    return this.#assets.restore(assetId);
+  }
+
+  softDeleteAsset(assetId: string): void {
+    this.#assets.softDelete(assetId);
+  }
+
+  listAssets(filter: AssetListFilter): { items: Asset[]; total: number } {
+    return this.#assets.list(filter);
+  }
+
+  addAssetLink(assetId: string, targetKind: AssetLinkTargetKind, targetId: string, role: AssetLinkRole): Asset {
+    return this.#assets.addLink(assetId, targetKind, targetId, role);
+  }
+
+  removeAssetLink(assetId: string, targetKind: AssetLinkTargetKind, targetId: string, role: AssetLinkRole): void {
+    this.#assets.removeLink(assetId, targetKind, targetId, role);
   }
 
   // ------------------------------------------------------------
