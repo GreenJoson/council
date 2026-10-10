@@ -1,6 +1,6 @@
 /**
  * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件、Zod、RevisionEventStream、项目文件预览服务与 routes/ 下各路由模块
- * @output 导出：含 schema ready、服务停止、SSE 事件流，并按顺序挂载设置/议题/实施项/任务/资产/流水线/编排路由模块与脱敏错误处理的应用工厂
+ * @output 导出：含 schema ready、服务停止、SSE 事件流，并按顺序挂载设置/议题/实施项/任务/资产/流水线/Worker 团队/编排路由模块与脱敏错误处理的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -47,6 +47,7 @@ import { registerWorkItemRoutes } from "./routes/work-item-routes.js";
 import { registerTaskRoutes } from "./routes/task-routes.js";
 import { registerAssetRoutes } from "./routes/asset-routes.js";
 import { registerPipelineRoutes } from "./routes/pipeline-routes.js";
+import { registerTeamRoutes } from "./routes/team-routes.js";
 import { registerOrchestrationRoutes } from "./routes/orchestration-routes.js";
 
 function createCorsMiddleware(
@@ -227,6 +228,7 @@ export function createCouncilHttpApp(
   registerTaskRoutes(app, context);
   registerAssetRoutes(app, context);
   registerPipelineRoutes(app, context);
+  registerTeamRoutes(app, context);
   registerOrchestrationRoutes(app, context);
 
   app.get("/api/v1/events", (request, response) => {
