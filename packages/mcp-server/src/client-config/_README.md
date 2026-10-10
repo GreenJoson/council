@@ -19,7 +19,7 @@
 
 ## 入口与依赖方向
 
-`http/routes/client-config-routes.ts` → `client-config-service.ts` → `files` / `store` / `sources` → `errors.ts`、`stdio-mcp.ts`（仅取标记常量）。
+`http/routes/client-config-routes.ts` → `client-config-service.ts` → `files` / `store` / `sources` → `errors.ts`、`stdio-mcp.ts`（取 stdio 启动命令定位 `resolveStdioMcpLaunch`，与团队 Lead 注入同源）。
 目标路径与 MCP env 来自 `config.ts` 的 `loadClientConfigSettings`（`COUNCIL_CLIENT_CONFIG_*`，留空即缺省）。本目录不依赖数据库与编排层。
 
 ## 验证方式

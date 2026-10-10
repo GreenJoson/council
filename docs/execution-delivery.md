@@ -103,8 +103,8 @@ schema v15 增加完成条件，v16 增加审计、失败分类与恢复来源�
 
 代码任务可以「组队」执行：团队 = 一条普通代码委派（Lead）+ 若干由 Lead 派发的 Worker 子委派，挂在同一任务上，每个任务同时最多一个活跃团队。
 
-- 组队：`POST /api/v1/tasks/:taskId/team`，参数与单项委派相同，监督者可省略（取默认 Claude），另可设 `maxParallel`（不超过 `COUNCIL_WORKER_MAX_PARALLEL`，默认 3）。执行者必须是带 @别名的系统 Claude/Codex CLI Agent，否则 409「团队模式需要系统 Claude/Codex Agent 作为执行者」。桌面单文件 sidecar 没有独立的 stdio MCP 入口，暂不支持组队，同样返回 409。
-- Lead 注入：只有 Lead 的执行阶段会拿到 Council MCP（`process.execPath` + `dist/src/index.js`，继承 `COUNCIL_*` 配置，固定调用者别名、`COUNCIL_TEAM_LEAD_DELEGATION_ID` 与回环 `COUNCIL_HTTP_HOST/PORT`，工具超时 900 秒）。这个 MCP 进程只注册六个团队工具：`council_dispatch_worker` / `council_list_workers` / `council_wait_worker` / `council_interrupt_worker` / `council_merge_worker` / `council_archive_worker`。执行提示词追加「团队模式」段。Brief 与审核阶段、Worker 都不注入 MCP。
+- 组队：`POST /api/v1/tasks/:taskId/team`，参数与单项委派相同，监督者可省略（取默认 Claude），另可设 `maxParallel`（不超过 `COUNCIL_WORKER_MAX_PARALLEL`，默认 3）。执行者必须是带 @别名的系统 Claude/Codex CLI Agent，否则 409「团队模式需要系统 Claude/Codex Agent 作为执行者」。桌面单文件 sidecar 以自身可执行 + `--council-stdio-mcp` 作为 Lead 的 MCP 入口，同样支持组队。
+- Lead 注入：只有 Lead 的执行阶段会拿到 Council MCP（dev 为 `process.execPath` + `dist/src/index.js`，桌面为 sidecar 自身 + `--council-stdio-mcp`，与客户端接入写入的注册同源，继承 `COUNCIL_*` 配置，固定调用者别名、`COUNCIL_TEAM_LEAD_DELEGATION_ID` 与回环 `COUNCIL_HTTP_HOST/PORT`，工具超时 900 秒）。这个 MCP 进程只注册六个团队工具：`council_dispatch_worker` / `council_list_workers` / `council_wait_worker` / `council_interrupt_worker` / `council_merge_worker` / `council_archive_worker`。执行提示词追加「团队模式」段。Brief 与审核阶段、Worker 都不注入 MCP。
 - 派发：Council 先把 Lead 工作区未提交的改动做成检查点提交（与交付提交同一套敏感扫描），再从这个提交 `worktree add` 出 `codex/council-worker-*` 分支。Worker 用 Lead 的执行者和权限交集执行，可以分段接续，完成后由 Council 提交到自己分支。Worker 不认领实施项、不单独审核、不进委派列表与工作注意力。同时运行的 Worker 超过上限时返回 409。
 - 合并：只合并 done 且未合并的 Worker；先做检查点提交，再 `merge --no-ff`，成功后回写 Lead HEAD。冲突时撤销本次合并，409 返回冲突文件与「请 Lead 自行在工作区合并」。
 - 中断与归档：中断即取消，Worker 进入 error，不能再合并；归档会先取消仍在运行的 Worker，archived 状态粘性。人工「结束团队」会中断所有运行中的 Worker，但不取消 Lead。

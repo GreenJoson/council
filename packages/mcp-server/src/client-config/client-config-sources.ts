@@ -1,5 +1,6 @@
 /**
- * @input  依赖：node:sea（桌面 sidecar 判定与内嵌资源）、本模块的 import.meta.url、仓库 skills/council 目录
+ * @input  依赖：node:sea（桌面 sidecar 判定与内嵌资源）、本模块的 import.meta.url、仓库 skills/council 目录、
+ *         stdio-mcp.ts 的 resolveStdioMcpLaunch（启动命令唯一真源）
  * @output 导出：resolveMcpLaunch（stdio MCP 的 command/args）与 loadCouncilSkillFiles（待分发的 Skill 文件集合）
  * @pos    客户端配置分发的"写什么"来源：不硬编码仓库路径，dev（dist/tsx）与桌面 sidecar 各自定位
  *
@@ -12,7 +13,7 @@ import path from "node:path";
 import { getAsset, isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 import { CouncilConflictError } from "../errors.js";
-import { COUNCIL_STDIO_MCP_FLAG } from "../stdio-mcp.js";
+import { resolveStdioMcpLaunch } from "../stdio-mcp.js";
 import type { SkillFile } from "./client-config-files.js";
 
 /** sidecar 构建脚本写入的 Skill 资源清单键与文件键前缀；须与 scripts/build-agent-sidecar.mjs 一致。 */
@@ -23,23 +24,10 @@ function moduleUrl(): string {
   return import.meta.url;
 }
 
-/**
- * stdio 入口：sidecar 用自身可执行 + 标记；dist 运行时用同级 ../index.js；tsx 跑源码时指向构建产物
- * dist/src/index.js（客户端以纯 node 启动，跑不了 .ts）。
- */
+/** stdio 入口与团队 Lead 注入共用同一套定位规则（sidecar 标记 / dist / tsx），见 stdio-mcp.ts。 */
 export function resolveMcpLaunch(): { command: string; args: string[] } {
-  if (isSea()) {
-    return { command: process.execPath, args: [COUNCIL_STDIO_MCP_FLAG] };
-  }
-  const here = moduleUrl();
-  const entryUrl = here.endsWith(".ts")
-    ? new URL("../../dist/src/index.js", here)
-    : new URL("../index.js", here);
-  const entry = fileURLToPath(entryUrl);
-  if (!existsSync(entry)) {
-    throw new CouncilConflictError("找不到 MCP stdio 入口 dist/src/index.js；请先构建 mcp-server（npm run build）。");
-  }
-  return { command: process.execPath, args: [entry] };
+  const launch = resolveStdioMcpLaunch();
+  return { command: launch.command, args: [...launch.args] };
 }
 
 function readSkillDirectory(root: string): SkillFile[] {
