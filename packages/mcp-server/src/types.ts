@@ -61,6 +61,8 @@ export interface CouncilConfig {
   pipelineMaxRevisions?: number;
   /** P3 原型代码委派请求的权限档（默认 workspace_write）；实际权限仍与执行 Agent 的权限档取交集。 */
   pipelinePrototypePermission?: PipelinePrototypePermission;
+  /** P4 Worker 团队：单个团队同时运行的 Worker 上限（默认 3），创建团队时冻结进 task_teams.max_parallel。 */
+  workerMaxParallel?: number;
   codexCommand: string;
   codexArgs: string[];
   codexModel?: string;
@@ -127,6 +129,8 @@ export interface McpCouncilConfig extends CouncilConfig {
   /** 同机 HTTP 服务基址（仅回环）；任务委派等需要后台执行的 MCP 工具经它转发。 */
   httpServiceUrl: string;
   httpForwardTimeoutMs: number;
+  /** P4：Council 只给团队 Lead 注入的 MCP 进程带上该值，团队工具据此定位团队；普通 MCP 会话缺省。 */
+  teamLeadDelegationId?: string;
 }
 
 export interface CouncilHttpConfig {

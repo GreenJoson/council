@@ -2,13 +2,15 @@
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输、可选 AbortSignal 与 Codex 生图配置
  * @output 导出：CodexRuntime（讨论/委派 generate、可用性与生图探针 checkAvailability、生图 generateImages）、
  *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS）
- * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界
+ * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界；
+ *         --ignore-user-config 之后只追加 Worker 团队 Lead 委派显式传入的 mcpServers（exec 与 resume 都带）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 早期会话和去重工具进度回调，不依赖保留输出窗口
  */
 
 import { NativeRuntimeProgressTracker, type NativeRuntimeProgressListener } from "./native-runtime-progress.js";
+import { codexMcpConfigArgs, type RuntimeMcpServers } from "./runtime-mcp-servers.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import {
   buildCodexImageArgs,
@@ -68,6 +70,8 @@ export interface CodexRuntimeInput {
   onTextEvent?: RuntimeTextListener;
   /** 仅显式任务委派传入；普通讨论省略后固定为 read_only。 */
   permissionProfile?: AgentPermissionProfile;
+  /** 仅 Worker 团队 Lead 委派传入；省略时不注入任何 MCP。 */
+  mcpServers?: RuntimeMcpServers;
 }
 
 export interface CodexAvailability {
@@ -516,6 +520,8 @@ export class CodexRuntime {
       // 再提交最终正文，形成同轮双写。Codex CLI 0.149.1 的此开关保留 CODEX_HOME
       // 认证，但完全跳过用户 config.toml，新会话与 resume 都必须带上。
       args.push("--ignore-user-config");
+      // 用户配置已整体跳过；团队 Lead 需要的 Council MCP 以 --config 覆盖逐项注入。
+      args.push(...codexMcpConfigArgs(input.mcpServers));
       args.push(
         "--skip-git-repo-check",
         "--json",

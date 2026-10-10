@@ -1,10 +1,17 @@
-/** @input 原生 Runtime、当前阶段与私有委派仓储；@output 持久进度、会话与准确终止原因；@pos 仅只读瞬态失败重试，写入与预算暂停不自动重放。 */
+/**
+ * @input  原生 Runtime、当前阶段、私有委派仓储与可选 mcpServers（仅 Worker 团队 Lead 执行阶段传入）
+ * @output 持久进度、会话与准确终止原因
+ * @pos    仅只读瞬态失败重试，写入与预算暂停不自动重放
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
+ */
 import { setTimeout as retryDelay } from "node:timers/promises";
 import type { AgentPermissionProfile } from "../agent-execution-policy.js";
 import type { ClaudeRuntime } from "../claude-runtime.js";
 import type { CodexRuntime } from "../codex-runtime.js";
 import type { AgentDefinition, ProviderProfile } from "../model-router-store.js";
 import type { NativeRuntimeProgress } from "../native-runtime-progress.js";
+import type { RuntimeMcpServers } from "../runtime-mcp-servers.js";
 import { checkpointProgress, type DelegationPhase } from "./delegation-checkpoint.js";
 import { delegationFailureCode } from "./delegation-recovery.js";
 import type { WorkItemDelegationStore } from "./work-item-delegation-store.js";
@@ -19,6 +26,8 @@ export interface DelegationRuntimeInput {
   sessionId?: string;
   permissionProfile: AgentPermissionProfile;
   signal: AbortSignal;
+  /** 仅 Worker 团队 Lead 的执行阶段传入；其余阶段与委派保持无 MCP。 */
+  mcpServers?: RuntimeMcpServers;
 }
 interface Dependencies {
   claude: ClaudeRuntime;
@@ -62,7 +71,8 @@ export async function runDelegationRuntimeStage(input: DelegationRuntimeInput, d
   try {
     const common = { prompt: input.prompt, cwd: input.cwd, signal: input.signal,
       permissionProfile: input.permissionProfile, onProgress,
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}), ...(input.agent.model ? { model: input.agent.model } : {}) };
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}), ...(input.agent.model ? { model: input.agent.model } : {}),
+      ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}) };
     const result = deps.provider.protocol === "claude-cli"
       ? await deps.claude.generate({ ...common, purpose: stage }) : await deps.codex.generate(common);
     // 兼容未在初始化事件提供 session 的旧 CLI。

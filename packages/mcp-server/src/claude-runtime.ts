@@ -2,12 +2,14 @@
  * @input  依赖：公开 prompt、Claude Code CLI stream-json、共享进程工具与可选 AbortSignal
  * @output 导出：ClaudeRuntime 增量生成、结构化失败/进度、分阶段回合预算、独立输出限额与可用性检查
  * @pos    无数据库副作用且只转发公开 text_delta 的 Claude Code 子进程运行边界；讨论默认强制只读，
- *         生成时强制清空 MCP 配置，使被召唤 Agent 无法取得 Council 写工具或递归召唤自身
+ *         生成时强制清空 MCP 配置，使被召唤 Agent 无法取得 Council 写工具或递归召唤自身；
+ *         唯一例外是 Worker 团队 Lead 委派显式传入的 mcpServers（--strict-mcp-config 仍在，只放行这些服务的工具）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 分阶段回合预算、结构化失败和早期会话/白名单进度回调
  */
 
+import { claudeAllowedMcpTools, claudeMcpConfigJson, type RuntimeMcpServers } from "./runtime-mcp-servers.js";
 import { classifyClaudeFailure, NativeRuntimeProgressTracker, type NativeRuntimeProgressListener, type NativeRuntimeProgress } from "./native-runtime-progress.js";
 import {
   assertRuntimeTimers,
@@ -43,11 +45,16 @@ type ClaudeRuntimeConfig = Pick<
 // 若继承调用者的 MCP 配置，就能拿到 Council 自身的写工具——自行发帖会绕过 lease/原子提交、
 // 自行建议题会造成议题分裂、递归召唤会让自动交接失去出口。正式回复一律由编排器提交，
 // Agent 不需要任何 MCP，因此在进程边界上直接清空，而不是靠提示词约束。
-const MCP_ISOLATION_ARGS = [
-  "--strict-mcp-config",
-  "--mcp-config",
-  '{"mcpServers":{}}',
-] as const;
+// Worker 团队 Lead 是唯一例外：只注入调用方显式给出的 Council 团队 MCP，用户自己的 MCP 仍被屏蔽。
+function mcpIsolationArgs(servers: RuntimeMcpServers | undefined): string[] {
+  const allowed = claudeAllowedMcpTools(servers);
+  return [
+    "--strict-mcp-config",
+    "--mcp-config",
+    claudeMcpConfigJson(servers),
+    ...(allowed.length > 0 ? ["--allowedTools", allowed.join(",")] : []),
+  ];
+}
 
 const MAX_STDERR_DETAIL_CHARS = 300;
 
@@ -77,6 +84,8 @@ export interface ClaudeRuntimeInput {
   onTextEvent?: RuntimeTextListener;
   /** 仅显式任务委派传入；普通讨论省略后固定为 read_only。 */
   permissionProfile?: AgentPermissionProfile;
+  /** 仅 Worker 团队 Lead 委派传入；省略时保持「无 MCP」隔离。 */
+  mcpServers?: RuntimeMcpServers;
 }
 
 export interface ClaudeAvailability {
@@ -355,7 +364,7 @@ export class ClaudeRuntime {
       // 且不产出任何 stream-json，调用方只能看到一个没有原因的失败。
       "--verbose",
       ...permissionArgs,
-      ...MCP_ISOLATION_ARGS,
+      ...mcpIsolationArgs(input.mcpServers),
       "--max-turns",
       String(turnLimit),
       ...(model ? ["--model", model] : []),
