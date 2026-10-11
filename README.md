@@ -212,6 +212,7 @@ Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only
 
 - Desktop: the webview CSP now allows `img-src` from the loopback Agent Service, so asset thumbnails, full-size images and message images render inside the installed app instead of a broken placeholder (0.10.0 had only verified the image endpoints over HTTP).
 - Desktop: the "Agent Service not ready" banner only quotes a sidecar log error written during the current launch, and only once the sidecar has exited; errors from earlier sessions are no longer presented as the reason.
+- Image generation no longer requires the project to be a Git repository: image delegations and the pipeline image stage now run in an isolated empty directory under the delegation root, with no worktree, so uncommitted changes don't block them either. Code delegations, including the prototype stage, still need Git; on a non-repository they now say to initialise and make a first commit instead of a generic "Git operation failed".
 
 ### 0.10.0 — 2026-10-11
 

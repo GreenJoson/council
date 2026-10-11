@@ -958,7 +958,7 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "生图需要本机 ChatGPT 登录的 Codex": "Image generation needs a local Codex signed in with ChatGPT",
   "委派生图": "Delegate image generation",
   "图像委派": "Image delegation",
-  "由具备生图能力的 Agent 在隔离 worktree 内按简报生成图片；不经 Agent 审核，由人在产物区验收。": "An image-capable agent generates images from the brief in an isolated worktree; no agent review, a human accepts them in Outputs.",
+  "由具备生图能力的 Agent 在隔离目录内按简报生成图片；不经 Agent 审核，由人在产物区验收。": "An image-capable agent generates images from the brief in an isolated directory; no agent review, a human accepts them in Outputs.",
   "生图 Agent": "Image agent",
   "参考图（可选，最多 {max} 张）": "Reference images (optional, up to {max})",
   "资产库里还没有图像。": "No images in the asset library yet.",

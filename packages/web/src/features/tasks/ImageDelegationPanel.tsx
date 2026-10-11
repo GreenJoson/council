@@ -135,7 +135,7 @@ export function ImageDelegationPanel({
         <ImagePlus size={13} /><strong>{t("图像委派")}</strong>
         <button type="button" className="work-item-mini-button" aria-label={t("关闭")} onClick={() => setOpen(false)}><X size={13} /></button>
       </header>
-      <p className="task-muted">{t("由具备生图能力的 Agent 在隔离 worktree 内按简报生成图片；不经 Agent 审核，由人在产物区验收。")}</p>
+      <p className="task-muted">{t("由具备生图能力的 Agent 在隔离目录内按简报生成图片；不经 Agent 审核，由人在产物区验收。")}</p>
       {executors.length === 0 ? (
         <p className="task-notice is-warning" role="note"><AlertTriangle size={13} />{t("生图需要本机 ChatGPT 登录的 Codex")}</p>
       ) : (

@@ -3,7 +3,8 @@
  * @output 导出：关键上下文完整的委派（议题任务与无议题直接任务）、按任务/项目列委派、逐文件审核、追加提交、修正草稿与交接恢复（沿用原 kind 与输入图）、显式权限及优雅关闭
  * @pos    supervisor→executor→review 的隔离 worktree 执行闭环；普通讨论永远不进入本层。
  *         审核提示词写明 approved 时 findings 必须为空（解析器会把带 findings 的 approved 改判 changes_requested），非阻断建议与人工验证项进 summary
- *         kind=code 走审核闭环；kind=image 只在这里分流到 delegation-image-execution（单段、强制人工验收、不接续）
+ *         kind=code 走审核闭环（需要 Git 仓库，非仓库给出初始化指引）；kind=image 不建 worktree、不碰 Git，
+ *         在委派根目录下的隔离空目录交给 delegation-image-execution（单段、强制人工验收、不接续），项目可以还不是仓库
  *         P3：prototype 任务按 code 委派；代码委派的输入图拷进 `.council/in/`（写 exclude）并以相对路径进入两段提示词；
  *         onSettled/get 供流水线订阅终态与启动对账；stageProjectInputs 供流水线 brief/review 把资产拷进项目 `.council/in/`
  *         P4 Worker 团队：setTeamHooks 让 Lead 执行阶段注入 Council 团队 MCP 与「团队模式」指令，并在快照/提交前
@@ -749,9 +750,12 @@ export class WorkItemDelegationManager {
     signal: AbortSignal,
   ): Promise<PreparedWorkspace> {
     const normalized = await realpath(normalizeProjectPath(projectPath) as string);
-    const root = await realpath(
-      (await this.#git(normalized, ["rev-parse", "--show-toplevel"], signal)).stdout.trim(),
-    );
+    // 非 Git 目录给出可操作的指引，而不是笼统的“Git 操作失败”；出图走隔离目录，不经过这里。
+    const toplevel = await this.#runGit(normalized, ["rev-parse", "--show-toplevel"], signal);
+    if (toplevel.exitCode !== 0) {
+      throw new Error("项目目录还不是 Git 仓库：代码委派需要 Git 隔离工作区与 diff 审核，请先初始化并提交一次；出图委派不受此限制。");
+    }
+    const root = await realpath(toplevel.stdout.trim());
     if (!path.isAbsolute(root)) {
       throw new Error("Git 项目根目录无效。");
     }
@@ -795,6 +799,19 @@ export class WorkItemDelegationManager {
     };
   }
 
+  /**
+   * 图像委派的工作区：委派根目录下的独立空目录，不依赖 Git。
+   * 产物只入资产库、从不提交，worktree 只会带来“必须是仓库 / 必须干净”的无关约束；
+   * 生图提示词自包含（brief + `.council/in` 参考图），不读项目文件。
+   */
+  async #prepareImageWorkspace(delegation: WorkItemDelegation): Promise<{ root: string }> {
+    await mkdir(this.config.worktreeRoot, { recursive: true, mode: 0o700 });
+    const root = path.join(this.config.worktreeRoot, delegation.id);
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    this.#store.update(delegation.id, { worktreePath: root, now: new Date().toISOString() });
+    return { root: await realpath(root) };
+  }
+
   get #taskLimits(): { messageLimit: number; maxContextChars: number } {
     return { messageLimit: this.config.defaultMessageLimit, maxContextChars: this.config.maxContextChars };
   }
@@ -812,6 +829,10 @@ export class WorkItemDelegationManager {
     try {
       const delegation = this.#store.get(id);
       if (!delegation) throw new Error("任务委派不存在。");
+      if (delegation.kind === "image") {
+        await this.#executeImage(id, await this.#prepareImageWorkspace(delegation), signal);
+        return;
+      }
       const task = this.#taskContext(delegation.workItemId);
       const workspace = await this.#prepareWorktree(
         delegation,
@@ -819,11 +840,7 @@ export class WorkItemDelegationManager {
         createInitialBaseline,
         signal,
       );
-      if (delegation.kind === "image") {
-        await this.#executeImage(id, workspace, signal);
-      } else {
-        await this.#executeInWorkspace(id, workspace, signal);
-      }
+      await this.#executeInWorkspace(id, workspace, signal);
     } catch (error) {
       this.#recordFailure(id, error, true);
       throw error;
@@ -845,13 +862,12 @@ export class WorkItemDelegationManager {
       path.relative(workspace.cwd, item.absolutePath).split(path.sep).join("/")));
   }
 
-  async #executeImage(id: string, workspace: PreparedWorkspace, signal: AbortSignal): Promise<string> {
+  async #executeImage(id: string, workspace: { root: string }, signal: AbortSignal): Promise<void> {
     return executeImageDelegation({
       store: this.#store,
       database: this.#database,
       assets: this.#assets,
       codex: this.codexRuntime,
-      git: async (cwd, args, gitSignal) => (await this.#git(cwd, args, gitSignal)).stdout,
       record: (kind, data) => this.#recordAudit(id, kind, data),
       requireAgent: (agentId, action) => this.#requireAgent(agentId, action),
       taskContext: (workItemId) => this.#taskContext(workItemId),
@@ -862,7 +878,7 @@ export class WorkItemDelegationManager {
         timeoutMs: this.config.imageTimeoutMs ?? DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
         maxOutputs: this.config.imageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
       },
-    }, id, { root: workspace.root, baseCommit: workspace.baseCommit }, signal);
+    }, id, { root: workspace.root }, signal);
   }
 
   async #runBatch(

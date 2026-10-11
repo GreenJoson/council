@@ -1,7 +1,7 @@
 /**
  * @input  依赖：CouncilDatabase（任务/资产记录、工作项回写）、AssetService（参考图字节、产物入库与关联）、
  *         CodexRuntime（生图探针与 generateImages）、brief-protocol（brief/清单/提示词）、委派账本、
- *         调用方注入的 Git 执行器、审计记录器与任务上下文解析
+ *         审计记录器与任务上下文解析；excludeCouncilDir 由调用方注入 Git 执行器
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
  *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因；
  *         image_unavailable 沿用 Codex 运行时的脱敏文案并在审计记 diagnosticCode，超时与出错可区分）与常量；
@@ -10,7 +10,8 @@
  *         readImageOutputManifest（流水线复盘据此只看本次委派入库的产物）；
  *         共享 helper excludeCouncilDir / copyInputAssets / COUNCIL_INPUT_DIR（代码委派输入资产与流水线复用）
  * @pos    图像委派的唯一执行体：管理器只按 kind 分流到这里；不 import 管理器，所有依赖显式传入。
- *         单段执行、无审核与 brief 生成阶段；产物不提交（headCommit = baseCommit），只入资产库并关联任务。
+ *         单段执行、无审核与 brief 生成阶段；在委派根目录下的隔离目录执行，不依赖 Git（项目可以还不是仓库），
+ *         产物不提交、不写 baseCommit/headCommit，只入资产库并关联任务。
  *         审计只记数量、字节、去重数与耗时，任何路径都不进 DTO、审计、日志或错误文案
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -141,9 +142,8 @@ export function defaultImageSupervisor(
 // └─────────────────────────────────────────────────────────────┘
 
 export interface ImageDelegationWorkspace {
-  /** 隔离 worktree 根目录（绝对路径，仅本地使用）。 */
+  /** 隔离目录根（绝对路径，仅本地使用；不是 Git 工作区）。 */
   root: string;
-  baseCommit: string;
 }
 
 export interface ImageDelegationDeps {
@@ -151,8 +151,6 @@ export interface ImageDelegationDeps {
   database: CouncilDatabase;
   assets: AssetService;
   codex: CodexRuntime;
-  /** 管理器的受控 Git 执行器，返回 stdout；非零退出时抛错。 */
-  git: (cwd: string, args: string[], signal: AbortSignal) => Promise<string>;
   record: (kind: string, data: Record<string, string | number>) => void;
   requireAgent: (id: string, action: string) => AgentDefinition;
   taskContext: (workItemId: string) => ResolvedDelegationTask;
@@ -203,7 +201,7 @@ export function readImageOutputManifest(
 }
 
 /**
- * 单段生图：认领任务 → 准备 `.council/in|out` 并写入 Git exclude → 复制参考图 → generateImages →
+ * 单段生图：认领任务 → 在隔离目录准备 `.council/in|out` → 复制参考图 → generateImages →
  * 清单解析 → 三路收集（清单 path、`.council/out`；前两路为空时才兜底扫 `<codex-home>/generated_images/<threadId>`）→
  * sha256 去重入库并关联任务 → 置 approved，任务停在 in_progress 等人工验收。
  */
@@ -212,7 +210,7 @@ export async function executeImageDelegation(
   id: string,
   workspace: ImageDelegationWorkspace,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<void> {
   if (signal.aborted) throw abortError();
   const delegation = deps.store.get(id);
   if (!delegation) throw new Error("任务委派不存在。");
@@ -224,7 +222,7 @@ export async function executeImageDelegation(
     topicId: delegation.topicId,
     workItemId: delegation.workItemId,
     expectedVersion: deps.workItemVersion() ?? task.item.version,
-    statusNote: `${executor.displayName} 正在隔离 worktree 中生成图像；${supervisor.displayName} 负责监督。`,
+    statusNote: `${executor.displayName} 正在隔离目录中生成图像；${supervisor.displayName} 负责监督。`,
     actorId: executor.actorId,
   });
   deps.setWorkItemVersion(claimed.version);
@@ -234,7 +232,6 @@ export async function executeImageDelegation(
   const inputDir = path.join(workspace.root, INPUT_DIR);
   await mkdir(inputDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
-  await excludeCouncilDir(deps.git, workspace.root, signal);
   const inputs = await copyInputAssets(deps.assets, inputDir, delegation.inputAssetIds);
 
   const startedAt = Date.now();
@@ -351,12 +348,10 @@ export async function executeImageDelegation(
   });
   deps.store.update(id, {
     status: "approved",
-    headCommit: workspace.baseCommit,
     summary: compact(`${statusNote}${publicManifest.notes ? ` ${publicManifest.notes}` : ""}`, 8_000),
     outputManifest: publicManifest,
     now: new Date().toISOString(),
   });
-  return workspace.baseCommit;
 }
 
 /**
@@ -408,7 +403,7 @@ function imageFailure(
 
 /**
  * `.council/` 不进入任何提交：写入 `git rev-parse --git-path info/exclude` 解析出的真实文件（worktree 共享仓库级 exclude）。
- * 图像委派、代码委派的输入资产与流水线 brief/review 阶段共用。
+ * 代码委派的输入资产使用；图像委派在非 Git 隔离目录执行，不需要它。
  */
 export async function excludeCouncilDir(
   git: (cwd: string, args: string[], signal: AbortSignal) => Promise<string>,
@@ -542,7 +537,7 @@ async function collectOutputs(input: {
     await add(absolutePath, deliverablePrompt(input.brief, absolutePath));
   }
   // ③ Codex 默认产物目录兜底：只在清单与 `.council/out` 一张都没收到时才扫。
-  // 真实 Codex 会先把原图落在这里、再缩放/复制进 worktree，两份字节不同、sha256 去不掉；
+  // 真实 Codex 会先把原图落在这里、再缩放/复制进隔离目录，两份字节不同、sha256 去不掉；
   // 与前两路取并集会让产物翻倍并混入未定稿的原图，人工验收反而要自己辨别。
   if (files.length === 0 && input.codexHome && SAFE_THREAD_ID.test(input.threadId)) {
     const generated = path.join(input.codexHome, "generated_images", input.threadId);
