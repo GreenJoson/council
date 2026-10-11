@@ -39,9 +39,9 @@ export interface BrandLogoProps {
 }
 
 /**
- * 圆桌 + 三席位 + 共识点的品牌标识，与桌面应用图标同一符号。
+ * 三席位 + 三段弧 + 共识星的品牌标识，与桌面应用图标同一符号：三个实心圆是围坐的 Agent，三段弧是议事环，中心星是收敛出的共识。
  * 几何正本：packages/desktop/src-tauri/icons/source/council-icon.svg（同一套 32 单位坐标），改一处请同步另一处。
- * 颜色全部走主题变量：底板随表面色、符号随主色、共识点随 Council 语义色，深浅色主题下都成立。
+ * 颜色全部走主题变量：底板随表面色、席位与弧随主色、共识星随 Council 语义色，深浅色主题下都成立。
  */
 export function BrandLogo({ size = 26 }: BrandLogoProps) {
   return (
@@ -63,18 +63,13 @@ export function BrandLogo({ size = 26 }: BrandLogoProps) {
         stroke="var(--color-border-strong)"
         strokeWidth="1"
       />
-      <circle
-        cx="16"
-        cy="17.6"
-        r="5.4"
-        fill="none"
-        stroke="var(--color-primary)"
-        strokeWidth="1.7"
-      />
-      <circle cx="16" cy="17.6" r="1.6" fill="var(--color-agent-council)" />
-      <circle cx="16" cy="7.2" r="2.2" fill="var(--color-primary)" />
-      <circle cx="6.99" cy="22.8" r="2.2" fill="var(--color-primary)" />
-      <circle cx="25.01" cy="22.8" r="2.2" fill="var(--color-primary)" />
+      <path d="M 20.747 8.120 A 9.2 9.2 0 0 1 25.198 15.829" fill="none" stroke="var(--color-primary)" strokeWidth="3" strokeLinecap="round" />
+      <path d="M 20.451 24.052 A 9.2 9.2 0 0 1 11.549 24.052" fill="none" stroke="var(--color-primary)" strokeWidth="3" strokeLinecap="round" />
+      <path d="M 6.802 15.829 A 9.2 9.2 0 0 1 11.253 8.120" fill="none" stroke="var(--color-primary)" strokeWidth="3" strokeLinecap="round" />
+      <circle cx="16" cy="6.8" r="2.7" fill="var(--color-primary)" />
+      <circle cx="23.967" cy="20.6" r="2.7" fill="var(--color-primary)" />
+      <circle cx="8.033" cy="20.6" r="2.7" fill="var(--color-primary)" />
+      <path d="M 16 11.9 C 16.3 14.9 17.1 15.7 20.1 16 C 17.1 16.3 16.3 17.1 16 20.1 C 15.7 17.1 14.9 16.3 11.9 16 C 14.9 15.7 15.7 14.9 16 11.9 Z" fill="var(--color-agent-council)" />
     </svg>
   );
 }

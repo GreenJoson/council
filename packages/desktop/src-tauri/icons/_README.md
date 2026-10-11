@@ -16,10 +16,10 @@
 
 ## 设计说明
 
-圆桌议事 + 多 Agent 协作：中心圆环是桌，三个等距实心圆是席位，桌心的小圆点是收敛出的共识。
-浅灰磨砂渐变底 + 近黑墨色符号 + 石板蓝共识点，配色取自 `packages/web/src/styles/theme.css` 浅色主题。
+三席位 + 三段弧 + 共识星：三个实心圆是围坐的 Agent，三段弧是它们之间的议事环，中心四角星是收敛出的共识。
+桌面图标用深蓝底板（navy 渐变 + 中心光晕）、亮蓝渐变符号、白色共识星，在 Dock 上与浅色界面形成对比；
 符号几何用 32 单位坐标，与 Web 端 `BrandLogo`（`packages/web/src/components/presentation.tsx`）和
-`packages/web/public/favicon.svg` 共用同一组数值，改动时三处同步。
+`packages/web/public/favicon.svg` 共用同一组数值（Web 端按主题变量着色），改动时三处同步。
 
 ## 重新生成
 

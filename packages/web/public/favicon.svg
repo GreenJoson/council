@@ -1,21 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <!-- Council favicon：与应用图标、BrandLogo 同一符号；静态文件读不到 theme.css，颜色按其浅/深色值写死 -->
+  <!-- Council favicon：与应用图标、BrandLogo 同一符号（三席位 + 三段弧 + 共识星）；静态文件读不到 theme.css，颜色按其浅/深色值写死 -->
   <style>
     .plate { fill: #ffffff; stroke: rgba(16, 20, 28, 0.14); }
     .ink { fill: #1c1f26; }
-    .ring { fill: none; stroke: #1c1f26; }
-    .core { fill: #3f4c66; }
+    .arc { fill: none; stroke: #1c1f26; }
+    .star { fill: #3f4c66; }
     @media (prefers-color-scheme: dark) {
       .plate { fill: #1d2127; stroke: rgba(255, 255, 255, 0.14); }
       .ink { fill: #eceef2; }
-      .ring { stroke: #eceef2; }
-      .core { fill: #9fb0d4; }
+      .arc { stroke: #eceef2; }
+      .star { fill: #9fb0d4; }
     }
   </style>
   <rect class="plate" x="1" y="1" width="30" height="30" rx="8" stroke-width="1"/>
-  <circle class="ring" cx="16" cy="17.6" r="5.4" stroke-width="1.7"/>
-  <circle class="core" cx="16" cy="17.6" r="1.6"/>
-  <circle class="ink" cx="16" cy="7.2" r="2.2"/>
-  <circle class="ink" cx="6.99" cy="22.8" r="2.2"/>
-  <circle class="ink" cx="25.01" cy="22.8" r="2.2"/>
+  <path class="arc" d="M 20.747 8.120 A 9.2 9.2 0 0 1 25.198 15.829" stroke-width="3" stroke-linecap="round"/>
+  <path class="arc" d="M 20.451 24.052 A 9.2 9.2 0 0 1 11.549 24.052" stroke-width="3" stroke-linecap="round"/>
+  <path class="arc" d="M 6.802 15.829 A 9.2 9.2 0 0 1 11.253 8.120" stroke-width="3" stroke-linecap="round"/>
+  <circle class="ink" cx="16" cy="6.8" r="2.7"/>
+  <circle class="ink" cx="23.967" cy="20.6" r="2.7"/>
+  <circle class="ink" cx="8.033" cy="20.6" r="2.7"/>
+  <path class="star" d="M 16 11.9 C 16.3 14.9 17.1 15.7 20.1 16 C 17.1 16.3 16.3 17.1 16 20.1 C 15.7 17.1 14.9 16.3 11.9 16 C 14.9 15.7 15.7 14.9 16 11.9 Z"/>
 </svg>

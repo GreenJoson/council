@@ -11,7 +11,7 @@
 | `binaries/` | 构建产物边界 | 保存构建时生成、由 Tauri 打包且不进入 Git 的 Agent Service sidecar |
 | `resources/` | 运行配置 | 保存 sidecar 非敏感默认配置（含独立 CLI 事件流预算）及构建时复制的 Node 许可证 |
 | `capabilities/default.json` | 权限边界 | 主窗口可使用的最小原生能力 |
-| `icons/` | 品牌资源 | 多 Agent 圆桌主题的 Council 图标源图与各平台打包尺寸 |
+| `icons/` | 品牌资源 | 「三席位 + 议事环 + 共识星」的 Council 图标矢量源与各平台打包尺寸 |
 | `src/lib.rs` | IPC 入口 | 注册桌面设置、ready + 数据库实例身份门后的持久 SQLite 连接、动态 Actor alias 内容命令、只读任务查询（`list_tasks`/`get_task`）、只读资产查询（`list_assets`/`get_asset`）与 revision 事件，以及本地 Agent 服务配置/健康/拉起命令和退出清理 |
 | `src/main.rs` | 进程入口 | 启动桌面应用 |
 | `src/settings.rs` | 设置核心 | 原子保存日志库、当前项目、最近项目与本地 Agent 服务配置（地址默认值唯一来源） |
