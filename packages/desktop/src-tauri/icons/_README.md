@@ -17,7 +17,8 @@
 ## 设计说明
 
 三席位 + 三段弧 + 共识星：三个实心圆是围坐的 Agent，三段弧是它们之间的议事环，中心四角星是收敛出的共识。
-桌面图标用深蓝底板（navy 渐变 + 中心光晕）、亮蓝渐变符号、白色共识星，在 Dock 上与浅色界面形成对比；
+桌面图标与应用内 BrandLogo 浅色主题同一配色：白到浅灰的底板、近黑墨色符号、石板蓝共识星（`theme.css` 的 `color-agent-council`）；
+深蓝底板的备选版留在 `concepts/d-vector-navy.svg`（目录不入库）。
 符号几何用 32 单位坐标，与 Web 端 `BrandLogo`（`packages/web/src/components/presentation.tsx`）和
 `packages/web/public/favicon.svg` 共用同一组数值（Web 端按主题变量着色），改动时三处同步。
 
