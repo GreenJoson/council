@@ -38,6 +38,8 @@ struct DesktopState {
     service_child: Option<Child>,
     /// sidecar 日志所在目录；服务起不来时唯一能说清原因的地方。
     log_directory: Option<PathBuf>,
+    /// 本次拉起 sidecar 前日志文件的长度：日志跨启动追加，只有这之后的错误才属于本次启动。
+    service_log_offset: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -139,14 +141,26 @@ fn home_directory() -> Option<PathBuf> {
 impl DesktopState {
     /// 服务不可用时给出真正的原因，而不是笼统猜一个「还在迁移」。
     ///
-    /// 优先转述 sidecar 日志里最后一条错误；日志指向打不开数据库、而日志库又在
+    /// 只有本次拉起的 sidecar 已经退出，才转述它在本次启动之后写下的最后一条错误；
+    /// 子进程还活着说明服务只是还没就绪或探测抖动（启动窗口、限流），这时引用日志
+    /// 只会把某次任务失败当成「未就绪」的原因。日志指向打不开数据库、而日志库又在
     /// 隐私保护目录下时，直接说清楚这是系统授权问题——这条路径上没有任何提示，
     /// 排查一次要翻日志、比对路径、再想到重建会让 ad-hoc 签名失去既有授权。
-    fn service_unavailable_reason(&self) -> String {
-        let last_error = self
-            .log_directory
-            .as_deref()
-            .and_then(orchestration::last_service_error);
+    fn service_unavailable_reason(&mut self) -> String {
+        let exited = self
+            .service_child
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(Some(_))));
+        let last_error = match (
+            exited,
+            self.log_directory.as_deref(),
+            self.service_log_offset,
+        ) {
+            (true, Some(directory), Some(offset)) => {
+                orchestration::last_service_error(directory, offset)
+            }
+            _ => None,
+        };
         let library = self.settings.snapshot().log_library;
         let blocked_by_privacy = match (&last_error, &library, home_directory()) {
             (Some(error), Some(path), Some(home)) => {
@@ -771,6 +785,12 @@ fn start_managed_service(
         .app_log_dir()
         .map_err(|error| format!("无法定位 Council 日志目录：{error}"))?;
     let log_path = orchestration::service_log_path(&log_directory);
+    // 先记下当前长度再拉起：spawn 之后 sidecar 写入的内容才算本次启动的日志。
+    inner.service_log_offset = Some(
+        std::fs::metadata(&log_path)
+            .map(|meta| meta.len())
+            .unwrap_or(0),
+    );
     let child = orchestration::spawn_service(&autostart, &log_path)?;
     inner.service_child = Some(child);
     Ok(OrchestrationStartResult { status: "spawned" })
@@ -802,6 +822,7 @@ pub fn run() {
                 store: None,
                 service_child: None,
                 log_directory: app.path().app_log_dir().ok(),
+                service_log_offset: None,
             };
             if desktop_state.settings.snapshot().log_library.is_some() {
                 // Node sidecar 是唯一 schema 迁移器；只有 ready 后 Rust 才能打开数据库。
@@ -927,6 +948,7 @@ mod tests {
             store: None,
             service_child: None,
             log_directory: None,
+            service_log_offset: None,
         };
 
         let error = match state.ensure_store() {

@@ -208,6 +208,11 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
+### Unreleased
+
+- Desktop: the webview CSP now allows `img-src` from the loopback Agent Service, so asset thumbnails, full-size images and message images render inside the installed app instead of a broken placeholder (0.10.0 had only verified the image endpoints over HTTP).
+- Desktop: the "Agent Service not ready" banner only quotes a sidecar log error written during the current launch, and only once the sidecar has exited; errors from earlier sessions are no longer presented as the reason.
+
 ### 0.10.0 — 2026-10-11
 
 - The V2 refactor is merged in full: direct code tasks, an asset library with Codex image generation, multi-stage pipelines (brief → images → review → prototype), and a consolidated UI.

@@ -52,4 +52,4 @@
 | 消息图片 | `POST /api/v1/assets/upload` 入库→消息正文引用 `council-asset:<id>`→资产反查到该消息的 reference 挂接 |
 | 真实库迁移 | 还原设置后重启：迁移器自动生成 `council.schema-v19-*.sqlite3.backup`，主库 `user_version` 20、`quick_check` ok，议题 84 / 消息 2159 / 任务 640 / 决策 178 与迁移前一致 |
 
-限制：两个 Agent 都以 `workspace_write` 验收，未验 `danger_full_access`；界面未做视觉驱动，证据来自 HTTP API、日志库与临时项目的 git 记录；内置限流（120 次/分钟）与桌面自身轮询共用，外部轮询须放慢，否则会收到 429。
+限制：两个 Agent 都以 `workspace_write` 验收，未验 `danger_full_access`；界面未做视觉驱动，证据来自 HTTP API、日志库与临时项目的 git 记录；内置限流（120 次/分钟）与桌面自身轮询共用，外部轮询须放慢，否则会收到 429。发布后在桌面端发现两处遗漏：图片被 WebView CSP 拦截不显示、未就绪提示引用以前会话的日志错误，已在后续提交修复（见 README 更新日志「未发布」）。

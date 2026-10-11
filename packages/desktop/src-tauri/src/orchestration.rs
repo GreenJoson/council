@@ -150,15 +150,19 @@ pub fn service_log_path(log_directory: &Path) -> PathBuf {
     log_directory.join(SERVICE_LOG_FILE_NAME)
 }
 
-/// 服务日志里最后一条 ERROR 的正文（不含堆栈）。
+/// 服务日志里 `since` 字节之后最后一条 ERROR 的正文（不含堆栈）。
 ///
 /// 探测失败只知道"没起来"，真正的原因一律在 sidecar 日志里。不把它带到界面上，
 /// 用户看到的永远是同一句无关的猜测，而每次排查都要有人手动去翻这个文件。
-pub fn last_service_error(log_directory: &Path) -> Option<String> {
+/// 日志跨启动追加，`since` 取本次拉起服务前文件的长度：只转述这次启动写下的错误，
+/// 否则几周前某次任务失败会被当成今天「服务未就绪」的原因。
+pub fn last_service_error(log_directory: &Path, since: u64) -> Option<String> {
     let mut file = fs::File::open(service_log_path(log_directory)).ok()?;
     let length = file.metadata().ok()?.len();
+    // 文件被删除重建后长度可能小于记录的偏移，此时退回只按尾部读。
+    let since = if since <= length { since } else { 0 };
     // 只读尾部：这个文件会一直追加，整读迟早会变成启动路径上的一次大 IO。
-    let start = length.saturating_sub(LOG_TAIL_BYTES);
+    let start = since.max(length.saturating_sub(LOG_TAIL_BYTES));
     if start > 0 {
         use std::io::Seek;
         file.seek(std::io::SeekFrom::Start(start)).ok()?;
@@ -491,7 +495,7 @@ mod tests {
         )
         .expect("write log");
 
-        let error = last_service_error(&directory).expect("read last error");
+        let error = last_service_error(&directory, 0).expect("read last error");
         // 取最后一条而不是第一条：早已修好的旧错误会把排查引到完全错误的方向。
         assert!(error.contains("unable to open database file"), "{error}");
         assert!(!error.contains("早就修好了"), "{error}");

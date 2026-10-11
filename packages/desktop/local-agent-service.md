@@ -14,7 +14,9 @@ Council.app 已内置 Agent Service 和 Node.js 运行时。正常使用时不�
 3. 切换日志库时终止旧 sidecar，再以新日志库重启；
 4. 退出 App 时先发 SIGTERM，超时后终止整个进程组，不留下后台孤儿进程；
 5. sidecar 暂未就绪时，界面保持离线并按打包配置有界探测；普通 HTTP 响应或
-   `ready=false` 均不算启动成功。
+   `ready=false` 均不算启动成功。探测失败的提示只在本次拉起的 sidecar 已退出时
+   转述它在本次启动之后写下的最后一条错误；子进程还在就只说「尚未就绪」，不引用
+   以前会话的日志。
 
 用户仍需分别完成 Claude Code CLI / Codex CLI 的安装和登录。模型选择、兼容 Provider 与 API Key 在 Council 的设置中心完成；API Key 只进入系统 Keychain，不写入 SQLite、设置文件或 sidecar 配置。
 
