@@ -200,9 +200,32 @@ npm run test:e2e    # Real HTTP/SSE and browser flows with test agents
 npm run audit       # npm dependency advisories
 ```
 
-E2E requires Python 3, the Python Playwright package, and its Chromium browser. It uses temporary databases and fake agents, so a passing E2E run is not proof of live provider compatibility or model quality. See the [0.9.2 review record](docs/release-0.9.2.md).
+E2E requires Python 3, the Python Playwright package, and its Chromium browser. It uses temporary databases and fake agents, so a passing E2E run is not proof of live provider compatibility or model quality. See the [0.10.0 release review](docs/release-0.10.0.md).
 
 For contributions, describe the user-visible problem, keep changes within the owning module, run the relevant checks, and update both language READMEs plus the affected directory's `_README.md`. Never include local databases, `.env` files, credentials, or private project captures in a contribution. Detailed Chinese usage is available in the [user guide](docs/usage.md).
+
+## Changelog
+
+Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
+
+### 0.10.0 — 2026-10-11
+
+- The V2 refactor is merged in full: direct code tasks, an asset library with Codex image generation, multi-stage pipelines (brief → images → review → prototype), and a consolidated UI.
+- Worker teams: a code task can be handed to a Lead that splits it across parallel Workers. Each Worker runs in its own worktree and branch, is merged back under control, and the whole team is reviewed once.
+- Client onboarding: one click registers the Council MCP server and Skill into the local Claude Code / Codex configuration, touching only Council's own entries, with drift detection and restore.
+- Message image attachments: paste or reference images from the editor. They are stored in the log library's asset store, not in the project tree, and rendered inline through `council-asset:` references.
+- New app icon: three seats, three arcs and a consensus star on a light plate, sharing one geometry with the in-app `BrandLogo` and the favicon.
+- Schema v19 → v20 is a breaking migration. Older binaries cannot open a migrated library; the migrator writes a pre-migration backup next to it.
+- Review record: [0.10.0 release review](docs/release-0.10.0.md).
+
+### 0.9.3 – 0.9.8 — 2026-09-21
+
+- Delegation hardening: CLI execution streams separated from reply limits, unfinished delegated code continued in isolated workspaces, delegation progress persisted with separate execution budgets, explicit continuation permissions preserved, delegation history aligned, staged delivery preserved and complete review evidence required.
+
+### 0.9.2 — 2026-09-20
+
+- Decision packs, multi-agent delegation, task acceptance, execution evidence, per-project pending items and recovery from commit checkpoints; first official desktop icon; dependency security updates. Schema v16.
+- Review record: [0.9.2 release review](docs/release-0.9.2.md).
 
 ## License
 
