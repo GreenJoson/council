@@ -214,7 +214,7 @@ export function Lightbox({ content, onClose, navigation }: LightboxProps) {
           {/* 翻页按钮浮在画布两侧而不在画布里：放大后画布滚动时按钮位置不动 */}
           {canGoPrevious ? (
             <button
-              className="markdown-lightbox-nav is-previous"
+              className="media-nav-button is-previous"
               type="button"
               aria-label={t("上一张")}
               title={t("上一张（←）")}
@@ -225,7 +225,7 @@ export function Lightbox({ content, onClose, navigation }: LightboxProps) {
           ) : null}
           {canGoNext ? (
             <button
-              className="markdown-lightbox-nav is-next"
+              className="media-nav-button is-next"
               type="button"
               aria-label={t("下一张")}
               title={t("下一张（→）")}

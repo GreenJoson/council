@@ -1,6 +1,7 @@
 /**
  * @input  依赖：theme.css 媒体尺寸/颜色 token 与 MarkdownContent、MermaidDiagram、Lightbox 语义类名
- * @output 导出：图片/架构图有界缩略预览、全视口大图缩放浏览（含序列翻页按钮与位置）与 Mermaid 状态样式
+ * @output 导出：图片/架构图有界缩略预览、全视口大图缩放浏览（含序列位置）、序列翻页按钮 media-nav-button
+ *         （Lightbox 与资产详情大预览共用，贴在定位容器左右两侧）与 Mermaid 状态样式
  * @pos    Operator Console 所有 Markdown 媒体的唯一视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -273,7 +274,8 @@
   min-height: 0;
 }
 
-.markdown-lightbox-nav {
+/* 序列翻页按钮：Lightbox 与资产详情大预览共用，相对最近的定位容器贴左右两侧、垂直居中 */
+.media-nav-button {
   position: absolute;
   top: 50%;
   z-index: 1;
@@ -288,20 +290,21 @@
   color: var(--color-text-secondary);
   box-shadow: var(--shadow-medium);
   transform: translateY(-50%);
+  text-decoration: none;
   cursor: pointer;
 }
 
-.markdown-lightbox-nav:hover,
-.markdown-lightbox-nav:focus-visible {
+.media-nav-button:hover,
+.media-nav-button:focus-visible {
   background: var(--color-surface-raised);
   color: var(--color-focus);
 }
 
-.markdown-lightbox-nav.is-previous {
+.media-nav-button.is-previous {
   left: 12px;
 }
 
-.markdown-lightbox-nav.is-next {
+.media-nav-button.is-next {
   right: 12px;
 }
 
@@ -394,16 +397,16 @@
     padding: 10px;
   }
 
-  .markdown-lightbox-nav {
+  .media-nav-button {
     width: 36px;
     height: 52px;
   }
 
-  .markdown-lightbox-nav.is-previous {
+  .media-nav-button.is-previous {
     left: 6px;
   }
 
-  .markdown-lightbox-nav.is-next {
+  .media-nav-button.is-next {
     right: 6px;
   }
 

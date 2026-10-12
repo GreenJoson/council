@@ -1,20 +1,21 @@
 /**
- * @input  依赖：界面语言、AssetRepository、assetId、内容 revision；use-assets 的 useAssetDetail / useImageSequence、
+ * @input  依赖：界面语言、AssetRepository、assetId、内容 revision、AssetsView 读好的资产库序列；use-assets 的 useAssetDetail、
  *         AssetThumbnail、asset-gallery 的翻页适配、components 的 Lightbox、资产文案表与 finalTargets
- * @output 导出：AssetDetail —— #/assets/<assetId>：左栏原图大预览（随视口高度缩放，点击用 Lightbox 看原图，
- *         大图里按资产库顺序上一张/下一张，关闭时详情页跟到最后看的那张）、右栏元数据、挂接列表、设为/取消 final、两步确认删除
+ * @output 导出：AssetDetail —— #/assets/<assetId>：标题栏位置与上一个/下一个、左栏原图大预览（两侧上一个/下一个箭头，
+ *         随视口高度缩放，点击用 Lightbox 看原图，大图里按资产库顺序翻图片，关闭时详情页跟到最后看的那张）、
+ *         右栏元数据、挂接列表、设为/取消 final、两步确认删除；大图未打开时 ←/→ 切换上一个/下一个资产
  * @pos    资产库的详情态；读取失败时显示占位与返回链接，不白屏；删除成功后回到 #/assets
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { AlertTriangle, ArrowLeft, ExternalLink, Maximize2, RefreshCw, Star, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Maximize2, RefreshCw, Star, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { buildHash } from "../../app/routes";
 import { Lightbox } from "../../components/Lightbox";
 import type { AssetRepository } from "../../data/assets/asset-repository";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AssetLink } from "../../types/assets";
+import type { Asset, AssetLink } from "../../types/assets";
 import {
   ASSET_KIND_LABELS,
   ASSET_ROLE_LABELS,
@@ -22,14 +23,16 @@ import {
   finalTargets,
   formatByteSize,
 } from "./asset-labels";
-import { buildAssetLightboxNavigation } from "./asset-gallery";
+import { buildAssetLightboxNavigation, findAssetNeighbors } from "./asset-gallery";
 import { AssetThumbnail } from "./AssetThumbnail";
-import { useAssetDetail, useImageSequence } from "./use-assets";
+import { useAssetDetail } from "./use-assets";
 
 export interface AssetDetailProps {
   repository: AssetRepository;
   assetId: string;
   revision: unknown;
+  /** 资产库序列（网格「全部」同序）；null 表示还没读到，此时不显示翻页。 */
+  sequence: readonly Asset[] | null;
 }
 
 const LIST_HASH = buildHash({ view: "assets" });
@@ -39,14 +42,43 @@ function linkHref(link: AssetLink): string | undefined {
   return link.targetKind === "work_item" ? buildHash({ view: "tasks", taskId: link.targetId }) : undefined;
 }
 
-export function AssetDetail({ repository, assetId, revision }: AssetDetailProps) {
+function assetHref(asset: Asset): string {
+  return buildHash({ view: "assets", assetId: asset.id });
+}
+
+/** 焦点在输入控件里时方向键是移动光标，不拿来翻页。 */
+function isTextEntry(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
+}
+
+export function AssetDetail({ repository, assetId, revision, sequence }: AssetDetailProps) {
   const { t, locale } = useI18n();
   const state = useAssetDetail(repository, assetId, revision);
   // 大图里正在看的资产 id；null 表示大图未打开。翻页只换这个 id，不改路由，避免详情页重挂载把大图关掉
   const [lightboxAssetId, setLightboxAssetId] = useState<string | null>(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const imageSequence = useImageSequence(repository, lightboxAssetId !== null);
   const { asset } = state;
+  // 详情页上一个/下一个按资产库顺序走，换的是路由；详情页随之重挂载，序列由 AssetsView 保留
+  const neighbors = findAssetNeighbors(sequence, assetId);
+  const isLightboxOpen = lightboxAssetId !== null;
+  const previousId = neighbors?.previous?.id;
+  const nextId = neighbors?.next?.id;
+
+  useEffect(() => {
+    // 大图打开时 ←/→ 归 Lightbox 翻图
+    if (isLightboxOpen) return undefined;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (isTextEntry(event.target)) return;
+      const targetId = event.key === "ArrowLeft" ? previousId : event.key === "ArrowRight" ? nextId : undefined;
+      if (!targetId) return;
+      event.preventDefault();
+      window.location.hash = buildHash({ view: "assets", assetId: targetId });
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isLightboxOpen, previousId, nextId]);
 
   if (!asset) {
     return (
@@ -70,7 +102,8 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
   const canToggleFinal = !asset.deletedAt && (pending.length > 0 || current.length > 0);
   const busy = state.busyAction !== null;
   const created = new Date(asset.createdAt);
-  const previewable = (imageSequence ?? []).filter((item) => repository.contentUrl(item) !== undefined);
+  // 大图只能翻图片：从资产库序列里挑出读得到原图的图像
+  const previewable = (sequence ?? []).filter((item) => item.kind === "image" && repository.contentUrl(item) !== undefined);
   const lightboxAsset = lightboxAssetId === null
     ? undefined
     : previewable.find((item) => item.id === lightboxAssetId) ?? (lightboxAssetId === asset.id ? asset : undefined);
@@ -92,6 +125,23 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
         <h1>{t(ASSET_KIND_LABELS[asset.kind])} · <code>{asset.id}</code></h1>
         {asset.deletedAt ? <span className="asset-deleted-pill">{t("已删除")}</span> : null}
         {current.length > 0 ? <span className="asset-final-badge"><Star size={11} />{t("最终稿")}</span> : null}
+        {neighbors && neighbors.total > 1 ? (
+          <nav className="asset-detail-pager" aria-label={t("资产翻页")}>
+            {neighbors.previous ? (
+              <a href={assetHref(neighbors.previous)} aria-label={t("上一个资产")} title={t("上一个（←）")}><ChevronLeft size={15} /></a>
+            ) : (
+              <span className="is-disabled" aria-hidden="true"><ChevronLeft size={15} /></span>
+            )}
+            <span className="asset-detail-position">
+              {t("第 {index} / {total} 个", { index: neighbors.index + 1, total: neighbors.total })}
+            </span>
+            {neighbors.next ? (
+              <a href={assetHref(neighbors.next)} aria-label={t("下一个资产")} title={t("下一个（→）")}><ChevronRight size={15} /></a>
+            ) : (
+              <span className="is-disabled" aria-hidden="true"><ChevronRight size={15} /></span>
+            )}
+          </nav>
+        ) : null}
       </header>
 
       {state.loadError ? (
@@ -103,14 +153,26 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
 
       <div className="asset-detail-body">
         <section className="asset-preview" aria-label={t("预览")}>
-          {asset.kind === "image" && contentUrl ? (
-            <button type="button" className="asset-preview-button" onClick={() => setLightboxAssetId(asset.id)} aria-label={t("查看原图")}>
-              <AssetThumbnail repository={repository} asset={asset} className="is-large" source="content" />
-              <span className="asset-preview-hint"><Maximize2 size={12} />{t("查看原图")}</span>
-            </button>
-          ) : (
-            <AssetThumbnail repository={repository} asset={asset} className="is-large" />
-          )}
+          <div className="asset-preview-stage">
+            {asset.kind === "image" && contentUrl ? (
+              <button type="button" className="asset-preview-button" onClick={() => setLightboxAssetId(asset.id)} aria-label={t("查看原图")}>
+                <AssetThumbnail repository={repository} asset={asset} className="is-large" source="content" />
+                <span className="asset-preview-hint"><Maximize2 size={12} />{t("查看原图")}</span>
+              </button>
+            ) : (
+              <AssetThumbnail repository={repository} asset={asset} className="is-large" />
+            )}
+            {neighbors?.previous ? (
+              <a className="media-nav-button is-previous" href={assetHref(neighbors.previous)} aria-label={t("上一个资产")} title={t("上一个（←）")}>
+                <ChevronLeft size={28} />
+              </a>
+            ) : null}
+            {neighbors?.next ? (
+              <a className="media-nav-button is-next" href={assetHref(neighbors.next)} aria-label={t("下一个资产")} title={t("下一个（→）")}>
+                <ChevronRight size={28} />
+              </a>
+            ) : null}
+          </div>
           {contentUrl && asset.kind !== "image" ? (
             <a className="asset-open-link" href={contentUrl} target="_blank" rel="noreferrer">
               <ExternalLink size={13} />{t("在新标签页打开原文件")}

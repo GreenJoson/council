@@ -6,13 +6,13 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `AssetsView.tsx` | 入口 | `#/assets` 与 `#/assets/<assetId>`：创建一次资产仓储，在网格、详情、导入对话框间共享；导航只写 `buildHash` 生成的 hash |
+| `AssetsView.tsx` | 入口 | `#/assets` 与 `#/assets/<assetId>`：创建一次资产仓储，在网格、详情、导入对话框间共享；详情翻页用的资产序列也在这里读，详情页按 assetId 重挂载时不丢；导航只写 `buildHash` 生成的 hash |
 | `AssetGrid.tsx` | 列表 | kind 筛选、「只看未引用」开关、铺满可用宽度的 4:3 缩略图网格（卡片链接到详情）、上一页/下一页分页；头部「清理未引用」经 `window.confirm` 报数后软删除当前项目所有未挂任何目标的资产（不受 kind 筛选影响）并提示数量；页大小取仓储 `pageSize` |
-| `AssetDetail.tsx` | 详情 | 左右两栏：左栏原图大预览（随视口高度缩放、滚动吸顶，点击用 Lightbox 看原图），右栏元数据、挂接列表、设为/取消 final、两步确认删除；大图里按资产库顺序上一张/下一张（只换本地状态不改路由，关闭时详情页跟到最后看的那张）；读取失败显示占位与返回链接 |
+| `AssetDetail.tsx` | 详情 | 标题栏「‹ 第 n / N 个 ›」与大预览两侧箭头按资产库顺序切换上一个/下一个资产（换路由；大图未打开时 ←/→ 同效）；左右两栏：左栏原图大预览（随视口高度缩放、滚动吸顶，点击用 Lightbox 看原图），右栏元数据、挂接列表、设为/取消 final、两步确认删除；大图里按资产库顺序上一张/下一张（只换本地状态不改路由，关闭时详情页跟到最后看的那张）；读取失败显示占位与返回链接 |
 | `AssetImportDialog.tsx` | 写入 | 原生 dialog，只收相对项目根目录的路径；项目路径由仓储持有 |
 | `AssetThumbnail.tsx` | 展示 | 资产网格、详情、任务产物区与图像委派 reference 候选共用的缩略图；默认读 512px 缩略图，详情大预览传 `source="content"` 读原图；无图时按 kind 显示图标占位 |
-| `use-assets.ts` | 状态 | 分页读取（kind / 只看未引用）与单资产读取；revision 前进或手动 reload 时重读，写操作返回的最新资产就地合并；`useUnlinkedCleanup` 先数未引用资产，确认后复用列表 + 单条软删除逐个清理，不依赖服务端批量接口；`useImageSequence` 在大图打开时按页读全部图片（上限 500 张）作为翻页序列 |
-| `asset-gallery.ts` | 适配 | 把一组资产与当前 id 转成 Lightbox 的翻页参数；详情页、任务产物区、流水线候选图对比共用，少于 2 张不显示翻页 |
+| `use-assets.ts` | 状态 | 分页读取（kind / 只看未引用）与单资产读取；revision 前进或手动 reload 时重读，写操作返回的最新资产就地合并；`useUnlinkedCleanup` 先数未引用资产，确认后复用列表 + 单条软删除逐个清理，不依赖服务端批量接口；`useAssetSequence` 在详情态按页读全部资产（与网格「全部」同序，上限 500 个），revision 前进时重读，供详情翻页与大图翻页（大图只取其中的图片） |
+| `asset-gallery.ts` | 适配 | `findAssetNeighbors` 给出详情页在序列里的位置与前后资产；`buildAssetLightboxNavigation` 把一组资产与当前 id 转成 Lightbox 的翻页参数；详情页、任务产物区、流水线候选图对比共用，少于 2 张不显示翻页 |
 | `asset-labels.ts` | 常量 | kind / role / 挂接目标的中文标签（经 `t()` 翻译）、字节数格式化与 links 查询纯函数 |
 
 ## 职责
@@ -28,5 +28,5 @@ mock 模式下资产仓储状态是模块级内存单例：资产页与任务页
 ## 验证方式
 
 - `npm run check --prefix packages/web`、`npx vitest run`（i18n 覆盖会检查本目录的 `t("…")` 字面量）。
-- mock 模式（`.claude/launch.json` 的 council-web-mock）走查：网格与 kind 筛选、分页、详情预览与 Lightbox（←/→ 与两侧按钮翻页、首末张隐藏箭头、关闭后详情跟随）、设/取消 final、删除确认、导入成功与非法路径报错。
+- mock 模式（`.claude/launch.json` 的 council-web-mock）走查：网格与 kind 筛选、分页、详情页上一个/下一个（按钮、两侧箭头、←/→，首末项置灰/隐藏）、详情预览与 Lightbox（←/→ 与两侧按钮翻页、首末张隐藏箭头、关闭后详情跟随）、设/取消 final、删除确认、导入成功与非法路径报错。
 - http 模式需要服务端 `/api/v1/assets*` 已就绪；实现见 `data/assets/http-asset-repository.ts`。
