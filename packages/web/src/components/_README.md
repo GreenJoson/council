@@ -22,6 +22,7 @@
 | `ImplementationProgress.tsx` | 执行 | 导出右栏 `ImplementationSummary` 完成度摘要与主区 `ImplementationProgress` 任务清单；接受决策不自动调用规划 Agent，用户须先显式选择 Agent 再触发分拆，也可手动添加；任务按 `parentId` 渲染成父子两层，父任务状态由子任务派生且不可手改，完成度只数叶子；审核发现标出阻断/非阻断与复审轮次，叶子可认领并回写修复 commit；叶子只显示最新委派状态摘要与进度，并给出「在任务页管理委派」链接（`#/tasks/<id>`），单条委派面板与历史委派已迁到任务详情，批量委派保留 |
 | `WorkItemDelegationPanel.tsx` | Agent 执行 | 由任务详情页（`features/tasks/TaskDetail`）复用：选择两个不同 Agent 分任执行者和监督者，按次选择不超过 Agent 上限的写入权限，冻结验收标准与完成策略，并展示执行/审核/退回/分支提交、待人工验收、审计和恢复状态 |
 | `presentation.tsx` | 基础 | 统一品牌 logo、冻结 Actor 快照到 Participant 的转换、动态头像回退、议题状态与决策状态标签/徽章 |
+| `FoldableContent.tsx` | 基础 | 区块内搜索与折叠的共用件：`SectionSearch`（标题栏搜索框，Esc 清空，显示命中数）、`Highlight`（命中高亮）、`FoldList`（长列表只露前几项，「展开其余 N 项」）、`FoldText`（长文本按行数/字数折叠，搜索命中时自动展开）；任务简报、任务正文与流水线复盘记录在用 |
 | `StatusBar.tsx` | 基础 | 底部状态条：左侧同步状态（离线时可点击重试）与活动 Agent 计数（`running/waiting_agent` Run + 执行/审核中委派，离线快照无此字段时不渲染），右侧构建身份（版本 · commit · 构建时间，由 vite.config 在构建期注入；semver 不随重建变化，靠 commit 与时间区分手上跑的是哪个包） |
 
 讨论、决策记录与架构档案三块视图已迁入 `features/discussion/`、`features/decisions/`、`features/architecture/`，见 `features/_README.md`；本目录只保留被多个功能域共用的基础件。

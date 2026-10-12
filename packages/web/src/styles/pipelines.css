@@ -1,5 +1,5 @@
 /*
- * 流水线（features/pipelines）：#/pipelines 列表阶段徽标、详情阶段轨道、人工操作区、
+ * 流水线（features/pipelines）：#/pipelines 列表阶段徽标、详情阶段轨道（含修订轮失败说明）、人工操作区、复盘记录（按轮收起）、
  * select 阶段并排对比与新建对话框差异。容器与分组沿用 tasks.css 的 tasks-view / tasks-group，
  * 只用 theme.css 语义 token；720px 以下轨道纵向堆叠、对比单列，保证 375px 无横向滚动。
  */
@@ -92,6 +92,13 @@
 .pipeline-stage-link {
   color: var(--color-primary);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pipeline-stage-note {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 /* ============================== */
@@ -123,14 +130,50 @@
   list-style: none;
 }
 
-.pipeline-reviews li {
+.pipeline-reviews > li {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+}
+
+.pipeline-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.pipeline-review-items {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+
+.pipeline-review-items li {
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.pipeline-review-items code {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .pipeline-reviews p {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.pipeline-review-change span {
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .pipeline-final-list {

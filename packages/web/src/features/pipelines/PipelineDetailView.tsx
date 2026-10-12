@@ -1,8 +1,8 @@
 /**
  * @input  依赖：界面语言、PipelineRepository、AssetRepository、pipelineId、两路 revision；
- *         use-pipeline-detail、PipelineTrack、StageControls、pipeline-labels
+ *         use-pipeline-detail、PipelineTrack、StageControls、PipelineReviews、FoldList、pipeline-labels
  * @output 导出：PipelineDetailView —— #/pipelines/<id>：头部（目标、模板、当前阶段、父任务链接）、阶段轨道、人工操作区、
- *         复盘记录与最终稿；写操作 409 时提示「流水线已更新，请重试」并已自动重读
+ *         约束（过长折叠）、复盘记录（可搜索、按轮收起）与最终稿；写操作 409 时提示「流水线已更新，请重试」并已自动重读
  * @pos    流水线视图的详情态；调用方按 pipelineId 作 key 重挂载，切换流水线时状态不串
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -10,9 +10,11 @@
 
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { buildHash } from "../../app/routes";
+import { FoldList } from "../../components/FoldableContent";
 import type { AssetRepository } from "../../data/assets/asset-repository";
 import type { PipelineRepository } from "../../data/pipelines/pipeline-repository";
 import { useI18n } from "../../i18n/I18nProvider";
+import { PipelineReviews } from "./PipelineReviews";
 import { PipelineTrack } from "./PipelineTrack";
 import { STAGE_LABELS, STAGE_STATUS_LABELS, TEMPLATE_HINTS, TEMPLATE_LABELS, formatPipelineTime } from "./pipeline-labels";
 import { StageControls, isPipelineFinished } from "./StageControls";
@@ -81,7 +83,7 @@ export function PipelineDetailView({ repository, assetRepository, pipelineId, re
         </p>
       ) : null}
 
-      <PipelineTrack document={document} />
+      <PipelineTrack document={document} childTasks={detail.children} outputCount={detail.outputAssetIds.length} />
 
       <StageControls
         detail={detail}
@@ -96,30 +98,11 @@ export function PipelineDetailView({ repository, assetRepository, pipelineId, re
       {document.request.constraints?.length ? (
         <section className="task-detail-section">
           <h2>{t("约束")}</h2>
-          <ul>{document.request.constraints.map((entry, index) => <li key={index}>{entry}</li>)}</ul>
+          <FoldList items={document.request.constraints} getKey={(_, index) => index} renderItem={(entry) => entry} />
         </section>
       ) : null}
 
-      {document.reviews.length > 0 ? (
-        <section className="task-detail-section" data-pipeline-reviews>
-          <h2>{t("复盘记录")}</h2>
-          <ol className="pipeline-reviews">
-            {document.reviews.map((review) => (
-              <li key={review.round}>
-                <strong>{t("第 {round} 轮", { round: review.round })}</strong>
-                <span className={`pipeline-stage-badge is-${review.verdict === "pass" ? "completed" : "failed"}`}>
-                  {review.verdict === "pass" ? t("通过") : t("需返工")}
-                </span>
-                {review.items.filter((item) => !item.ok).map((item) => (
-                  <p key={`${item.assetId}-${item.deliverableId}`} className="task-muted">
-                    <code>{item.deliverableId}</code> {item.issue ?? ""}{item.change ? ` → ${item.change}` : ""}
-                  </p>
-                ))}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
+      {document.reviews.length > 0 ? <PipelineReviews reviews={document.reviews} /> : null}
 
       {document.finalAssetIds?.length ? (
         <section className="task-detail-section" data-pipeline-final>

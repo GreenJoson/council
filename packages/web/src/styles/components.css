@@ -1,6 +1,7 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
- * @output 导出：会话流筛选 chips 与议题行、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式
+ * @output 导出：会话流筛选 chips 与议题行、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式，
+ *         以及详情页长内容共用的区块搜索框、命中高亮与折叠（components/FoldableContent）
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -3590,4 +3591,79 @@
 
 .cycle-abandon {
   margin-top: 11px;
+}
+
+/* ============================== */
+/* 详情页长内容：区块搜索、命中高亮与折叠（FoldableContent） */
+/* ============================== */
+
+.section-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: min(280px, 100%);
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-small);
+  background: var(--control-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.section-search:focus-within {
+  border-color: var(--color-focus);
+  background: var(--color-surface-raised);
+}
+
+.section-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.section-search small {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.fold-search-hit {
+  border-radius: 2px;
+  background: var(--color-warning-soft);
+  color: inherit;
+}
+
+.fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
+  width: fit-content;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12px;
+}
+
+.fold-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fold-text-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+pre.fold-text-body {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }

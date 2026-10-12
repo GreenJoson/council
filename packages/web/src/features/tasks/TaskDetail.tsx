@@ -1,8 +1,8 @@
 /**
  * @input  依赖：界面语言、TaskRepository、AssetRepository、taskId、两路 revision、可用 Agent 列表、打开议题回调；
  *         use-task-detail、use-task-team、TaskStatusForm、BriefSection、TaskAssetsSection、TaskDelegationSection、
- *         TaskTeamPanel 与状态文案表
- * @output 导出：TaskDetail —— 单个任务的详情：元信息、正文、简报（展示/编辑）、产物区、状态更新、议题跳转、
+ *         TaskTeamPanel、components/FoldableContent 的 FoldText 与状态文案表
+ * @output 导出：TaskDetail —— 单个任务的详情：元信息、正文（过长时折叠）、简报（搜索/折叠/编辑）、产物区、状态更新、议题跳转、
  *         诚实限制提示、委派（代码/图像，代码委派可选团队模式）面板与历史；有团队时右栏显示「团队」
  * @pos    #/tasks/<taskId> 的主体；读取失败（含任务不存在）时显示占位与返回列表链接，不白屏。
  *         布局为「主列 + 右栏」网格（宽屏两列，窄屏右栏落到主列下方），没有团队时只有主列
@@ -12,6 +12,7 @@
 
 import { AlertTriangle, ArrowLeft, GitCommitHorizontal, MessagesSquare, RefreshCw } from "lucide-react";
 import { buildHash } from "../../app/routes";
+import { FoldText } from "../../components/FoldableContent";
 import { WORK_ITEM_STATUS_LABELS } from "../../components/ImplementationProgress";
 import type { AssetRepository } from "../../data/assets/asset-repository";
 import { parseCouncilBrief } from "../../data/tasks/council-brief";
@@ -123,7 +124,9 @@ export function TaskDetail({
       <div className="task-detail-layout">
         <div className="task-detail-main">
           <section className="task-detail-section" aria-label={t("任务内容")}>
-            {task.details ? <p className="task-details-text">{task.details}</p> : <p className="task-muted">{t("没有补充说明。")}</p>}
+            {task.details
+              ? <FoldText className="task-details-text" text={task.details} maxLines={6} maxChars={240} />
+              : <p className="task-muted">{t("没有补充说明。")}</p>}
             {task.statusNote ? <blockquote>{task.statusNote}</blockquote> : null}
             {task.fixCommit ? <small className="task-commit"><GitCommitHorizontal size={12} />{task.fixCommit}</small> : null}
           </section>

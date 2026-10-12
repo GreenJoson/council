@@ -8,8 +8,8 @@
 |---|---|---|
 | `TasksView.tsx` | 入口 | 创建一次任务仓储（列表、详情、新建对话框共享）与资产仓储（详情产物区与图像委派）；有 `taskId` 时渲染详情（按 id 重挂载），否则渲染列表；新建成功后跳到 `#/tasks/<新 id>` |
 | `TaskList.tsx` | 列表 | 按 进行中/阻塞/待办/已完成 分组，提供类型与来源筛选、刷新与新建入口；未完成任务行显示最新委派状态 |
-| `TaskDetail.tsx` | 详情 | 标题、元信息、「在讨论中打开」链接、正文，依次装配简报区、产物区（image 任务或有图像委派时）、状态更新表单与委派区；有团队时为「主列 + 右栏」网格（>1260px 两列，窄屏右栏落到下方）；加载失败给重试入口 |
-| `BriefSection.tsx` | 简报 | council-brief 结构化展示（参考资产链接到 `#/assets/<id>`），非 council-brief 回退键值列表；「编辑简报」经 `PUT /tasks/:id` 的 `brief` 保存 |
+| `TaskDetail.tsx` | 详情 | 标题、元信息、「在讨论中打开」链接、正文（长正文默认折叠，见 `components/FoldableContent`），依次装配简报区、产物区（image 任务或有图像委派时）、状态更新表单与委派区；有团队时为「主列 + 右栏」网格（>1260px 两列，窄屏右栏落到下方）；加载失败给重试入口 |
+| `BriefSection.tsx` | 简报 | council-brief 结构化展示（参考资产链接到 `#/assets/<id>`），非 council-brief 回退键值列表（对象值格式化成多行 JSON）；标题栏可整区收起/展开并带区块内搜索（过滤条目、高亮命中，命中块名时保留整块），长列表/长目标/长字段默认折叠；「编辑简报」经 `PUT /tasks/:id` 的 `brief` 保存。流水线父任务的 brief 是流水线文档：默认收起、链接到流水线页、不给编辑 |
 | `BriefEditor.tsx` | 简报 | 受控编辑器，表单 / JSON 两种模式；只有合法时才能从 JSON 切回表单；导出简报类型标签与问题列表 |
 | `brief-form.ts` | 简报 | 表单草稿 ⇄ council-brief 的纯函数转换（创建草稿、序列化、解析、提交前校验），表单不覆盖的字段原样保留 |
 | `TaskAssetsSection.tsx` | 产物 | `target=work_item:<id>` 的 output/final 资产缩略图、Lightbox 看原图、逐张设为/取消最终稿 |

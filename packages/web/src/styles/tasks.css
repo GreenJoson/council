@@ -1,7 +1,7 @@
 /*
  * 任务视图（features/tasks）：#/tasks 列表、#/tasks/<id> 详情、新建任务对话框差异样式，
  * 详情的「主列 + 右栏团队」布局与 Worker 行、委派表单里的团队模式开关，
- * 以及讨论页实施项卡片内的委派摘要。只用 theme.css 语义 token。
+ * 以及讨论页实施项卡片内的委派摘要、详情区块标题栏（可收起标题 + 区块搜索）。只用 theme.css 语义 token。
  */
 
 /* ============================== */
@@ -232,6 +232,35 @@
 .task-detail-section h2 {
   margin: 0;
   font-size: 14px;
+}
+
+/* 区块标题栏：左侧标题（可带收起开关），右侧区块搜索；窄屏搜索换行占满 */
+.task-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.task-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.task-section-toggle h2 {
+  color: var(--color-text);
+}
+
+@media (max-width: 720px) {
+  .task-section-head .section-search {
+    width: 100%;
+  }
 }
 
 .task-details-text {

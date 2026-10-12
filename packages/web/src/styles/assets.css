@@ -701,6 +701,17 @@
   font-weight: 500;
 }
 
+.brief-view h3 small {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.brief-goal {
+  display: grid;
+  gap: 2px;
+}
+
 .brief-view p {
   margin: 0;
 }
