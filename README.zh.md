@@ -8,7 +8,7 @@
 
 Council 把 Claude、Codex 和其他已配置 Agent 放进同一个项目、同一个议题。从提案、独立审查、人工决策到隔离实施，不必再靠你在聊天窗口之间反复搬运消息。
 
-当前桌面版本为 **0.10.1**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
+当前桌面版本为 **0.10.2**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
 
 ## 解决什么问题？
 
@@ -218,7 +218,7 @@ E2E 需要 Python 3、Python Playwright 包及其 Chromium 浏览器，使用临
 
 发布审核记录放在 `docs/`，0.9.2 之前的版本只保留在 git 历史里。
 
-### 未发布
+### 0.10.2 — 2026-10-13
 
 - 讨论里一键派活：讨论 Agent 仍是只读的。被 @ 要求出图时，它会在回复末尾附一个 `council-dispatch` 派活块，写明模板、项目内参考图路径和完整简报。
   - 消息卡把派活块显示成派活方案卡，列出交付物和总张数，不再露出原始 JSON。

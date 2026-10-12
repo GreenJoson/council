@@ -8,7 +8,7 @@ English · [简体中文](README.zh.md)
 
 Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-The current desktop release is **0.10.1**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
+The current desktop release is **0.10.2**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
 ## Why Council?
 
@@ -218,7 +218,7 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
-### Unreleased
+### 0.10.2 — 2026-10-13
 
 - One-click dispatch from a discussion: discussion agents stay read-only. When @-mentioned to produce images, an agent ends its reply with a `council-dispatch` block naming the template, in-project reference image paths and the full brief.
   - The message card shows the block as a dispatch plan card listing the deliverables and the total image count, instead of raw JSON.
