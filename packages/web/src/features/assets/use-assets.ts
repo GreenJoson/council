@@ -2,7 +2,8 @@
  * @input  依赖：AssetRepository、网格筛选（kind / 只看未引用）、页偏移与内容 revision
  * @output 导出：useAssetPage（资产分页列表读取，revision 前进或手动 reload 时重读）、
  *         useAssetDetail（单个资产读取 + 设为/取消 final、删除写操作与忙碌/错误态）、
- *         useUnlinkedCleanup（「清理未引用」：先数未挂任何目标的资产，经调用方确认后逐个软删除，返回清理数量）
+ *         useUnlinkedCleanup（「清理未引用」：先数未挂任何目标的资产，经调用方确认后逐个软删除，返回清理数量）、
+ *         useImageSequence（详情页大图翻页用的图像序列：打开 Lightbox 才按页读完，与网格同序）
  * @pos    资产功能的状态与副作用层；组件只拿结果渲染。写操作返回的最新资产就地合并，
  *         随后仍以 revision 驱动的重读为准（与任务页 use-task-detail 同一约定）；
  *         清理不新增服务端批量接口，复用列表 + 单条软删除，三种数据模式行为一致
@@ -122,6 +123,35 @@ export function useUnlinkedCleanup(
   }, [repository, onDone]);
 
   return { isCleaning, result, error, cleanup };
+}
+
+/** 大图翻页序列的读取上限：资产库再大也只取最新这些张，避免一次打开大图读完整个库。 */
+const IMAGE_SEQUENCE_LIMIT = 500;
+
+/**
+ * 当前项目的图像资产序列（与网格「全部」同序：入库时间倒序），供详情页 Lightbox 上一张/下一张。
+ * enabled 为 true（打开大图）才开始读，读到后在本次详情页内复用；读失败只是没有翻页，不影响看当前图，
+ * 下次打开大图再试。
+ */
+export function useImageSequence(repository: AssetRepository, enabled: boolean): Asset[] | null {
+  const [sequence, setSequence] = useState<Asset[] | null>(null);
+
+  useEffect(() => {
+    if (!enabled || sequence !== null) return undefined;
+    let active = true;
+    void (async () => {
+      const items: Asset[] = [];
+      while (items.length < IMAGE_SEQUENCE_LIMIT) {
+        const page = await repository.listAssets({ kind: "image", limit: repository.pageSize, offset: items.length });
+        items.push(...page.items);
+        if (!page.hasMore || page.items.length === 0) break;
+      }
+      if (active) setSequence(items.slice(0, IMAGE_SEQUENCE_LIMIT));
+    })().catch(() => undefined);
+    return () => { active = false; };
+  }, [repository, enabled, sequence]);
+
+  return sequence;
 }
 
 export interface AssetDetailState {

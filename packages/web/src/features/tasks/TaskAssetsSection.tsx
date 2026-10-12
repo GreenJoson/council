@@ -1,7 +1,8 @@
 /**
- * @input  依赖：界面语言、AssetRepository、taskId、两路 revision；features/assets 的 AssetThumbnail，components 的 Lightbox
+ * @input  依赖：界面语言、AssetRepository、taskId、两路 revision；features/assets 的 AssetThumbnail 与翻页适配，
+ *         components 的 Lightbox
  * @output 导出：TaskAssetsSection —— 任务详情的「产物」区：挂在本任务上的 output/final 资产缩略图网格，
- *         点击用 Lightbox 看原图，逐张设为/取消最终稿，卡片链接到 #/assets/<id>
+ *         点击用 Lightbox 看原图（本任务产物内上一张/下一张），逐张设为/取消最终稿，卡片链接到 #/assets/<id>
  * @pos    任务详情的子区块；按 target=work_item:<taskId> 查询资产，revision 或编排 revision 前进时重读
  *         （图像委派完成入库会推进它们）；设 final 只增删本任务的 final 挂接，不碰其它任务
  *
@@ -16,6 +17,7 @@ import type { AssetRepository } from "../../data/assets/asset-repository";
 import { getErrorMessage } from "../../data/error-message";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset } from "../../types/assets";
+import { buildAssetLightboxNavigation } from "../assets/asset-gallery";
 import { AssetThumbnail } from "../assets/AssetThumbnail";
 
 export interface TaskAssetsSectionProps {
@@ -69,6 +71,7 @@ export function TaskAssetsSection({ repository, taskId, revision, executionRevis
   }
 
   const previewUrl = preview ? repository.contentUrl(preview) : undefined;
+  const previewable = (assets ?? []).filter((asset) => asset.kind === "image" && repository.contentUrl(asset) !== undefined);
 
   return (
     <section className="task-detail-section task-assets" aria-labelledby="task-assets-heading">
@@ -113,7 +116,11 @@ export function TaskAssetsSection({ repository, taskId, revision, executionRevis
         </ul>
       )}
       {preview && previewUrl ? (
-        <Lightbox content={{ kind: "image", src: previewUrl, alt: preview.prompt ?? preview.id }} onClose={closePreview} />
+        <Lightbox
+          content={{ kind: "image", src: previewUrl, alt: preview.prompt ?? preview.id }}
+          onClose={closePreview}
+          navigation={buildAssetLightboxNavigation(previewable, preview.id, setPreview)}
+        />
       ) : null}
     </section>
   );

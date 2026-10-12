@@ -215,6 +215,7 @@ Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only
 - Image generation no longer requires the project to be a Git repository: image delegations and the pipeline image stage now run in an isolated empty directory under the delegation root, with no worktree, so uncommitted changes don't block them either. Code delegations, including the prototype stage, still need Git; on a non-repository they now say to initialise and make a first commit instead of a generic "Git operation failed".
 - Image viewer: a long Lightbox title (such as an image prompt) no longer stretches the frame, so the full image is centred instead of half of it being cut off; the title is truncated to one line with the full text on hover.
 - Asset library layout: the grid fills the available width with 4:3 cards; the detail page is now two columns — a large original-resolution preview on the left that scales with the window height and stays pinned while scrolling (click to open full size), metadata on the right — falling back to one column on narrow screens.
+- Image viewer: previous/next arrows on both sides of the Lightbox (also ← / →) with a "3 / 12" position, in library order from the asset detail page and within the set on a task's outputs and the pipeline's image comparison; zoom resets on each page turn and trackpad pinch now zooms too. Closing the viewer on the asset detail page moves the page to the last image you looked at.
 
 ### 0.10.0 — 2026-10-11
 

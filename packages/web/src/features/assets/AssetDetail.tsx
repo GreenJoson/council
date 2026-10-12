@@ -1,15 +1,15 @@
 /**
- * @input  依赖：界面语言、AssetRepository、assetId、内容 revision；use-assets 的 useAssetDetail、AssetThumbnail、
- *         components 的 Lightbox、资产文案表与 finalTargets
- * @output 导出：AssetDetail —— #/assets/<assetId>：左栏原图大预览（随视口高度缩放，点击用 Lightbox 看原图）、
- *         右栏元数据、挂接列表、设为/取消 final、两步确认删除
+ * @input  依赖：界面语言、AssetRepository、assetId、内容 revision；use-assets 的 useAssetDetail / useImageSequence、
+ *         AssetThumbnail、asset-gallery 的翻页适配、components 的 Lightbox、资产文案表与 finalTargets
+ * @output 导出：AssetDetail —— #/assets/<assetId>：左栏原图大预览（随视口高度缩放，点击用 Lightbox 看原图，
+ *         大图里按资产库顺序上一张/下一张，关闭时详情页跟到最后看的那张）、右栏元数据、挂接列表、设为/取消 final、两步确认删除
  * @pos    资产库的详情态；读取失败时显示占位与返回链接，不白屏；删除成功后回到 #/assets
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
 import { AlertTriangle, ArrowLeft, ExternalLink, Maximize2, RefreshCw, Star, Trash2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { buildHash } from "../../app/routes";
 import { Lightbox } from "../../components/Lightbox";
 import type { AssetRepository } from "../../data/assets/asset-repository";
@@ -22,8 +22,9 @@ import {
   finalTargets,
   formatByteSize,
 } from "./asset-labels";
+import { buildAssetLightboxNavigation } from "./asset-gallery";
 import { AssetThumbnail } from "./AssetThumbnail";
-import { useAssetDetail } from "./use-assets";
+import { useAssetDetail, useImageSequence } from "./use-assets";
 
 export interface AssetDetailProps {
   repository: AssetRepository;
@@ -41,10 +42,10 @@ function linkHref(link: AssetLink): string | undefined {
 export function AssetDetail({ repository, assetId, revision }: AssetDetailProps) {
   const { t, locale } = useI18n();
   const state = useAssetDetail(repository, assetId, revision);
-  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  // 大图里正在看的资产 id；null 表示大图未打开。翻页只换这个 id，不改路由，避免详情页重挂载把大图关掉
+  const [lightboxAssetId, setLightboxAssetId] = useState<string | null>(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  // Lightbox 的 effect 依赖 onClose，稳定引用避免每次渲染重设焦点与键盘监听。
-  const closeLightbox = useCallback(() => setIsLightboxOpen(false), []);
+  const imageSequence = useImageSequence(repository, lightboxAssetId !== null);
   const { asset } = state;
 
   if (!asset) {
@@ -69,6 +70,20 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
   const canToggleFinal = !asset.deletedAt && (pending.length > 0 || current.length > 0);
   const busy = state.busyAction !== null;
   const created = new Date(asset.createdAt);
+  const previewable = (imageSequence ?? []).filter((item) => repository.contentUrl(item) !== undefined);
+  const lightboxAsset = lightboxAssetId === null
+    ? undefined
+    : previewable.find((item) => item.id === lightboxAssetId) ?? (lightboxAssetId === asset.id ? asset : undefined);
+  const lightboxUrl = lightboxAsset ? repository.contentUrl(lightboxAsset) : undefined;
+
+  function closeLightbox() {
+    const viewed = lightboxAssetId;
+    setLightboxAssetId(null);
+    // 在大图里翻到了别的资产：关闭后详情页跟到最后看的那张，元数据与操作对得上眼前的图
+    if (viewed && asset && viewed !== asset.id) {
+      window.location.hash = buildHash({ view: "assets", assetId: viewed });
+    }
+  }
 
   return (
     <main className="assets-view asset-detail" id="main-content" data-asset-id={asset.id}>
@@ -89,7 +104,7 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
       <div className="asset-detail-body">
         <section className="asset-preview" aria-label={t("预览")}>
           {asset.kind === "image" && contentUrl ? (
-            <button type="button" className="asset-preview-button" onClick={() => setIsLightboxOpen(true)} aria-label={t("查看原图")}>
+            <button type="button" className="asset-preview-button" onClick={() => setLightboxAssetId(asset.id)} aria-label={t("查看原图")}>
               <AssetThumbnail repository={repository} asset={asset} className="is-large" source="content" />
               <span className="asset-preview-hint"><Maximize2 size={12} />{t("查看原图")}</span>
             </button>
@@ -174,8 +189,12 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
         </section>
       </div>
 
-      {isLightboxOpen && contentUrl ? (
-        <Lightbox content={{ kind: "image", src: contentUrl, alt: asset.prompt ?? asset.id }} onClose={closeLightbox} />
+      {lightboxAsset && lightboxUrl ? (
+        <Lightbox
+          content={{ kind: "image", src: lightboxUrl, alt: lightboxAsset.prompt ?? lightboxAsset.id }}
+          onClose={closeLightbox}
+          navigation={buildAssetLightboxNavigation(previewable, lightboxAsset.id, (next) => setLightboxAssetId(next.id))}
+        />
       ) : null}
     </main>
   );

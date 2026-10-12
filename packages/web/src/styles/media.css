@@ -1,6 +1,6 @@
 /**
  * @input  依赖：theme.css 媒体尺寸/颜色 token 与 MarkdownContent、MermaidDiagram、Lightbox 语义类名
- * @output 导出：图片/架构图有界缩略预览、全视口大图缩放浏览与 Mermaid 状态样式
+ * @output 导出：图片/架构图有界缩略预览、全视口大图缩放浏览（含序列翻页按钮与位置）与 Mermaid 状态样式
  * @pos    Operator Console 所有 Markdown 媒体的唯一视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -256,6 +256,55 @@
   margin-left: 4px;
 }
 
+.markdown-lightbox-position {
+  flex: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* 画布外再包一层定位容器：翻页按钮相对它定位，放大后画布内部滚动不带走按钮 */
+.markdown-lightbox-body {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.markdown-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-medium);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.markdown-lightbox-nav:hover,
+.markdown-lightbox-nav:focus-visible {
+  background: var(--color-surface-raised);
+  color: var(--color-focus);
+}
+
+.markdown-lightbox-nav.is-previous {
+  left: 12px;
+}
+
+.markdown-lightbox-nav.is-next {
+  right: 12px;
+}
+
 .markdown-lightbox-canvas {
   min-width: 0;
   min-height: 0;
@@ -284,6 +333,11 @@
   object-fit: contain;
   transform: scale(var(--lightbox-scale));
   transform-origin: center;
+}
+
+/* 有翻页按钮时两侧各让出按钮宽度，未放大时按钮不压住图片边缘 */
+.markdown-lightbox-frame.has-navigation .markdown-lightbox-image {
+  max-width: calc(var(--lightbox-width) - 160px);
 }
 
 .markdown-lightbox-diagram {
@@ -340,7 +394,21 @@
     padding: 10px;
   }
 
-  .markdown-lightbox-image {
+  .markdown-lightbox-nav {
+    width: 36px;
+    height: 52px;
+  }
+
+  .markdown-lightbox-nav.is-previous {
+    left: 6px;
+  }
+
+  .markdown-lightbox-nav.is-next {
+    right: 6px;
+  }
+
+  .markdown-lightbox-image,
+  .markdown-lightbox-frame.has-navigation .markdown-lightbox-image {
     max-width: calc(94vw - 36px);
     max-height: calc(90vh - 76px);
   }

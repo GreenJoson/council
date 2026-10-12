@@ -1,7 +1,8 @@
 /**
  * @input  依赖：界面语言、AssetRepository（getAsset/contentUrl）、候选资产 id、已勾选 id 与切换回调；
- *         features/assets 的 AssetThumbnail，components 的 Lightbox
- * @output 导出：AssetCompare —— select 阶段的并排对比：候选图 2 或 3 列（窄屏单列），点击看原图，勾选 1–maxSelected 张作为最终稿
+ *         features/assets 的 AssetThumbnail 与翻页适配，components 的 Lightbox
+ * @output 导出：AssetCompare —— select 阶段的并排对比：候选图 2 或 3 列（窄屏单列），点击看原图（候选图内上一张/下一张），
+ *         勾选 1–maxSelected 张作为最终稿
  * @pos    StageControls 的子区块；只负责展示与勾选状态回传，提交「选定」由调用方完成。
  *         资产元数据逐个 getAsset 读取，单张读失败只影响该卡片（显示 id 占位），不拖垮整组
  *
@@ -13,6 +14,7 @@ import { Lightbox } from "../../components/Lightbox";
 import type { AssetRepository } from "../../data/assets/asset-repository";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Asset } from "../../types/assets";
+import { buildAssetLightboxNavigation } from "../assets/asset-gallery";
 import { AssetThumbnail } from "../assets/AssetThumbnail";
 
 export interface AssetCompareProps {
@@ -51,6 +53,10 @@ export function AssetCompare({ repository, assetIds, selected, maxSelected, disa
   // 2 张并排两列，3 张及以上三列；具体断点由 pipelines.css 按 data-columns 处理。
   const columns = assetIds.length >= 3 ? 3 : 2;
   const previewUrl = preview ? repository.contentUrl(preview) : undefined;
+  // 翻页按候选图原顺序走，跳过读不到元数据或拿不到原图地址的卡片
+  const previewable = assetIds
+    .map((assetId) => assets.get(assetId))
+    .filter((asset): asset is Asset => asset !== undefined && repository.contentUrl(asset) !== undefined);
 
   if (assetIds.length === 0) {
     return <p className="task-muted">{t("本流水线还没有可挑选的产出图。")}</p>;
@@ -95,7 +101,11 @@ export function AssetCompare({ repository, assetIds, selected, maxSelected, disa
         })}
       </div>
       {preview && previewUrl ? (
-        <Lightbox content={{ kind: "image", src: previewUrl, alt: preview.prompt ?? preview.id }} onClose={closePreview} />
+        <Lightbox
+          content={{ kind: "image", src: previewUrl, alt: preview.prompt ?? preview.id }}
+          onClose={closePreview}
+          navigation={buildAssetLightboxNavigation(previewable, preview.id, setPreview)}
+        />
       ) : null}
     </>
   );
