@@ -37,7 +37,7 @@
 | `openai-compatible-agent-adapter.test.ts` | ToolLoop 适配测试 | 验证 `repository_read` 与 Council 所有权工具事件、远程脱敏原因可公开且未知异常继续隔离 |
 | `prompt-budget.test.ts` | 安全测试 | 验证零历史预算不会触发 `slice(-0)` 绕过 |
 | `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、系统 Agent 名称/alias/删除拒绝、单次完成复核覆盖、上下文限制转发、跨议题 session 碰撞失败关闭、断线、取消、审批、恢复与 sweeper；长调用跨越 RuntimeBinding TTL 且瞬时续租失败时仍可原子提交 |
-| `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议；兼作 Codex 替身：`login status` 已登录、`features list` 声明 `image_generation`，`exec --enable image_generation` 时按 brief 交付物写两张 PNG 到 `.council/out/` 并输出清单 |
+| `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议；兼作 Codex 替身：`login status` 已登录、`features list` 声明 `image_generation`，`exec --enable image_generation` 时按 brief 交付物写两张 PNG 到 `.council/out/` 并输出清单（另有首次不写文件、首次清单损坏、首次写一张半就挂起等生图超时三种一次性标记） |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
 | `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式文本、分片文件/Git Tool Call 与故障响应，用于远程 Provider/双 Agent/只读 ToolLoop E2E |
 | `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证已有提案直达评审、后续 Note 关联多仓库 commit、缺 commit 可操作冲突、能力 fail-fast、commit/diff 互审、提问恢复与决策一致性 |

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输、可选 AbortSignal 与 Codex 生图配置
  * @output 导出：CodexRuntime（讨论/委派 generate、可用性与生图探针 checkAvailability、生图 generateImages）、
- *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS）
+ *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS，并以诊断码 IMAGE_TIMEOUT_DIAGNOSTIC 与其它失败区分）
  * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界；
  *         --ignore-user-config 之后只追加 Worker 团队 Lead 委派显式传入的 mcpServers（exec 与 resume 都带）
  *
@@ -28,6 +28,7 @@ import {
   makeAbortError,
   normalizeCliOption,
   ProcessOutputLimitError,
+  ProcessTimeoutError,
   runBoundedProcess,
   type BoundedProcessMessages,
   type ProcessResult,
@@ -105,6 +106,9 @@ const PROCESS_MESSAGES: BoundedProcessMessages = {
   commandNotFound: "找不到 Codex 可执行程序，请安装 CLI 或设置 COUNCIL_CODEX_COMMAND。",
   spawnFailed: "无法启动 Codex，请检查可执行权限和项目目录配置。",
 };
+
+/** 生图超过 COUNCIL_CODEX_IMAGE_TIMEOUT_MS 被终止时 CodexRuntimeError 的诊断码。 */
+export const IMAGE_TIMEOUT_DIAGNOSTIC = "image_timeout";
 
 /** 生图走 COUNCIL_CODEX_IMAGE_TIMEOUT_MS，超时文案要点名它而不是普通调用的超时项；真实生图每张约需 1 分钟。 */
 const IMAGE_PROCESS_MESSAGES: BoundedProcessMessages = {
@@ -439,16 +443,25 @@ export class CodexRuntime {
       progress.observe(value);
       input.onActivity?.();
     });
-    const result = await this.#run(
-      args,
-      input.prompt,
-      input.worktreeDir,
-      input.signal,
-      (chunk) => decoder.push(chunk),
-      this.config.cliMaxStreamChars,
-      input.timeoutMs,
-      IMAGE_PROCESS_MESSAGES,
-    );
+    let result: ProcessResult;
+    try {
+      result = await this.#run(
+        args,
+        input.prompt,
+        input.worktreeDir,
+        input.signal,
+        (chunk) => decoder.push(chunk),
+        this.config.cliMaxStreamChars,
+        input.timeoutMs,
+        IMAGE_PROCESS_MESSAGES,
+      );
+    } catch (error) {
+      // 超时单独标码：图像执行据此收回输出目录里已画好的产物，而不是整轮作废。
+      if (error instanceof ProcessTimeoutError) {
+        throw new CodexRuntimeError(error.message, true, IMAGE_TIMEOUT_DIAGNOSTIC);
+      }
+      throw error;
+    }
     decoder.flush();
     if (input.signal?.aborted) {
       throw makeAbortError(ABORT_MESSAGE);

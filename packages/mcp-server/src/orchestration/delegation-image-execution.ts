@@ -5,6 +5,8 @@
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
  *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因；
  *         image_unavailable 沿用 Codex 运行时的脱敏文案并在审计记 diagnosticCode，超时与出错可区分）与常量；
+ *         生图超时不整轮作废：`.council/out/` 里文件名对得上交付物、字节写完整的图照常入库并补出清单条目，
+ *         委派仍置 approved，未产出的交付物写进 notes（流水线复盘记为 missing 交下一轮补做），一张都没有才 image_unavailable；
  *         清单里超出 brief 的产物（修订轮常见的「多报」）只丢弃并记审计，不让整轮失败；
  *         委派 outputManifest 的公开形状 ImageOutputManifest（清单 + 本次入库的 assetIds、逐张 assetId）与读取 helper
  *         readImageOutputManifest（流水线复盘据此只看本次委派入库的产物）；
@@ -22,7 +24,8 @@ import { appendFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, wri
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AssetService } from "../assets/asset-service.js";
-import { CodexRuntimeError, type CodexRuntime } from "../codex-runtime.js";
+import { imageBytesComplete } from "../assets/asset-sniff.js";
+import { CodexRuntimeError, IMAGE_TIMEOUT_DIAGNOSTIC, type CodexRuntime } from "../codex-runtime.js";
 import { MAX_IMAGE_INPUT_ASSETS, MAX_WORK_ITEM_STATUS_NOTE_CHARS } from "../constants.js";
 import type { CouncilDatabase } from "../database.js";
 import { CouncilValidationError } from "../errors.js";
@@ -30,6 +33,7 @@ import type { AgentDefinition, ProviderProfile } from "../model-router-store.js"
 import {
   assetManifestJsonSchema,
   BRIEF_PROTOCOL_LIMITS,
+  COUNCIL_MANIFEST_MIME_TYPES,
   CouncilProtocolError,
   parseCouncilAssetManifest,
   parseCouncilBrief,
@@ -39,10 +43,10 @@ import {
   type CouncilBrief,
 } from "../pipelines/brief-protocol.js";
 import { normalizeProjectPath } from "../project-path.js";
-import type { WorkItem } from "../types.js";
+import type { Asset, WorkItem } from "../types.js";
 import { validateInputImageAssets, type ResolvedDelegationTask } from "./delegation-task-resolver.js";
 import { redactAuditText } from "./runtime-audit-store.js";
-import type { WorkItemDelegationStore } from "./work-item-delegation-store.js";
+import type { WorkItemDelegation, WorkItemDelegationStore } from "./work-item-delegation-store.js";
 
 // ┌─────────────────────────────────────────────────────────────┐
 // │ 常量与错误                                                  │
@@ -165,8 +169,8 @@ interface CollectedFile {
   sha256: string;
   bytes: number;
   prompt: string;
-  /** 清单声明的相对路径（只有清单路①收到的文件有）：入库后用它把 assetId 写回清单。 */
-  manifestPath?: string;
+  /** 相对 worktree 的路径（清单路①与 `.council/out` 路②有，兜底目录没有）：入库后用它把 assetId 写回清单。 */
+  relativePath?: string;
 }
 
 /**
@@ -201,7 +205,7 @@ export function readImageOutputManifest(
 }
 
 /**
- * 单段生图：认领任务 → 在隔离目录准备 `.council/in|out` → 复制参考图 → generateImages →
+ * 单段生图：认领任务 → 在隔离目录准备 `.council/in|out` → 复制参考图 → generateImages（超时转 salvageTimedOutImages）→
  * 清单解析 → 三路收集（清单 path、`.council/out`；前两路为空时才兜底扫 `<codex-home>/generated_images/<threadId>`）→
  * sha256 去重入库并关联任务 → 置 approved，任务停在 in_progress 等人工验收。
  */
@@ -236,8 +240,9 @@ export async function executeImageDelegation(
 
   const startedAt = Date.now();
   const scratch = await mkdtemp(path.join(tmpdir(), "council-image-"));
-  let threadId: string;
-  let lastMessage: string;
+  let run: { threadId: string; lastMessage: string } | undefined;
+  /** 生图超时时的公开原因；输出目录里有已完成的产物就收回，没有才按 image_unavailable 失败。 */
+  let timeoutReason: string | undefined;
   try {
     const outputSchemaPath = path.join(scratch, "manifest.schema.json");
     const lastMessagePath = path.join(scratch, "last-message.json");
@@ -251,7 +256,7 @@ export async function executeImageDelegation(
       inputs: inputs.map((item) => ({ assetId: item.assetId, relativePath: item.relativePath })),
     });
     try {
-      ({ threadId, lastMessage } = await deps.codex.generateImages({
+      run = await deps.codex.generateImages({
         worktreeDir: workspace.root,
         prompt,
         outputSchemaPath,
@@ -260,7 +265,7 @@ export async function executeImageDelegation(
         ...(executor.model ? { model: executor.model } : {}),
         timeoutMs: deps.config.timeoutMs,
         signal,
-      }));
+      });
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw error;
       if (signal.aborted) throw abortError();
@@ -268,17 +273,34 @@ export async function executeImageDelegation(
       const reason = error instanceof Error && error.message.trim()
         ? redactAuditText(error.message.trim())
         : "Codex 执行出错或超时，请检查本机 Codex 后重新委派。";
-      throw imageFailure(
-        deps,
-        "image_unavailable",
-        `图像生成失败：${reason}`,
-        error instanceof CodexRuntimeError ? error.diagnosticCode : "runtime_error",
-      );
+      if (!(error instanceof CodexRuntimeError && error.diagnosticCode === IMAGE_TIMEOUT_DIAGNOSTIC)) {
+        throw imageFailure(
+          deps,
+          "image_unavailable",
+          `图像生成失败：${reason}`,
+          error instanceof CodexRuntimeError ? error.diagnosticCode : "runtime_error",
+        );
+      }
+      timeoutReason = reason;
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
   if (signal.aborted) throw abortError();
+  const approval = { id, delegation, claimedVersion: claimed.version, supervisorActorId: supervisor.actorId };
+  if (!run) {
+    await salvageTimedOutImages(deps, approval, {
+      root: workspace.root,
+      outputDir,
+      brief,
+      projectPath: task.projectPath,
+      inputs: inputs.length,
+      startedAt,
+      reason: timeoutReason ?? "Codex 生图超时。",
+    });
+    return;
+  }
+  const { threadId, lastMessage } = run;
 
   const parsed = parseManifestForBrief(deps, lastMessage, brief);
   const manifest = parsed.manifest;
@@ -328,30 +350,149 @@ export async function executeImageDelegation(
   const publicManifest: ImageOutputManifest = {
     schemaVersion: manifest.schemaVersion,
     outputs: manifest.outputs.map((output) => {
-      const assetId = ingest.assetIdByManifestPath.get(output.path);
+      const assetId = ingest.assetByPath.get(output.path)?.id;
       return { ...output, prompt: redactAuditText(output.prompt), ...(assetId ? { assetId } : {}) };
     }),
     assetIds: ingest.assetIds,
     notes: redactAuditText(manifest.notes),
   };
-  const statusNote = compact(
+  approveImageDelegation(
+    deps,
+    approval,
     `图像已入库 ${String(ingest.assetIds.length)} 张（去重 ${String(deduplicated)} 张），等待人工验收。`,
-    MAX_WORK_ITEM_STATUS_NOTE_CHARS,
+    publicManifest,
   );
+}
+
+interface ImageApproval {
+  id: string;
+  delegation: WorkItemDelegation;
+  claimedVersion: number;
+  supervisorActorId: string;
+}
+
+/** 产物已入库：任务停在 in_progress 等人工验收，委派置 approved 并写回公开清单。 */
+function approveImageDelegation(
+  deps: ImageDelegationDeps,
+  approval: ImageApproval,
+  note: string,
+  publicManifest: ImageOutputManifest,
+): void {
+  const statusNote = compact(note, MAX_WORK_ITEM_STATUS_NOTE_CHARS);
   deps.database.updateWorkItemAsActor({
-    ...(delegation.topicId ? { topicId: delegation.topicId } : {}),
-    workItemId: delegation.workItemId,
+    ...(approval.delegation.topicId ? { topicId: approval.delegation.topicId } : {}),
+    workItemId: approval.delegation.workItemId,
     status: "in_progress",
-    expectedVersion: claimed.version,
+    expectedVersion: approval.claimedVersion,
     statusNote,
-    actorId: supervisor.actorId,
+    actorId: approval.supervisorActorId,
   });
-  deps.store.update(id, {
+  deps.store.update(approval.id, {
     status: "approved",
     summary: compact(`${statusNote}${publicManifest.notes ? ` ${publicManifest.notes}` : ""}`, 8_000),
     outputManifest: publicManifest,
     now: new Date().toISOString(),
   });
+}
+
+const MANIFEST_MIME_TYPES: ReadonlySet<string> = new Set(COUNCIL_MANIFEST_MIME_TYPES);
+
+/**
+ * 生图超时的收回：Codex 被终止时没有清单，但 `.council/out/` 里往往已有画好的交付物，整轮作废会白白丢掉它们。
+ * 只收文件名对得上 brief 交付物、且字节写完整（不是终止时写到一半）的图，逐张补出清单条目后照常置 approved；
+ * 没产出的交付物写进 notes，流水线复盘把它们记为 missing、交给下一轮补做。一张都收不到才按 image_unavailable 失败。
+ * 不扫 Codex 默认产物目录：那里的原图未经裁切/去底，超时时也分不清哪些已经定稿。
+ */
+async function salvageTimedOutImages(
+  deps: ImageDelegationDeps,
+  approval: ImageApproval,
+  input: {
+    root: string;
+    outputDir: string;
+    brief: CouncilBrief;
+    projectPath: string;
+    inputs: number;
+    startedAt: number;
+    reason: string;
+  },
+): Promise<void> {
+  const { brief } = input;
+  const collected = await collectOutputs({
+    root: input.root,
+    outputDir: input.outputDir,
+    manifest: undefined,
+    brief,
+    threadId: "",
+  });
+  const usable: Array<{ file: CollectedFile; deliverableId: string }> = [];
+  let unmatched = 0;
+  let incomplete = 0;
+  for (const file of collected.files) {
+    const deliverable = matchDeliverable(brief, file.absolutePath);
+    if (!deliverable) {
+      unmatched += 1;
+      continue;
+    }
+    if (!imageBytesComplete(await readFile(file.absolutePath))) {
+      incomplete += 1;
+      continue;
+    }
+    usable.push({ file, deliverableId: deliverable.id });
+  }
+  const ingest = await ingestOutputs(deps, {
+    delegationId: approval.id,
+    workItemId: approval.delegation.workItemId,
+    projectPath: input.projectPath,
+    files: usable.map((item) => item.file),
+  });
+  deps.record("image.collected", {
+    candidates: collected.files.length + collected.localDuplicates,
+    unique: collected.files.length,
+    ingested: ingest.assetIds.length,
+    deduplicated: collected.localDuplicates + ingest.deduplicated,
+    rejected: collected.rejected + ingest.rejected,
+    skipped: ingest.skipped,
+    bytes: ingest.bytes,
+    inputs: input.inputs,
+    durationMs: Date.now() - input.startedAt,
+  });
+  if (ingest.assetIds.length === 0) {
+    throw imageFailure(deps, "image_unavailable", `图像生成失败：${input.reason}`, IMAGE_TIMEOUT_DIAGNOSTIC);
+  }
+
+  const outputs: ImageOutputManifest["outputs"] = [];
+  for (const { file, deliverableId } of usable) {
+    const asset: Asset | undefined = file.relativePath ? ingest.assetByPath.get(file.relativePath) : undefined;
+    if (!asset || !file.relativePath || !MANIFEST_MIME_TYPES.has(asset.mime) || !asset.width || !asset.height) continue;
+    outputs.push({
+      deliverableId,
+      path: file.relativePath,
+      mime: asset.mime as CouncilAssetManifestOutput["mime"],
+      width: asset.width,
+      height: asset.height,
+      prompt: redactAuditText(file.prompt),
+      assetId: asset.id,
+    });
+  }
+  const produced = new Set(outputs.map((output) => output.deliverableId));
+  const missing = brief.deliverables.map((item) => item.id).filter((deliverableId) => !produced.has(deliverableId));
+  deps.record("image.timeout_salvaged", {
+    salvaged: ingest.assetIds.length,
+    missing: missing.length,
+    unmatched,
+    incomplete,
+  });
+  const notes = compact(
+    `Codex 生图超时被终止，已从输出目录收回 ${String(ingest.assetIds.length)} 张已完成的产物`
+      + (missing.length > 0 ? `；未产出：${missing.join("、")}。` : "。"),
+    BRIEF_PROTOCOL_LIMITS.maxLongText,
+  );
+  approveImageDelegation(
+    deps,
+    approval,
+    `生图超时，已收回 ${String(ingest.assetIds.length)} 张已完成的图像（去重 ${String(collected.localDuplicates + ingest.deduplicated)} 张），等待人工验收。`,
+    { schemaVersion: 1, outputs, assetIds: ingest.assetIds, notes },
+  );
 }
 
 /**
@@ -482,9 +623,13 @@ async function manifestOutputPath(root: string, realOutputDir: string, relative:
  * 硬套会把 hero 原图标成 icon。
  */
 function deliverablePrompt(brief: CouncilBrief, filename: string): string {
+  return matchDeliverable(brief, filename)?.description ?? brief.goal;
+}
+
+/** 文件名（去扩展名）等于交付物 id，或是它的 `-v2` 这类兄弟文件名。 */
+function matchDeliverable(brief: CouncilBrief, filename: string): CouncilBrief["deliverables"][number] | undefined {
   const base = path.basename(filename, path.extname(filename));
-  const matched = brief.deliverables.find((item) => base === item.id || base.startsWith(`${item.id}-`));
-  return matched?.description ?? brief.goal;
+  return brief.deliverables.find((item) => base === item.id || base.startsWith(`${item.id}-`));
 }
 
 async function collectOutputs(input: {
@@ -501,7 +646,7 @@ async function collectOutputs(input: {
   const seen = new Set<string>();
   let localDuplicates = 0;
   let rejected = 0;
-  const add = async (absolutePath: string, prompt: string, manifestPath?: string): Promise<void> => {
+  const add = async (absolutePath: string, prompt: string, relativePath?: string): Promise<void> => {
     const image = await regularImage(absolutePath);
     if (!image) {
       rejected += 1;
@@ -513,7 +658,7 @@ async function collectOutputs(input: {
       return;
     }
     seen.add(sha256);
-    files.push({ absolutePath, sha256, bytes: image.bytes.length, prompt, ...(manifestPath ? { manifestPath } : {}) });
+    files.push({ absolutePath, sha256, bytes: image.bytes.length, prompt, ...(relativePath ? { relativePath } : {}) });
   };
   const realOutputDir = await realpath(input.outputDir);
   const claimed = new Set<string>();
@@ -534,7 +679,7 @@ async function collectOutputs(input: {
   // ② `.council/out/` 里实际存在、清单漏报的文件。
   for (const absolutePath of await listImages(input.outputDir)) {
     if (claimed.has(absolutePath)) continue;
-    await add(absolutePath, deliverablePrompt(input.brief, absolutePath));
+    await add(absolutePath, deliverablePrompt(input.brief, absolutePath), `${OUTPUT_DIR}/${path.basename(absolutePath)}`);
   }
   // ③ Codex 默认产物目录兜底：只在清单与 `.council/out` 一张都没收到时才扫。
   // 真实 Codex 会先把原图落在这里、再缩放/复制进隔离目录，两份字节不同、sha256 去不掉；
@@ -553,15 +698,15 @@ async function ingestOutputs(
   input: { delegationId: string; workItemId: string; projectPath: string; files: readonly CollectedFile[] },
 ): Promise<{
   assetIds: string[];
-  /** 清单相对路径 → 入库 assetId，只含清单路①收到的文件。 */
-  assetIdByManifestPath: Map<string, string>;
+  /** 相对路径 → 入库资产（含 mime 与宽高），只含带 relativePath 的文件。 */
+  assetByPath: Map<string, Asset>;
   deduplicated: number;
   rejected: number;
   skipped: number;
   bytes: number;
 }> {
   const assetIds: string[] = [];
-  const assetIdByManifestPath = new Map<string, string>();
+  const assetByPath = new Map<string, Asset>();
   let deduplicated = 0;
   let rejected = 0;
   let bytes = 0;
@@ -581,7 +726,7 @@ async function ingestOutputs(
       if (result.deduplicated) deduplicated += 1;
       bytes += result.asset.byteSize;
       assetIds.push(result.asset.id);
-      if (file.manifestPath) assetIdByManifestPath.set(file.manifestPath, result.asset.id);
+      if (file.relativePath) assetByPath.set(file.relativePath, result.asset);
     } catch (error) {
       // 单张被资产库拒绝（嗅探不符、超限、配额）不拖垮其余产物；数量进审计。
       if (error instanceof CouncilValidationError) {
@@ -591,5 +736,5 @@ async function ingestOutputs(
       throw error;
     }
   }
-  return { assetIds, assetIdByManifestPath, deduplicated, rejected, skipped: input.files.length - attempted, bytes };
+  return { assetIds, assetByPath, deduplicated, rejected, skipped: input.files.length - attempted, bytes };
 }

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：子进程命令、stdin、环境、定时、输出上限、stdout 观察器与溢出策略
- * @output 导出：有界运行、含计数的输出超限错误、首尾截断、进程树终止与 CLI 选项规范化工具
+ * @output 导出：有界运行、含计数的输出超限错误、超时错误 ProcessTimeoutError、首尾截断、进程树终止与 CLI 选项规范化工具
  * @pos    Claude、Codex 与 Kimi 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -25,6 +25,11 @@ export class ProcessOutputLimitError extends Error {
   constructor(message: string, readonly receivedChars: number, readonly limitChars: number) {
     super(message);
   }
+}
+
+/** 超过 timeoutMs 被终止；文案沿用调用方的 messages.timeout，类型供调用方区分「超时」与其它失败。 */
+export class ProcessTimeoutError extends Error {
+  override readonly name = "ProcessTimeoutError";
 }
 
 type ProcessOutcome =
@@ -97,7 +102,7 @@ function stopError(
     return makeAbortError(messages.aborted);
   }
   if (reason === "timeout") {
-    return new Error(messages.timeout);
+    return new ProcessTimeoutError(messages.timeout);
   }
   return new ProcessOutputLimitError(messages.outputLimit, receivedChars, limitChars);
 }

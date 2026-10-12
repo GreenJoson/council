@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1063,7 +1063,8 @@ with sync_playwright() as playwright:
 
     # P3 流水线闭环：brief（Claude 替身）→ 人工确认 → 生图（Codex 替身）→ 复盘首轮 revise 自动修订 → 次轮 pass
     # → 人工选终稿 → 原型代码委派；另一条 concept-sheet 首轮生图无产物失败后 resume，
-    # 第二次清单损坏（草稿图已入库）再 resume，复盘只看本次入库的产物，最后取消。
+    # 第二次清单损坏（草稿图已入库）再 resume，复盘只看本次入库的产物，最后取消；
+    # 第三条首轮生图超时，收回已完成的图交复盘、缺的由修订轮补做。
     pipeline_started = time.monotonic()
 
     def wait_pipeline(pipeline_id, predicate, description, timeout=60):
@@ -1211,6 +1212,31 @@ with sync_playwright() as playwright:
     api_expect_error("POST", f"/api/v1/pipelines/{concept_id}/final", 409,
                      {"assetIds": concept["outputAssetIds"][:1], "expectedVersion": cancelled_version})
     api_expect_error("POST", f"/api/v1/pipelines/{concept_id}/resume", 409, {"expectedVersion": cancelled_version})
+
+    # 生图整轮超时不作废已画好的图：替身写好 main-screen、detail-screen 只写一半（缺 IEND）就挂起，到生图超时被终止。
+    # 写完整的那张照常入库交复盘，写一半的不收；复盘把没出图的 detail-screen 记为 missing 判返工，修订轮补齐后通过。
+    salvage = api_request("POST", "/api/v1/pipelines", {
+        "project": PROJECT_PATH, "template": "concept-sheet",
+        "goal": "COUNCIL_PIPELINE_IMAGE_TIMEOUT_ONCE 概念设定：超时收回",
+    })["pipeline"]
+    salvage_id = salvage["task"]["id"]
+    salvage = wait_pipeline(salvage_id, waiting_at("brief"), " brief 待确认")
+    api_request("POST", f"/api/v1/pipelines/{salvage_id}/brief", {
+        "brief": salvage["document"]["draftBrief"], "expectedVersion": salvage["task"]["version"],
+    })
+    salvage = wait_pipeline(salvage_id, waiting_at("select"), "超时收回后选定终稿", timeout=120)
+    salvage_reviews = salvage["document"]["reviews"]
+    assert [review["verdict"] for review in salvage_reviews] == ["revise", "pass"], salvage_reviews
+    assert salvage_reviews[0].get("missing") == ["detail-screen"], salvage_reviews[0]
+    assert {item["deliverableId"] for item in salvage_reviews[0]["items"]} == {"main-screen"}, salvage_reviews[0]
+    timeout_round = next(child for child in salvage["children"] if child["title"] == "生图 第1轮")
+    salvaged = wait_task_delegation(timeout_round["id"], "approved", timeout=5)
+    assert "超时" in salvaged["summary"] and "detail-screen" in salvaged["summary"], salvaged
+    assert [output["deliverableId"] for output in salvaged["outputManifest"]["outputs"]] == ["main-screen"], salvaged
+    salvaged_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{timeout_round['id']}")
+    assert salvaged_assets["total"] == 1, salvaged_assets
+    salvage = api_request("POST", f"/api/v1/pipelines/{salvage_id}/cancel", {"expectedVersion": salvage["task"]["version"]})
+    assert salvage["document"]["status"] == "cancelled", salvage["document"]
     print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
 
     # P3 流水线界面（http 模式，真实后端 + 替身 Agent）：列表分组与取消徽标 → 已完成详情 →

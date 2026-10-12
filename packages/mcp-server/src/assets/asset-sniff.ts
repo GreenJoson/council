@@ -1,6 +1,7 @@
 /**
  * @input  依赖：文件完整字节
- * @output 导出：sniffAssetMime（按文件头识别 PNG/JPEG/WebP/GIF/SVG/glb/PDF）、readImageDimensions（PNG/JPEG/WebP/GIF 宽高）、assetKindForMime
+ * @output 导出：sniffAssetMime（按文件头识别 PNG/JPEG/WebP/GIF/SVG/glb/PDF）、readImageDimensions（PNG/JPEG/WebP/GIF 宽高）、
+ *         imageBytesComplete（PNG/JPEG/WebP 是否写到了结尾）、assetKindForMime
  * @pos    纯函数，不碰文件系统、不信扩展名；纯 JS 解析，sidecar 为 Node SEA 单文件，不能引入原生图像依赖
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -71,6 +72,10 @@ function u16le(bytes: Uint8Array, offset: number): number {
   return bytes[offset]! | (bytes[offset + 1]! << 8);
 }
 
+function u32le(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16)) + bytes[offset + 3]! * 0x1000000;
+}
+
 function u24le(bytes: Uint8Array, offset: number): number {
   return bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16);
 }
@@ -136,4 +141,20 @@ export function readImageDimensions(mime: string, bytes: Uint8Array): { width: n
           : undefined;
   if (!parsed || parsed[0] <= 0 || parsed[1] <= 0) return undefined;
   return { width: parsed[0], height: parsed[1] };
+}
+
+/**
+ * 位图字节是否写完整：PNG 以 IEND 块结尾、JPEG 以 EOI（FFD9）结尾、WebP 的 RIFF 长度不超过实际字节。
+ * 进程被终止时可能留下写到一半的文件，文件头照样能嗅探、宽高也读得出，只有结尾能区分。其它格式不判断，返回 true。
+ */
+export function imageBytesComplete(bytes: Uint8Array): boolean {
+  const mime = sniffAssetMime(bytes);
+  if (mime === "image/png") return bytes.length >= 20 && ascii(bytes, bytes.length - 8, 4) === "IEND";
+  if (mime === "image/jpeg") {
+    // 编码器偶尔在 EOI 之后补几个填充字节，只看结尾一小段。
+    const tail = bytes.subarray(Math.max(0, bytes.length - 16));
+    return tail.some((value, index) => value === 0xff && tail[index + 1] === 0xd9);
+  }
+  if (mime === "image/webp") return bytes.length >= 12 && 8 + u32le(bytes, 4) <= bytes.length;
+  return true;
 }

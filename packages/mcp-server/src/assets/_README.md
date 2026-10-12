@@ -7,7 +7,7 @@
 | `asset-service.ts` | 用例门面 | 列表/详情/项目内导入/本机文件入库/浏览器上传字节入库/链接增删/软删除/原图与缩略图读取；REST、stdio MCP 与图像委派共用 |
 | `asset-ingest.ts` | 入库边界 | `ingestFile`（本机绝对路径）、`ingestBytes`（内存字节，浏览器上传/粘贴）与 `importFromProject`（项目相对路径）：lstat 拒绝符号链接与非普通文件、嗅探 MIME、白名单、单文件/总配额、同项目同 sha256 去重（软删除则恢复）；`acceptKinds` 可把入口收窄到图片 |
 | `asset-references.ts` | 引用解析 | 从消息正文提取 `![说明](council-asset:<asset_id>)` 引用并把资产挂到消息（role=reference）；HTTP 与 MCP 发消息共用，挂接幂等、未知 ID 跳过 |
-| `asset-sniff.ts` | 纯函数 | 文件头嗅探 PNG/JPEG/WebP/GIF/SVG/glb/PDF，纯 JS 解析位图宽高，MIME → kind |
+| `asset-sniff.ts` | 纯函数 | 文件头嗅探 PNG/JPEG/WebP/GIF/SVG/glb/PDF，纯 JS 解析位图宽高，判断 PNG/JPEG/WebP 是否写到结尾，MIME → kind |
 | `asset-storage.ts` | 落盘 | 内容寻址布局 `<asset-root>/<sha 前 2 位>/<sha>.<ext>`、临时文件 + rename、缩略图缓存 `<asset-root>/thumbnails/<sha>.png`、配额检查 |
 | `asset-preview.ts` | 只读出口 | content 原始字节；thumbnail 用外部命令（sips 兼容参数）生成 PNG 并缓存，SVG 返回原文，非图像返回空 |
 | `asset-errors.ts` | 错误语义 | `AssetRejectedError` 带原因码，继承校验错误；资产路由按原因码映射 403/404/413/415/507 |
