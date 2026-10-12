@@ -1,6 +1,7 @@
 /**
- * @input  依赖：界面语言、AssetRepository 的 thumbnailUrl、资产 kind 文案表
- * @output 导出：AssetThumbnail —— 资产缩略图；无缩略图（非图像、地址未知、加载失败/404）时显示按 kind 区分的图标占位
+ * @input  依赖：界面语言、AssetRepository 的 thumbnailUrl / contentUrl、资产 kind 文案表
+ * @output 导出：AssetThumbnail —— 资产缩略图；source="content" 时改读原图（详情大预览用，缩略图最长边只有 512 会糊）；
+ *         无可用地址（非图像、地址未知、加载失败/404）时显示按 kind 区分的图标占位
  * @pos    资产网格、资产详情与任务产物区共用的最小展示单元；不发请求，只把仓储给出的 URL 交给 <img>
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -24,11 +25,15 @@ export interface AssetThumbnailProps {
   repository: AssetRepository;
   asset: Asset;
   className?: string;
+  /** 默认读缩略图；大尺寸预览传 "content" 读原图。非图像资产两者都只显示占位。 */
+  source?: "thumbnail" | "content";
 }
 
-export function AssetThumbnail({ repository, asset, className }: AssetThumbnailProps) {
+export function AssetThumbnail({ repository, asset, className, source = "thumbnail" }: AssetThumbnailProps) {
   const { t } = useI18n();
-  const url = repository.thumbnailUrl(asset);
+  const url = source === "content"
+    ? (asset.kind === "image" ? repository.contentUrl(asset) : undefined)
+    : repository.thumbnailUrl(asset);
   // 记住失败的是哪个 URL：URL 变化（如桌面模式拿到服务地址）时自动再试一次。
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const classes = ["asset-thumbnail", className].filter(Boolean).join(" ");

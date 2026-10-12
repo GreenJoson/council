@@ -1,8 +1,8 @@
 /**
  * @input  依赖：界面语言上下文、图片 URL 或已渲染的 mermaid SVG 字符串
  * @output 导出：LightboxContent 联合类型与 Lightbox 全屏大图浏览组件
- *         （body Portal、固定大视口、缩放、内部滚动、遮罩/Esc/关闭按钮）
- * @pos    MarkdownContent 图片缩略图与架构档案 mermaid 图集共用的唯一放大浏览入口；
+ *         （body Portal、固定大视口、缩放、内部滚动、遮罩/Esc/关闭按钮；长标题单行省略、悬停看全文，不撑宽框体）
+ * @pos    MarkdownContent 图片、架构档案 mermaid 图集、资产详情/任务产物/流水线对比共用的唯一放大浏览入口；
  *         自研实现，不引入第三方弹层库
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -74,7 +74,7 @@ export function Lightbox({ content, onClose }: LightboxProps) {
     >
       <div className="markdown-lightbox-frame" onClick={(event) => event.stopPropagation()}>
         <header className="markdown-lightbox-toolbar">
-          <span className="markdown-lightbox-title">
+          <span className="markdown-lightbox-title" title={content.alt || undefined}>
             {content.alt || (content.kind === "diagram" ? t("架构图") : t("图片"))}
           </span>
           <div className="markdown-lightbox-controls" aria-label={t("大图缩放")}>

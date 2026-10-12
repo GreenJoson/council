@@ -1,7 +1,8 @@
 /**
  * @input  依赖：界面语言、AssetRepository、assetId、内容 revision；use-assets 的 useAssetDetail、AssetThumbnail、
  *         components 的 Lightbox、资产文案表与 finalTargets
- * @output 导出：AssetDetail —— #/assets/<assetId>：预览（点击用 Lightbox 看原图）、元数据、挂接列表、设为/取消 final、两步确认删除
+ * @output 导出：AssetDetail —— #/assets/<assetId>：左栏原图大预览（随视口高度缩放，点击用 Lightbox 看原图）、
+ *         右栏元数据、挂接列表、设为/取消 final、两步确认删除
  * @pos    资产库的详情态；读取失败时显示占位与返回链接，不白屏；删除成功后回到 #/assets
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -89,7 +90,7 @@ export function AssetDetail({ repository, assetId, revision }: AssetDetailProps)
         <section className="asset-preview" aria-label={t("预览")}>
           {asset.kind === "image" && contentUrl ? (
             <button type="button" className="asset-preview-button" onClick={() => setIsLightboxOpen(true)} aria-label={t("查看原图")}>
-              <AssetThumbnail repository={repository} asset={asset} className="is-large" />
+              <AssetThumbnail repository={repository} asset={asset} className="is-large" source="content" />
               <span className="asset-preview-hint"><Maximize2 size={12} />{t("查看原图")}</span>
             </button>
           ) : (

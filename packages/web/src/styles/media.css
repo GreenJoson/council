@@ -179,6 +179,9 @@
 
 .markdown-lightbox-frame {
   display: grid;
+  /* 列必须锁成 minmax(0, 1fr)：默认 auto 列会被不换行的长标题（如生图提示词）撑到几千像素，
+     画布随之变宽、图片居中到框体之外，只剩一半可见 */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   width: var(--lightbox-width);
   height: var(--lightbox-height);
@@ -201,6 +204,7 @@
 }
 
 .markdown-lightbox-title {
+  flex: 1 1 auto;
   min-width: 0;
   color: var(--color-text-secondary);
   font-size: 12px;

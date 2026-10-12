@@ -4,7 +4,7 @@
  */
 
 /* ============================== */
-/* 单栏容器：与 tasks-view 同一留白方式 */
+/* 单栏容器：与 tasks-view 同一留白方式；内容铺满可用宽度，大屏不留右侧空白 */
 /* ============================== */
 
 .assets-view {
@@ -19,7 +19,7 @@
 
 .assets-view > * {
   width: 100%;
-  max-width: 1120px;
+  min-width: 0;
 }
 
 .assets-view h1 {
@@ -188,14 +188,26 @@
   white-space: nowrap;
 }
 
+/* 详情大预览：读原图，宽度铺满左栏；高度跟随视口，减去的 230px ≈ 顶栏 + 返回链接与标题 + 卡片内边距 + 底部留白，
+   保证首屏不出滚动条。img 绝对定位填满画框再 contain：网格 auto 行里 height:100% 解析不了，会按原图比例撑高 */
 .asset-thumbnail.is-large {
+  position: relative;
   aspect-ratio: auto;
-  min-height: 240px;
-  max-height: 480px;
+  width: 100%;
+  min-height: 320px;
+  height: calc(100vh - 230px);
+  background: var(--color-canvas-deep);
 }
 
 .asset-thumbnail.is-large img {
-  max-height: 480px;
+  position: absolute;
+  inset: 0;
+}
+
+/* 非图像资产或原图加载失败只有图标占位，不必占满视口高度 */
+.asset-thumbnail.is-large.is-placeholder {
+  min-height: 0;
+  height: 240px;
 }
 
 /* ============================== */
@@ -204,7 +216,7 @@
 
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 14px;
   margin: 0;
   padding: 0;
@@ -228,6 +240,12 @@
 .asset-card:focus-visible {
   border-color: var(--color-border-strong);
   background: var(--color-surface-hover);
+}
+
+/* 生图多为横版 3:2，网格用 4:3 画框比 1:1 少一半上下空带；仍是 contain，不裁图 */
+.asset-card .asset-thumbnail {
+  aspect-ratio: 4 / 3;
+  background: var(--color-canvas-deep);
 }
 
 .asset-card-meta {
@@ -300,11 +318,17 @@
   font-size: 11px;
 }
 
+/* 左图右信息：左栏吃掉全部剩余宽度，右栏固定在可读宽度；左栏随滚动吸顶，长提示词只滚右栏内容 */
 .asset-detail-body {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 420px);
   gap: 18px;
   align-items: start;
+}
+
+.asset-detail-body > .asset-preview {
+  position: sticky;
+  top: 0;
 }
 
 .asset-preview,
@@ -320,6 +344,7 @@
 .asset-preview-button {
   position: relative;
   display: grid;
+  width: 100%;
   padding: 0;
   border: 0;
   background: none;
@@ -765,6 +790,17 @@ header.task-delegation-kind > button {
 
   .asset-detail-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asset-detail-body > .asset-preview {
+    position: static;
+  }
+
+  .asset-thumbnail.is-large {
+    min-height: 0;
+    height: auto;
+    max-height: 70vh;
+    aspect-ratio: 4 / 3;
   }
 
   .brief-deliverable {
