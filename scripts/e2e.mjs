@@ -207,6 +207,8 @@ function apiEnvironment(dataDirectory) {
     COUNCIL_CODEX_HOME: path.join(dataDirectory, "codex-home"),
     ...clientConfigEnvironment(dataDirectory),
     COUNCIL_CODEX_IMAGE_TIMEOUT_MS: "20000",
+    // 卡住判定须明显短于总超时：超时收回用例的替身每秒输出心跳，不能被误判为卡住。
+    COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS: "8000",
     COUNCIL_CLAUDE_PERMISSION_MODE: "plan",
     COUNCIL_CLAUDE_TIMEOUT_MS: "5000",
     COUNCIL_CLAUDE_KILL_GRACE_MS: "100",

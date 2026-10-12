@@ -34,6 +34,8 @@ export interface CodexImageGenerationInput {
   model?: string;
   /** 单次调用绝对时长上限，调用方传 COUNCIL_CODEX_IMAGE_TIMEOUT_MS。 */
   timeoutMs: number;
+  /** 事件流连续静默上限（COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS）：超过即判定卡住终止；缺省只受 timeoutMs 约束。 */
+  idleTimeoutMs?: number;
   /** 白名单进程进度（会话、工具计数）；不含正文、命令参数或路径。 */
   onEvent?: NativeRuntimeProgressListener;
   onActivity?: () => void;

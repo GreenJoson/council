@@ -1,7 +1,7 @@
 /**
  * @input  依赖：公开 prompt、隔离用户配置的 Codex CLI JSONL 增量传输、可选 AbortSignal 与 Codex 生图配置
  * @output 导出：CodexRuntime（讨论/委派 generate、可用性与生图探针 checkAvailability、生图 generateImages）、
- *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS，并以诊断码 IMAGE_TIMEOUT_DIAGNOSTIC 与其它失败区分）
+ *         CodexAvailability/CodexImageCapability、生图输入输出类型、独立事件流/最终回复限额、脱敏失败分类（生图超时点名 COUNCIL_CODEX_IMAGE_TIMEOUT_MS、事件流静默超过 COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS 判定卡住，分别以诊断码 IMAGE_TIMEOUT_DIAGNOSTIC / IMAGE_STALLED_DIAGNOSTIC 与其它失败区分）
  * @pos    分离公开消息/过程事件与最终正文上限、讨论强制只读、显式委派才可写、生图走独立 workspace-write 沙箱的 Codex 运行边界；
  *         --ignore-user-config 之后只追加 Worker 团队 Lead 委派显式传入的 mcpServers（exec 与 resume 都带）
  *
@@ -109,11 +109,14 @@ const PROCESS_MESSAGES: BoundedProcessMessages = {
 
 /** 生图超过 COUNCIL_CODEX_IMAGE_TIMEOUT_MS 被终止时 CodexRuntimeError 的诊断码。 */
 export const IMAGE_TIMEOUT_DIAGNOSTIC = "image_timeout";
+/** 生图事件流静默超过 COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS（上游请求挂住）被终止时的诊断码。 */
+export const IMAGE_STALLED_DIAGNOSTIC = "image_stalled";
 
 /** 生图走 COUNCIL_CODEX_IMAGE_TIMEOUT_MS，超时文案要点名它而不是普通调用的超时项；真实生图每张约需 1 分钟。 */
 const IMAGE_PROCESS_MESSAGES: BoundedProcessMessages = {
   ...PROCESS_MESSAGES,
   timeout: "Codex 生图超时（COUNCIL_CODEX_IMAGE_TIMEOUT_MS），请减少交付物张数或调大该超时。",
+  idle: "Codex 生图长时间没有任何输出（COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS），判定卡住已终止，可直接恢复重试。",
 };
 
 // 实测（codex-cli 0.144.6）：--json 事件流首行为
@@ -298,6 +301,7 @@ export class CodexRuntime {
     maxTotalOutputChars?: number,
     timeoutMs: number = this.config.codexTimeoutMs,
     messages: BoundedProcessMessages = PROCESS_MESSAGES,
+    idleTimeoutMs?: number,
   ): Promise<ProcessResult> {
     try {
       return await runBoundedProcess({
@@ -307,6 +311,7 @@ export class CodexRuntime {
         ...(cwd ? { cwd } : {}),
         ...(signal ? { signal } : {}),
         timeoutMs,
+        ...(idleTimeoutMs ? { idleTimeoutMs } : {}),
         killGraceMs: this.config.codexKillGraceMs,
         maxOutputChars: this.config.maxOutputChars,
         stdoutOverflow: "truncate",
@@ -454,11 +459,16 @@ export class CodexRuntime {
         this.config.cliMaxStreamChars,
         input.timeoutMs,
         IMAGE_PROCESS_MESSAGES,
+        input.idleTimeoutMs,
       );
     } catch (error) {
-      // 超时单独标码：图像执行据此收回输出目录里已画好的产物，而不是整轮作废。
+      // 超时与卡住单独标码：图像执行据此收回输出目录里已画好的产物（卡住且一张没有时先重试），而不是整轮作废。
       if (error instanceof ProcessTimeoutError) {
-        throw new CodexRuntimeError(error.message, true, IMAGE_TIMEOUT_DIAGNOSTIC);
+        throw new CodexRuntimeError(
+          error.message,
+          true,
+          error.kind === "idle" ? IMAGE_STALLED_DIAGNOSTIC : IMAGE_TIMEOUT_DIAGNOSTIC,
+        );
       }
       throw error;
     }

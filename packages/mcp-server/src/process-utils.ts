@@ -1,6 +1,7 @@
 /**
  * @input  依赖：子进程命令、stdin、环境、定时、输出上限、stdout 观察器与溢出策略
- * @output 导出：有界运行、含计数的输出超限错误、超时错误 ProcessTimeoutError、首尾截断、进程树终止与 CLI 选项规范化工具
+ * @output 导出：有界运行（总时长与可选的 stdout 静默上限）、含计数的输出超限错误、超时错误 ProcessTimeoutError（区分总时长超时与静默卡住）、
+ *         首尾截断、进程树终止与 CLI 选项规范化工具
  * @pos    Claude、Codex 与 Kimi 运行时共用的进程生命周期安全基础层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,7 +17,7 @@ export interface ProcessResult {
   exitCode: number | null;
 }
 
-export type StopReason = "aborted" | "output" | "timeout";
+export type StopReason = "aborted" | "output" | "timeout" | "idle";
 
 /** 只携带计数，不携带可能含凭据、文件正文或私有工具参数的原始输出。 */
 export class ProcessOutputLimitError extends Error {
@@ -27,9 +28,16 @@ export class ProcessOutputLimitError extends Error {
   }
 }
 
-/** 超过 timeoutMs 被终止；文案沿用调用方的 messages.timeout，类型供调用方区分「超时」与其它失败。 */
+/**
+ * 超过 timeoutMs（kind=total）或 stdout 连续 idleTimeoutMs 没有新分片（kind=idle）被终止；
+ * 文案沿用调用方的 messages.timeout / messages.idle，类型供调用方区分「超时」「卡住」与其它失败。
+ */
 export class ProcessTimeoutError extends Error {
   override readonly name = "ProcessTimeoutError";
+
+  constructor(message: string, readonly kind: "total" | "idle" = "total") {
+    super(message);
+  }
 }
 
 type ProcessOutcome =
@@ -40,6 +48,8 @@ type ProcessOutcome =
 export interface BoundedProcessMessages {
   aborted: string;
   timeout: string;
+  /** stdout 静默超限的文案；缺省沿用 timeout。 */
+  idle?: string;
   outputLimit: string;
   commandNotFound: string;
   spawnFailed: string;
@@ -54,6 +64,8 @@ export interface BoundedProcessOptions {
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   timeoutMs: number;
+  /** stdout 连续这么久没有新分片就判定卡住并终止；缺省不检查，只受 timeoutMs 约束。 */
+  idleTimeoutMs?: number;
   killGraceMs: number;
   maxOutputChars: number;
   /**
@@ -103,6 +115,9 @@ function stopError(
   }
   if (reason === "timeout") {
     return new ProcessTimeoutError(messages.timeout);
+  }
+  if (reason === "idle") {
+    return new ProcessTimeoutError(messages.idle ?? messages.timeout, "idle");
   }
   return new ProcessOutputLimitError(messages.outputLimit, receivedChars, limitChars);
 }
@@ -275,7 +290,7 @@ export async function terminateProcessTree(
 
 /**
  * 有界运行一个 CLI 子进程：prompt 走 stdin，stdout 按策略停止或截断、stderr 滚动截断，
- * 支持超时、AbortSignal 与 POSIX 进程组 SIGTERM→SIGKILL 逐级终止。
+ * 支持总时长超时、stdout 静默超时、AbortSignal 与 POSIX 进程组 SIGTERM→SIGKILL 逐级终止。
  */
 export async function runBoundedProcess(options: BoundedProcessOptions): Promise<ProcessResult> {
   const { messages } = options;
@@ -310,6 +325,14 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   });
   const closed = completion.then<ProcessOutcome>((result) => ({ kind: "closed", result }));
   const timeout = setTimeout(() => stop?.("timeout"), options.timeoutMs);
+  // 静默计时只在 stdout 有新分片时重置：上游请求挂住时 CLI 既不退出也不输出，只靠总时长要白等到底。
+  let idleTimer: NodeJS.Timeout | undefined;
+  const armIdle = (): void => {
+    if (options.idleTimeoutMs === undefined) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => stop?.("idle"), options.idleTimeoutMs);
+  };
+  armIdle();
   const abortListener = (): void => stop?.("aborted");
   options.signal?.addEventListener("abort", abortListener, { once: true });
 
@@ -317,6 +340,7 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     if (outputLimitExceeded) return;
+    armIdle();
     stdoutCharsReceived += chunk.length;
     // 超限后仅排空管道；不再把后续洪流交给 JSON 解码器，也不持续扩大诊断计数。
     if (options.stdoutOverflow === "truncate"
@@ -373,6 +397,7 @@ export async function runBoundedProcess(options: BoundedProcessOptions): Promise
     );
   } finally {
     clearTimeout(timeout);
+    if (idleTimer) clearTimeout(idleTimer);
     options.signal?.removeEventListener("abort", abortListener);
     releaseOwnership();
   }

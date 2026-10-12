@@ -4,7 +4,9 @@
  *         Codex 侧另有 `login status`、`features list`（image_generation stable true）与
  *         `exec --enable image_generation` 生图替身（写 2 张最小合法 PNG 到 <cd>/.council/out 并输出清单；
  *         COUNCIL_PIPELINE_NO_OUTPUTS_ONCE 首次只出清单不写文件，COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 首次写一张
- *         草稿图但清单损坏，COUNCIL_PIPELINE_IMAGE_TIMEOUT_ONCE 首次写好第一个交付物、第二个只写一半（缺 IEND）后挂起等生图超时）；P3 流水线 brief / 复盘一次性调用替身（COUNCIL_PIPELINE_BRIEF 按模板返回合法
+ *         草稿图但清单损坏，COUNCIL_PIPELINE_IMAGE_TIMEOUT_ONCE 首次写好第一个交付物、第二个只写一半（缺 IEND）后
+ *         每秒输出心跳事件挂起等生图总超时，COUNCIL_PIPELINE_IMAGE_STALL_ONCE 首次一张不写、只输出 thread.started 后静默挂起
+ *         等服务端判定卡住并自动重试）；P3 流水线 brief / 复盘一次性调用替身（COUNCIL_PIPELINE_BRIEF 按模板返回合法
  *         council-brief，COUNCIL_PIPELINE_REVIEW 首轮 revise、之后 pass，deliverableId 优先取产物行的清单标注）；
  *         P4 Worker 团队替身（COUNCIL_TEAM_E2E）：Lead 必须带注入的 council MCP 与「团队模式」指令，首段真实拉起该 MCP
  *         核对只有六个团队工具并调用 council_list_workers，之后每段约 2.5 秒内（给 5 秒进程超时留余量）等 team-a/team-b 的 worker.txt 被合并进来，
@@ -178,7 +180,9 @@ function fakePipelineReview(text) {
  * 含 COUNCIL_PIPELINE_BAD_MANIFEST_ONCE 时，第一次写一张字节不同的草稿图但清单 path 写成绝对路径
  * （真实 Codex 常见的清单损坏；触发 manifest_invalid，草稿图已入库挂在子任务上）；
  * 含 COUNCIL_PIPELINE_IMAGE_TIMEOUT_ONCE 时，第一次写好第一个交付物、第二个只写到一半就挂起不退出，
- * 等服务端按生图超时终止（触发超时收回）。计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
+ * 期间每秒输出一条心跳事件（「忙但慢」，不触发静默判定），等服务端按生图总超时终止（触发超时收回）；
+ * 含 COUNCIL_PIPELINE_IMAGE_STALL_ONCE 时，第一次一张不写、只输出 thread.started 后静默挂起（上游请求挂住），
+ * 等服务端按事件流静默上限判定卡住、原地自动重试，第二次正常出图。计数文件放在 --cd 的上一级，委派工作区重建后仍能记住。
  */
 function fakeImageGeneration(text) {
   const cwd = optionValue("--cd");
@@ -210,6 +214,13 @@ function fakeImageGeneration(text) {
     writeFileSync(path.join(outDir, `${deliverableId}.png`), Buffer.from(PNG_RGB, "hex"));
     // 第二个交付物写到一半：去掉结尾 12 字节的 IEND 块，文件头与宽高照样能读出。
     if (ids[1]) writeFileSync(path.join(outDir, `${ids[1]}.png`), Buffer.from(PNG_RGBA, "hex").subarray(0, -12));
+    process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "fake-image-thread" })}\n`);
+    setInterval(() => process.stdout.write(`${JSON.stringify({ type: "fake.heartbeat" })}\n`), 1_000);
+    return;
+  }
+  const stallMarker = path.join(path.dirname(cwd), ".fake-pipeline-image-stall-once");
+  if (text.includes("COUNCIL_PIPELINE_IMAGE_STALL_ONCE") && !existsSync(stallMarker)) {
+    writeFileSync(stallMarker, "1\n");
     process.stdout.write(`${JSON.stringify({ type: "thread.started", thread_id: "fake-image-thread" })}\n`);
     setTimeout(() => {}, 300_000);
     return;

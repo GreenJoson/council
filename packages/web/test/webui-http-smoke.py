@@ -1237,6 +1237,33 @@ with sync_playwright() as playwright:
     assert salvaged_assets["total"] == 1, salvaged_assets
     salvage = api_request("POST", f"/api/v1/pipelines/{salvage_id}/cancel", {"expectedVersion": salvage["task"]["version"]})
     assert salvage["document"]["status"] == "cancelled", salvage["document"]
+
+    # 上游请求挂住：替身首次一张不写、只输出 thread.started 后静默挂起，到事件流静默上限被判定卡住。
+    # 输出目录为空就原地自动重试一次，第二次正常出图：生图阶段不失败、无需人工恢复，首轮两项交付物齐全交复盘。
+    stall = api_request("POST", "/api/v1/pipelines", {
+        "project": PROJECT_PATH, "template": "concept-sheet",
+        "goal": "COUNCIL_PIPELINE_IMAGE_STALL_ONCE 概念设定：卡住重试",
+    })["pipeline"]
+    stall_id = stall["task"]["id"]
+    stall = wait_pipeline(stall_id, waiting_at("brief"), " brief 待确认")
+    api_request("POST", f"/api/v1/pipelines/{stall_id}/brief", {
+        "brief": stall["document"]["draftBrief"], "expectedVersion": stall["task"]["version"],
+    })
+    stall = wait_pipeline(
+        stall_id,
+        lambda detail: waiting_at("select")(detail) or pipeline_stage(detail, "image")["status"] == "failed",
+        "卡住重试后选定终稿",
+        timeout=120,
+    )
+    assert pipeline_stage(stall, "image")["status"] != "failed", stall["document"]
+    stall_reviews = stall["document"]["reviews"]
+    assert not stall_reviews[0].get("missing"), stall_reviews[0]
+    stall_round = next(child for child in stall["children"] if child["title"] == "生图 第1轮")
+    retried = wait_task_delegation(stall_round["id"], "approved", timeout=5)
+    assert retried["attempt"] == 1 and "卡住" not in retried.get("summary", ""), retried
+    assert [output["deliverableId"] for output in retried["outputManifest"]["outputs"]] == ["main-screen", "detail-screen"], retried
+    stall = api_request("POST", f"/api/v1/pipelines/{stall_id}/cancel", {"expectedVersion": stall["task"]["version"]})
+    assert stall["document"]["status"] == "cancelled", stall["document"]
     print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
 
     # P3 流水线界面（http 模式，真实后端 + 替身 Agent）：列表分组与取消徽标 → 已完成详情 →

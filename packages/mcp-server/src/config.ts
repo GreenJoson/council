@@ -36,6 +36,8 @@ const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
 /** Codex 生图沙箱独立于讨论沙箱：只允许 workspace-write，避免一个开关放宽所有 Codex 调用。 */
 const REQUIRED_CODEX_IMAGE_SANDBOX_MODE = "workspace-write";
 export const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 1_800_000;
+/** 正常生图事件间最长静默约 2 分钟（单张出图期间无事件），10 分钟没有任何输出基本可判定上游请求挂住。 */
+export const DEFAULT_CODEX_IMAGE_IDLE_TIMEOUT_MS = 600_000;
 export const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
 const DEFAULT_GEMINI_ACP_COMMAND = "gemini";
@@ -390,6 +392,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): CouncilConfig 
       "COUNCIL_CODEX_IMAGE_TIMEOUT_MS",
       env,
       DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+    ),
+    codexImageIdleTimeoutMs: parseOptionalTimer(
+      "COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS",
+      env,
+      DEFAULT_CODEX_IMAGE_IDLE_TIMEOUT_MS,
     ),
     codexImageMaxOutputs: parseOptionalPositiveInteger(
       "COUNCIL_CODEX_IMAGE_MAX_OUTPUTS",

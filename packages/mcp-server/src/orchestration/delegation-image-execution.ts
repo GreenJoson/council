@@ -4,8 +4,9 @@
  *         审计记录器与任务上下文解析；excludeCouncilDir 由调用方注入 Git 执行器
  * @output 导出：图像委派派发前校验（brief、参考资产、默认监督者）、单段生图执行 executeImageDelegation、
  *         DelegationImageError（image_unavailable / outputs_missing / manifest_invalid，失败文案带协议定位原因；
- *         image_unavailable 沿用 Codex 运行时的脱敏文案并在审计记 diagnosticCode，超时与出错可区分）与常量；
- *         生图超时不整轮作废：`.council/out/` 里文件名对得上交付物、字节写完整的图照常入库并补出清单条目，
+ *         image_unavailable 沿用 Codex 运行时的脱敏文案并在审计记 diagnosticCode，超时、卡住与出错可区分）与常量；
+ *         Codex 长时间无输出判定卡住（image_stalled）且输出目录一张图都没有时原地自动重试一次（记 image.stalled_retry）；
+ *         生图超时或卡住不整轮作废：`.council/out/` 里文件名对得上交付物、字节写完整的图照常入库并补出清单条目，
  *         委派仍置 approved，未产出的交付物写进 notes（流水线复盘记为 missing 交下一轮补做），一张都没有才 image_unavailable；
  *         清单里超出 brief 的产物（修订轮常见的「多报」）只丢弃并记审计，不让整轮失败；
  *         委派 outputManifest 的公开形状 ImageOutputManifest（清单 + 本次入库的 assetIds、逐张 assetId）与读取 helper
@@ -25,7 +26,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AssetService } from "../assets/asset-service.js";
 import { imageBytesComplete } from "../assets/asset-sniff.js";
-import { CodexRuntimeError, IMAGE_TIMEOUT_DIAGNOSTIC, type CodexRuntime } from "../codex-runtime.js";
+import {
+  CodexRuntimeError,
+  IMAGE_STALLED_DIAGNOSTIC,
+  IMAGE_TIMEOUT_DIAGNOSTIC,
+  type CodexRuntime,
+} from "../codex-runtime.js";
 import { MAX_IMAGE_INPUT_ASSETS, MAX_WORK_ITEM_STATUS_NOTE_CHARS } from "../constants.js";
 import type { CouncilDatabase } from "../database.js";
 import { CouncilValidationError } from "../errors.js";
@@ -63,6 +69,8 @@ const INPUT_DIR = `${COUNCIL_DIR}/in`;
 export const COUNCIL_INPUT_DIR = INPUT_DIR;
 const OUTPUT_DIR = `${COUNCIL_DIR}/out`;
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
+/** 判定卡住且输出目录一张图都没有时最多再跑几次：上游请求偶发挂住，重来一次通常就能出图，卡住两次再停下交人处理。 */
+const IMAGE_STALL_RETRIES = 1;
 /** Codex thread id 只用于拼兜底目录名；拒绝 `.`/`..` 这类会跳出目录的取值。 */
 const SAFE_THREAD_ID = /^[A-Za-z0-9_:-][A-Za-z0-9._:-]{0,199}$/u;
 
@@ -161,7 +169,8 @@ export interface ImageDelegationDeps {
   /** 派发/认领所得任务版本；只回写这个版本，不覆盖执行期间的人工作答。 */
   workItemVersion: () => number | undefined;
   setWorkItemVersion: (version: number) => void;
-  config: { codexHome?: string; timeoutMs: number; maxOutputs: number };
+  /** idleTimeoutMs：Codex 事件流连续静默上限，超过判定卡住提前终止（缺省只受 timeoutMs 约束）。 */
+  config: { codexHome?: string; timeoutMs: number; idleTimeoutMs?: number; maxOutputs: number };
 }
 
 interface CollectedFile {
@@ -205,7 +214,8 @@ export function readImageOutputManifest(
 }
 
 /**
- * 单段生图：认领任务 → 在隔离目录准备 `.council/in|out` → 复制参考图 → generateImages（超时转 salvageTimedOutImages）→
+ * 单段生图：认领任务 → 在隔离目录准备 `.council/in|out` → 复制参考图 → generateImages（卡住且零产出重试一次；
+ * 超时或卡住转 salvageTimedOutImages）→
  * 清单解析 → 三路收集（清单 path、`.council/out`；前两路为空时才兜底扫 `<codex-home>/generated_images/<threadId>`）→
  * sha256 去重入库并关联任务 → 置 approved，任务停在 in_progress 等人工验收。
  */
@@ -241,8 +251,8 @@ export async function executeImageDelegation(
   const startedAt = Date.now();
   const scratch = await mkdtemp(path.join(tmpdir(), "council-image-"));
   let run: { threadId: string; lastMessage: string } | undefined;
-  /** 生图超时时的公开原因；输出目录里有已完成的产物就收回，没有才按 image_unavailable 失败。 */
-  let timeoutReason: string | undefined;
+  /** 生图超时/卡住时的公开原因与诊断码；输出目录里有已完成的产物就收回，没有才按 image_unavailable 失败。 */
+  let interrupted: { reason: string; diagnosticCode: string } | undefined;
   try {
     const outputSchemaPath = path.join(scratch, "manifest.schema.json");
     const lastMessagePath = path.join(scratch, "last-message.json");
@@ -255,33 +265,44 @@ export async function executeImageDelegation(
       outputDir: OUTPUT_DIR,
       inputs: inputs.map((item) => ({ assetId: item.assetId, relativePath: item.relativePath })),
     });
-    try {
-      run = await deps.codex.generateImages({
-        worktreeDir: workspace.root,
-        prompt,
-        outputSchemaPath,
-        lastMessagePath,
-        inputImagePaths: inputs.map((item) => item.absolutePath),
-        ...(executor.model ? { model: executor.model } : {}),
-        timeoutMs: deps.config.timeoutMs,
-        signal,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") throw error;
-      if (signal.aborted) throw abortError();
-      // 运行时文案本身不含路径（超时/未登录/进程退出分类），再脱敏一次只为兜底；审计记诊断码便于区分超时与出错。
-      const reason = error instanceof Error && error.message.trim()
-        ? redactAuditText(error.message.trim())
-        : "Codex 执行出错或超时，请检查本机 Codex 后重新委派。";
-      if (!(error instanceof CodexRuntimeError && error.diagnosticCode === IMAGE_TIMEOUT_DIAGNOSTIC)) {
-        throw imageFailure(
-          deps,
-          "image_unavailable",
-          `图像生成失败：${reason}`,
-          error instanceof CodexRuntimeError ? error.diagnosticCode : "runtime_error",
-        );
+    for (let attempt = 0; ; attempt += 1) {
+      const attemptStartedAt = Date.now();
+      try {
+        run = await deps.codex.generateImages({
+          worktreeDir: workspace.root,
+          prompt,
+          outputSchemaPath,
+          lastMessagePath,
+          inputImagePaths: inputs.map((item) => item.absolutePath),
+          ...(executor.model ? { model: executor.model } : {}),
+          timeoutMs: deps.config.timeoutMs,
+          ...(deps.config.idleTimeoutMs ? { idleTimeoutMs: deps.config.idleTimeoutMs } : {}),
+          signal,
+        });
+        break;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        if (signal.aborted) throw abortError();
+        // 运行时文案本身不含路径（超时/未登录/进程退出分类），再脱敏一次只为兜底；审计记诊断码便于区分超时与出错。
+        const reason = error instanceof Error && error.message.trim()
+          ? redactAuditText(error.message.trim())
+          : "Codex 执行出错或超时，请检查本机 Codex 后重新委派。";
+        const diagnosticCode = error instanceof CodexRuntimeError ? error.diagnosticCode : undefined;
+        if (diagnosticCode !== IMAGE_TIMEOUT_DIAGNOSTIC && diagnosticCode !== IMAGE_STALLED_DIAGNOSTIC) {
+          throw imageFailure(deps, "image_unavailable", `图像生成失败：${reason}`, diagnosticCode ?? "runtime_error");
+        }
+        // 卡住多半是上游请求挂住：一张都没画出时原地重来一次；已有产物就直接收回，不再从头重画。
+        if (
+          diagnosticCode === IMAGE_STALLED_DIAGNOSTIC
+          && attempt < IMAGE_STALL_RETRIES
+          && (await listImages(outputDir)).length === 0
+        ) {
+          deps.record("image.stalled_retry", { attempt: attempt + 1, durationMs: Date.now() - attemptStartedAt });
+          continue;
+        }
+        interrupted = { reason, diagnosticCode };
+        break;
       }
-      timeoutReason = reason;
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -296,7 +317,8 @@ export async function executeImageDelegation(
       projectPath: task.projectPath,
       inputs: inputs.length,
       startedAt,
-      reason: timeoutReason ?? "Codex 生图超时。",
+      reason: interrupted?.reason ?? "Codex 生图超时。",
+      diagnosticCode: interrupted?.diagnosticCode ?? IMAGE_TIMEOUT_DIAGNOSTIC,
     });
     return;
   }
@@ -398,7 +420,7 @@ function approveImageDelegation(
 const MANIFEST_MIME_TYPES: ReadonlySet<string> = new Set(COUNCIL_MANIFEST_MIME_TYPES);
 
 /**
- * 生图超时的收回：Codex 被终止时没有清单，但 `.council/out/` 里往往已有画好的交付物，整轮作废会白白丢掉它们。
+ * 生图超时或卡住的收回：Codex 被终止时没有清单，但 `.council/out/` 里往往已有画好的交付物，整轮作废会白白丢掉它们。
  * 只收文件名对得上 brief 交付物、且字节写完整（不是终止时写到一半）的图，逐张补出清单条目后照常置 approved；
  * 没产出的交付物写进 notes，流水线复盘把它们记为 missing、交给下一轮补做。一张都收不到才按 image_unavailable 失败。
  * 不扫 Codex 默认产物目录：那里的原图未经裁切/去底，超时时也分不清哪些已经定稿。
@@ -414,9 +436,12 @@ async function salvageTimedOutImages(
     inputs: number;
     startedAt: number;
     reason: string;
+    /** image_timeout（总时长用尽）或 image_stalled（长时间无输出判定卡住），决定文案与审计诊断码。 */
+    diagnosticCode: string;
   },
 ): Promise<void> {
   const { brief } = input;
+  const stalled = input.diagnosticCode === IMAGE_STALLED_DIAGNOSTIC;
   const collected = await collectOutputs({
     root: input.root,
     outputDir: input.outputDir,
@@ -457,7 +482,7 @@ async function salvageTimedOutImages(
     durationMs: Date.now() - input.startedAt,
   });
   if (ingest.assetIds.length === 0) {
-    throw imageFailure(deps, "image_unavailable", `图像生成失败：${input.reason}`, IMAGE_TIMEOUT_DIAGNOSTIC);
+    throw imageFailure(deps, "image_unavailable", `图像生成失败：${input.reason}`, input.diagnosticCode);
   }
 
   const outputs: ImageOutputManifest["outputs"] = [];
@@ -477,20 +502,21 @@ async function salvageTimedOutImages(
   const produced = new Set(outputs.map((output) => output.deliverableId));
   const missing = brief.deliverables.map((item) => item.id).filter((deliverableId) => !produced.has(deliverableId));
   deps.record("image.timeout_salvaged", {
+    diagnosticCode: input.diagnosticCode,
     salvaged: ingest.assetIds.length,
     missing: missing.length,
     unmatched,
     incomplete,
   });
   const notes = compact(
-    `Codex 生图超时被终止，已从输出目录收回 ${String(ingest.assetIds.length)} 张已完成的产物`
+    `Codex 生图${stalled ? "长时间无输出判定卡住" : "超时"}被终止，已从输出目录收回 ${String(ingest.assetIds.length)} 张已完成的产物`
       + (missing.length > 0 ? `；未产出：${missing.join("、")}。` : "。"),
     BRIEF_PROTOCOL_LIMITS.maxLongText,
   );
   approveImageDelegation(
     deps,
     approval,
-    `生图超时，已收回 ${String(ingest.assetIds.length)} 张已完成的图像（去重 ${String(collected.localDuplicates + ingest.deduplicated)} 张），等待人工验收。`,
+    `生图${stalled ? "卡住" : "超时"}，已收回 ${String(ingest.assetIds.length)} 张已完成的图像（去重 ${String(collected.localDuplicates + ingest.deduplicated)} 张），等待人工验收。`,
     { schemaVersion: 1, outputs, assetIds: ingest.assetIds, notes },
   );
 }

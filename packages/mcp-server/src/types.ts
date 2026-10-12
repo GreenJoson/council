@@ -76,6 +76,8 @@ export interface CouncilConfig {
   codexImageEnabled?: boolean;
   codexImageSandboxMode?: "workspace-write";
   codexImageTimeoutMs?: number;
+  /** 生图事件流连续静默上限：超过即判定 Codex 卡住（多为上游请求挂住）提前终止。 */
+  codexImageIdleTimeoutMs?: number;
   codexImageMaxOutputs?: number;
   /** Codex 数据目录（<codex-home>），图像委派兜底收集产物用；缺省时跳过该路收集。 */
   codexHome?: string;

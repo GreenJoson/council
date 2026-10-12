@@ -18,6 +18,7 @@
 
 import {
   DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
+  DEFAULT_CODEX_IMAGE_IDLE_TIMEOUT_MS,
   DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
   EXECUTION_DEFAULTS,
   loadAssetConfig,
@@ -171,9 +172,10 @@ interface DelegationManagerConfig {
   executionMaxTurns?: number;
   maxExecutionSegments?: number;
   executionTimeoutMs?: number;
-  /** 图像委派：Codex 默认产物目录（兜底收集）、单次超时与入库张数上限、资产库配置；缺省按默认值回落。 */
+  /** 图像委派：Codex 默认产物目录（兜底收集）、单次超时、静默卡住上限与入库张数上限、资产库配置；缺省按默认值回落。 */
   codexHome?: string;
   imageTimeoutMs?: number;
+  imageIdleTimeoutMs?: number;
   imageMaxOutputs?: number;
   assets?: AssetConfig;
 }
@@ -251,6 +253,7 @@ export class WorkItemDelegationManager {
       executionTimeoutMs: councilConfig.delegationExecutionTimeoutMs,
       ...(councilConfig.codexHome ? { codexHome: councilConfig.codexHome } : {}),
       ...(councilConfig.codexImageTimeoutMs ? { imageTimeoutMs: councilConfig.codexImageTimeoutMs } : {}),
+      ...(councilConfig.codexImageIdleTimeoutMs ? { imageIdleTimeoutMs: councilConfig.codexImageIdleTimeoutMs } : {}),
       ...(councilConfig.codexImageMaxOutputs ? { imageMaxOutputs: councilConfig.codexImageMaxOutputs } : {}),
       ...(councilConfig.assets ? { assets: councilConfig.assets } : {}),
     }, modelRouter, claudeRuntime, codexRuntime);
@@ -876,6 +879,7 @@ export class WorkItemDelegationManager {
       config: {
         ...(this.config.codexHome ? { codexHome: this.config.codexHome } : {}),
         timeoutMs: this.config.imageTimeoutMs ?? DEFAULT_CODEX_IMAGE_TIMEOUT_MS,
+        idleTimeoutMs: this.config.imageIdleTimeoutMs ?? DEFAULT_CODEX_IMAGE_IDLE_TIMEOUT_MS,
         maxOutputs: this.config.imageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
       },
     }, id, { root: workspace.root }, signal);
