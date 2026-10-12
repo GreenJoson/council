@@ -8,7 +8,7 @@ English · [简体中文](README.zh.md)
 
 Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-The current desktop release is **0.10.0**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
+The current desktop release is **0.10.1**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
 ## Why Council?
 
@@ -200,7 +200,17 @@ npm run test:e2e    # Real HTTP/SSE and browser flows with test agents
 npm run audit       # npm dependency advisories
 ```
 
-E2E requires Python 3, the Python Playwright package, and its Chromium browser. It uses temporary databases and fake agents, so a passing E2E run is not proof of live provider compatibility or model quality. See the [0.10.0 release review](docs/release-0.10.0.md).
+Every replacement of the local install gets a new version number and goes through the install script:
+
+```bash
+npm run version:set -- 0.10.2   # update every version record at once
+npm run build:desktop           # build from a clean commit
+npm run desktop:install         # check, back up, replace, verify
+```
+
+`desktop:install` refuses to replace the app if the version is unchanged or lower than the installed one, if the worktree is dirty, or if background tasks are running. The full procedure and rollback steps are in [Local release and replacement](docs/local-release.md) (Chinese).
+
+E2E requires Python 3, the Python Playwright package, and its Chromium browser. It uses temporary databases and fake agents, so a passing E2E run is not proof of live provider compatibility or model quality. See the [0.10.1 release review](docs/release-0.10.1.md).
 
 For contributions, describe the user-visible problem, keep changes within the owning module, run the relevant checks, and update both language READMEs plus the affected directory's `_README.md`. Never include local databases, `.env` files, credentials, or private project captures in a contribution. Detailed Chinese usage is available in the [user guide](docs/usage.md).
 
@@ -208,8 +218,9 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
-### Unreleased
+### 0.10.1 — 2026-10-13
 
+- Local release: `npm run version:set` updates every version record at once; `npm run desktop:install` replaces the local install safely. It refuses an unchanged version, a downgrade, or a replacement while tasks are running, backs up the old app first and verifies the result afterwards. See [Local release and replacement](docs/local-release.md).
 - Desktop: the webview CSP now allows `img-src` from the loopback Agent Service, so asset thumbnails, full-size images and message images render inside the installed app instead of a broken placeholder (0.10.0 had only verified the image endpoints over HTTP).
 - Desktop: the "Agent Service not ready" banner only quotes a sidecar log error written during the current launch, and only once the sidecar has exited; errors from earlier sessions are no longer presented as the reason.
 - Image generation no longer requires the project to be a Git repository: image delegations and the pipeline image stage now run in an isolated empty directory under the delegation root, with no worktree, so uncommitted changes don't block them either. Code delegations, including the prototype stage, still need Git; on a non-repository they now say to initialise and make a first commit instead of a generic "Git operation failed".
@@ -224,6 +235,7 @@ Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only
 - Image generation: one stuck generator call no longer sinks the whole round. Previously a single call hung for 11 minutes while Codex kept waiting, the round was killed at 30 minutes, and the 5 images already finished were discarded; the prompt now tells Codex to abort a call with no result after 4 minutes and retry once, and if it hangs again to skip that image, deliver the rest and say so in the notes. When a pipeline review finds a deliverable with no output this round, the round is recorded as "Needs revision" and the next revision round produces it (if revisions are used up it goes to selection as before); the review record header shows "N not produced" and lists the missing deliverables when expanded.
 - Image generation: a round that hits the overall timeout no longer throws away the images it already finished. Previously a revision round had all 6 images in its output folder by the halfway mark, then spent the rest of the 30 minutes redoing a few, was killed, and all 6 were discarded; now on timeout the server ingests the output-folder images whose file names match a deliverable and whose files are complete, hands them to review as this round's output, lists the deliverables that were not produced in the notes for the next revision round, and fails only when nothing is salvageable. The prompt also tells Codex to copy each image into the output folder as soon as it is done.
 - Image generation: a stalled Codex run is stopped early and retried automatically. In one revision round Codex's model request never answered — no output for 29 minutes — and the round sat until the 30-minute timeout with nothing to show; now if the event stream is silent for `COUNCIL_CODEX_IMAGE_IDLE_TIMEOUT_MS` (default 10 minutes; normal runs stay silent for at most about 3), the run is treated as stalled and stopped. If the output folder has no images yet it is retried once in place; if some images are there they are salvaged for review as on a timeout. Only a second stall with nothing to salvage fails with `image_unavailable`, which says the run was judged stalled and can be resumed directly.
+- Review record: [0.10.1 release review](docs/release-0.10.1.md).
 
 ### 0.10.0 — 2026-10-11
 
