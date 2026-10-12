@@ -11,7 +11,7 @@
 | `work-item-routes.ts` | 路由 | 实施项创建/AI 生成/更新/认领、项目待处理、项目活动计数（`GET /api/v1/topics/:topicId/activity` → `{activeAgents, attention}`，按议题所在项目汇总）、运行审计与跨 Agent 任务委派（单项、批量、接续、取消） |
 | `task-routes.ts` | 路由 | `/api/v1/tasks` 任务创建/按项目列表/详情（附所属议题摘要与委派）/乐观更新，以及不依赖议题的任务委派启动与列表；`PUT` 对 image 任务可带 `brief`（按 council-brief 校验）；委派接受 kind=code（supervisor 必填、inputAssetIds 可带 ≤8 张同项目图像；kind=prototype 任务也走 code）与 kind=image（supervisor 可省略取默认 Claude，inputAssetIds ≤8） |
 | `asset-routes.ts` | 路由 | `/api/v1/assets` 资产列表（`kind`/`target`/`unlinked=true` 过滤）/详情/原始内容/缩略图/项目内导入/浏览器上传（`POST /upload?project=` 原始字节，路由级 raw 解析，只收图片）/本机图片入库（`POST /ingest`，桌面原生选择器选中的绝对路径，只收图片）/链接增删/软删除；内容响应固定 no-store/nosniff，SVG 加沙箱 CSP，入库拒绝按原因码映射 403/404/413/415/507 |
-| `pipeline-routes.ts` | 路由 | `/api/v1/pipelines` 流水线创建（201 `{pipeline}`）/按项目列表/详情与人工推进（确认 brief、选终稿、恢复、取消，均返回 PipelineDetail）；actor 固定 human，编排服务未启用时 503 |
+| `pipeline-routes.ts` | 路由 | `/api/v1/pipelines` 流水线创建（201 `{pipeline}`）、从讨论消息派活（`POST /dispatch {topicId, messageId}`：新起 201、已起过 200，均为 `{pipeline, created}`）/按项目列表/详情与人工推进（确认 brief、选终稿、恢复、取消，均返回 PipelineDetail）；actor 固定 human，编排服务未启用时 503 |
 | `team-routes.ts` | 路由 | `/api/v1/tasks/:taskId/team` P4 Worker 团队：组队（202 `{team, leadDelegation}`）、读团队（无团队 404）、派发 Worker（202）、等待（`timeoutMs` ≤ 600000，客户端断开即停）、中断/合并/归档/聚焦、结束团队；合并冲突 409 `data: {files, hint}`；编排服务未启用时 503 |
 | `orchestration-routes.ts` | 路由 | RuntimeBinding 列表/关闭/重开、编排运行创建/查询/启动/批准/取消/恢复、圆桌周期指标与开始/放弃/作答/提交修复 |
 

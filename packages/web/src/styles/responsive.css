@@ -316,6 +316,15 @@
     gap: 2px;
   }
 
+  .pipeline-dispatch-card li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .pipeline-dispatch-card li small {
+    white-space: normal;
+  }
+
   .publish-button {
     min-width: 46px;
     width: 46px;

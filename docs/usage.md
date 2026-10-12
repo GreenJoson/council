@@ -236,6 +236,21 @@ MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 
 
 流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）与原型委派权限档 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`（默认 `workspace_write`）可在 `.env` 调整。
 
+讨论里也能直接派活。讨论 Agent 本身是只读的，被 @ 要求「干活」时，它会在回复末尾附上一个 `council-dispatch` 派活块，里面写明：
+- 模板
+- 项目内参考图路径（png/jpg/webp，最多 8 张）
+- 完整简报
+
+消息卡会把这个块显示成派活方案卡，列出交付物和总张数。点「按此起流水线」后：
+1. 服务端从已存的消息里重新解析方案，不信任前端传来的内容。
+2. 参考图先导入资产库，再起流水线。
+3. 跳过简报确认，直接开始生图。
+
+对应的 HTTP 接口是 `POST /api/v1/pipelines/dispatch`，请求体为 `{topicId, messageId}`。
+- 议题必须绑定项目。
+- 同一条消息已经起过流水线（未取消）时，直接返回那条，`created` 为 `false`；已取消的可以重新派。
+- 流水线标题与项目里已有任务重名时（例如重派同一条消息），自动加「（2）」这样的序号。
+
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，
 点击“记录人工决策”，填写最终结论和可选的验证/部署说明，再点击“记录并结束议题”。Council
 会以 Human 身份直接写入 `accepted`，关闭圆桌、持久会话和后续 Agent 入口；整个过程不会创建

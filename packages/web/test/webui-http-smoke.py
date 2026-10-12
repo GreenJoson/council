@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）、讨论消息派活（尾块重解析、参考图入库、跳过简报确认直接生图、重复派活返回原流水线、取消后可重派且同名标题自动加序号、无尾块/越界参考图 400、消息不存在 404）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾、消息派活卡点击跳到新流水线与坏方案只提示不给按钮）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1264,6 +1264,61 @@ with sync_playwright() as playwright:
     assert [output["deliverableId"] for output in retried["outputManifest"]["outputs"]] == ["main-screen", "detail-screen"], retried
     stall = api_request("POST", f"/api/v1/pipelines/{stall_id}/cancel", {"expectedVersion": stall["task"]["version"]})
     assert stall["document"]["status"] == "cancelled", stall["document"]
+
+    # 讨论消息一键派活：消息带 council-dispatch 尾块（模板 + 项目内参考图 + 完整简报），服务端从已存消息重解析，
+    # 参考图导入资产库后跳过简报确认直接生图；同一条消息重复派活返回原流水线，取消后可重新派；
+    # 没有尾块 / 参考图越出项目 400，消息不存在 404。界面点击链路在流水线界面验收之后。
+    def post_dispatch_message(goal, references=("docs/logo.png",)):
+        plan = {
+            "template": "concept-sheet", "references": list(references),
+            "brief": {
+                "schemaVersion": 1, "kind": "concept-sheet", "goal": goal,
+                "deliverables": [
+                    {"id": "guard-front", "description": "森林守卫正面立绘", "size": "1024x1536", "count": 1},
+                    {"id": "guard-back", "description": "森林守卫背面立绘", "size": "1024x1536", "count": 1},
+                ],
+                "acceptance": ["正背面服装与配色一致"],
+            },
+        }
+        return api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+            "kind": "note",
+            "content": f"按讨论结论派活。\n\n```council-dispatch\n{json.dumps(plan, ensure_ascii=False)}\n```",
+        })
+
+    dispatch_message = post_dispatch_message("派活：森林守卫正背面")
+    dispatch_body = {"topicId": topic_id, "messageId": dispatch_message["id"]}
+    dispatched = api_request("POST", "/api/v1/pipelines/dispatch", dispatch_body)
+    assert dispatched["created"] is True, dispatched
+    dispatch_id = dispatched["pipeline"]["task"]["id"]
+    dispatch_doc = dispatched["pipeline"]["document"]
+    assert dispatch_doc["request"]["source"] == {"topicId": topic_id, "messageId": dispatch_message["id"]}, dispatch_doc
+    assert pipeline_stage(dispatched["pipeline"], "brief")["status"] == "completed", dispatch_doc
+    assert pipeline_stage(dispatched["pipeline"], "image")["status"] == "running", dispatch_doc
+    assert [item["id"] for item in dispatch_doc["brief"]["deliverables"]] == ["guard-front", "guard-back"], dispatch_doc
+    dispatch_refs = dispatch_doc["request"]["referenceAssetIds"]
+    assert len(dispatch_refs) == 1 and dispatch_doc["brief"]["style"]["references"] == dispatch_refs, dispatch_doc
+    assert api_request("GET", f"/api/v1/assets/{dispatch_refs[0]}")["kind"] == "image"
+    again = api_request("POST", "/api/v1/pipelines/dispatch", dispatch_body)
+    assert again["created"] is False and again["pipeline"]["task"]["id"] == dispatch_id, again["pipeline"]["task"]
+    api_expect_error("POST", "/api/v1/pipelines/dispatch", 400, {"topicId": topic_id, "messageId": asset_message["id"]})
+    api_expect_error("POST", "/api/v1/pipelines/dispatch", 404, {"topicId": topic_id, "messageId": "message_missing-dispatch"})
+    outside = post_dispatch_message("派活：越界参考图", references=("../outside.png",))
+    api_expect_error("POST", "/api/v1/pipelines/dispatch", 400, {"topicId": topic_id, "messageId": outside["id"]})
+    dispatch_detail = wait_pipeline(dispatch_id, waiting_at("select"), "派活后选定终稿", timeout=120)
+    assert [review["verdict"] for review in dispatch_detail["document"]["reviews"]] == ["revise", "pass"], dispatch_detail["document"]
+    first_round = next(child for child in dispatch_detail["children"] if child["title"] == "生图 第1轮")
+    assert "参考图 1 张" in wait_task_delegation(first_round["id"], "approved", timeout=5)["summary"]
+    cancelled_dispatch = api_request("POST", f"/api/v1/pipelines/{dispatch_id}/cancel", {
+        "expectedVersion": dispatch_detail["task"]["version"],
+    })
+    assert cancelled_dispatch["document"]["status"] == "cancelled", cancelled_dispatch["document"]
+    redispatched = api_request("POST", "/api/v1/pipelines/dispatch", dispatch_body)
+    assert redispatched["created"] is True and redispatched["pipeline"]["task"]["id"] != dispatch_id, redispatched["pipeline"]["task"]
+    redispatch_id = redispatched["pipeline"]["task"]["id"]
+    # 顶层任务标题项目内唯一且不分状态：重派的同名目标自动加序号，不撞 409。
+    assert redispatched["pipeline"]["task"]["title"] == f'{dispatched["pipeline"]["task"]["title"]}（2）', redispatched["pipeline"]["task"]
+    redispatched = wait_pipeline(redispatch_id, lambda detail: pipeline_stage(detail, "image")["status"] != "running", "重新派活后出图结束", timeout=120)
+    api_request("POST", f"/api/v1/pipelines/{redispatch_id}/cancel", {"expectedVersion": redispatched["task"]["version"]})
     print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
 
     # P3 流水线界面（http 模式，真实后端 + 替身 Agent）：列表分组与取消徽标 → 已完成详情 →
@@ -1312,6 +1367,32 @@ with sync_playwright() as playwright:
     page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
     page.locator(f"[data-pipeline-group='done'] [data-pipeline-id='{ui_pipeline_id}']").wait_for()
     print(f"P3 流水线界面通过，耗时 {time.monotonic() - ui_started:.1f}s")
+
+    # 讨论消息派活卡：尾块不再露出原始 JSON，改为方案卡（模板、交付物、参考图数）；点「按此起流水线」跳到新流水线，
+    # 已直接开始生图；方案解析不了时只给问题提示、不给按钮。
+    page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
+    page.get_by_role("heading", name="真实同步验收", exact=True).wait_for()
+    ui_dispatch_message = post_dispatch_message("界面派活：森林守卫")
+    api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
+        "kind": "note", "content": "坏方案：\n\n```council-dispatch\n{not json}\n```",
+    })
+    dispatch_card = page.locator(f"[data-message-id='{ui_dispatch_message['id']}'] .pipeline-dispatch-card")
+    dispatch_card.wait_for()
+    card_text = dispatch_card.inner_text()
+    assert "概念设定图" in card_text and "2 项交付物，共 2 张" in card_text and "参考图 1 张" in card_text, card_text
+    assert "guard-front" in card_text and "council-dispatch" not in page.locator(f"[data-message-id='{ui_dispatch_message['id']}']").inner_text()
+    invalid_card = page.locator(".pipeline-dispatch-card.is-invalid").last
+    invalid_card.get_by_text("派活方案不是合法 JSON，请让 Agent 重新给出。").wait_for()
+    assert invalid_card.get_by_role("button").count() == 0
+    dispatch_card.get_by_role("button", name="按此起流水线", exact=True).click()
+    page.wait_for_function("location.hash.startsWith('#/pipelines/')")
+    ui_dispatch_id = page.locator("[data-pipeline-detail]").get_attribute("data-pipeline-detail")
+    ui_dispatch = api_request("GET", f"/api/v1/pipelines/{ui_dispatch_id}")
+    assert ui_dispatch["document"]["request"]["source"]["messageId"] == ui_dispatch_message["id"], ui_dispatch["document"]
+    wait_stage(page, "brief", ("completed",))
+    ui_dispatch = wait_pipeline(ui_dispatch_id, lambda detail: pipeline_stage(detail, "image")["status"] != "running", "界面派活出图结束", timeout=120)
+    api_request("POST", f"/api/v1/pipelines/{ui_dispatch_id}/cancel", {"expectedVersion": ui_dispatch["task"]["version"]})
+    print("讨论消息派活卡界面通过")
     page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 
     second_topic = api_request(

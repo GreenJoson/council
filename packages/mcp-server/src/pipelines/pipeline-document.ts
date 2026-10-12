@@ -1,6 +1,6 @@
 /**
  * @input  依赖：brief-protocol（CouncilBrief 解析与限制）、templates（模板/阶段 id 与模板要求）
- * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument、初始文档 createPipelineDocument、
+ * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument（request.source 记录派活来源的议题/消息）、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
  *         修订 brief 生成 buildRevisionBrief（以原 brief 为基线只保留不合格与本轮缺少产物的交付物并带本轮改法，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
@@ -118,6 +118,8 @@ const documentSchema = z.object({
     goal: z.string().trim().min(1).max(LIMITS.maxGoal),
     constraints: z.array(z.string().trim().min(1).max(LIMITS.maxConstraint)).max(LIMITS.maxConstraints).optional(),
     referenceAssetIds: z.array(idText).max(LIMITS.maxReferences).optional(),
+    /** 从讨论消息的派活尾块起的流水线：记下出处，同一条消息重复点按钮时返回既有流水线。 */
+    source: z.object({ topicId: idText, messageId: idText }).strict().optional(),
   }).strict(),
   agents: z.object({
     brief: idText,

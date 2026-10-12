@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpRouteContext（可选编排服务上挂载的 PipelineService）、Zod schema 与统一响应
- * @output 导出：注册 P3 流水线 REST（创建、按项目列表、详情、确认 brief、选定终稿、恢复失败阶段、取消）的 registerPipelineRoutes
+ * @output 导出：注册 P3 流水线 REST（创建、从讨论消息派活、按项目列表、详情、确认 brief、选定终稿、恢复失败阶段、取消）的 registerPipelineRoutes
  * @pos    /api/v1/pipelines：流水线的唯一 HTTP 入口；只做协议适配，阶段语义与错误码在 pipelines/PipelineService
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,7 @@ import { HttpError, sendSuccess } from "../responses.js";
 import {
   confirmPipelineBriefBodySchema,
   createPipelineBodySchema,
+  dispatchPipelineBodySchema,
   listPipelinesQuerySchema,
   pipelineParamsSchema,
   pipelineVersionBodySchema,
@@ -43,6 +44,18 @@ export function registerPipelineRoutes(app: Express, context: HttpRouteContext):
       actorId: HUMAN_ACTOR,
     });
     sendSuccess(response, { pipeline }, "流水线已创建。", 201);
+  });
+
+  // 讨论消息上的「按此起流水线」：同一条消息重复点返回既有流水线（200），新起的返回 201。
+  app.post("/api/v1/pipelines/dispatch", async (request, response) => {
+    const pipelines = requirePipelines();
+    const input = parse(dispatchPipelineBodySchema, request.body);
+    const result = await pipelines.dispatchFromMessage({ ...input, actorId: HUMAN_ACTOR });
+    if (result.created) {
+      sendSuccess(response, { pipeline: result.pipeline, created: true }, "已按派活方案起流水线，开始生图。", 201);
+    } else {
+      sendSuccess(response, { pipeline: result.pipeline, created: false }, "这条消息已经起过流水线。");
+    }
   });
 
   app.get("/api/v1/pipelines", (request, response) => {

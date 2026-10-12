@@ -15,6 +15,7 @@ import type { PipelineRepository } from "./pipeline-repository";
 import type {
   CreatePipelineInput,
   PipelineDetail,
+  PipelineDispatchResult,
   PipelineListResult,
 } from "../../types/pipelines";
 
@@ -61,6 +62,10 @@ export class DesktopPipelineRepository implements PipelineRepository {
 
   async createPipeline(input: CreatePipelineInput): Promise<PipelineDetail> {
     return (await this.#requireLive()).createPipeline(input);
+  }
+
+  async dispatchPipeline(topicId: string, messageId: string): Promise<PipelineDispatchResult> {
+    return (await this.#requireLive()).dispatchPipeline(topicId, messageId);
   }
 
   async confirmBrief(pipelineId: string, brief: Record<string, unknown>, expectedVersion: number): Promise<PipelineDetail> {

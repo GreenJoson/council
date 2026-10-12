@@ -8,11 +8,12 @@
  */
 
 import { createApiUrl, jsonRequest, requestApiData, type Fetcher } from "../http-client";
-import { parsePipelineCreated, parsePipelineDetail, parsePipelineSummaries } from "./pipeline-api";
+import { parsePipelineCreated, parsePipelineDetail, parsePipelineDispatched, parsePipelineSummaries } from "./pipeline-api";
 import type { PipelineRepository } from "./pipeline-repository";
 import type {
   CreatePipelineInput,
   PipelineDetail,
+  PipelineDispatchResult,
   PipelineListResult,
 } from "../../types/pipelines";
 
@@ -69,6 +70,16 @@ export class HttpPipelineRepository implements PipelineRepository {
         // 未选择 Agent 时不发送，交给服务端按启用 Agent 选默认值。
         ...(input.agents && Object.keys(input.agents).length > 0 ? { agents: input.agents } : {}),
       }),
+    );
+  }
+
+  async dispatchPipeline(topicId: string, messageId: string): Promise<PipelineDispatchResult> {
+    // 项目由议题决定，不随当前项目路径发送。
+    return requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, "/api/v1/pipelines/dispatch"),
+      parsePipelineDispatched,
+      jsonRequest({ topicId, messageId }),
     );
   }
 

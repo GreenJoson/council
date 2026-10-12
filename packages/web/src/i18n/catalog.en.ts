@@ -1157,4 +1157,18 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "本轮没有产出这项交付物": "This deliverable was not produced in this round",
   "改法": "Change",
   "失败的是修订轮；此前已产出的 {count} 张图仍保留，「恢复」只重跑这一轮修订。": "The revision round failed; the {count} images produced earlier are kept, and Resume only reruns this revision round.",
+  // 讨论消息派活卡（features/discussion/PipelineDispatchCard、data/pipelines/dispatch-block）
+  "派活方案": "Dispatch plan",
+  "{count} 项交付物，共 {images} 张": "{count} deliverables, {images} images",
+  "按此起流水线": "Start pipeline",
+  "跳过简报确认，直接开始生图；参考图会先导入资产库。": "Skips brief confirmation and starts generating; reference images are imported into the asset library first.",
+  "已按派活方案起流水线，开始生图": "Pipeline started from the dispatch plan; generating images",
+  "这条消息已经起过流水线": "A pipeline was already started from this message",
+  "派活方案不是合法 JSON，请让 Agent 重新给出。": "The dispatch plan is not valid JSON. Ask the agent to provide it again.",
+  "派活方案格式不对，请让 Agent 重新给出。": "The dispatch plan is malformed. Ask the agent to provide it again.",
+  "派活方案的模板无法识别，请让 Agent 重新给出。": "The dispatch plan's template is not recognized. Ask the agent to provide it again.",
+  "派活方案的参考图列表格式不对，请让 Agent 重新给出。": "The dispatch plan's reference list is malformed. Ask the agent to provide it again.",
+  "派活方案里的简报不完整，请让 Agent 重新给出。": "The brief in the dispatch plan is incomplete. Ask the agent to provide it again.",
+  "派活方案的简报类型和模板对不上，请让 Agent 重新给出。": "The brief kind in the dispatch plan does not match the template. Ask the agent to provide it again.",
+  "演示模式不能从讨论消息派活，请连接本地 Agent 服务后再试。": "Demo mode cannot dispatch from discussion messages. Connect the local Agent Service and try again.",
 };

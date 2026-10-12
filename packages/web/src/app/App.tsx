@@ -4,7 +4,8 @@
  * @output 导出：App 根组件（壳）
  * @pos    只做装配：创建仓储、串起各控制器、处理桌面首次设置/致命错误/加载中三种前置态，并把路由交给 hash；
  *         V2 壳为「图标栏 + 会话列表 + 主区（讨论 + 可收起的上下文栏）」，会话列表同时露出任务与流水线，
- *         任务/流水线新建对话框在壳层渲染以便从编辑器一键切换并带入草稿；
+ *         任务/流水线新建对话框在壳层渲染以便从编辑器一键切换并带入草稿；讨论消息派活卡的「按此起流水线」
+ *         在壳层调流水线仓储并跳到新流水线；
  *         架构档案时间线点击某条 ADR 时通过 decisionFocus 通知决策记录视图定位；
  *         Composer 的 @claude/@codex 召唤语法糖由 use-topic-actions 的 publish 承接
  *
@@ -128,6 +129,13 @@ export default function App() {
   const recoverableErrorMessage =
     orch.capabilitiesErrorMessage ?? orch.runsErrorMessage ?? content.errorMessage;
 
+  // 讨论消息派活卡：服务端从已存消息重解析并起流水线；同一条消息已起过时返回那条，一样跳过去
+  async function handleDispatchPipeline(topicId: string, messageId: string): Promise<void> {
+    const result = await pipelineRepository.dispatchPipeline(topicId, messageId);
+    setToastMessage(result.created ? t("已按派活方案起流水线，开始生图") : t("这条消息已经起过流水线"));
+    navigate({ view: "pipelines", pipelineId: result.pipeline.task.id });
+  }
+
   function handleRetryError(): void {
     if (orch.capabilitiesErrorMessage) {
       orch.retryCapabilities();
@@ -182,7 +190,8 @@ export default function App() {
           onOpenInspector={() => setIsInspectorOpen(true)}
           onToggleContext={() => setIsContextCollapsed((current) => !current)}
           onCloseInspector={() => setIsInspectorOpen(false)}
-          onOpenTaskCreate={setTaskDraft} onOpenPipelineCreate={setPipelineDraft} />
+          onOpenTaskCreate={setTaskDraft} onOpenPipelineCreate={setPipelineDraft}
+          onDispatchPipeline={handleDispatchPipeline} />
       </div>
       {(isTopicsOpen || isInspectorOpen) ? (
         <button className="panel-scrim" type="button" aria-label={t("关闭侧边面板")}

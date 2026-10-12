@@ -65,6 +65,11 @@ export const topicIdSchema = z
 
 export const topicParamsSchema = z.object({ topicId: topicIdSchema }).strict();
 
+const messageIdSchema = z
+  .string()
+  .max(MAX_ID_CHARS)
+  .regex(/^message_[A-Za-z0-9-]+$/, "messageId 格式无效");
+
 export const workItemIdSchema = z
   .string()
   .max(MAX_ID_CHARS, "workItemId 过长")
@@ -455,6 +460,11 @@ export const pipelineVersionBodySchema = z
   .object({ expectedVersion: z.number().int().positive() })
   .strict();
 
+/** 讨论消息一键派活：只传出处，派活内容由服务层从已存消息的 council-dispatch 尾块重新解析。 */
+export const dispatchPipelineBodySchema = z
+  .object({ topicId: topicIdSchema, messageId: messageIdSchema })
+  .strict();
+
 // ---- 资产库（/api/v1/assets）：入库规则在 assets/，这里只校验形状 ----
 
 export const assetIdSchema = z
@@ -582,11 +592,6 @@ export const createRunBodySchema = z
   .strict();
 
 export const emptyActionBodySchema = z.object({}).strict();
-
-const messageIdSchema = z
-  .string()
-  .max(MAX_ID_CHARS)
-  .regex(/^message_[A-Za-z0-9-]+$/, "messageId 格式无效");
 
 export const startCycleBodySchema = z
   .object({

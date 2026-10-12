@@ -5,7 +5,7 @@
  *         并以同名同签名方法转发到 AgentRegistry 与 CouncilProductService，含一次性调用与 Agent 候选）、
  *         生产依赖工厂，以及从两个协作模块再导出的注册/Run/审批类型与 AVAILABILITY_TTL_MS
  * @pos    REST/SSE 契约使用的编排、模型配置与 supervisor→executor 执行一致性聚合根、生产依赖工厂
- *         （Codex 绑定的可用性检查顺带刷新生图探针声明；工厂装配并挂载 P3 PipelineService，
+ *         （Codex 绑定的可用性检查顺带刷新生图探针声明；工厂装配并挂载 P3 PipelineService（含派活参考图导入用的 AssetService），
  *         initialize 在委派恢复后启动流水线对账，shutdown/close 同步停止与关闭；
  *         P4 同样装配并挂载 TeamService：Lead MCP 入口/COUNCIL_* 环境/回环地址在此注入，
  *         initialize 在委派恢复后对账团队，close 关闭团队仓储）
@@ -14,7 +14,9 @@
  */
 
 import { RuntimeAuditStore } from "./runtime-audit-store.js";
-import { collectCouncilEnv, DEFAULT_CODEX_IMAGE_MAX_OUTPUTS } from "../config.js";
+import { collectCouncilEnv, DEFAULT_CODEX_IMAGE_MAX_OUTPUTS, loadAssetConfig } from "../config.js";
+import { AssetService } from "../assets/asset-service.js";
+import path from "node:path";
 import { WorkAttentionStore } from "./work-attention-store.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -660,8 +662,9 @@ export function createProductionOrchestrationService(
   );
   // P3 流水线：独立数据库连接（schema 已由委派管理器的连接校验），一次性调用与委派都走本服务的转发，
   // 因而复用配置锁与生图执行者探针校验。
+  const pipelineDatabase = new CouncilDatabase(councilConfig.databasePath, councilConfig.sqliteBusyTimeoutMs);
   service.attachPipelines(new PipelineService({
-    database: new CouncilDatabase(councilConfig.databasePath, councilConfig.sqliteBusyTimeoutMs),
+    database: pipelineDatabase,
     agents: {
       invokeOneShot: async (input) => await service.invokeOneShot(input),
       listAgentCandidates: async () => await service.listAgentCandidates(),
@@ -688,6 +691,11 @@ export function createProductionOrchestrationService(
       maxImageOutputs: councilConfig.codexImageMaxOutputs ?? DEFAULT_CODEX_IMAGE_MAX_OUTPUTS,
     },
     prototypePermission: councilConfig.pipelinePrototypePermission ?? "workspace_write",
+    // 讨论消息派活时把项目里的参考图导入资产库；与资产路由同一份配置，测试夹具没有 assets 时按库目录回落。
+    assets: new AssetService(
+      pipelineDatabase,
+      councilConfig.assets ?? loadAssetConfig({}, path.dirname(councilConfig.databasePath)),
+    ),
   }));
   // P4 Worker 团队：独立数据库连接；Lead 委派经本服务转发（复用配置锁），Worker 子委派直接交委派管理器。
   // Lead 的 Council MCP 子进程继承本进程 COUNCIL_* 配置，并经回环地址把写操作转发回本服务。

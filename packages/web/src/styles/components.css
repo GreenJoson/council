@@ -1,7 +1,7 @@
 /**
  * @input  依赖：theme.css、app.css 和组件语义类名
  * @output 导出：会话流筛选 chips 与议题行、流体消息列、实施进度及委派历史对齐、检查器、对话框与决策归档样式，
- *         以及详情页长内容共用的区块搜索框、命中高亮与折叠（components/FoldableContent）
+ *         讨论消息的关联提交卡与派活方案卡，以及详情页长内容共用的区块搜索框、命中高亮与折叠（components/FoldableContent）
  * @pos    Operator Console 的高密度组件视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -866,6 +866,108 @@
   font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 讨论消息的派活方案卡：Agent 给方案，人点按钮起流水线 */
+.pipeline-dispatch-card {
+  display: grid;
+  gap: 8px;
+  max-width: 76ch;
+  margin-top: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-surface));
+}
+
+.pipeline-dispatch-card.is-invalid {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 5%, var(--color-surface));
+}
+
+.pipeline-dispatch-card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--color-primary-strong);
+}
+
+.pipeline-dispatch-card.is-invalid .pipeline-dispatch-card-heading {
+  color: var(--color-warning);
+}
+
+.pipeline-dispatch-card-heading strong {
+  font-size: 11px;
+}
+
+.pipeline-dispatch-card-heading span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.pipeline-dispatch-card-goal,
+.pipeline-dispatch-card-problem,
+.pipeline-dispatch-card-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pipeline-dispatch-card-goal {
+  color: var(--color-text);
+}
+
+.pipeline-dispatch-card-problem {
+  color: var(--color-text-secondary);
+}
+
+.pipeline-dispatch-card-error {
+  color: var(--color-danger);
+}
+
+.pipeline-dispatch-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-dispatch-card li {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.3fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.pipeline-dispatch-card li code {
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pipeline-dispatch-card li small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.pipeline-dispatch-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.pipeline-dispatch-card-actions small {
+  color: var(--color-text-muted);
+  font-size: 11px;
 }
 
 .publish-button {

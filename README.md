@@ -218,6 +218,14 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
+### Unreleased
+
+- One-click dispatch from a discussion: discussion agents stay read-only. When @-mentioned to produce images, an agent ends its reply with a `council-dispatch` block naming the template, in-project reference image paths and the full brief.
+  - The message card shows the block as a dispatch plan card listing the deliverables and the total image count, instead of raw JSON.
+  - Clicking "Start pipeline" makes the server re-parse the plan from the stored message, import the reference images into the asset library, skip brief confirmation and start generating, then opens the pipeline page.
+  - One message starts at most one pipeline; clicking again opens the existing one. Once that pipeline is cancelled, the message can be dispatched again; the new pipeline gets a numbered title such as "(2)".
+  - HTTP endpoint: `POST /api/v1/pipelines/dispatch`.
+
 ### 0.10.1 — 2026-10-13
 
 - Local release: `npm run version:set` updates every version record at once; `npm run desktop:install` replaces the local install safely. It refuses an unchanged version, a downgrade, or a replacement while tasks are running, backs up the old app first and verifies the result afterwards. See [Local release and replacement](docs/local-release.md).

@@ -1,7 +1,8 @@
 /**
  * @input  依赖：council.ts 的任务行快照 CouncilWorkItem 与 WorkItemStatus
  * @output 导出：流水线模板/阶段/阶段状态常量与联合类型、PipelineStage、PipelineReview（含本轮缺少产物的交付物 missing）、CouncilPipelineDocument（schemaVersion 1）、
- *         PipelineSummary（列表项）、PipelineListResult（列表读结果）、PipelineDetail（详情）、CreatePipelineInput（新建入参）
+ *         PipelineSummary（列表项）、PipelineListResult（列表读结果）、PipelineDetail（详情）、PipelineDispatchResult（从讨论消息派活的结果）、
+ *         CreatePipelineInput（新建入参）
  * @pos    P3 流水线（/api/v1/pipelines）在 Web 端的稳定领域模型；字段与 docs/council-v2-refactor-plan.md
  *         「P3 落地契约」的 council-pipeline 文档一一对应。流水线本体 = kind=pipeline 的父任务，复用 CouncilWorkItem
  *
@@ -119,6 +120,12 @@ export interface PipelineDetail {
   outputAssetIds: string[];
   /** 桌面模式本地服务离线时的诚实提示；有它时其余字段不可信，仅用于占位。 */
   limitation?: string;
+}
+
+/** 从讨论消息派活：created=false 表示这条消息已经起过（未取消的）流水线，返回的是既有那条。 */
+export interface PipelineDispatchResult {
+  pipeline: PipelineDetail;
+  created: boolean;
 }
 
 /** 列表读结果：桌面模式本地服务离线时 items 为空并带 limitation 诚实提示。 */

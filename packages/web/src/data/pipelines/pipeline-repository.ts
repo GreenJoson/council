@@ -1,6 +1,6 @@
 /**
  * @input  依赖：types/pipelines 的列表项、详情与新建入参
- * @output 导出：PipelineRepository 流水线列表/详情/新建/确认 brief/选定 final/恢复/取消契约
+ * @output 导出：PipelineRepository 流水线列表/详情/新建/从讨论消息派活/确认 brief/选定 final/恢复/取消契约
  * @pos    流水线领域的前端数据边界；http/desktop/mock 三套实现由 create-pipeline-repository.ts 选择
  *
  * 刷新约定：与 TaskRepository 一致，真实实现不提供 subscribe。服务端 SSE 只有 council.changed {revision}，
@@ -21,6 +21,7 @@
 import type {
   CreatePipelineInput,
   PipelineDetail,
+  PipelineDispatchResult,
   PipelineListResult,
 } from "../../types/pipelines";
 
@@ -30,6 +31,11 @@ export interface PipelineRepository {
   getPipeline(pipelineId: string): Promise<PipelineDetail>;
   /** 同项目重名 409；创建后服务端立即异步跑 brief 阶段。 */
   createPipeline(input: CreatePipelineInput): Promise<PipelineDetail>;
+  /**
+   * 按讨论消息末尾的 council-dispatch 派活尾块起流水线（跳过 brief 重写，直接出图）。只传出处，
+   * 服务端从已存消息重新解析；尾块无效 400，同一条消息已起过返回既有流水线（created=false）。
+   */
+  dispatchPipeline(topicId: string, messageId: string): Promise<PipelineDispatchResult>;
   /** brief 阶段 waiting_human 时确认（可修改的）brief；brief 无效 400。 */
   confirmBrief(pipelineId: string, brief: Record<string, unknown>, expectedVersion: number): Promise<PipelineDetail>;
   /** select 阶段 waiting_human 时选定 final；assetIds 必须是本流水线图像子任务的 output。 */

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：task-api 的任务行解析（复用 parseApiWorkItem + mapWorkItem）、types/pipelines 的常量与类型
  * @output 导出：parseCouncilPipelineDocument、parsePipelineSummaries（{items}）、parsePipelineDetail（{task, document, children, outputAssetIds}）、
- *         parsePipelineCreated（POST / 的 201 {pipeline}）
+ *         parsePipelineCreated（POST / 的 201 {pipeline}）、parsePipelineDispatched（POST /dispatch 的 {pipeline, created}）
  * @pos    流水线领域唯一协议校验入口；REST 返回的未知 JSON 都先经这里再进入 UI。
  *         已知字段严格校验（枚举越界、类型不符直接拒绝），未知字段忽略——后端可加字段而不打断前端
  *
@@ -16,6 +16,7 @@ import {
   type CouncilPipelineDocument,
   type PipelineAgents,
   type PipelineDetail,
+  type PipelineDispatchResult,
   type PipelineReview,
   type PipelineStage,
   type PipelineSummary,
@@ -228,6 +229,13 @@ export function parsePipelineDetail(value: unknown): PipelineDetail {
     children,
     outputAssetIds: readStringArray(record.outputAssetIds, "pipeline detail.outputAssetIds"),
   };
+}
+
+/** POST /dispatch 返回 { pipeline, created }：新起 201、同一条消息已起过 200。 */
+export function parsePipelineDispatched(value: unknown): PipelineDispatchResult {
+  const record = readRecord(value, "pipeline dispatched");
+  if (typeof record.created !== "boolean") throw new Error("pipeline dispatched.created 必须是布尔值");
+  return { pipeline: parsePipelineDetail(record.pipeline), created: record.created };
 }
 
 /** POST / 返回 201 { pipeline: PipelineDetail }；也接受直接返回详情，避免包装层差异卡住创建。 */

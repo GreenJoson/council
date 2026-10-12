@@ -1,5 +1,5 @@
 /**
- * @input  依赖：假 CodexRuntime、公开编排上下文、RuntimeEvent 与 AbortSignal
+ * @input  依赖：假 CodexRuntime、公开编排上下文、RuntimeEvent、AbortSignal 与派活协议说明（计入可信头长度）
  * @output 导出：可信 prompt、统一文本事件、历史裁剪、session 恢复、失败重试与安全原因测试
  * @pos    Codex Agent 适配器跨越不可信公开记录时的安全边界验证
  *
@@ -20,6 +20,7 @@ import {
   type CodexRuntimeInput,
 } from "../src/codex-runtime.js";
 import { CodexAgentAdapter } from "../src/orchestration/codex-agent-adapter.js";
+import { DISPATCH_PROTOCOL_PROMPT } from "../src/pipelines/dispatch-protocol.js";
 
 class FakeRuntime {
   readonly calls: CodexRuntimeInput[] = [];
@@ -78,10 +79,13 @@ function invocation(projectPath: string): AgentInvocation {
   };
 }
 
+// 可信头含派活协议说明；上限随之放宽同样长度，留给公开记录的余量不变，旧记录仍必须被裁掉
+const CONTEXT_BUDGET = 1_100 + DISPATCH_PROTOCOL_PROMPT.length + 1;
+
 test("超大公开历史只裁旧记录，完整保留可信头、排版要求与当前 instruction", async () => {
   const runtime = new FakeRuntime();
   const adapter = new CodexAgentAdapter(runtime as unknown as CodexRuntime, {
-    maxContextChars: 1_100,
+    maxContextChars: CONTEXT_BUDGET,
   });
   const controller = new AbortController();
 
@@ -106,7 +110,7 @@ test("超大公开历史只裁旧记录，完整保留可信头、排版要求�
   assert.match(call.prompt, /较早公开记录已截断/);
   assert.doesNotMatch(call.prompt, /OLD_UNTRUSTED_/);
   assert.match(call.prompt, /LATEST_PUBLIC_CONTEXT/);
-  assert.ok(call.prompt.length <= 1_100);
+  assert.ok(call.prompt.length <= CONTEXT_BUDGET);
 });
 
 test("后续回合恢复 Codex session 且 prompt 只携带公开增量", async () => {

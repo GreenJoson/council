@@ -7,7 +7,7 @@
  *         选 final →（app-mockup）prototype running →（约 1s）completed；其他模板选 final 即完成。
  *         失败阶段 resume 只重跑该阶段；cancel 置当前阶段 skipped（error.code=cancelled）+ 文档 status=cancelled。
  *         每次推进（含定时器）都递增父任务 version；写操作版本不符、阶段不可操作、已取消时抛 409（CouncilApiError），
- *         与 http 模式走同一条前端冲突提示路径
+ *         与 http 模式走同一条前端冲突提示路径；从讨论消息派活需要服务端读已存消息，mock 一律 400 并给出说明
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -33,6 +33,7 @@ import {
   type CouncilPipelineDocument,
   type CreatePipelineInput,
   type PipelineDetail,
+  type PipelineDispatchResult,
   type PipelineListResult,
   type PipelineStage,
   type PipelineStageId,
@@ -138,6 +139,11 @@ export class MockPipelineRepository implements PipelineRepository {
     this.#records.push(record);
     this.#runBrief(record);
     return this.#detail(record);
+  }
+
+  // 派活要由服务端从已存消息重新解析，演示数据没有这条链路。
+  async dispatchPipeline(_topicId: string, _messageId: string): Promise<PipelineDispatchResult> {
+    throw badRequest("演示模式不能从讨论消息派活，请连接本地 Agent 服务后再试。");
   }
 
   async confirmBrief(pipelineId: string, brief: Record<string, unknown>, expectedVersion: number): Promise<PipelineDetail> {
