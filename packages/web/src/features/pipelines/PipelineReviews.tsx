@@ -1,7 +1,8 @@
 /**
  * @input  依赖：界面语言、流水线复盘记录（reviews）；components/FoldableContent 的区块搜索与高亮、app/routes 的 buildHash
  * @output 导出：PipelineReviews —— 流水线详情的「复盘记录」区：每轮一个可收起的条目（标题显示结论与不合格数），
- *         默认只展开最新一轮；不合格项分行显示问题与改法，交付物 id 链接到对应资产；标题栏搜索按交付物/资产 id、问题、改法过滤，
+ *         默认只展开最新一轮；不合格项分行显示问题与改法，交付物 id 链接到对应资产；本轮没出图的交付物（missing）单列在前、
+ *         标题计数一并注明；标题栏搜索按交付物/资产 id、问题、改法过滤，
  *         有查询时只留有命中的轮次并全部展开
  * @pos    PipelineDetailView 的只读子区块，没有复盘记录时由调用方不渲染
  *
@@ -26,10 +27,13 @@ export function PipelineReviews({ reviews }: { reviews: readonly PipelineReview[
   const rounds = reviews.map((review) => {
     const failed = review.items.filter((item) => !item.ok);
     const hits = failed.filter((item) => textMatches(query, item.deliverableId, item.assetId, item.issue, item.change));
-    return { review, failed, hits };
+    const missing = review.missing ?? [];
+    const missingHits = missing.filter((id) => textMatches(query, id, t("本轮没有产出这项交付物")));
+    return { review, failed, hits, missing, missingHits };
   });
-  const visible = searching ? rounds.filter((entry) => entry.hits.length > 0) : rounds;
-  const hitCount = visible.reduce((sum, entry) => sum + entry.hits.length, 0);
+  const matchCount = (entry: (typeof rounds)[number]) => entry.hits.length + entry.missingHits.length;
+  const visible = searching ? rounds.filter((entry) => matchCount(entry) > 0) : rounds;
+  const hitCount = visible.reduce((sum, entry) => sum + matchCount(entry), 0);
   const isOpen = (round: number) => searching || (toggled.get(round) ?? round === latestRound);
 
   return (
@@ -46,7 +50,7 @@ export function PipelineReviews({ reviews }: { reviews: readonly PipelineReview[
       </div>
       {visible.length === 0 ? <p className="task-muted">{t("没有匹配的内容。")}</p> : null}
       <ol className="pipeline-reviews">
-        {visible.map(({ review, failed, hits }) => {
+        {visible.map(({ review, failed, hits, missing, missingHits }) => {
           const open = isOpen(review.round);
           return (
             <li key={review.round}>
@@ -65,10 +69,17 @@ export function PipelineReviews({ reviews }: { reviews: readonly PipelineReview[
                   {failed.length > 0
                     ? t("{failed} / {total} 项需修改", { failed: failed.length, total: review.items.length })
                     : t("{total} 项全部合格", { total: review.items.length })}
+                  {missing.length > 0 ? ` · ${t("{count} 项未出图", { count: missing.length })}` : null}
                 </small>
               </button>
-              {open && hits.length > 0 ? (
+              {open && hits.length + missingHits.length > 0 ? (
                 <ul className="pipeline-review-items">
+                  {missingHits.map((id) => (
+                    <li key={`missing-${id}`} data-review-missing>
+                      <code><Highlight text={id} query={query} /></code>
+                      <p className="task-muted">{t("本轮没有产出这项交付物")}</p>
+                    </li>
+                  ))}
                   {hits.map((item) => (
                     <li key={`${item.assetId}-${item.deliverableId}`}>
                       <a href={buildHash({ view: "assets", assetId: item.assetId })}>

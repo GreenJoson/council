@@ -110,9 +110,11 @@ function parseReview(value: unknown, index: number): PipelineReview {
   const record = readRecord(value, path);
   const verdict = readEnum(record, "verdict", ["pass", "revise"] as const, path);
   if (!Array.isArray(record.items)) throw new Error(`${path}.items 必须是数组`);
+  const missing = readOptionalStringArray(record, "missing", path);
   return {
     round: readNonNegativeInteger(record, "round", path),
     verdict,
+    ...(missing && missing.length > 0 ? { missing } : {}),
     items: record.items.map((raw, at) => {
       const itemPath = `${path}.items[${String(at)}]`;
       const item = readRecord(raw, itemPath);

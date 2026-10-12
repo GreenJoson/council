@@ -15,6 +15,8 @@
  *         接续不再传该配置值（沿用原委派已求交集的权限），接续发起失败时阶段保留原 delegationId 以便再次接续；
  *         派发在建子任务时失败把 image 阶段记成 failed，重试经 startImage 按文档状态重建首轮或修订简报
  *         修订简报以确认后的原 brief 为基线，只带本轮复盘的改法（不逐轮累加撞协议上限，goal 前缀不嵌套）；
+ *         本轮 brief 里有交付物没有任何产物（执行者跳过卡住的生图调用）时，复盘结论按 revise 记录并在 missing 里列出，
+ *         下一轮修订补做这些交付物；修订轮数用尽则照常进入选定、由人决定；
  *         新一轮出图派发后以 human 身份收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，
  *         不收尾父任务会一直显示进行中），启动对账先对每条未取消流水线补做这一步再判断是否已结束
  *
@@ -445,9 +447,14 @@ export class PipelineDriver {
     const at = now();
     const { document } = this.#store.load(pipelineId);
     const round = document.reviews.length + 1;
-    const record = { round, verdict: review.verdict, items: review.items };
-    const exhausted = review.verdict === "revise" && document.revisionCount >= this.#maxRevisions;
-    if (review.verdict === "pass" || exhausted) {
+    // 复盘者只对着产物逐张下结论，看不到「这张根本没出」：按清单标注与复盘条目算出本轮 brief 里没有产物的交付物，
+    // 有缺失就不能算通过，记进 missing 让下一轮修订补做（startImage 重建修订简报时也从记录里读回）。
+    const covered = new Set([...inputs.deliverableIds.values(), ...review.items.map((item) => item.deliverableId)]);
+    const missing = inputs.brief.deliverables.map((item) => item.id).filter((id) => !covered.has(id));
+    const verdict = missing.length > 0 ? "revise" : review.verdict;
+    const record = { round, verdict, items: review.items, ...(missing.length > 0 ? { missing } : {}) };
+    const exhausted = verdict === "revise" && document.revisionCount >= this.#maxRevisions;
+    if (verdict === "pass" || exhausted) {
       this.#store.write(pipelineId, ({ document: current }) => {
         const reviewStage = stageOf(current, "review");
         const next = withStage(current, "review", {
@@ -460,7 +467,7 @@ export class PipelineDriver {
           currentStageId: "select",
           reviews: [...current.reviews, record],
           ...(exhausted
-            ? { notice: `已达修订上限（${String(this.#maxRevisions)} 轮），复盘仍有不合格项，请人工挑选终稿。` }
+            ? { notice: `已达修订上限（${String(this.#maxRevisions)} 轮），复盘仍有不合格或缺少产物的交付物，请人工挑选终稿。` }
             : {}),
         };
       }, { actorId });
@@ -469,7 +476,7 @@ export class PipelineDriver {
     const revisionCount = document.revisionCount + 1;
     // 以确认后的原 brief 为基线，而不是上一轮修订简报：否则每轮改法都累加进 constraints，撞到协议上限后
     // 最新一轮的改法会被整轮丢弃，goal 的「【修订】…原目标：」前缀也会层层嵌套。
-    const revision = buildRevisionBrief(document.brief ?? inputs.brief, review);
+    const revision = buildRevisionBrief(document.brief ?? inputs.brief, record);
     this.#store.write(pipelineId, ({ document: current }) => ({
       ...withStage(current, "review", { status: "pending" }, at),
       reviews: [...current.reviews, record],
@@ -666,7 +673,7 @@ export class PipelineDriver {
   #imageInputsFallback(document: PipelineDocument): readonly string[] {
     const last = document.reviews.at(-1);
     if (document.revisionCount === 0 || !last || !document.brief) return document.request.referenceAssetIds ?? [];
-    return buildRevisionBrief(document.brief, { verdict: last.verdict, items: last.items }).inputAssetIds;
+    return buildRevisionBrief(document.brief, last).inputAssetIds;
   }
 
   /**

@@ -4,12 +4,12 @@
 
 | 文件名 | 地位 | 功能 |
 |---|---|---|
-| `brief-protocol.ts` | 协议正本 | `council-brief` 与 `council-asset-manifest` 的严格解析（未知字段拒绝、schemaVersion 1、路径必须相对 worktree 且规范）、给 `codex exec --output-schema` 的清单 JSON Schema、按 Codex imagegen 规则渲染生图提示词（每张默认只生成一次、明显不合规才重做且最多一次，压住整轮时长） |
+| `brief-protocol.ts` | 协议正本 | `council-brief` 与 `council-asset-manifest` 的严格解析（未知字段拒绝、schemaVersion 1、路径必须相对 worktree 且规范）、给 `codex exec --output-schema` 的清单 JSON Schema、按 Codex imagegen 规则渲染生图提示词（每张默认只生成一次、明显不合规才重做且最多一次，压住整轮时长；单次调用超过 4 分钟不返回就中止重试一次，仍卡住则跳过这张、交付其余并在 notes 注明） |
 | `templates.ts` | 模板正本 | 三个流水线模板（`app-mockup` / `game-asset-pack` / `concept-sheet`）的阶段序列与 brief 要求（kind、nextStage、最少交付物、透明度） |
-| `pipeline-document.ts` | 协议正本 | `council-pipeline` 文档（父任务 `brief_json`）严格解析与阶段读写 helper、brief 与模板一致性校验（含交付物合计张数 ≤ 单次生图上限 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`）、`council-brief`/`council-review` 尾块提取（取最后一个围栏）、修订 brief 生成（只留不合格交付物，goal 开头声明本轮范围）、`PIPELINE_DOCUMENT_LIMITS`（HTTP/MCP 入口共用） |
+| `pipeline-document.ts` | 协议正本 | `council-pipeline` 文档（父任务 `brief_json`）严格解析与阶段读写 helper、brief 与模板一致性校验（含交付物合计张数 ≤ 单次生图上限 `COUNCIL_CODEX_IMAGE_MAX_OUTPUTS`）、`council-brief`/`council-review` 尾块提取（取最后一个围栏）、修订 brief 生成（只留不合格与本轮缺少产物的交付物，goal 开头声明本轮范围）、`PIPELINE_DOCUMENT_LIMITS`（HTTP/MCP 入口共用） |
 | `pipeline-prompts.ts` | 提示词 | brief / review 一次性调用指令（首行机器标记 `COUNCIL_PIPELINE_BRIEF` / `COUNCIL_PIPELINE_REVIEW`；brief 指令告知单次生图上限与每张约 1 分钟的时间预算）与原型子任务说明（告知沙箱限制：起不了服务/浏览器时不停下等放行，未验证项写进收尾说明交人工）；用户输入作为数据段，只出现相对路径；复盘产物行带生图清单标注的 deliverableId 提示 |
 | `pipeline-state.ts` | 状态读写 | 每条流水线一把串行锁；文档写入一律锁内重读父任务后用刚读到的版本写（子任务派生会让父版本 +1）；`completeImageChildren` 以 human 身份收尾仍 in_progress 的出图子任务（驱动器收尾被接手的旧轮、服务选定终稿时共用） |
-| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机；复盘只看本次图像委派入库的产物（委派 `outputManifest.assetIds`，按清单顺序列给复盘者），resume 重跑不把失败尝试入库的图混进本轮，选定阶段仍可从子任务全部 output 资产里挑；新一轮出图派发后收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，不收尾父任务会一直显示进行中），启动对账先补做这一步 |
+| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机；复盘只看本次图像委派入库的产物（委派 `outputManifest.assetIds`，按清单顺序列给复盘者），resume 重跑不把失败尝试入库的图混进本轮，选定阶段仍可从子任务全部 output 资产里挑；本轮 brief 里有交付物没有任何产物时复盘记为 revise 并在 `missing` 列出，下一轮修订补做；新一轮出图派发后收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，不收尾父任务会一直显示进行中），启动对账先补做这一步 |
 | `pipeline-service.ts` | 用例 | create/list/get/confirmBrief/selectFinal/resume/cancel：校验版本、阶段可操作性、brief 模板约束、终稿归属与数量、默认 Agent 选择后交给驱动器 |
 
 ## 职责
@@ -20,7 +20,7 @@
 - 一条流水线 = `kind=pipeline, source=direct` 的父任务，文档存其 `brief_json`；图像、修订与原型子任务 `source=pipeline`。
   父任务状态仍只由子任务派生，「等人」只记在文档里；不新增 SSE 事件，前端靠 `council.changed` 刷新。
 - 阶段：brief（Claude 一次性只读调用，参考图拷到 `<project-root>/.council/in/`）→ 等人确认 → image（Codex 图像委派）
-  → review（Claude 复盘本轮产物；`revise` 且未达 `COUNCIL_PIPELINE_MAX_REVISIONS` 时建修订子任务再回 review；修订简报 = 原 brief 只留不合格交付物 + 本轮改法，不累加上一轮）
+  → review（Claude 复盘本轮产物；`revise` 且未达 `COUNCIL_PIPELINE_MAX_REVISIONS` 时建修订子任务再回 review；修订简报 = 原 brief 只留不合格与本轮没出图的交付物 + 本轮改法，不累加上一轮）
   → 等人选终稿（给父任务挂 `final` 链接，图像子任务以 human 身份完成）→ prototype（仅 app-mockup：kind=prototype 子任务按
   `kind=code` 委派，`inputAssetIds` = 终稿，`completionPolicy=human`，权限档取 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`，默认 workspace_write，
   放宽为 danger_full_access 时 Codex 不带沙箱运行以便自行起服务与浏览器验证；实际权限仍与执行 Agent 的权限档取交集）。

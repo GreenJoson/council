@@ -1153,6 +1153,8 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "搜索交付物、问题或改法…": "Search deliverables, issues or changes…",
   "{failed} / {total} 项需修改": "{failed} / {total} need changes",
   "{total} 项全部合格": "All {total} pass",
+  "{count} 项未出图": "{count} not produced",
+  "本轮没有产出这项交付物": "This deliverable was not produced in this round",
   "改法": "Change",
   "失败的是修订轮；此前已产出的 {count} 张图仍保留，「恢复」只重跑这一轮修订。": "The revision round failed; the {count} images produced earlier are kept, and Resume only reruns this revision round.",
 };

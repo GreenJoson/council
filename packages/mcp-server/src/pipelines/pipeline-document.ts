@@ -3,7 +3,7 @@
  * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
- *         修订 brief 生成 buildRevisionBrief（以原 brief 为基线只保留不合格交付物并带本轮改法，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
+ *         修订 brief 生成 buildRevisionBrief（以原 brief 为基线只保留不合格与本轮缺少产物的交付物并带本轮改法，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
  * @pos    流水线驱动状态的协议正本：纯函数，不起进程、不读写数据库；与 brief-protocol 同一严格度
  *         （未知字段拒绝、尾块取最后一个围栏、损坏即失败关闭）
  *
@@ -106,6 +106,8 @@ const reviewRecordSchema = z.object({
   round: z.number().int().min(1),
   verdict: z.enum(["pass", "revise"]),
   items: z.array(reviewItemSchema).max(LIMITS.maxReviewItems),
+  /** 本轮 brief 里没有任何产物的交付物 id（执行者跳过卡住的那张）；由驱动计算，不来自复盘者。 */
+  missing: z.array(z.string().min(1).max(64)).max(LIMITS.maxReviewItems).optional(),
 }).strict();
 
 const documentSchema = z.object({
@@ -319,6 +321,8 @@ const reviewSchema = z.object({
 export interface CouncilReview {
   verdict: "pass" | "revise";
   items: PipelineReviewItem[];
+  /** 本轮没有产物的交付物 id：驱动按清单与复盘条目计算后补上，复盘者的尾块里没有这一项。 */
+  missing?: readonly string[];
 }
 
 /**
@@ -360,8 +364,8 @@ export function parseCouncilReview(
 }
 
 /**
- * 修订子任务的 brief：只保留不合格交付物，change 追加进 style.constraints（到 brief 协议上限即停止追加）；
- * 返回修订 brief 与要作为输入的原图资产 id（不超过委派输入上限 8 张）。
+ * 修订子任务的 brief：只保留不合格与本轮缺少产物（review.missing）的交付物，change 追加进 style.constraints
+ * （到 brief 协议上限即停止追加）；返回修订 brief 与要作为输入的原图资产 id（不超过委派输入上限 8 张，缺失项没有原图）。
  * 调用方应传确认后的原 brief 而不是上一轮修订简报，否则改法逐轮累加、goal 前缀嵌套。
  */
 export function buildRevisionBrief(
@@ -369,12 +373,16 @@ export function buildRevisionBrief(
   review: CouncilReview,
 ): { brief: CouncilBrief; inputAssetIds: string[] } {
   const failed = review.items.filter((item) => !item.ok);
-  const failedIds = new Set(failed.map((item) => item.deliverableId));
+  const failedIds = new Set([...failed.map((item) => item.deliverableId), ...(review.missing ?? [])]);
   const deliverables = brief.deliverables.filter((item) => failedIds.has(item.id));
   const constraints = [...(brief.style?.constraints ?? [])];
-  for (const item of failed) {
-    if (!item.change || constraints.length >= BRIEF_PROTOCOL_LIMITS.maxListItems) continue;
-    const text = `[${item.deliverableId}] ${item.change}`.slice(0, BRIEF_PROTOCOL_LIMITS.maxShortText);
+  const changes = [
+    ...failed.flatMap((item) => item.change ? [`[${item.deliverableId}] ${item.change}`] : []),
+    ...(review.missing ?? []).map((id) => `[${id}] 上一轮没有产出，本轮补做`),
+  ];
+  for (const change of changes) {
+    if (constraints.length >= BRIEF_PROTOCOL_LIMITS.maxListItems) break;
+    const text = change.slice(0, BRIEF_PROTOCOL_LIMITS.maxShortText);
     if (!constraints.includes(text)) constraints.push(text);
   }
   // 真实 Codex 会按 goal 里描述的整套界面重做全部交付物，再把已通过的也写进清单；

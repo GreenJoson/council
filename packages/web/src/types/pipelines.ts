@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council.ts 的任务行快照 CouncilWorkItem 与 WorkItemStatus
- * @output 导出：流水线模板/阶段/阶段状态常量与联合类型、PipelineStage、PipelineReview、CouncilPipelineDocument（schemaVersion 1）、
+ * @output 导出：流水线模板/阶段/阶段状态常量与联合类型、PipelineStage、PipelineReview（含本轮缺少产物的交付物 missing）、CouncilPipelineDocument（schemaVersion 1）、
  *         PipelineSummary（列表项）、PipelineListResult（列表读结果）、PipelineDetail（详情）、CreatePipelineInput（新建入参）
  * @pos    P3 流水线（/api/v1/pipelines）在 Web 端的稳定领域模型；字段与 docs/council-v2-refactor-plan.md
  *         「P3 落地契约」的 council-pipeline 文档一一对应。流水线本体 = kind=pipeline 的父任务，复用 CouncilWorkItem
@@ -61,6 +61,8 @@ export interface PipelineReview {
   round: number;
   verdict: "pass" | "revise";
   items: PipelineReviewItem[];
+  /** 本轮 brief 里没有任何产物的交付物 id（执行者跳过了卡住的生图）；有它时结论必为 revise。 */
+  missing?: string[];
 }
 
 export interface PipelineAgents {
