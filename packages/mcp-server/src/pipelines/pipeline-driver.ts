@@ -14,7 +14,9 @@
  *         原型委派的权限档来自配置 prototypePermission（默认 workspace_write，可放宽为 danger_full_access 让执行者自行起服务验证），
  *         接续不再传该配置值（沿用原委派已求交集的权限），接续发起失败时阶段保留原 delegationId 以便再次接续；
  *         派发在建子任务时失败把 image 阶段记成 failed，重试经 startImage 按文档状态重建首轮或修订简报
- *         修订简报以确认后的原 brief 为基线，只带本轮复盘的改法（不逐轮累加撞协议上限，goal 前缀不嵌套）
+ *         修订简报以确认后的原 brief 为基线，只带本轮复盘的改法（不逐轮累加撞协议上限，goal 前缀不嵌套）；
+ *         新一轮出图派发后以 human 身份收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，
+ *         不收尾父任务会一直显示进行中），启动对账先对每条未取消流水线补做这一步再判断是否已结束
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -517,7 +519,30 @@ export class PipelineDriver {
         currentStageId: "image",
       }), { actorId: input.actorId });
     }
-    return await this.#startStageDelegation(pipelineId, "image", child.id, input.actorId, input.inputAssetIds);
+    const snapshot = await this.#startStageDelegation(pipelineId, "image", child.id, input.actorId, input.inputAssetIds);
+    return this.#retireSupersededImages(pipelineId) > 0 ? this.#store.load(pipelineId) : snapshot;
+  }
+
+  /**
+   * 收尾被接手的出图轮：image 阶段当前指向的子任务是在办轮，其余仍 in_progress 的出图子任务以 human 身份标完成，
+   * 产物与链接不动，选定终稿时照样能挑。失败只记日志——下一轮已经派出，不能因收尾失败把复盘判成失败；
+   * 漏掉的由下次启动对账补上。
+   */
+  #retireSupersededImages(pipelineId: string): number {
+    try {
+      const { task, document } = this.#store.load(pipelineId);
+      const currentId = stageOf(document, "image")?.workItemId;
+      if (document.status === "cancelled" || !currentId) return 0;
+      const title = this.#store.database.getWorkItem(currentId).title;
+      return this.#store.completeImageChildren(task, {
+        keepWorkItemId: currentId,
+        statusNote: `已由「${title}」接手，本轮产物保留在资产库，可在选定终稿时挑选。`,
+        actorId: HUMAN,
+      });
+    } catch (error) {
+      logger.warn("pipeline", `流水线收尾旧出图子任务失败：${pipelineId}`, error);
+      return 0;
+    }
   }
 
   /**
@@ -645,13 +670,14 @@ export class PipelineDriver {
   }
 
   /**
-   * 启动对账：上次进程停在 running 的阶段——一次性调用必然已丢失，标 interrupted；
-   * 委派已到终态（终态回调发生在订阅之前）就按终态推进；委派仍在跑则等回调。
+   * 启动对账：先收尾被接手的旧出图子任务（修复早先版本留下的「进行中」）；上次进程停在 running 的阶段——
+   * 一次性调用必然已丢失，标 interrupted；委派已到终态（终态回调发生在订阅之前）就按终态推进；委派仍在跑则等回调。
    */
   async #reconcile(): Promise<void> {
     for (const parent of this.#store.database.listPipelineParents()) {
       try {
         await this.#store.withLock(parent.id, async () => {
+          this.#retireSupersededImages(parent.id);
           const { document } = this.#store.load(parent.id);
           if (isPipelineFinished(document)) return;
           const stage = currentStage(document);

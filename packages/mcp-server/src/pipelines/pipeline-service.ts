@@ -1,5 +1,5 @@
 /**
- * @input  依赖：CouncilDatabase（父任务/子任务/资产）、PipelineStateStore 与 PipelineDriver（锁与阶段推进）、
+ * @input  依赖：CouncilDatabase（父任务/子任务/资产）、PipelineStateStore 与 PipelineDriver（锁、阶段推进与选定后的出图子任务收尾）、
  *         Agent 候选目录（默认 Agent 选择）、委派端口、模板与文档协议、参考图校验、原型委派权限档（prototypePermission）
  * @output 导出：PipelineService（create/list/get/confirmBrief/selectFinal/resume/cancel 与生命周期）、
  *         PipelineSummary、PipelineDetail、CreatePipelineInput、PipelineAgentCatalog
@@ -358,26 +358,11 @@ export class PipelineService {
       for (const assetId of assetIds) this.#database.addAssetLink(assetId, "work_item", task.id, "final");
       // 先建原型子任务再收尾图像子任务：否则父任务会被短暂派生为 completed。
       if (hasPrototype) await this.#driver.startPrototype(input.pipelineId, input.actorId);
-      this.#completeImageChildren(children, input.actorId);
+      // 选定终稿即人工验收：仍 in_progress 的出图子任务一并收尾。
+      this.#store.completeImageChildren(task, { statusNote: FINAL_NOTE, actorId: input.actorId }, children);
       return this.#store.load(input.pipelineId);
     });
     return this.#detail(snapshot);
-  }
-
-  /** 选定终稿即人工验收：把仍 in_progress 的图像子任务以 human 身份标为 completed。 */
-  #completeImageChildren(children: readonly WorkItem[], actorId: string): void {
-    for (const child of children) {
-      if (child.kind !== "image") continue;
-      const fresh = this.#database.getWorkItem(child.id);
-      if (fresh.status !== "in_progress") continue;
-      this.#database.updateWorkItemAsActor({
-        workItemId: fresh.id,
-        status: "completed",
-        expectedVersion: fresh.version,
-        statusNote: FINAL_NOTE,
-        actorId,
-      });
-    }
   }
 
   async resume(input: { pipelineId: string; expectedVersion: number; actorId: string }): Promise<PipelineDetail> {

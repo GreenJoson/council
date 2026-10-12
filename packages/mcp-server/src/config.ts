@@ -35,7 +35,7 @@ const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 const DEFAULT_CODEX_KILL_GRACE_MS = 3_000;
 /** Codex 生图沙箱独立于讨论沙箱：只允许 workspace-write，避免一个开关放宽所有 Codex 调用。 */
 const REQUIRED_CODEX_IMAGE_SANDBOX_MODE = "workspace-write";
-export const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 900_000;
+export const DEFAULT_CODEX_IMAGE_TIMEOUT_MS = 1_800_000;
 export const DEFAULT_CODEX_IMAGE_MAX_OUTPUTS = 16;
 const DEFAULT_KIMI_ACP_COMMAND = "kimi";
 const DEFAULT_GEMINI_ACP_COMMAND = "gemini";

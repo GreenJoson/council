@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1019,7 +1019,8 @@ with sync_playwright() as playwright:
     image_done = wait_task_delegation(image_task["id"], "approved")
     assert image_done["kind"] == "image" and image_done["completionPolicy"] == "human", image_done
     assert image_done["supervisorAgentId"] == completed["executorAgentId"], image_done
-    assert image_done["headCommit"] == image_done["baseCommit"], image_done
+    # 出图在委派根目录下的隔离空目录执行，不建 worktree、不提交，委派不带 baseCommit/headCommit。
+    assert not image_done.get("headCommit") and not image_done.get("baseCommit"), image_done
     manifest_outputs = image_done["outputManifest"]["outputs"]
     assert manifest_outputs and all(not item["path"].startswith("/") for item in manifest_outputs), image_done
     image_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{image_task['id']}")
@@ -1032,7 +1033,7 @@ with sync_playwright() as playwright:
         assert response.read(8) == b"\x89PNG\r\n\x1a\n"
     image_item = api_request("GET", f"/api/v1/tasks/{image_task['id']}")["task"]
     assert image_item["status"] == "in_progress" and "等待人工验收" in image_item["statusNote"], image_item
-    # 投递目录 .council/ 已写入 exclude，项目工作区保持干净。
+    # 出图不在项目里落 .council/ 投递目录，项目工作区保持干净。
     council_status = subprocess.run(
         ["git", "-C", PROJECT_PATH, "status", "--porcelain", "--", ".council"],
         check=True, capture_output=True, text=True,
@@ -1119,6 +1120,11 @@ with sync_playwright() as playwright:
     image_children = [child for child in mockup["children"] if child["kind"] == "image"]
     assert len(image_children) == 2, mockup["children"]
     assert all(child["source"] == "pipeline" and child["parentId"] == mockup_id for child in image_children), image_children
+    # 修订轮派出后，被接手的首轮出图子任务即收尾（否则父任务一直派生为进行中）；修订轮仍等选定终稿。
+    first_round = next(child for child in image_children if child["title"] == "生图 第1轮")
+    revision_round = next(child for child in image_children if child["title"] == "生图修订 第1轮")
+    assert first_round["status"] == "completed" and "生图修订 第1轮" in first_round["statusNote"], first_round
+    assert revision_round["status"] == "in_progress", revision_round
     assert mockup["outputAssetIds"], mockup
     listed = api_request("GET", f"/api/v1/pipelines?project={quote(PROJECT_PATH)}")["items"]
     assert any(item["id"] == mockup_id and item["currentStageId"] == "select" for item in listed), listed
@@ -1135,7 +1141,8 @@ with sync_playwright() as playwright:
     ), parent_assets
     for child in mockup["children"]:
         if child["kind"] == "image":
-            assert child["status"] == "completed" and child["statusNote"] == "已在流水线中选定终稿", child
+            note = "已在流水线中选定终稿" if child["id"] == revision_round["id"] else first_round["statusNote"]
+            assert child["status"] == "completed" and child["statusNote"] == note, child
     prototype_child = next(child for child in mockup["children"] if child["kind"] == "prototype")
     # 原型第一段以 canContinue:false 交接（沙箱不许起服务验证）→ 委派 execution_checkpoint、阶段 failed 带接续提示；
     # 流水线「恢复」接续上一次委派而不是重做：新委派带 resumedFromId、沿用输入图，第一段的文件保留进最终提交。
