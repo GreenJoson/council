@@ -5,7 +5,8 @@
  *         创建 → brief running →（约 600ms）waiting_human + draftBrief → 确认 → image running →（约 1s）completed →
  *         review 第 1 轮 revise（revisionCount=1）→ 重新出图 → review 第 2 轮 pass → select waiting_human →
  *         选 final →（app-mockup）prototype running →（约 1s）completed；其他模板选 final 即完成。
- *         失败阶段 resume 只重跑该阶段；cancel 置当前阶段 skipped（error.code=cancelled）+ 文档 status=cancelled。
+ *         失败阶段 resume 只重跑该阶段；cancel 置当前阶段 skipped（error.code=cancelled）+ 文档 status=cancelled；
+ *         delete 从内存移除不在运行的流水线（运行中 409，与服务端一致）。
  *         每次推进（含定时器）都递增父任务 version；写操作版本不符、阶段不可操作、已取消时抛 409（CouncilApiError），
  *         与 http 模式走同一条前端冲突提示路径；从讨论消息派活需要服务端读已存消息，mock 一律 400 并给出说明
  *
@@ -220,6 +221,18 @@ export class MockPipelineRepository implements PipelineRepository {
     record.document.status = "cancelled";
     this.#touch(record);
     return this.#detail(record);
+  }
+
+  async deletePipeline(pipelineId: string, expectedVersion: number): Promise<void> {
+    const record = this.#require(pipelineId);
+    if (record.task.version !== expectedVersion) throw conflict("实施项已被更新，请刷新后重试。");
+    const current = this.#stage(record, record.document.currentStageId);
+    if (record.document.status !== "cancelled" && current.status === "running") {
+      throw conflict("流水线还在运行，请先取消再删除。");
+    }
+    this.#clearTimers(pipelineId);
+    this.#records.splice(this.#records.indexOf(record), 1);
+    for (const listener of this.#listeners) listener();
   }
 
   // ---- 阶段推进 ----

@@ -3,13 +3,13 @@
  *         features/tasks 的 BriefEditor 与 brief-form、data/tasks 的 parseCouncilBrief、AssetCompare
  * @output 导出：StageControls —— 当前阶段的人工操作区：
  *         brief 等待处理 → BriefEditor 编辑 draftBrief 后「确认简报」；select 等待处理 → AssetCompare 勾选 1–3 张后「选定」；
- *         failed → 「恢复」；未结束 → 两步确认的「取消流水线」
+ *         failed → 「恢复」；未结束 → 两步确认的「取消流水线」；不在运行（含已取消、已完成）→ 两步确认的「删除流水线」
  * @pos    流水线详情的唯一写入口；本地 brief 校验不过不提交，服务端错误由详情页统一展示
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { Ban, Check, CheckCheck, LoaderCircle, RotateCcw } from "lucide-react";
+import { Ban, Check, CheckCheck, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import type { AssetRepository } from "../../data/assets/asset-repository";
 import { parseCouncilBrief, type BriefIssue } from "../../data/tasks/council-brief";
@@ -31,9 +31,10 @@ export interface StageControlsProps {
   onSelectFinal: (assetIds: string[]) => Promise<boolean>;
   onResume: () => Promise<boolean>;
   onCancel: () => Promise<boolean>;
+  onDelete: () => Promise<boolean>;
 }
 
-/** 已取消，或全部阶段完成，即视为结束：不再提供任何写操作。 */
+/** 已取消，或全部阶段完成，即视为结束：只剩删除，不再提供推进类写操作。 */
 export function isPipelineFinished(detail: PipelineDetail): boolean {
   const { document } = detail;
   if (document.status === "cancelled") return true;
@@ -111,14 +112,40 @@ export function StageControls({
   onSelectFinal,
   onResume,
   onCancel,
+  onDelete,
 }: StageControlsProps) {
   const { t } = useI18n();
-  const [confirmingCancel, setConfirmingCancel] = useState(false);
-  if (isPipelineFinished(detail)) return null;
+  // 取消与删除共用一个两步确认位，同一时刻只展开一个。
+  const [confirming, setConfirming] = useState<"cancel" | "delete" | null>(null);
 
   const { document } = detail;
+  const finished = isPipelineFinished(detail);
   const current = document.stages.find((stage) => stage.id === document.currentStageId);
   const busy = busyAction !== null;
+  // 运行中的阶段还会写回记录，服务端也会拒绝（409），先取消再删。
+  const deletable = finished || current?.status !== "running";
+
+  const deleteControl = confirming === "delete" ? (
+    <>
+      <span className="task-muted">{t("删除后流水线与子任务记录不可恢复，生成的图片仍留在资产库。确定吗？")}</span>
+      <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirming(null)}>
+        {t("保留")}
+      </button>
+      <button className="secondary-button is-danger" type="button" disabled={busy}
+        onClick={() => void onDelete().then(() => setConfirming(null))}>
+        {busyAction === "delete" ? <LoaderCircle className="spinning" size={15} /> : <Trash2 size={15} />}
+        {t("确认删除")}
+      </button>
+    </>
+  ) : (
+    <button className="secondary-button is-danger" type="button" disabled={busy} onClick={() => setConfirming("delete")}>
+      <Trash2 size={15} />{t("删除流水线")}
+    </button>
+  );
+
+  if (finished) {
+    return <div className="pipeline-controls-actions pipeline-global-actions">{deleteControl}</div>;
+  }
 
   return (
     <>
@@ -135,23 +162,24 @@ export function StageControls({
             {t("恢复")}
           </button>
         ) : null}
-        {confirmingCancel ? (
+        {confirming === "cancel" ? (
           <>
             <span className="task-muted">{t("取消后流水线不可继续，确定吗？")}</span>
-            <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirmingCancel(false)}>
+            <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirming(null)}>
               {t("保留")}
             </button>
             <button className="secondary-button is-danger" type="button" disabled={busy}
-              onClick={() => void onCancel().then(() => setConfirmingCancel(false))}>
+              onClick={() => void onCancel().then(() => setConfirming(null))}>
               {busyAction === "cancel" ? <LoaderCircle className="spinning" size={15} /> : <Ban size={15} />}
               {t("确认取消")}
             </button>
           </>
-        ) : (
-          <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirmingCancel(true)}>
+        ) : confirming === null ? (
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => setConfirming("cancel")}>
             <Ban size={15} />{t("取消流水线")}
           </button>
-        )}
+        ) : null}
+        {deletable && confirming !== "cancel" ? deleteControl : null}
       </div>
     </>
   );

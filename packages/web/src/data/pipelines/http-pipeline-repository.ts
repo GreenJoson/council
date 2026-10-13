@@ -99,6 +99,15 @@ export class HttpPipelineRepository implements PipelineRepository {
     return this.#action(pipelineId, "cancel", { expectedVersion });
   }
 
+  async deletePipeline(pipelineId: string, expectedVersion: number): Promise<void> {
+    await requestApiData(
+      this.#fetcher,
+      createApiUrl(this.#baseUrl, `/api/v1/pipelines/${encodeURIComponent(pipelineId)}`, { expectedVersion }),
+      () => undefined,
+      { method: "DELETE" },
+    );
+  }
+
   async #action(pipelineId: string, action: PipelineAction, body: Record<string, unknown>): Promise<PipelineDetail> {
     return requestApiData(
       this.#fetcher,

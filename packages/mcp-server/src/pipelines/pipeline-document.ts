@@ -2,6 +2,7 @@
  * @input  依赖：brief-protocol（CouncilBrief 解析与限制）、templates（模板/阶段 id 与模板要求）
  * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument（request.source 记录派活来源的议题/消息）、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
+ *         brief 解析 parsePipelineBrief（deliverable id 先转小写再严格校验）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
  *         修订 brief 生成 buildRevisionBrief（以原 brief 为基线只保留不合格与本轮缺少产物的交付物并带本轮改法，goal 开头声明本轮范围）、文档上限 PIPELINE_DOCUMENT_LIMITS（HTTP/MCP 入口共用），以及 PipelineProtocolError
  * @pos    流水线驱动状态的协议正本：纯函数，不起进程、不读写数据库；与 brief-protocol 同一严格度
@@ -281,7 +282,33 @@ export function assertBriefMatchesTemplate(
   }
 }
 
-/** 解析并校验 brief（对象或 JSON 字符串）；协议错误统一转成 brief_invalid。 */
+/**
+ * Agent 起草的 brief 常把 deliverable id 写成大写（如 `NP-034-coilback`），提示词已要求小写仍会出现。
+ * 大小写不影响含义，校验前统一转小写，不为此让整个简报阶段失败；JSON 损坏等其它问题原样交给严格解析报错。
+ */
+function lowercaseDeliverableIds(value: unknown): unknown {
+  let decoded = value;
+  if (typeof value === "string") {
+    try {
+      decoded = JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return value;
+  const record = decoded as Record<string, unknown>;
+  if (!Array.isArray(record.deliverables)) return value;
+  return {
+    ...record,
+    deliverables: record.deliverables.map((item: unknown) => {
+      if (!item || typeof item !== "object") return item;
+      const deliverable = item as Record<string, unknown>;
+      return typeof deliverable.id === "string" ? { ...deliverable, id: deliverable.id.toLowerCase() } : deliverable;
+    }),
+  };
+}
+
+/** 解析并校验 brief（对象或 JSON 字符串，deliverable id 先转小写）；协议错误统一转成 brief_invalid。 */
 export function parsePipelineBrief(
   value: unknown,
   template: PipelineTemplateId,
@@ -289,7 +316,7 @@ export function parsePipelineBrief(
 ): CouncilBrief {
   let brief: CouncilBrief;
   try {
-    brief = parseCouncilBrief(value);
+    brief = parseCouncilBrief(lowercaseDeliverableIds(value));
   } catch (error) {
     if (error instanceof CouncilProtocolError) throw new PipelineProtocolError("brief_invalid", error.message);
     throw error;

@@ -72,7 +72,7 @@ npm run build:desktop
 
 “资产”页是当前项目的资产库：图像、3D 模型、文档、归档包按类型筛选、分页浏览；“从项目导入”填写相对项目根目录的路径即可入库，绝对路径、越出项目目录的路径和符号链接会被拒绝，同一文件重复导入返回已有资产。资产详情显示缩略图、尺寸、SHA-256、生成者、来源委派与挂接关系；挂为任务产物的资产可以设为最终稿；删除是软删除，原文件保留在资产目录但不再可读。勾选「只看未引用」只列出没有挂到任何任务、消息或决策的资产；「清理未引用」先统计数量并弹窗确认，再逐个软删除这些资产，总量配额只计未删除资产，因此清理会释放配额但不会动资产目录里的文件。图像委派生成的图片会自动入库并出现在任务详情的“产物”区。讨论消息里引用的图片也进这里：编辑器的“引用图片”在桌面端打开原生文件选择器选一张本机图片（例如下载目录里的截图），浏览器端则选择文件或直接粘贴图片，图片按内容哈希存入当前项目的资产库，原文件不复制进项目目录也不移动，正文只写 `![说明](council-asset:<资产 ID>)`，发布后该资产自动挂到这条消息（角色 reference），资产详情能回溯到消息；Agent 在消息里引用项目内相对路径的图片（如 `![草图](docs/x.png)`）由本地服务只读出站，同样内嵌缩略图并可点击放大，不入库。
 
-“流水线”页把“写简报 → 出图 → 复盘 → 选定（→ 原型）”串成一条可追踪的链路，只需要一句话目标：模板有“应用视觉稿”（出图后再把选定的图交给 Agent 做可点击原型）、“游戏素材包”（至少 6 张透明 sprite）与“概念设定图”；新建时可附约束与最多 8 张参考图，Agent 不选则按已启用的 Claude（写简报、复盘）与通过生图探针的 Codex（出图、原型）自动选择。列表按“等待我处理 / 进行中 / 失败 / 已完成”分组；详情页的阶段轨道显示每段状态，只有两个节点需要你动手：确认 Agent 起草的简报（可先改再确认），以及在并排对比里勾选最终稿。复盘由 Claude 看图给出通过或修订意见，修订会自动重跑出图，轮数受 `COUNCIL_PIPELINE_MAX_REVISIONS` 限制；失败的阶段可“恢复”重跑，进行中的流水线可“取消”。写简报、出图、复盘不要求项目是 Git 仓库（出图在委派根目录下的隔离目录执行），只有原型阶段的代码委派需要项目已初始化 Git 并至少提交一次。流水线本身是一条 `kind=pipeline` 的任务，各阶段生成的图像/原型子任务会出现在“任务”页，选定的最终稿同时挂到资产库；“应用视觉稿”的原型委派通过后流水线即归入“已完成”，原型任务本身仍在“任务”页等你验收。流水线依赖本地 Agent 服务，离线时列表为空并禁用新建。
+“流水线”页把“写简报 → 出图 → 复盘 → 选定（→ 原型）”串成一条可追踪的链路，只需要一句话目标：模板有“应用视觉稿”（出图后再把选定的图交给 Agent 做可点击原型）、“游戏素材包”（至少 6 张透明 sprite）与“概念设定图”；新建时可附约束与最多 8 张参考图，Agent 不选则按已启用的 Claude（写简报、复盘）与通过生图探针的 Codex（出图、原型）自动选择。列表按“等待我处理 / 进行中 / 失败 / 已完成”分组；详情页的阶段轨道显示每段状态，只有两个节点需要你动手：确认 Agent 起草的简报（可先改再确认），以及在并排对比里勾选最终稿。复盘由 Claude 看图给出通过或修订意见，修订会自动重跑出图，轮数受 `COUNCIL_PIPELINE_MAX_REVISIONS` 限制；失败的阶段可“恢复”重跑，进行中的流水线可“取消”；不再需要的流水线（失败、已取消、已完成或停在等你处理）可在详情页点“删除流水线”，两步确认后连同各阶段子任务记录一起删除、回到列表，生成的图片仍留在资产库，阶段还在跑时要先取消再删。阶段失败时显示的是上游给出的具体原因，例如 Claude 额度用完，换模型后点“恢复”即可接续。写简报、出图、复盘不要求项目是 Git 仓库（出图在委派根目录下的隔离目录执行），只有原型阶段的代码委派需要项目已初始化 Git 并至少提交一次。流水线本身是一条 `kind=pipeline` 的任务，各阶段生成的图像/原型子任务会出现在“任务”页，选定的最终稿同时挂到资产库；“应用视觉稿”的原型委派通过后流水线即归入“已完成”，原型任务本身仍在“任务”页等你验收。流水线依赖本地 Agent 服务，离线时列表为空并禁用新建。
 
 桌面应用支持议题、消息、决策、项目切换、跨进程刷新和 Agent 调用。Composer 输入 `@` 后选择可用 Agent 并发布，会先保存公开消息，再创建对应后台运行；回复成功后自动回贴并完成，不需要复制、再次转发或额外批准。每次 `@` 都是独立的可审计调用；存在调用或持久会话时，右侧「上下文」栏的自动轮次区块才显示紧凑运行状态、取消、恢复和历史。直召依赖本地 Agent 服务；离线时内容协作仍可用，但不会把 `@` 悄悄当普通消息发布。
 
@@ -234,7 +234,7 @@ MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 
 `COUNCIL_ASSET_MAX_TOTAL_BYTES` 限制；文件按内容哈希存放在 `COUNCIL_ASSET_DIR`（留空为日志库下的 `assets` 子目录），
 缩略图由 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 生成并缓存。资产只属于一个项目，跨项目不可见。
 
-流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）与原型委派权限档 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`（默认 `workspace_write`）可在 `.env` 调整。
+流水线也能从 Agent 侧发起：MCP 用 `council_start_pipeline`（`project_path`、`template` 取 `app-mockup`/`game-asset-pack`/`concept-sheet`、`goal`，可选 `constraints`、`reference_asset_ids`）与 `council_get_pipeline`（`pipeline_id`，返回阶段进度、简报与复盘记录、子任务和产物 ID）；HTTP 对应 `POST /api/v1/pipelines`、`GET /api/v1/pipelines?project=`、`GET /api/v1/pipelines/:pipelineId`，人工节点经 `POST …/:pipelineId/brief`（确认简报）、`…/final`（选定终稿）、`…/resume`（重跑失败阶段）、`…/cancel`，删除用 `DELETE …/:pipelineId?expectedVersion=`（阶段在跑或还有活动委派时返回 `409`，要先取消；删除后同名标题和派活消息都可以重新用），写操作都带父任务 `expectedVersion`，过期返回 `409`。两个 MCP 工具同样转发给本机 Council HTTP 服务，确认简报与选定终稿只在 WebUI 完成。阶段数上限 `COUNCIL_PIPELINE_MAX_STAGES`、自动修订轮数 `COUNCIL_PIPELINE_MAX_REVISIONS`（默认 3）与原型委派权限档 `COUNCIL_PIPELINE_PROTOTYPE_PERMISSION`（默认 `workspace_write`）可在 `.env` 调整。
 
 讨论里也能直接派活。讨论 Agent 本身是只读的，被 @ 要求「干活」时，它会在回复末尾附上一个 `council-dispatch` 派活块，里面写明：
 - 模板
@@ -248,7 +248,8 @@ MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 
 
 对应的 HTTP 接口是 `POST /api/v1/pipelines/dispatch`，请求体为 `{topicId, messageId}`。
 - 议题必须绑定项目。
-- 同一条消息已经起过流水线（未取消）时，直接返回那条，`created` 为 `false`；已取消的可以重新派。
+- 同一条消息已经起过流水线（未取消）时，直接返回那条，`created` 为 `false`；已取消或已删除的可以重新派。
+- 派活块和 Agent 起草的简报里，deliverable id 写成大写会先转小写再校验，不再因此判为坏方案或让简报阶段失败。
 - 流水线标题与项目里已有任务重名时（例如重派同一条消息），自动加「（2）」这样的序号。
 
 如果实现、验证或部署已经在 Council 外完成，不必再叫 Agent 总结：打开该议题的“决策”页，

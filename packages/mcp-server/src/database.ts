@@ -2,7 +2,7 @@
  * @input  依赖：已由 Node 迁移器准备的 SQLite、database/ 下的领域仓储与行映射、安全错误语义
  * @output 导出：CouncilDatabase（连接与 PRAGMA、BEGIN IMMEDIATE 事务、动态 Actor alias/可信 actorId
  *         解析、无损 Session 历史、计数/revision/圆桌度量/项目活动 Agent 计数）及同名同签名转发到仓储的议题、消息、
- *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表；P3 流水线子任务建项与文档写入）
+ *         决策、实施项方法（含 v18 任务：按 id 读取、直接任务建项、按项目列表；P3 流水线子任务建项与文档写入、流水线整棵删除并清理资产链接）
  *         与 v19 资产行读写；CouncilRevisions
  * @pos    双桌面客户端共享身份、内容和变更检测的数据访问入口；领域 SQL 住在 database/ 各仓储，
  *         调用方签名不变；身份漂移或停用时失败关闭
@@ -414,6 +414,18 @@ export class CouncilDatabase {
   /** 流水线文档写入：只改父任务 brief_json 与版本，版本冲突 409。 */
   updatePipelineDocument(input: Parameters<WorkItemRepository["updatePipelineDocument"]>[0]): WorkItem {
     return this.#workItems.updatePipelineDocument(input);
+  }
+
+  /**
+   * 物理删除流水线父任务与整棵子树（委派、团队、Worker 随外键级联），并在同一事务里清理指向这些任务的资产链接。
+   * 资产本身保留在资产库。调用方负责先确认流水线不在运行、没有活动委派。
+   */
+  deletePipeline(pipelineId: string): string[] {
+    return this.#transaction(() => {
+      const ids = this.#workItems.deletePipelineTree(pipelineId);
+      this.#assets.removeTargetLinks("work_item", ids);
+      return ids;
+    });
   }
 
   listTasks(input: {

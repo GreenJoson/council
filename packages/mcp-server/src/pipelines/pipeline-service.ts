@@ -2,12 +2,13 @@
  * @input  依赖：CouncilDatabase（父任务/子任务/资产、议题与消息）、PipelineStateStore 与 PipelineDriver（锁、阶段推进与选定后的出图子任务收尾）、
  *         Agent 候选目录（默认 Agent 选择）、委派端口、项目内资产导入端口（派活参考图）、模板/文档/派活协议、参考图校验、
  *         原型委派权限档（prototypePermission）
- * @output 导出：PipelineService（create/dispatchFromMessage/list/get/confirmBrief/selectFinal/resume/cancel 与生命周期）、
+ * @output 导出：PipelineService（create/dispatchFromMessage/list/get/confirmBrief/selectFinal/resume/cancel/delete 与生命周期）、
  *         PipelineSummary、PipelineDetail、CreatePipelineInput、PipelineDispatchResult、PipelineAgentCatalog、PipelineAssetImporter
  * @pos    流水线用例层：校验人工输入（版本、阶段可操作性、brief 模板约束与交付物合计 ≤ 单次生图上限、终稿归属与数量上限、Agent 可用性）后交给驱动器推进；
  *         dispatchFromMessage 从已存讨论消息的 council-dispatch 尾块起流水线：参考图按项目相对路径导入资产库，
  *         人点按钮即视为确认 brief，跳过 brief 阶段直接出图；同一条消息只起一条（已取消的除外），
- *         标题与项目内已有任务重名时自动加「（N）」。
+ *         标题与项目内已有任务重名时自动加「（N）」；
+ *         delete 物理删除不在运行、没有活动委派的流水线（含子任务与委派记录），生成的图片留在资产库。
  *         HTTP 路由与（经回环 HTTP 的）MCP 工具只做协议适配
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -16,8 +17,10 @@
 import { MAX_IMAGE_INPUT_ASSETS, MAX_TITLE_CHARS } from "../constants.js";
 import type { CouncilDatabase } from "../database.js";
 import { CouncilConflictError, CouncilValidationError } from "../errors.js";
+import { logger } from "../logger.js";
 import { validateInputImageAssets } from "../orchestration/delegation-task-resolver.js";
 import type { AgentCandidate } from "../orchestration/product-service.js";
+import type { WorkItemDelegation } from "../orchestration/work-item-delegation-store.js";
 import { normalizeProjectPath } from "../project-path.js";
 import type { PipelinePrototypePermission, WorkItem } from "../types.js";
 import { extractPipelineDispatch } from "./dispatch-protocol.js";
@@ -92,6 +95,8 @@ export interface CreatePipelineInput {
 
 const FINAL_NOTE = "已在流水线中选定终稿";
 const MAX_PIPELINE_REVISIONS = 31;
+/** 还会写回任务的委派状态：有这些委派时不能删除流水线。 */
+const ACTIVE_DELEGATION = new Set<WorkItemDelegation["status"]>(["queued", "executing", "reviewing", "changes_requested"]);
 
 const AGENT_HINTS = {
   brief: "流水线需要一个已启用、已填写模型且可用的 Claude CLI Agent 撰写 brief 与复盘；请在设置中启用 Claude CLI、填写模型并登录后重试，或在 agents.brief 指定可用 Agent。",
@@ -125,6 +130,7 @@ export class PipelineService {
   readonly #database: CouncilDatabase;
   readonly #store: PipelineStateStore;
   readonly #driver: PipelineDriver;
+  readonly #delegations: PipelineDelegationPort;
   readonly #catalog: PipelineAgentCatalog;
   readonly #assets: PipelineAssetImporter | undefined;
   readonly #maxStages: number;
@@ -146,6 +152,7 @@ export class PipelineService {
     this.#database = deps.database;
     this.#store = new PipelineStateStore(deps.database);
     this.#catalog = deps.agents;
+    this.#delegations = deps.delegations;
     this.#assets = deps.assets;
     this.#maxStages = deps.limits.maxStages;
     this.#maxImageOutputs = deps.limits.maxImageOutputs;
@@ -546,5 +553,23 @@ export class PipelineService {
     const snapshot = await this.#store.withLock(input.pipelineId, () =>
       this.#driver.cancel(input.pipelineId, input.actorId, input.expectedVersion));
     return this.#detail(snapshot);
+  }
+
+  /**
+   * 物理删除流水线及其子任务、委派记录；生成的图片留在资产库（只断开与这些任务的链接）。
+   * 运行中（未取消且当前阶段 running）或任何子任务还有活动委派时拒绝，避免删掉正在写回的记录。
+   * 删除后标题与派活消息都空出来，同一条消息可以重新派活。隔离工作区目录不在这里清理。
+   */
+  async delete(input: { pipelineId: string; expectedVersion: number; actorId: string }): Promise<void> {
+    await this.#store.withLock(input.pipelineId, () => {
+      const { task, document } = this.#store.load(input.pipelineId);
+      this.#store.assertVersion(task, input.expectedVersion);
+      const running = document.status !== "cancelled" && currentStage(document).status === "running";
+      const busy = [task, ...this.#store.children(task)].some((item) =>
+        this.#delegations.listForWorkItem(item.id).some((delegation) => ACTIVE_DELEGATION.has(delegation.status)));
+      if (running || busy) throw new CouncilConflictError("流水线还在运行，请先取消再删除。");
+      const ids = this.#database.deletePipeline(task.id);
+      logger.info("pipeline", `流水线已删除：${task.id}（${String(ids.length)} 个任务）by ${input.actorId}`);
+    });
   }
 }

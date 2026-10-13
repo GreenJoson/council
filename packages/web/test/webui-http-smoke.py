@@ -1317,6 +1317,23 @@ with sync_playwright() as playwright:
     redispatch_id = redispatched["pipeline"]["task"]["id"]
     # 顶层任务标题项目内唯一且不分状态：重派的同名目标自动加序号，不撞 409。
     assert redispatched["pipeline"]["task"]["title"] == f'{dispatched["pipeline"]["task"]["title"]}（2）', redispatched["pipeline"]["task"]
+    # 删除：阶段在跑时 409 要求先取消（版本被驱动抢先推进时按最新版本重试）；已取消的整棵子树物理删除，
+    # 详情 404、实施项链接随之清掉，图片仍留在资产库。
+    for _ in range(5):
+        running_detail = api_request("GET", f"/api/v1/pipelines/{redispatch_id}")
+        assert pipeline_stage(running_detail, "image")["status"] == "running", running_detail["document"]
+        refused = api_expect_error("DELETE", f"/api/v1/pipelines/{redispatch_id}?expectedVersion={running_detail['task']['version']}", 409)
+        if refused["message"] != "流水线已被更新，请刷新后重试。":
+            break
+    assert refused["message"] == "流水线还在运行，请先取消再删除。", refused
+    first_round_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{first_round['id']}")
+    assert first_round_assets["total"] >= 1, first_round_assets
+    api_request("DELETE", f"/api/v1/pipelines/{dispatch_id}?expectedVersion={cancelled_dispatch['task']['version']}")
+    api_expect_error("GET", f"/api/v1/pipelines/{dispatch_id}", 404)
+    for asset in first_round_assets["items"]:
+        assert api_request("GET", f"/api/v1/assets/{asset['id']}").get("deletedAt") is None, asset
+    orphan_links = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{first_round['id']}")
+    assert orphan_links["total"] == 0, orphan_links
     redispatched = wait_pipeline(redispatch_id, lambda detail: pipeline_stage(detail, "image")["status"] != "running", "重新派活后出图结束", timeout=120)
     api_request("POST", f"/api/v1/pipelines/{redispatch_id}/cancel", {"expectedVersion": redispatched["task"]["version"]})
     print(f"P3 流水线闭环通过，耗时 {time.monotonic() - pipeline_started:.1f}s")
@@ -1390,8 +1407,17 @@ with sync_playwright() as playwright:
     ui_dispatch = api_request("GET", f"/api/v1/pipelines/{ui_dispatch_id}")
     assert ui_dispatch["document"]["request"]["source"]["messageId"] == ui_dispatch_message["id"], ui_dispatch["document"]
     wait_stage(page, "brief", ("completed",))
+    # 阶段在跑时不给删除，只给取消；取消后只剩「删除流水线」，两步确认后回到列表，该行消失。
+    assert page.get_by_role("button", name="删除流水线", exact=True).count() == 0
     ui_dispatch = wait_pipeline(ui_dispatch_id, lambda detail: pipeline_stage(detail, "image")["status"] != "running", "界面派活出图结束", timeout=120)
     api_request("POST", f"/api/v1/pipelines/{ui_dispatch_id}/cancel", {"expectedVersion": ui_dispatch["task"]["version"]})
+    page.get_by_role("button", name="删除流水线", exact=True).click()
+    page.get_by_text("删除后流水线与子任务记录不可恢复，生成的图片仍留在资产库。确定吗？").wait_for()
+    page.get_by_role("button", name="确认删除", exact=True).click()
+    page.wait_for_function("location.hash === '#/pipelines'")
+    page.get_by_role("heading", name="流水线", exact=True).wait_for()
+    assert page.locator(f"[data-pipeline-id='{ui_dispatch_id}']").count() == 0
+    api_expect_error("GET", f"/api/v1/pipelines/{ui_dispatch_id}", 404)
     print("讨论消息派活卡界面通过")
     page.goto(f"{WEB_URL}#/discussion/{topic_id}", wait_until="domcontentloaded")
 

@@ -1,7 +1,7 @@
 /**
  * @input  依赖：共享数据库上下文、资产行映射与安全错误语义
  * @output 导出：AssetRepository —— 按 (project_path, sha256) 查重、新建/恢复资产行、读取公开 DTO 与内部存储记录、
- *         按项目/kind/链接目标/未引用（unlinked：不挂任何目标）分页列表（默认不含软删除）、未删除资产字节总量、链接增删（目标存在且同项目）、软删除；
+ *         按项目/kind/链接目标/未引用（unlinked：不挂任何目标）分页列表（默认不含软删除）、未删除资产字节总量、链接增删（目标存在且同项目）、按目标批量清理链接（目标被物理删除时）、软删除；
  *         以及 AssetStorageRecord / NewAssetRecord / AssetListFilter 类型
  * @pos    assets / asset_links 两张表的唯一数据访问所有者；不碰文件系统，落盘与嗅探在 assets/ 领域完成。
  *         内容 revision 由 v19 触发器推进，这里不手动改 council_meta
@@ -256,6 +256,14 @@ export class AssetRepository {
       `).run(assetId, targetKind, targetId, role, new Date().toISOString());
       return this.get(assetId);
     });
+  }
+
+  /** 删除指向这些目标的全部链接：目标被物理删除时调用（asset_links 对目标没有外键）。资产本身保留。 */
+  removeTargetLinks(targetKind: AssetLinkTargetKind, targetIds: readonly string[]): void {
+    const statement = this.#context.database.prepare(`
+      DELETE FROM asset_links WHERE target_kind = ? AND target_id = ?
+    `);
+    for (const targetId of targetIds) statement.run(targetKind, targetId);
   }
 
   removeLink(assetId: string, targetKind: AssetLinkTargetKind, targetId: string, role: AssetLinkRole): void {

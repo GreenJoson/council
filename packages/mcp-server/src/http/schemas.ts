@@ -460,6 +460,11 @@ export const pipelineVersionBodySchema = z
   .object({ expectedVersion: z.number().int().positive() })
   .strict();
 
+/** 删除流水线：DELETE 不带 body，版本放查询参数。 */
+export const pipelineDeleteQuerySchema = z
+  .object({ expectedVersion: z.coerce.number().int().positive() })
+  .strict();
+
 /** 讨论消息一键派活：只传出处，派活内容由服务层从已存消息的 council-dispatch 尾块重新解析。 */
 export const dispatchPipelineBodySchema = z
   .object({ topicId: topicIdSchema, messageId: messageIdSchema })

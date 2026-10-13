@@ -4,7 +4,8 @@
  *         批量建项（手工拆解须绑定 Accepted 决策、审核发现可无决策、子项继承父决策锚点，
  *         project_path 从议题拷贝，kind/source/priority 走 v18 DEFAULT）、
  *         直接任务建项（topic_id NULL、source direct、project_path 必填）、
- *         流水线子任务建项（source pipeline、parent 为流水线父任务）与流水线文档写入（只改 brief_json 与版本）、按 id 读取、
+ *         流水线子任务建项（source pipeline、parent 为流水线父任务）与流水线文档写入（只改 brief_json 与版本）、
+ *         流水线整棵子树物理删除（返回被删 id）、按 id 读取、
  *         以 id 为准的乐观版本更新/认领（给了 topicId 时仍校验议题归属；更新可选写入已校验的 brief_json）、祖先状态派生、
  *         议题内过滤列表与按项目列表（走 idx_work_items_project_status，含议题派生项）
  * @pos    实施项（任务）领域仓储，work_items 表唯一数据访问所有者；父任务状态只由子任务派生，
@@ -752,6 +753,27 @@ export class WorkItemRepository {
       ORDER BY priority DESC, updated_at DESC, rowid DESC
     `).all(...parameters) as unknown as WorkItemRow[];
     return rows.map(workItemFromRow);
+  }
+
+  /**
+   * 物理删除流水线父任务及整棵子树，返回被删的任务 id（含父任务），供调用方在同一事务里清理没有外键的资产链接。
+   * 子任务、委派、团队与 Worker 记录随外键级联删除；资产的来源委派置空。调用方负责开事务并先确认没有活动委派。
+   */
+  deletePipelineTree(pipelineId: string): string[] {
+    const root = this.#context.database.prepare(`
+      SELECT kind, source FROM work_items WHERE id = ?
+    `).get(pipelineId) as unknown as { kind: string; source: string } | undefined;
+    if (!root || root.kind !== "pipeline" || root.source !== "direct") throw new CouncilNotFoundError("流水线不存在。");
+    const rows = this.#context.database.prepare(`
+      WITH RECURSIVE tree(id) AS (
+        SELECT id FROM work_items WHERE id = ?
+        UNION ALL
+        SELECT child.id FROM work_items child JOIN tree ON child.parent_id = tree.id
+      )
+      SELECT id FROM tree
+    `).all(pipelineId) as unknown as Array<{ id: string }>;
+    this.#context.database.prepare("DELETE FROM work_items WHERE id = ?").run(pipelineId);
+    return rows.map((row) => row.id);
   }
 
   /** 全部流水线父任务（跨项目）；只供流水线驱动启动对账，量级随流水线数增长。 */

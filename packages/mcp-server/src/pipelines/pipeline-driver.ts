@@ -1,6 +1,6 @@
 /**
  * @input  依赖：PipelineStateStore（锁与文档读写）、Agent 端口（一次性只读调用、agentId→actorId）、
- *         委派端口（发起/接续/取消/查询委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts、
+ *         委派端口（发起/接续/取消/查询委派、按任务列委派、终态订阅、资产拷入 `.council/in/`）、pipeline-document/prompts、
  *         delegation-image-execution 的 readImageOutputManifest（复盘只看本次图像委派入库的产物）
  * @output 导出：PipelineDriver（阶段推进：brief/review 一次性调用、图像/修订/原型委派派发、委派终态推进、
  *         失败阶段重试、取消、启动对账与停机），以及 PipelineAgentPort / PipelineDelegationPort
@@ -18,13 +18,14 @@
  *         本轮 brief 里有交付物没有任何产物（执行者跳过卡住的生图调用）时，复盘结论按 revise 记录并在 missing 里列出，
  *         下一轮修订补做这些交付物；修订轮数用尽则照常进入选定、由人决定；
  *         新一轮出图派发后以 human 身份收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，
- *         不收尾父任务会一直显示进行中），启动对账先对每条未取消流水线补做这一步再判断是否已结束
+ *         不收尾父任务会一直显示进行中），启动对账先对每条未取消流水线补做这一步再判断是否已结束；
+ *         阶段失败说明优先取 AgentInvocationError.publicMessage（额度用尽等可处理的原因）
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { OrchestrationConfigError, type CouncilTopicContext } from "council-orchestrator";
-import { CouncilConflictError } from "../errors.js";
+import { AgentInvocationError, OrchestrationConfigError, type CouncilTopicContext } from "council-orchestrator";
+import { CouncilConflictError, CouncilNotFoundError } from "../errors.js";
 import { logger } from "../logger.js";
 import { readImageOutputManifest } from "../orchestration/delegation-image-execution.js";
 import type { StartWorkItemDelegationInput } from "../orchestration/work-item-delegation-manager.js";
@@ -79,6 +80,8 @@ export interface PipelineDelegationPort {
   ): Promise<WorkItemDelegation>;
   cancel(id: string): WorkItemDelegation;
   get(id: string): WorkItemDelegation | undefined;
+  /** 某个任务上的全部委派；删除流水线前确认没有活动委派。 */
+  listForWorkItem(workItemId: string): WorkItemDelegation[];
   onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void;
   stageProjectInputs(
     root: string,
@@ -114,8 +117,15 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * 阶段失败说明：Agent 调用错误优先用适配器脱敏后的 publicMessage（如额度用尽、登录失效），
+ * message 里只有「内部原因未公开」之类的泛化说明，界面看不出该怎么处理。
+ */
 function errorMessage(error: unknown, fallback: string): string {
-  const text = (error instanceof Error ? error.message : String(error)).trim() || fallback;
+  const raw = error instanceof AgentInvocationError && error.publicMessage
+    ? error.publicMessage
+    : error instanceof Error ? error.message : String(error);
+  const text = raw.trim() || fallback;
   return text.length <= MAX_ERROR_MESSAGE ? text : `${text.slice(0, MAX_ERROR_MESSAGE - 1)}…`;
 }
 
@@ -307,6 +317,8 @@ export class PipelineDriver {
       currentStageId: stageId,
     }), { actorId });
     void this.#runOneShot(pipelineId, stageId, startedAt).catch((error: unknown) => {
+      // 取消后被删除的流水线：调用结果没有地方写，丢弃即可。
+      if (error instanceof CouncilNotFoundError) return;
       logger.error("pipeline", `流水线一次性调用收尾失败：${pipelineId}`, error);
     });
     return snapshot;

@@ -84,6 +84,10 @@ export class DesktopPipelineRepository implements PipelineRepository {
     return (await this.#requireLive()).cancelPipeline(pipelineId, expectedVersion);
   }
 
+  async deletePipeline(pipelineId: string, expectedVersion: number): Promise<void> {
+    await (await this.#requireLive()).deletePipeline(pipelineId, expectedVersion);
+  }
+
   /** 详情与写操作必须在服务可达时执行；离线时抛出与编排面板一致的诚实指引。 */
   async #requireLive(): Promise<PipelineRepository> {
     let delegate: PipelineRepository | undefined;

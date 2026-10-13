@@ -680,6 +680,7 @@ export function createProductionOrchestrationService(
         await service.resumeWorkItemDelegation(id, expectedVersion, requestedPermission),
       cancel: (id) => service.cancelWorkItemDelegation(id),
       get: (id) => delegationManager.get(id),
+      listForWorkItem: (workItemId) => delegationManager.listForWorkItem(workItemId),
       onSettled: (listener) => delegationManager.onSettled(listener),
       stageProjectInputs: async (root, assetIds, signal) =>
         await delegationManager.stageProjectInputs(root, assetIds, signal),

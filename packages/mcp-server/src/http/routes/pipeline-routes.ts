@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpRouteContext（可选编排服务上挂载的 PipelineService）、Zod schema 与统一响应
- * @output 导出：注册 P3 流水线 REST（创建、从讨论消息派活、按项目列表、详情、确认 brief、选定终稿、恢复失败阶段、取消）的 registerPipelineRoutes
+ * @output 导出：注册 P3 流水线 REST（创建、从讨论消息派活、按项目列表、详情、确认 brief、选定终稿、恢复失败阶段、取消、删除）的 registerPipelineRoutes
  * @pos    /api/v1/pipelines：流水线的唯一 HTTP 入口；只做协议适配，阶段语义与错误码在 pipelines/PipelineService
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -14,6 +14,7 @@ import {
   createPipelineBodySchema,
   dispatchPipelineBodySchema,
   listPipelinesQuerySchema,
+  pipelineDeleteQuerySchema,
   pipelineParamsSchema,
   pipelineVersionBodySchema,
   selectPipelineFinalBodySchema,
@@ -114,5 +115,13 @@ export function registerPipelineRoutes(app: Express, context: HttpRouteContext):
       expectedVersion: input.expectedVersion,
       actorId: HUMAN_ACTOR,
     }), "流水线已取消。");
+  });
+
+  app.delete("/api/v1/pipelines/:pipelineId", async (request, response) => {
+    const pipelines = requirePipelines();
+    const { pipelineId } = parse(pipelineParamsSchema, request.params);
+    const { expectedVersion } = parse(pipelineDeleteQuerySchema, request.query);
+    await pipelines.delete({ pipelineId, expectedVersion, actorId: HUMAN_ACTOR });
+    sendSuccess(response, { id: pipelineId }, "流水线已删除。");
   });
 }

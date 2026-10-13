@@ -218,6 +218,15 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
+### Unreleased
+
+- Pipelines can be deleted: the detail page has a new "Delete pipeline" button. After a two-step confirmation it removes the pipeline together with its stage subtasks and returns to the list.
+  - Failed, cancelled, completed and waiting pipelines can all be deleted; while a stage is running only "Cancel" is offered, so cancel first.
+  - Generated images stay in the asset library and are only unlinked from the deleted tasks; the dispatch message and the title can be reused afterwards.
+  - HTTP endpoint: `DELETE /api/v1/pipelines/:pipelineId?expectedVersion=`, which returns 409 while a stage is running or a delegation is still active.
+- A failed stage now shows the upstream reason (for example, the Claude quota is exhausted) instead of a generic invocation failure.
+- Deliverable ids written in uppercase in an agent-drafted brief or dispatch block are lowercased before validation, instead of failing the brief stage or marking the dispatch card invalid.
+
 ### 0.10.2 — 2026-10-13
 
 - One-click dispatch from a discussion: discussion agents stay read-only. When @-mentioned to produce images, an agent ends its reply with a `council-dispatch` block naming the template, in-project reference image paths and the full brief.

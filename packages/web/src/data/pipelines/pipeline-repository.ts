@@ -1,6 +1,6 @@
 /**
  * @input  依赖：types/pipelines 的列表项、详情与新建入参
- * @output 导出：PipelineRepository 流水线列表/详情/新建/从讨论消息派活/确认 brief/选定 final/恢复/取消契约
+ * @output 导出：PipelineRepository 流水线列表/详情/新建/从讨论消息派活/确认 brief/选定 final/恢复/取消/删除契约
  * @pos    流水线领域的前端数据边界；http/desktop/mock 三套实现由 create-pipeline-repository.ts 选择
  *
  * 刷新约定：与 TaskRepository 一致，真实实现不提供 subscribe。服务端 SSE 只有 council.changed {revision}，
@@ -43,6 +43,8 @@ export interface PipelineRepository {
   /** 只重跑当前 failed 阶段，已入库资产不动。 */
   resumePipeline(pipelineId: string, expectedVersion: number): Promise<PipelineDetail>;
   cancelPipeline(pipelineId: string, expectedVersion: number): Promise<PipelineDetail>;
+  /** 物理删除流水线与子任务记录，图片留在资产库；运行中 409（先取消）。 */
+  deletePipeline(pipelineId: string, expectedVersion: number): Promise<void>;
   /** 仅 mock：内存状态机推进时通知调用方重读；返回退订函数。 */
   watchLocalChanges?(listener: () => void): () => void;
 }

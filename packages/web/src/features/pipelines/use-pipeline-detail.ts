@@ -1,7 +1,7 @@
 /**
  * @input  依赖：PipelineRepository（由 PipelinesView 注入）、路由中的 pipelineId、内容 revision 与编排 revision、
  *         http-client 的 CouncilApiError（识别 409）
- * @output 导出：usePipelineDetail —— 流水线详情读取、加载/错误态、手动重读，以及确认 brief、选定 final、恢复、取消写操作与忙碌标记
+ * @output 导出：usePipelineDetail —— 流水线详情读取、加载/错误态、手动重读，以及确认 brief、选定 final、恢复、取消、删除写操作与忙碌标记
  * @pos    流水线详情的状态与副作用层；调用方按 pipelineId 作 key 重挂载。写操作统一带当前父任务 version，
  *         返回的最新详情就地替换；409（版本冲突/阶段已变化）时标记 conflict 并主动重读
  *
@@ -15,7 +15,7 @@ import type { PipelineRepository } from "../../data/pipelines/pipeline-repositor
 import type { PipelineDetail } from "../../types/pipelines";
 import { useLocalChangeTick } from "./use-pipelines";
 
-export type PipelineAction = "brief" | "final" | "resume" | "cancel";
+export type PipelineAction = "brief" | "final" | "resume" | "cancel" | "delete";
 
 export interface PipelineActionError {
   action: PipelineAction;
@@ -35,6 +35,8 @@ export interface PipelineDetailState {
   selectFinal: (assetIds: string[]) => Promise<boolean>;
   resume: () => Promise<boolean>;
   cancel: () => Promise<boolean>;
+  /** 物理删除；成功后由调用方离开详情页（之后重读会 404）。 */
+  remove: () => Promise<boolean>;
 }
 
 export function usePipelineDetail(
@@ -70,14 +72,14 @@ export function usePipelineDetail(
 
   async function run(
     action: PipelineAction,
-    write: (expectedVersion: number) => Promise<PipelineDetail>,
+    write: (expectedVersion: number) => Promise<PipelineDetail | undefined>,
   ): Promise<boolean> {
     if (version === undefined) return false;
     setBusyAction(action);
     setActionError(null);
     try {
       const next = await write(version);
-      setDetail(next);
+      if (next) setDetail(next);
       return true;
     } catch (reason: unknown) {
       const conflict = reason instanceof CouncilApiError && reason.httpStatus === 409;
@@ -101,5 +103,9 @@ export function usePipelineDetail(
     selectFinal: (assetIds) => run("final", (expected) => repository.selectFinal(pipelineId, assetIds, expected)),
     resume: () => run("resume", (expected) => repository.resumePipeline(pipelineId, expected)),
     cancel: () => run("cancel", (expected) => repository.cancelPipeline(pipelineId, expected)),
+    remove: () => run("delete", async (expected) => {
+      await repository.deletePipeline(pipelineId, expected);
+      return undefined;
+    }),
   };
 }
