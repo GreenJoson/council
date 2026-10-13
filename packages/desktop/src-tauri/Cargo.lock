@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "council-desktop"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "council-core",
  "libc",
