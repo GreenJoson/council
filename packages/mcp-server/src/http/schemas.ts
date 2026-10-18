@@ -588,6 +588,8 @@ export const createRunBodySchema = z
               .max(MAX_ID_CHARS)
               .regex(/^message_[A-Za-z0-9-]+$/, "requestMessageId 格式无效")
               .optional(),
+            // 同题盲答：本轮看不到同一 Run 里其他 Agent 这次的回答。
+            blind: z.boolean().optional(),
           })
           .strict(),
       )

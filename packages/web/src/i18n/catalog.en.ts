@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 中文界面源文案
- * @output 导出：英文界面词典，含文件预览、提交恢复、草稿接续、任务视图（列表/详情/新建/委派历史）、资产库、council-brief 简报与图像委派、P3 流水线（列表/详情/阶段轨道/并排选定/新建）、P4 任务详情右栏「团队」与团队模式发起；占位符使用 {name} 形式
+ * @output 导出：英文界面词典，含文件预览、提交恢复、草稿接续、任务视图（列表/详情/新建/委派历史）、资产库、council-brief 简报与图像委派、P3 流水线（列表/详情/阶段轨道/并排选定/新建）、P4 任务详情右栏「团队」与团队模式发起、同题盲答分组与一键互评；占位符使用 {name} 形式
  * @pos    中英双语的英文单一真源，用户内容不经过本词典
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -1174,5 +1174,17 @@ export const englishCatalog: Readonly<Record<string, string>> = {
   "派活方案的参考图列表格式不对，请让 Agent 重新给出。": "The dispatch plan's reference list is malformed. Ask the agent to provide it again.",
   "派活方案里的简报不完整，请让 Agent 重新给出。": "The brief in the dispatch plan is incomplete. Ask the agent to provide it again.",
   "派活方案的简报类型和模板对不上，请让 Agent 重新给出。": "The brief kind in the dispatch plan does not match the template. Ask the agent to provide it again.",
-  "演示模式不能从讨论消息派活，请连接本地 Agent 服务后再试。": "Demo mode cannot dispatch from discussion messages. Connect the local Agent Service and try again.",
+  "演示模式不能从讨论消息派活，请连接本地 Agent 服务后再试。": "Demo mode cannot dispatch from discussion messages. Connect the local Agent Service and try again.",  "{agents} 将各自独立回答（答题时看不到彼此），以 {kind} 呈现；这条召唤消息本身记录为 Note": "{agents} will answer independently (without seeing each other) as {kind}; the invocation itself is recorded as a Note",
+  "同题盲答": "Blind answers",
+  "互评": "Peer review",
+  "没有全部完成": "Not all answered",
+  "等待你确认": "Waiting for you",
+  "作答中 {done}/{total}": "Answering {done}/{total}",
+  "{agent} 这轮没有作答": "{agent} did not answer this round",
+  "{agent} 正在作答…": "{agent} is answering…",
+  "{agent} 排队作答，看不到其他人的回答": "{agent} is queued and cannot see the other answers",
+  "已发起互评，见下方": "Peer review started, see below",
+  "让他们互评": "Have them review each other",
+  "每位 Agent 评审对方的回答，并说哪版更好": "Each agent reviews the other's answer and says which one is better",
+  "请互评上面这组同题盲答：各自点评对方的方案，再说哪版更好、为什么。": "Please review each other's blind answers above: critique the other plan, then say which one is better and why.",
 };

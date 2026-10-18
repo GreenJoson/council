@@ -4,7 +4,8 @@
  * @output 导出：Composer 公开回复编辑器、结构化关联提交、「引用图片」/粘贴图片（use-composer-images）与已决议题 @Agent 禁用边界
  * @pos    将用户可见结论发布到共享 Council 时间线，并承接消息卡片发起的引用回复；
  *         图片以 `![说明](council-asset:<id>)` 插在光标处，字节只进 Council 资产库；
- *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次单轮自动 run
+ *         草稿以 "@claude"/"@codex" 开头时额外把发布翻译成一次自动 run；连写多个召唤（如 "@claude @codex"）
+ *         时同一个问题交给每位 Agent 各答一轮、答题时互相看不到（同题盲答）
  *         （召唤解析见 data/mention-parser.ts，冲突判断复用 AutoRoundsPanel 的
  *         getCreateRunBlockedReason，保持与自动轮次面板同一套互斥规则）；
  *         召唤成功时讨论消息的 kind 固定改写为 note，kind 选择器转而描述 Agent
@@ -27,7 +28,7 @@ import {
   findActiveMentionQuery,
   getMentionToken,
   hasMentionAttempt,
-  parseMention,
+  parseMentions,
 } from "../../data/mention-parser";
 import type { MessageKind, SyncState } from "../../types/council";
 import type { OrchestrationAdapter, OrchestrationSnapshot } from "../../types/orchestration";
@@ -50,11 +51,14 @@ export interface QuoteSeed {
  * @claude/@codex 召唤成功时随 onPublish 一起交给调用方的补充信息。
  * responseKind 是 Composer 当前选中的 kind——它此时描述的是"Agent 回应应呈现的类型"，
  * 不是这条用户消息自身的 kind（那个已经被固定为 note，随 onPublish 的第一个参数传出）。
+ * adapterIds 有两个及以上时是同题盲答：每位 Agent 各答一轮，答题时看不到彼此这次的回答。
  */
 export interface MentionPublishRequest {
-  adapterId: string;
+  adapterIds: string[];
   instruction: string;
   responseKind: MessageKind;
+  /** 按 adapterId 覆盖各自的指令（一键互评要告诉每位 Agent 去评谁）；缺省用 instruction */
+  instructions?: Readonly<Record<string, string>>;
 }
 
 export interface ComposerProps {
@@ -161,18 +165,19 @@ export function Composer({
     );
   }, [isMentionMenuOpen, mentionQuery, mentionAdapters]);
 
-  const mention = useMemo(() => parseMention(content, mentionAdapters), [content, mentionAdapters]);
-  const mentionAdapter = mention
-    ? mentionAdapters.find((adapter) => adapter.id === mention.adapterId)
-    : undefined;
+  const mention = useMemo(() => parseMentions(content, mentionAdapters), [content, mentionAdapters]);
+  const mentionTargets = mention
+    ? mention.adapterIds.flatMap((id) => mentionAdapters.filter((adapter) => adapter.id === id))
+    : [];
+  const unavailableTarget = mentionTargets.find((adapter) => !adapter.available);
 
   type MentionStatus =
     | { kind: "none" }
-    | { kind: "ready"; adapter: OrchestrationAdapter }
+    | { kind: "ready"; adapters: OrchestrationAdapter[]; agents: string }
     | { kind: "blocked"; reason: string };
 
   let mentionStatus: MentionStatus = { kind: "none" };
-  if (mention && mentionAdapter) {
+  if (mention && mentionTargets.length > 0) {
     if (!allowAgentCalls) {
       mentionStatus = {
         kind: "blocked",
@@ -181,17 +186,21 @@ export function Composer({
             ?? "议题已经决策，不能再通过 @ 召唤 Agent。",
         ),
       };
-    } else if (!mentionAdapter.available) {
+    } else if (unavailableTarget) {
       mentionStatus = {
         kind: "blocked",
-        reason: mentionAdapter.limitation ?? t("{agent} 当前不能被 Web 主动调用。", {
-          agent: mentionAdapter.label,
+        reason: unavailableTarget.limitation ?? t("{agent} 当前不能被 Web 主动调用。", {
+          agent: unavailableTarget.label,
         }),
       };
     } else if (mentionRunBlockedReason) {
       mentionStatus = { kind: "blocked", reason: t(mentionRunBlockedReason) };
     } else {
-      mentionStatus = { kind: "ready", adapter: mentionAdapter };
+      mentionStatus = {
+        kind: "ready",
+        adapters: mentionTargets,
+        agents: mentionTargets.map((adapter) => adapter.label).join(t("、")),
+      };
     }
   } else if (isOrchestrationOffline && hasMentionAttempt(content)) {
     mentionStatus = { kind: "blocked", reason: t("自动编排当前离线，暂时无法通过 @ 召唤 Agent。") };
@@ -338,7 +347,7 @@ export function Composer({
     const trimmed = content.trim();
     const mentionPayload: MentionPublishRequest | undefined =
       mentionStatus.kind === "ready" && mention
-        ? { adapterId: mention.adapterId, instruction: mention.instruction, responseKind: kind }
+        ? { adapterIds: mention.adapterIds, instruction: mention.instruction, responseKind: kind }
         : undefined;
     // 召唤成功时，这条讨论消息本身固定记录为 note——它是"指令性发言"，
     // 不是用户在 kind 选择器里点的那个提案类型；kind 选择器此时改为描述 Agent 回应的类型。
@@ -556,10 +565,15 @@ export function Composer({
       {mentionStatus.kind === "ready" ? (
         <p className="composer-mention-hint">
           <Bot size={13} />
-          {t("{agent} 将以 {kind} 回应；这条召唤消息本身记录为 Note", {
-            agent: mentionStatus.adapter.label,
-            kind: messageKindLabels[kind],
-          })}
+          {mentionStatus.adapters.length > 1
+            ? t("{agents} 将各自独立回答（答题时看不到彼此），以 {kind} 呈现；这条召唤消息本身记录为 Note", {
+                agents: mentionStatus.agents,
+                kind: messageKindLabels[kind],
+              })
+            : t("{agent} 将以 {kind} 回应；这条召唤消息本身记录为 Note", {
+                agent: mentionStatus.agents,
+                kind: messageKindLabels[kind],
+              })}
         </p>
       ) : null}
       {mentionStatus.kind === "blocked" ? (
@@ -615,7 +629,7 @@ export function Composer({
             {isPublishing
               ? t("发布中…")
               : mentionStatus.kind === "ready"
-                ? t("发布并召唤 {agent}", { agent: mentionStatus.adapter.label })
+                ? t("发布并召唤 {agent}", { agent: mentionStatus.agents })
                 : hasCommitAssociations
                   ? t("发布提交记录")
                   : t("发布 {kind}", { kind: messageKindLabels[kind] })}

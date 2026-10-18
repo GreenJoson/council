@@ -4,7 +4,8 @@
  * @output 导出：CouncilProductService —— 圆桌开局/推进/放弃、Run 创建/启动/审批/取消/恢复、
  *         单次只读 Agent 调用 invokeOneShot（任务规划与 P3 流水线 brief/review 共用）、只读任务规划、
  *         RuntimeBinding 生命周期、Model Router 设置变更联动、任务委派转发（议题入口与任务入口；图像委派先经探针确认执行者 granted 含 image_generate）
- * @pos    Composer/@Agent 产品接线的真正实现；CouncilOrchestrationService 以同名同签名方法转发到这里
+ * @pos    Composer/@Agent 产品接线的真正实现；CouncilOrchestrationService 以同名同签名方法转发到这里；
+ *         同题盲答轮次（blind）在指令末尾追加可信的独立作答说明
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -63,7 +64,12 @@ export interface PublicRoundInput {
   messageKind: MessageKind;
   instruction: string;
   requestMessageId?: string;
+  /** 同题盲答：本轮看不到同一 Run 里其他 Agent 这次的回答。 */
+  blind?: boolean;
 }
+
+/** 盲答轮次追加在指令末尾的可信说明：告诉 Agent 为什么看不到别人的回答，避免它等待或假装引用。 */
+const BLIND_ROUND_NOTE = "（同题独立作答：同一个问题也交给了其他 Agent。你看不到他们这次的回答，他们也看不到你的。请独立给出完整方案，不要等待、猜测或引用别人的答案。）";
 
 export interface CreateRunOptions {
   confirmationBeforeCompletion?: boolean;
@@ -350,14 +356,18 @@ export class CouncilProductService {
         transportKind,
         processInstanceId: this.#processInstanceId,
       });
-      const instruction = round.requestMessageId
+      const baseInstruction = round.requestMessageId
         ? withTrustedGitCommitTargets(
             round.instruction,
             this.#store.readTopicProposalSeed(topicId)?.commitTargets ?? [],
           )
         : round.instruction;
+      const { blind: requestedBlind, ...rest } = round;
+      const blind = requestedBlind === true;
+      const instruction = blind ? `${baseInstruction}\n\n${BLIND_ROUND_NOTE}` : baseInstruction;
       rounds.push({
-        ...round,
+        ...rest,
+        ...(blind ? { blind: true } : {}),
         instruction,
         actorId,
         bindingRevision,

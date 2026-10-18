@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排协议枚举与未知 JSON 快照
- * @output 导出：v1-v3 只读兼容与 v4 RuntimeBinding 冻结的严格运行快照编解码
+ * @output 导出：v1-v3 只读兼容与 v4 RuntimeBinding 冻结的严格运行快照编解码（v4 轮次可选 requestMessageId 与只取 true 的 blind）
  * @pos    阻止损坏或非规范持久化数据进入编排核心
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -82,6 +82,14 @@ function stringValue(value: unknown, path: string): string {
     fail(`${path} 必须是非空字符串。`);
   }
   return value;
+}
+
+/** 只以 true 落库的可选标记：false 与缺省同义，出现 false 说明快照不是规范化写入的。 */
+function trueValue(value: unknown, path: string): true {
+  if (value !== true) {
+    fail(`${path} 只能是 true。`);
+  }
+  return true;
 }
 
 function booleanValue(value: unknown, path: string): boolean {
@@ -245,7 +253,7 @@ export function validateRunSnapshot(
           "messageKind",
           "instruction",
         ],
-        ["requestMessageId"],
+        ["requestMessageId", "blind"],
         planPath,
       );
     } else {
@@ -281,6 +289,7 @@ export function validateRunSnapshot(
           }),
       messageKind: item.messageKind,
       instruction: stringValue(item.instruction, `snapshot.plan[${String(index)}].instruction`),
+      ...(item.blind === undefined ? {} : { blind: trueValue(item.blind, `${planPath}.blind`) }),
     };
   });
 

@@ -3,7 +3,7 @@
  *         召唤标记、结构化关联提交与派活尾块解析、PipelineDispatchCard
  * @output 导出：含项目文件链接、关联提交证据卡与派活方案卡的 MessageCard 讨论时间线卡片
  * @pos    展示 Agent 公开方案、批评、回应和综合结论（内容按 Markdown 渲染并可折叠），并发起引用回复；
- *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note），把该标记抠出渲染成
+ *         正文以已知 Agent 召唤标记开头时（Composer 发布的指令性 note，可连写多个做同题盲答），把这些标记抠出渲染成
  *         高亮芯片，其余正文照常交给 MarkdownContent；正文带 council-dispatch 尾块时从正文去掉原始 JSON，
  *         改为派活方案卡，人点「按此起流水线」才开工
  *
@@ -12,7 +12,7 @@
 
 import { GitCommitHorizontal, Reply } from "lucide-react";
 import { extractCommitAssociation } from "../../data/commit-association";
-import { extractLeadingMentionChip } from "../../data/mention-parser";
+import { extractLeadingMentionChips } from "../../data/mention-parser";
 import { extractDispatchBlock } from "../../data/pipelines/dispatch-block";
 import type { CouncilMessage, Participant } from "../../types/council";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -45,7 +45,7 @@ export function MessageCard({
   const commitAssociation = extractCommitAssociation(message.content);
   const dispatchBlock = extractDispatchBlock(commitAssociation?.body ?? message.content);
   const visibleContent = dispatchBlock?.body ?? commitAssociation?.body ?? message.content;
-  const mentionChip = extractLeadingMentionChip(visibleContent);
+  const mentionChips = extractLeadingMentionChips(visibleContent);
   const frozenParticipant: Participant = {
     id: message.actorSnapshot.actorId,
     slug: message.actorSnapshot.slug,
@@ -86,13 +86,13 @@ export function MessageCard({
           {messageKindLabels[message.kind]}
         </span>
         <h2>{message.title}</h2>
-        {mentionChip ? (
-          <span className={`mention-chip mention-chip-${mentionChip.token}`}>
-            @{mentionChip.token}
+        {mentionChips?.tokens.map((token) => (
+          <span key={token} className={`mention-chip mention-chip-${token}`}>
+            @{token}
           </span>
-        ) : null}
-        {(mentionChip ? mentionChip.remainder : visibleContent) ? (
-          <MarkdownContent content={mentionChip ? mentionChip.remainder : visibleContent} topicId={topicId} collapsible />
+        ))}
+        {(mentionChips ? mentionChips.remainder : visibleContent) ? (
+          <MarkdownContent content={mentionChips ? mentionChips.remainder : visibleContent} topicId={topicId} collapsible />
         ) : null}
         {dispatchBlock ? (
           <PipelineDispatchCard

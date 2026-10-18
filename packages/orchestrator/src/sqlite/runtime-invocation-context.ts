@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council SQLite、RuntimeBinding 仓储、公开消息 codec 与议题上下文读取器
- * @output 导出：议题级请求去重、首轮全上下文和 session 增量上下文构建
+ * @output 导出：议题级请求去重、首轮全上下文和 session 增量上下文构建（同题盲答时屏蔽同一 Run 里其他 Agent 的回答）
  * @pos    SQLiteCouncilStore 的 RuntimeBinding 调用上下文职责
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -9,8 +9,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { InvalidRunStateError } from "../errors.js";
 import type {
+  BlindContextFilter,
   CouncilPublicMessage,
   CouncilTopicContext,
+  RuntimeBindingCursor,
   RuntimeBindingInvocationContext,
 } from "../types.js";
 import { assertActorId, assertMessageKind } from "./run-codec.js";
@@ -66,10 +68,38 @@ export function decodeCouncilMessageRows(
   });
 }
 
+function cursorOf(message: CouncilPublicMessage | undefined): RuntimeBindingCursor | undefined {
+  return message ? { createdAt: message.createdAt, messageId: message.id } : undefined;
+}
+
+/**
+ * 同题盲答：去掉 since 之后由 actorIds 发出的消息。消费水位只推进到第一条被屏蔽消息之前，
+ * 被屏蔽的回答（以及它之后的消息）留在游标后面，这位 Agent 下一次被调用（例如互评）时照常读到；
+ * 没有盲答条件时水位就是最后一条消息。水位之后的可见消息下次会重复出现一次，只影响篇幅不影响正确性。
+ */
+function withBlindFilter(
+  messages: readonly CouncilPublicMessage[],
+  blind: BlindContextFilter | undefined,
+): { visible: CouncilPublicMessage[]; consumedCursor?: RuntimeBindingCursor } {
+  const hidden = (message: CouncilPublicMessage): boolean =>
+    blind !== undefined && message.createdAt >= blind.since && blind.actorIds.includes(message.actorId);
+  const firstHidden = messages.findIndex(hidden);
+  if (firstHidden === -1) {
+    const consumedCursor = cursorOf(messages.at(-1));
+    return { visible: [...messages], ...(consumedCursor ? { consumedCursor } : {}) };
+  }
+  const consumedCursor = cursorOf(messages[firstHidden - 1]);
+  return {
+    visible: messages.filter((message) => !hidden(message)),
+    ...(consumedCursor ? { consumedCursor } : {}),
+  };
+}
+
 export async function loadRuntimeBindingInvocationContext(
   dependencies: RuntimeInvocationContextDependencies,
   bindingId: string,
   requestMessageId?: string,
+  blind?: BlindContextFilter,
 ): Promise<RuntimeBindingInvocationContext> {
   const { database, runtimeBindings, contextMessageLimit, getTopicContext } = dependencies;
   const binding = runtimeBindings.get(bindingId);
@@ -102,14 +132,12 @@ export async function loadRuntimeBindingInvocationContext(
         );
       }
     }
-    const last = topic.messages.at(-1);
+    const { visible, consumedCursor } = withBlindFilter(topic.messages, blind);
     return {
       binding,
-      topic,
+      topic: { ...topic, messages: visible },
       firstTurn: true,
-      ...(last
-        ? { consumedCursor: { createdAt: last.createdAt, messageId: last.id } }
-        : {}),
+      ...(consumedCursor ? { consumedCursor } : {}),
     };
   }
   const rows = database.prepare(`
@@ -138,18 +166,11 @@ export async function loadRuntimeBindingInvocationContext(
       );
     }
   }
-  const last = messages.at(-1);
+  const { visible, consumedCursor } = withBlindFilter(messages, blind);
   return {
     binding,
-    topic: { ...topic, messages },
+    topic: { ...topic, messages: visible },
     firstTurn: false,
-    ...(last
-      ? {
-          consumedCursor: {
-            createdAt: last.createdAt,
-            messageId: last.id,
-          },
-        }
-      : {}),
+    ...(consumedCursor ? { consumedCursor } : {}),
   };
 }

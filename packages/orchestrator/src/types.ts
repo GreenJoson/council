@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排协议枚举
- * @output 导出：轮次策略、运行快照、Run/RuntimeBinding lease、共享上下文与 Agent 调用类型
+ * @output 导出：轮次策略（含同题盲答标记）、运行快照、Run/RuntimeBinding lease、共享上下文（含盲答屏蔽条件）与 Agent 调用类型
  * @pos    编排核心和外部适配器之间的严格类型契约
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -30,6 +30,11 @@ export interface RoundPlan {
   requestMessageId?: string;
   messageKind: MessageKind;
   instruction: string;
+  /**
+   * 同题盲答：本轮构建上下文时，屏蔽同一 Run 里其他轮次的 Agent 在 Run 创建之后发的消息，
+   * 让几位 Agent 互相看不到对方这次的回答；被屏蔽的消息留在会话游标之后，下一次调用照常读到。
+   */
+  blind?: boolean;
 }
 
 export interface ConfirmationPolicy {
@@ -190,6 +195,12 @@ export interface TransitionRuntimeBindingInput {
   sessionId?: string;
   clearSession?: boolean;
   closeReason?: string;
+}
+
+/** 同题盲答的上下文屏蔽条件：since（Run 创建时间）之后由 actorIds 发出的消息不进本次上下文。 */
+export interface BlindContextFilter {
+  since: string;
+  actorIds: readonly string[];
 }
 
 export interface RuntimeBindingInvocationContext {

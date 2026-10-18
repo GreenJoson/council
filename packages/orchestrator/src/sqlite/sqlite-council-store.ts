@@ -19,6 +19,7 @@ import type { CouncilStore } from "../ports.js";
 import type {
   ApproveGateInput,
   ApproveGateResult,
+  BlindContextFilter,
   ClaimRuntimeBindingLeaseInput,
   ClaimRunLeaseInput,
   CouncilTopicContext,
@@ -840,13 +841,14 @@ export class SQLiteCouncilStore implements CouncilStore {
   async getRuntimeBindingInvocationContext(
     bindingId: string,
     requestMessageId?: string,
+    blind?: BlindContextFilter,
   ): Promise<RuntimeBindingInvocationContext> {
     return await loadRuntimeBindingInvocationContext({
       database: this.#database,
       runtimeBindings: this.#runtimeBindings,
       contextMessageLimit: this.#contextMessageLimit,
       getTopicContext: async (topicId) => await this.getTopicContext(topicId),
-    }, bindingId, requestMessageId);
+    }, bindingId, requestMessageId, blind);
   }
 
   async claimRuntimeBindingLease(

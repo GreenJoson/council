@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）、讨论消息派活（尾块重解析、参考图入库、跳过简报确认直接生图、重复派活返回原流水线、取消后可重派且同名标题自动加序号、无尾块/越界参考图 400、消息不存在 404）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾、消息派活卡点击跳到新流水线与坏方案只提示不给按钮）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、同题盲答（连写两个 @ 时两位远程 Agent 互不可见地作答并排成组、一键互评时可读到对方）、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）、讨论消息派活（尾块重解析、参考图入库、跳过简报确认直接生图、重复派活返回原流水线、取消后可重派且同名标题自动加序号、无尾块/越界参考图 400、消息不存在 404）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾、消息派活卡点击跳到新流水线与坏方案只提示不给按钮）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -551,6 +551,34 @@ with sync_playwright() as playwright:
         "远程 ToolLoop 已通过 Council 受控 Git 工具读取已提交 diff。",
         exact=True,
     ).wait_for()
+
+    # 同题盲答：一条消息连写两个 @，两位远程 Agent 各答一轮、答题时看不到对方这次的回答；
+    # 全部答完后点「让他们互评」，互评时双方都能读到对方的盲答原文。
+    page.get_by_placeholder("写下公开结论、证据或回应…").fill(
+        "@router-alpha @router-beta COUNCIL_BLIND_E2E：各出一版短视频玩法方案。"
+    )
+    page.locator(".composer-mention-hint").get_by_text("将各自独立回答", exact=False).wait_for()
+    page.get_by_role("button", name="发布并召唤 Router Alpha、Router Beta", exact=True).click()
+    blind_group = page.locator(".blind-answer-group:not(.is-review)").last
+    blind_group.get_by_text("远程 Alpha 盲答方案：没看到 Beta 的回答。", exact=True).wait_for(timeout=20_000)
+    blind_group.get_by_text("远程 Beta 盲答方案：没看到 Alpha 的回答。", exact=True).wait_for(timeout=20_000)
+    blind_group.locator(".blind-answer-group-status", has_text="已完成").wait_for()
+    blind_cards = blind_group.locator(".message-card")
+    assert blind_cards.count() == 2
+    first_box, second_box = blind_cards.nth(0).bounding_box(), blind_cards.nth(1).bounding_box()
+    assert abs(first_box["y"] - second_box["y"]) < 2 and second_box["x"] >= first_box["x"] + first_box["width"], (first_box, second_box)
+    blind_runs = [
+        run
+        for run in api_request("GET", f"/api/v1/topics/{topic_id}/runs")["runs"]
+        if len(run["plan"]) == 2 and all(round_plan.get("blind") is True for round_plan in run["plan"])
+    ]
+    assert len(blind_runs) == 1 and blind_runs[0]["status"] == "completed", blind_runs
+    blind_group.get_by_role("button", name="让他们互评", exact=True).click()
+    review_group = page.locator(".blind-answer-group.is-review").last
+    review_group.get_by_text("远程 Alpha 互评：已读到 Beta 的盲答方案。", exact=True).wait_for(timeout=20_000)
+    review_group.get_by_text("远程 Beta 互评：已读到 Alpha 的盲答方案。", exact=True).wait_for(timeout=20_000)
+    blind_group.get_by_text("已发起互评，见下方", exact=True).wait_for()
+    assert review_group.get_by_role("button", name="让他们互评", exact=True).count() == 0
 
     renamed_alpha = api_request(
         "PUT",

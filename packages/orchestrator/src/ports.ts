@@ -1,6 +1,6 @@
 /**
  * @input  依赖：编排运行、共享消息与 Agent 调用类型
- * @output 导出：含分页、lease fencing 的 CouncilStore 和 AgentAdapter 抽象端口
+ * @output 导出：含分页、lease fencing、同题盲答上下文屏蔽的 CouncilStore 和 AgentAdapter 抽象端口
  * @pos    隔离消息自动传播与 Agent 自动触发的架构边界
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -12,6 +12,7 @@ import type {
   AgentResult,
   ApproveGateInput,
   ApproveGateResult,
+  BlindContextFilter,
   ClaimRuntimeBindingLeaseInput,
   CouncilTopicContext,
   ClaimRunLeaseInput,
@@ -72,9 +73,11 @@ export interface CouncilStore {
   getRuntimeBinding(bindingId: string): Promise<RuntimeBinding>;
   listRuntimeBindings(input: ListRuntimeBindingsInput): Promise<readonly RuntimeBinding[]>;
   listOpenRuntimeBindings(): Promise<readonly RuntimeBinding[]>;
+  /** blind 存在时按同题盲答屏蔽同一 Run 里其他 Agent 的回答，游标不越过被屏蔽的消息。 */
   getRuntimeBindingInvocationContext(
     bindingId: string,
     requestMessageId?: string,
+    blind?: BlindContextFilter,
   ): Promise<RuntimeBindingInvocationContext>;
   claimRuntimeBindingLease(
     input: ClaimRuntimeBindingLeaseInput,

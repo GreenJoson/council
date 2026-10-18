@@ -1,9 +1,9 @@
 /**
  * @input  依赖：OrchestrationAdapter 领域类型
- * @output 导出：ParsedMention、parseMention（召唤解析）、ActiveMentionQuery、
- *         findActiveMentionQuery（Composer 自动补全的实时光标态）、hasMentionAttempt
+ * @output 导出：ParsedMention、parseMention（召唤解析）、ParsedMentions、parseMentions（连写多个 @ 的同题召唤解析）、
+ *         ActiveMentionQuery、findActiveMentionQuery（Composer 自动补全的实时光标态）、hasMentionAttempt
  *         （不依赖具体 adapter 解析的"看起来像召唤"探测）、LeadingMentionChip、
- *         extractLeadingMentionChip（消息流展示层的前导召唤芯片提取）
+ *         extractLeadingMentionChip / extractLeadingMentionChips（消息流展示层的前导召唤芯片提取）
  * @pos    Composer 动态 Agent 召唤语法的唯一解析入口；纯函数，不发起任何请求，
  *         不关心 adapter.available——是否可用是调用方（Composer）结合实时 orchestration
  *         快照另行判断的业务问题，本文件只负责语法层面的识别
@@ -159,6 +159,61 @@ export function parseMention(
   return { adapterId: adapter.id, instruction };
 }
 
+export interface ParsedMentions {
+  /** 去重后的 OrchestrationAdapter.id，按书写顺序；两个及以上即同题盲答 */
+  adapterIds: string[];
+  /** 去掉全部命中的 @ 标记后的正文，已 trim */
+  instruction: string;
+}
+
+/** 第一个召唤之后紧跟的下一个召唤：中间只允许空白或「、，, & 和」这类连接符。 */
+const FOLLOWING_MENTION_PATTERN = /^(?:\s|[、，,&]|和)+@([A-Za-z][\w-]*)/u;
+
+/**
+ * 解析连写的多个召唤，例如「@claude @codex 各出一版方案」→ 两位 Agent 同题作答。
+ * 第一个召唤的规则与 parseMention 完全一致；之后只吸收紧跟其后、能解析成已知 Agent 的召唤，
+ * 遇到未知名或正文就停，未吸收的 @ 原样留在正文里。只有一个召唤时结果与 parseMention 相同。
+ */
+export function parseMentions(
+  text: string,
+  adapters: readonly OrchestrationAdapter[],
+): ParsedMentions | null {
+  const found = findFirstMentionMatch(text);
+  if (!found) {
+    return null;
+  }
+  const resolve = (token: string): OrchestrationAdapter | undefined =>
+    adapters.find((candidate) => getMentionToken(candidate).toLowerCase() === token.toLowerCase());
+  const first = resolve(found.token);
+  if (!first) {
+    return null;
+  }
+  const { lines, lineIndex, matchStart } = found;
+  const line = lines[lineIndex] ?? "";
+  const adapterIds = [first.id];
+  let matchEnd = found.matchEnd;
+  for (;;) {
+    const next = FOLLOWING_MENTION_PATTERN.exec(line.slice(matchEnd));
+    const adapter = next ? resolve(next[1] ?? "") : undefined;
+    if (!next || !adapter) {
+      break;
+    }
+    if (!adapterIds.includes(adapter.id)) {
+      adapterIds.push(adapter.id);
+    }
+    matchEnd += next[0].length;
+  }
+  // 与 parseMention 相同：标记在行首时连同其后一个空格一起去掉。
+  const sliceEnd = matchStart === 0 && line[matchEnd] === " " ? matchEnd + 1 : matchEnd;
+  const nextLines = [...lines];
+  nextLines[lineIndex] = line.slice(0, matchStart) + line.slice(sliceEnd);
+  const instruction = nextLines.join("\n").trim();
+  if (!instruction) {
+    return null;
+  }
+  return { adapterIds, instruction };
+}
+
 /**
  * 不依赖 adapters 解析、只探测"文本里是否存在一个语法上合法的召唤标记"。
  * 供 Composer 在编排离线（此时 adapters 只剩占位条目，parseMention 必然解析失败）
@@ -203,4 +258,38 @@ export function extractLeadingMentionChip(content: string): LeadingMentionChip |
     token,
     remainder: content.slice(match[0].length).trimStart(),
   };
+}
+
+export interface LeadingMentionChips {
+  /** 按出现顺序、已小写；同一 token 只出现一次 */
+  tokens: string[];
+  /** 去掉全部前导召唤标记后剩余的正文，仅 trimStart */
+  remainder: string;
+}
+
+const FOLLOWING_LEADING_MENTION_PATTERN = /^(?:\s|[、，,&]|和)*@([A-Za-z][\w-]*)(\s|$)/u;
+
+/**
+ * extractLeadingMentionChip 的多召唤版本：正文开头连写的「@claude @codex …」全部抠成芯片。
+ * 只吸收紧跟在开头召唤之后、由空白或「、，, & 和」相连的 @token，正文中段的 @ 照旧保留。
+ */
+export function extractLeadingMentionChips(content: string): LeadingMentionChips | null {
+  const first = extractLeadingMentionChip(content);
+  if (!first) {
+    return null;
+  }
+  const tokens = [first.token];
+  let remainder = first.remainder;
+  for (;;) {
+    const next = FOLLOWING_LEADING_MENTION_PATTERN.exec(remainder);
+    if (!next) {
+      break;
+    }
+    const token = (next[1] ?? "").toLowerCase();
+    if (!tokens.includes(token)) {
+      tokens.push(token);
+    }
+    remainder = remainder.slice(next[0].length).trimStart();
+  }
+  return { tokens, remainder };
 }

@@ -1,7 +1,8 @@
 /**
  * @input  依赖：COUNCIL_FAKE_PROVIDER_PORT 与 OpenAI Chat Completions 流式请求
- * @output 导出：按模型返回公开文本、只读 Tool Call 或故障的 loopback 测试 Provider
- * @pos    动态远程 Provider/双 Agent/只读文件与受控 Git ToolLoop 的跨进程 E2E 替身
+ * @output 导出：按模型返回公开文本、只读 Tool Call 或故障的 loopback 测试 Provider；带 COUNCIL_BLIND_E2E 时按上下文里
+ *         是否出现对方盲答原文回答（证明盲答互不可见、互评可见）
+ * @pos    动态远程 Provider/双 Agent/同题盲答/只读文件与受控 Git ToolLoop 的跨进程 E2E 替身
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -29,6 +30,32 @@ function readJson(request) {
     });
     request.on("error", reject);
   });
+}
+
+function messageText(message) {
+  if (typeof message?.content === "string") {
+    return message.content;
+  }
+  return Array.isArray(message?.content)
+    ? message.content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("\n")
+    : "";
+}
+
+/**
+ * 同题盲答 E2E：请求里带 COUNCIL_BLIND_E2E 时，按上下文里有没有对方的盲答原文作答，
+ * 由此证明答题时互相看不到、互评时能读到。
+ */
+function blindReply(model, messages) {
+  const text = messages.map(messageText).join("\n");
+  if (!text.includes("COUNCIL_BLIND_E2E")) {
+    return undefined;
+  }
+  const name = model === "router-model-beta" ? "Beta" : "Alpha";
+  const other = name === "Beta" ? "Alpha" : "Beta";
+  const seesOther = text.includes(`远程 ${other} 盲答方案`);
+  return text.includes("互评：")
+    ? `远程 ${name} 互评：${seesOther ? "已读到" : "没读到"} ${other} 的盲答方案。`
+    : `远程 ${name} 盲答方案：${seesOther ? "看到了" : "没看到"} ${other} 的回答。`;
 }
 
 const server = createServer(async (request, response) => {
@@ -130,9 +157,9 @@ const server = createServer(async (request, response) => {
     response.end("data: [DONE]\n\n");
     return;
   }
-  const reply = model === "router-model-beta"
+  const reply = blindReply(model, messages) ?? (model === "router-model-beta"
     ? "远程 Beta Agent 已完成即时调用。"
-    : "远程 Alpha Agent 已完成即时调用。";
+    : "远程 Alpha Agent 已完成即时调用。");
   response.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",

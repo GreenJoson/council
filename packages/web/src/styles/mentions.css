@@ -1,6 +1,6 @@
 /**
- * @input  依赖：theme.css、components.css 与 Composer/MessageCard 召唤语义类名
- * @output 导出：@ Agent 自动补全、召唤状态和消息芯片样式
+ * @input  依赖：theme.css、components.css（spin 关键帧在 app.css）与 Composer/MessageCard/BlindAnswerGroup 召唤语义类名
+ * @output 导出：@ Agent 自动补全、召唤状态、消息芯片（多召唤连排）与同题盲答分组（并排回答、占位、互评入口）样式
  * @pos    讨论编辑器与消息流的 Agent 召唤视觉层
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -105,6 +105,11 @@
   font-weight: 600;
 }
 
+/* 同题盲答的召唤消息会连写多个芯片 */
+.mention-chip + .mention-chip {
+  margin-left: 6px;
+}
+
 .mention-chip-claude {
   background: var(--color-agent-claude-soft);
   color: var(--color-agent-claude);
@@ -113,4 +118,121 @@
 .mention-chip-codex {
   background: var(--color-agent-codex-soft);
   color: var(--color-agent-codex);
+}
+
+/* 同题盲答：同一道题的多个回答放进一个分组并排比较，宽度与消息列一致；
+   列宽不够时 auto-fit 自动叠成单列，组内消息卡去掉时间线竖线与自身列宽。 */
+.blind-answer-group {
+  width: min(
+    calc(100% - var(--discussion-column-gutter)),
+    clamp(
+      var(--discussion-column-min),
+      var(--discussion-column-fluid),
+      var(--discussion-column-max)
+    )
+  );
+  margin: 0 auto 14px;
+  padding: 10px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-large);
+  background: var(--color-surface-subtle);
+}
+
+.blind-answer-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 10px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.blind-answer-group-header strong {
+  color: var(--color-text);
+}
+
+.blind-answer-group-agents {
+  font-family: var(--font-mono);
+}
+
+.blind-answer-group-status {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  font-size: 12px;
+}
+
+.blind-answer-group-status.status-completed {
+  background: var(--color-positive-soft);
+  color: var(--color-positive);
+}
+
+.blind-answer-group-status.status-failed,
+.blind-answer-group-status.status-cancelled {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.blind-answer-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+/* 组头已写明是谁在答，组内卡片去掉头像列把宽度留给正文，常见窗口宽度下也能左右并排 */
+.blind-answer-group-grid .message-card {
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  margin: 0;
+}
+
+.blind-answer-group-grid .timeline-avatar {
+  display: none;
+}
+
+.blind-answer-group-grid .message-card::before {
+  display: none;
+}
+
+.blind-answer-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 96px;
+  padding: 16px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-medium);
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.blind-answer-group .spin {
+  animation: spin 900ms linear infinite;
+}
+
+.blind-answer-group-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 4px 0;
+}
+
+.blind-answer-group-note {
+  margin: 10px 4px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.blind-answer-group-footer .blind-answer-group-note {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blind-answer-group .spin {
+    animation: none;
+  }
 }

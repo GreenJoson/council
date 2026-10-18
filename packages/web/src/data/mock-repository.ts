@@ -129,6 +129,7 @@ export class MockCouncilRepository implements CouncilRepository {
       title: input.kind === "critique" ? "新的审查意见" : "新的公开回复",
       content: input.content,
       createdLabel: "刚刚",
+      createdAt: new Date().toISOString(),
     });
     topic.updatedLabel = "刚刚";
     topic.status = input.kind === "synthesis" ? "synthesis" : "discussing";

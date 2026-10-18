@@ -1,7 +1,7 @@
 /**
  * @input  依赖：React、OrchestrationRepository（含 SSE 订阅）、Agent 委派 hook、界面语言、编排领域类型
  * @output 导出：useOrchestrationState —— 编排快照、能力/运行两类错误与重试、忙碌动作、实施项委派状态，
- *         以及 @ 召唤 run、圆桌（开局/答问/提交修复/放弃）、自动轮次（启动/取消/恢复/确认）、持久会话开关写操作
+ *         以及 @ 召唤 run（连写多个 @ 时为同题盲答）、圆桌（开局/答问/提交修复/放弃）、自动轮次（启动/取消/恢复/确认）、持久会话开关写操作
  * @pos    App 壳的编排控制器：能力快照独立于内容加载；当前议题变化时重新 selectTopic 拉取该议题的运行态
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -106,7 +106,9 @@ export function useOrchestrationState(
   }
 
   /**
-   * @claude/@codex 召唤语法糖的第二步：公开消息已发布后发起单轮自动 run。
+   * @claude/@codex 召唤语法糖的第二步：公开消息已发布后发起自动 run。
+   * 召唤一位 Agent 是单轮；召唤多位时每位一轮、同一条请求消息，并标记 blind——
+   * 服务端在后答的 Agent 上下文里藏掉先答者本次的回答，保证各自独立作答。
    * 失败只报"消息已发布，但自动回应启动失败"，不回滚已发布的消息。
    */
   async function triggerMentionRun(
@@ -119,12 +121,13 @@ export function useOrchestrationState(
       const created = await orchestrationRepository.createRun({
         topicId: activeTopicId,
         confirmationBeforeCompletion: false,
-        plan: [{
-          adapterId: mention.adapterId,
+        plan: mention.adapterIds.map((adapterId) => ({
+          adapterId,
           messageKind: mention.responseKind,
-          instruction: mention.instruction,
+          instruction: mention.instructions?.[adapterId] ?? mention.instruction,
           requestMessageId,
-        }],
+          ...(mention.adapterIds.length > 1 ? { blind: true } : {}),
+        })),
       });
       setBusyAction(`start:${created.id}`);
       const snapshot = await orchestrationRepository.startRun(created.id);

@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council orchestration REST/SSE API 的未知 JSON data
- * @output 导出：含动态 actorId 的 Capabilities（能力词表含 P2 的 image_generate/image_input）、Run、持久会话、委派（v18：可选 topicId、kind、
+ * @output 导出：含动态 actorId 的 Capabilities（能力词表含 P2 的 image_generate/image_input）、Run（轮次可选 requestMessageId 与同题盲答 blind）、持久会话、委派（v18：可选 topicId、kind、
  *         inputAssetIds、outputManifest）、项目活动计数与 Agent 增量事件严格解析函数
  * @pos    自动轮次仓储唯一 REST/SSE 协议校验入口
  *
@@ -374,11 +374,15 @@ function parsePolicy(value: unknown): OrchestrationDefaultPolicy {
 
 function parseRound(value: unknown): OrchestrationRoundPlan {
   const record = recordValue(value, "round");
+  const requestMessageId = optionalString(record, "requestMessageId");
+  const blind = optionalBoolean(record, "blind");
   return {
     adapterId: stringValue(record, "adapterId"),
     actorId: stringValue(record, "actorId"),
     messageKind: enumValue(record, "messageKind", MESSAGE_KINDS),
     instruction: stringValue(record, "instruction"),
+    ...(requestMessageId ? { requestMessageId } : {}),
+    ...(blind ? { blind } : {}),
   };
 }
 

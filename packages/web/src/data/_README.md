@@ -19,7 +19,7 @@
 | `http-client.ts` | 传输 | 集中构造 URL、解析统一响应并保留 HTTP 错误语义 |
 | `project-path.ts` | 配置 | 校验 http 模式 POSIX、盘符或 UNC 绝对项目路径 |
 | `status-revisions.ts` | 分流 | 严格解析总、内容和编排三类 revision |
-| `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected）；导出 `mapWorkItem` 供任务域复用 v18 字段映射 |
+| `workspace-mapper.ts` | 映射 | 保留 Topic/Message/Decision 行级冻结快照（消息另保留原始 `createdAt`）并派生当前参与者，将 canonical Topic 摘要和详情转换为 Web 工作区；决策 status 原样透传 accepted/superseded（只丢弃 rejected）；导出 `mapWorkItem` 供任务域复用 v18 字段映射 |
 | `http-repository.ts` | 真实 | 惰性读取当前详情，按 SSE revision 串行校准工作区，归档议题、提交用户绑定的 accepted 人工决策，并提供不改状态的只读议题详情加载 |
 | `http-orchestration-repository.ts` | 真实 | 校准运行与逻辑绑定列表，生成 AI 实施计划，传输圆桌审查范围，执行关闭/重开，合并临时草稿并接入 Model Router API；选中议题与每次 SSE 总修订刷新都拉一次 `GET /api/v1/topics/:id/activity`，供图标栏徽标与状态条计数 |
 | `mock-data.ts` | 示例 | 提供脱敏的 Operator Console 工作区数据；含一组可验证的架构档案样例——一个被取代的旧决策 + 取代它的新决策（decision.rationale 内嵌 mermaid 图）+ 一条含 mermaid 图的 synthesis 消息 |
@@ -32,7 +32,8 @@
 | `selectors.ts` | 查询 | 提供可测试的议题文本搜索与状态筛选逻辑（filterTopics）、Markdown 顶层 mermaid 围栏提取（extractMermaidBlocks，逐行围栏状态机而非正则，不误提嵌套围栏）与架构档案聚合纯函数（computeAdrNumberAssignments 稳定 ADR 编号、buildArchitectureTimeline 演进时间线、aggregateConstraints 约束去重聚合、collectArchitectureDiagrams 图集提取）|
 | `section-collapse.ts` | 偏好 | 区块折叠状态的 localStorage 读写边界（通用 `createSectionSetStore`）：架构档案存「已收起」集合、默认全展开；上下文栏约束/证据/备选存「已展开」集合、默认全收起；只认已知区块 id，值损坏时回落默认 |
 | `theme.ts` | 偏好 | 浅色/深色主题的读取、应用与持久化唯一边界 |
-| `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全和前导召唤芯片提取 |
+| `mention-parser.ts` | 查询 | 动态 Agent 召唤的纯函数层；统一按适配器绑定的 Actor ID 匹配，排除代码围栏并提供自动补全、连写多个 `@` 的同题召唤解析和前导召唤芯片（可多个）提取 |
+| `blind-answers.ts` | 查询 | 同题盲答纯函数：按 Run 时间窗把各 Agent 的回答配成一组、识别互评组与「已互评」，并生成一键互评给每位 Agent 的评审指令 |
 | `commit-association.ts` | 协议 | 把一个仓库内以逗号、空格或换行批量粘贴的 SHA 展开为独立提交，校验相对路径后编码为 `council-fix` 尾块，并为消息卡安全解码 |
 | `work-item-tree.ts` | 查询 | 把扁平实施项按 `parentId` 装成两层树并稳定排序；完成度只数叶子，父任务不进分母 |
 | `decision-package.ts` | 查询 | 计算议题 proposed/accepted 决策包状态，支持逐条或批量接受而不把列表压成单条结论 |

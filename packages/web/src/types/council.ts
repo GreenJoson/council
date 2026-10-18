@@ -2,7 +2,7 @@
  * @input  依赖：无
  * @output 导出：Council Web 的动态 Actor、含关闭态的 Topic/Message/Decision/实施项（v18 任务：
  *         kind/source/priority/brief、可选 topicId）行快照、任务类型与来源常量、
- *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型
+ *         人工 Accepted 输入、superseded/decidedAt 与仓储边界类型；Message 可带原始 ISO createdAt 供按时间归属 Run
  * @pos    前端状态和后续本地 API 之间的稳定领域模型；DecisionStatus 与 CouncilDecision
  *         同时供讨论面板、决策包、决策记录与架构档案四处消费
  *
@@ -84,6 +84,8 @@ export interface CouncilMessage {
   title: string;
   content: string;
   createdLabel: string;
+  /** 原始 ISO 时间；同题盲答按它把回答归到对应 Run。静态 mock 数据可缺省 */
+  createdAt?: string;
 }
 
 export interface ConstraintItem {

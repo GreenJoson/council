@@ -2,7 +2,7 @@
  * @input  依赖：界面语言上下文、当前项目名、含 owner/完整决策包/实施任务冻结快照的当前议题、参与者回退、同步/发布状态、消息回调与自动轮次快照
  *         （驱动时间线 Agent 回复动态，并透传议题开放状态给 Composer 控制 @agent 召唤）
  * @output 导出：支持本地文件预览链接的DiscussionPanel 中央工作区（讨论/完整决策包、单条/批量接受、任务/元数据、
- *         议题关闭、人工签署、阶梯导航、引用回复与消息派活卡起流水线）；单条实施项委派已迁到任务页，任务 tab 只给摘要与跳转
+ *         议题关闭、人工签署、阶梯导航、引用回复、消息派活卡起流水线与同题盲答并排分组/一键互评）；单条实施项委派已迁到任务页，任务 tab 只给摘要与跳转
  * @pos    Operator Console 的主要阅读、决策通读、任务执行、元数据核查和回复区域；过长议题问题默认
  *         收起；决策 tab 按主列流体宽度渲染全文，右栏经 decisionFocusNonce 切过来
  *
@@ -10,7 +10,7 @@
  */
 
 import { Archive, Check, CheckCircle2, Copy, FileCheck2, PanelRight, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CouncilMessage,
   CouncilWorkItem,
@@ -25,6 +25,7 @@ import type {
   OrchestrationSnapshot,
   WorkItemDelegation,
 } from "../../types/orchestration";
+import { collectBlindAnswerGroups } from "../../data/blind-answers";
 import { pendingDecisions, summarizeDecisionPackage } from "../../data/decision-package";
 import { summarizeWorkItemProgress } from "../../data/work-item-tree";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -33,6 +34,8 @@ import {
   AgentReplyActivity,
   selectAgentReplyActivity,
 } from "./AgentReplyActivity";
+import { getCreateRunBlockedReason, getTopicAgentCallBlockedReason } from "./AutoRoundsPanel";
+import { BlindAnswerGroupView } from "./BlindAnswerGroup";
 import { Composer, type MentionPublishRequest, type QuoteSeed } from "./Composer";
 import { DecisionCard } from "../../components/DecisionCard";
 import { ImplementationProgress } from "../../components/ImplementationProgress";
@@ -229,6 +232,20 @@ export function DiscussionPanel({
       }
     };
   }, [activeTab, topic.id, topic.messages]);
+
+  // 同题盲答：组内回答从逐条平铺里摘出，挪到请求消息后面并排展示。
+  const runsForTopic = orchestration?.activeTopicId === topic.id ? orchestration.runs : undefined;
+  const blindGroups = useMemo(
+    () => collectBlindAnswerGroups(runsForTopic ?? [], topic.messages),
+    [runsForTopic, topic.messages],
+  );
+  const blindGroupByRequest = new Map(blindGroups.map((group) => [group.requestMessageId, group]));
+  const groupedAnswerIds = new Set(blindGroups.flatMap((group) =>
+    group.slots.flatMap((slot) => (slot.message ? [slot.message.id] : []))));
+  const allowAgentCalls = topic.status !== "decided" && topic.status !== "closed";
+  const blindReviewBlockedReason = getTopicAgentCallBlockedReason(allowAgentCalls)
+    ?? (orchestration?.sync.status === "offline" ? "自动编排当前离线，暂时无法通过 @ 召唤 Agent。" : undefined)
+    ?? getCreateRunBlockedReason(runsForTopic ?? [], orchestrationBusyAction);
 
   const agentReplyActivity = selectAgentReplyActivity(orchestration, topic.id);
   const agentReplyActivityKey = agentReplyActivity
@@ -490,18 +507,42 @@ export function DiscussionPanel({
                 </p>
               ) : null}
               {topic.messages.length > 0 ? (
-                topic.messages.map((message, index) => (
-                  <MessageCard
-                    topicId={topic.id}
-                    message={message}
-                    participant={participants.get(message.author)}
-                    index={index}
-                    elementId={messageElementId(message.id)}
-                    onQuote={handleQuote}
-                    onDispatchPipeline={onDispatchPipeline ? () => onDispatchPipeline(topic.id, message.id) : undefined}
-                    key={message.id}
-                  />
-                ))
+                topic.messages.map((message, index) => {
+                  if (groupedAnswerIds.has(message.id)) {
+                    return null;
+                  }
+                  const blindGroup = blindGroupByRequest.get(message.id);
+                  return (
+                    <Fragment key={message.id}>
+                      <MessageCard
+                        topicId={topic.id}
+                        message={message}
+                        participant={participants.get(message.author)}
+                        index={index}
+                        elementId={messageElementId(message.id)}
+                        onQuote={handleQuote}
+                        onDispatchPipeline={onDispatchPipeline ? () => onDispatchPipeline(topic.id, message.id) : undefined}
+                      />
+                      {blindGroup ? (
+                        <BlindAnswerGroupView
+                          topicId={topic.id}
+                          group={blindGroup}
+                          adapters={orchestration?.capabilities?.adapters ?? []}
+                          participants={participants}
+                          index={index + 1}
+                          elementIdOf={messageElementId}
+                          onQuote={handleQuote}
+                          onDispatchPipeline={onDispatchPipeline
+                            ? (messageId) => onDispatchPipeline(topic.id, messageId)
+                            : undefined}
+                          reviewBlockedReason={blindReviewBlockedReason}
+                          isPublishing={isPublishing}
+                          onPublish={onPublish}
+                        />
+                      ) : null}
+                    </Fragment>
+                  );
+                })
               ) : (
                 <div className="empty-discussion">
                   <AgentAvatar agent="council" />
@@ -520,7 +561,7 @@ export function DiscussionPanel({
           <Composer
             currentProjectName={projectName}
             isPublishing={isPublishing}
-            allowAgentCalls={topic.status !== "decided" && topic.status !== "closed"}
+            allowAgentCalls={allowAgentCalls}
             sync={sync}
             onPublish={onPublish}
             quoteSeed={quoteSeed}

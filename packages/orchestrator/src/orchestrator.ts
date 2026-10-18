@@ -1,7 +1,8 @@
 /**
  * @input  依赖：CouncilStore、AgentAdapter、状态类型与可判定错误
  * @output 导出：可分离 begin/drive、双 lease 心跳、适配器代次 fencing、显式安全失败消息的 CouncilOrchestrator 与重启分类
- * @pos    人工门、双 lease、适配器热替换、超时、重试、取消和失败恢复的唯一领域实现
+ * @pos    人工门、双 lease、适配器热替换、超时、重试、取消和失败恢复的唯一领域实现；
+ *         同题盲答轮次（plan[].blind）按 Run 创建时间屏蔽同一 Run 里其他 Agent 的回答
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -176,6 +177,7 @@ function normalizeInput(input: CreateRunInput): CreateRunInput {
       ...(requestMessageId ? { requestMessageId } : {}),
       messageKind: round.messageKind,
       instruction,
+      ...(round.blind === true ? { blind: true } : {}),
     };
   });
 
@@ -289,7 +291,8 @@ function assertPersistedRun(run: OrchestrationRun): void {
         round.runtimeBindingId === persisted.runtimeBindingId &&
         round.requestMessageId === persisted.requestMessageId &&
         round.messageKind === persisted.messageKind &&
-        round.instruction === persisted.instruction,
+        round.instruction === persisted.instruction &&
+        round.blind === persisted.blind,
       );
     });
   if (!policyMatches || !planMatches) {
@@ -1009,9 +1012,19 @@ export class CouncilOrchestrator {
         });
         this.#activeBindingLeases.set(run.id, bindingLease);
         storeStage = "load-runtime-context";
+        // 同题盲答：同一 Run 里其他 Agent 在 Run 创建后的回答不进本轮上下文。
+        const blind = round.blind
+          ? {
+              since: run.createdAt,
+              actorIds: [...new Set(run.plan
+                .filter((other) => other.actorId !== round.actorId)
+                .map((other) => other.actorId))],
+            }
+          : undefined;
         const invocationContext = await this.store.getRuntimeBindingInvocationContext(
           runtimeBindingId,
           round.requestMessageId,
+          blind,
         );
         storeStage = "transition-runtime-thinking";
         binding = await this.store.transitionRuntimeBinding({

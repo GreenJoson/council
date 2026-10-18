@@ -39,7 +39,7 @@
 | `http-orchestration.test.ts` | 主验收 | 用真实 App 验证冻结路由、系统 Agent 名称/alias/删除拒绝、单次完成复核覆盖、上下文限制转发、跨议题 session 碰撞失败关闭、断线、取消、审批、恢复与 sweeper；长调用跨越 RuntimeBinding TTL 且瞬时续租失败时仍可原子提交 |
 | `fake-claude.mjs` | 测试替身 | 为浏览器 E2E 提供真实子进程边界下的版本、认证与生成协议；兼作 Codex 替身：`login status` 已登录、`features list` 声明 `image_generation`，`exec --enable image_generation` 时按 brief 交付物写两张 PNG 到 `.council/out/` 并输出清单（另有首次不写文件、首次清单损坏、首次写一张半后带心跳挂起等生图总超时、首次一张不写静默挂起等卡住判定与自动重试四种一次性标记） |
 | `fake-keychain.mjs` | 测试替身 | 在隔离临时文件中实现 Keychain 最小命令协议，不触碰用户系统凭据 |
-| `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式文本、分片文件/Git Tool Call 与故障响应，用于远程 Provider/双 Agent/只读 ToolLoop E2E |
+| `fake-openai-provider.mjs` | 测试替身 | 提供 loopback 流式文本、分片文件/Git Tool Call 与故障响应，带 `COUNCIL_BLIND_E2E` 时按上下文里是否出现对方盲答原文作答，用于远程 Provider/双 Agent/同题盲答/只读 ToolLoop E2E |
 | `http-cycle.test.ts` | 端到端验收 | 走真实 REST 与执行面验证已有提案直达评审、后续 Note 关联多仓库 commit、缺 commit 可操作冲突、能力 fail-fast、commit/diff 互审、提问恢复与决策一致性 |
 | `cycle-driver.test.ts` | 行为验收 | 在真实迁移库上验证既有提案复用、自动交接、阻塞反驳回环、提问恢复，以及预算用尽原子保存阻断分歧 |
 | `schema-freeze.test.ts` | 安全验收 | 冻结已发布迁移的 schema 指纹：改动任一已落库版本的 DDL 文本立刻失败，新增版本必须补指纹，并锁定 v5 为纯数据迁移 |

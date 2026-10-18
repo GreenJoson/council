@@ -218,6 +218,13 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
+### Unreleased
+
+- Blind answers: start a message with several mentions (for example `@claude @codex give me one plan each`) and each agent answers in its own round without seeing the others' answers to this request.
+  - The answers move under the invoking message and sit side by side, stacking into one column on narrow screens; unanswered slots show queued or answering.
+  - Once everyone has answered, "Have them review each other" asks each agent to review the other's answer: its strongest point, biggest problem, what it would adopt, and which version is better.
+  - When creating a run over HTTP, each round can carry `"blind": true`; this only adds an optional field to the run snapshot, and the database stays at schema v20.
+
 ### 0.10.3 — 2026-10-13
 
 - Pipelines can be deleted: the detail page has a new "Delete pipeline" button. After a two-step confirmation it removes the pipeline together with its stage subtasks and returns to the list.

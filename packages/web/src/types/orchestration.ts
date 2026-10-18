@@ -1,6 +1,6 @@
 /**
  * @input  依赖：Council 动态 Actor 编排公开协议
- * @output 导出：含权限/职责的 Capabilities（能力键含 P2 的 image_generate/image_input）、Run、跨 Agent 实施项委派（v18：可选 topicId、kind、
+ * @output 导出：含权限/职责的 Capabilities（能力键含 P2 的 image_generate/image_input）、Run（轮次可带请求消息与同题盲答标记）、跨 Agent 实施项委派（v18：可选 topicId、kind、
  *         inputAssetIds、outputManifest）、议题/任务两条委派入参（任务入参的 supervisorAgentId 对图像委派可省略）、
  *         AI 计划、会话和独立快照类型
  * @pos    Web 自动轮次 UI 与 OrchestrationRepository 的稳定领域模型
@@ -179,6 +179,10 @@ export interface OrchestrationRoundPlan {
   actorId: string;
   messageKind: OrchestrationMessageKind;
   instruction: string;
+  /** @ 召唤时冻结的人类请求消息；同题盲答按它把几份回答归成一组。 */
+  requestMessageId?: string;
+  /** 同题盲答：本轮看不到同一 Run 里其他 Agent 这次的回答。 */
+  blind?: boolean;
 }
 
 export interface OrchestrationFailure {
@@ -256,6 +260,7 @@ export interface CreateOrchestrationRunInput {
     messageKind: OrchestrationMessageKind;
     instruction: string;
     requestMessageId?: string;
+    blind?: boolean;
   }>;
 }
 
