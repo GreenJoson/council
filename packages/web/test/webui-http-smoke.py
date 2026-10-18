@@ -28,6 +28,8 @@ API_URL = os.environ["COUNCIL_API_URL"].rstrip("/")
 PROJECT_PATH = os.environ["COUNCIL_PROJECT_PATH"]
 FAKE_PROVIDER_URL = os.environ["COUNCIL_FAKE_PROVIDER_URL"]
 SCREENSHOT_PATH = os.environ.get("COUNCIL_WEB_SCREENSHOT")
+# 「在浏览器中打开」的系统命令替身记下的参数；Windows 上没有替身，跳过这一步。
+OPEN_LOG = os.environ.get("COUNCIL_E2E_OPEN_LOG")
 web_parts = urlsplit(WEB_URL)
 WEB_ORIGIN = f"{web_parts.scheme}://{web_parts.netloc}"
 LOCAL_OPENER = build_opener(ProxyHandler({}))
@@ -177,6 +179,10 @@ def wait_stage(page, stage_id: str, statuses: tuple[str, ...], timeout: int = 60
 # 团队契约：GET /api/v1/tasks/:taskId/team 以 404 表示「没有团队」，任务详情每次重读都会触发；
 # 浏览器把它记成资源加载失败，这是约定内的状态而非页面错误，只放过这一条路径的 404。
 TEAM_NOT_FOUND_URL = re.compile(r"/api/v1/tasks/[^/]+/team$")
+# 删除流水线会物理删掉子任务；App 常驻的任务流在每次 revision 都逐行读未完成任务的委派，
+# 恰好读到刚删的子任务就是 404（界面按 allSettled 忽略，浏览器仍记一条）。只放过本用例主动删除的任务。
+DELEGATIONS_URL = re.compile(r"/api/v1/tasks/([^/]+)/delegations$")
+DELETED_TASK_IDS: set[str] = set()
 
 
 def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
@@ -184,6 +190,9 @@ def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
         return
     location_url = urlsplit(message.location.get("url") or "").path
     if "status of 404" in message.text and TEAM_NOT_FOUND_URL.search(location_url):
+        return
+    deleted = DELEGATIONS_URL.search(location_url)
+    if "status of 404" in message.text and deleted and deleted.group(1) in DELETED_TASK_IDS:
         return
     # 带上出错资源的路径（不含查询串），失败时能直接看出是哪个请求。
     errors.append(f"{message.text} @ {location_url}" if location_url else message.text)
@@ -262,6 +271,46 @@ with sync_playwright() as playwright:
     failure_page.get_by_role("button", name="已删除文件", exact=True).click()
     failure_page.get_by_role("dialog", name="文件预览：missing.json", exact=True).get_by_role("alert").filter(has_text="可能已移动或删除").wait_for()
     failure_page.close()
+
+    # HTML 页面预览：页面跑在本地服务独立端口（与 API、WebUI 都不同源）的沙箱 iframe 里，
+    # `../` 引用的样式与脚本照常加载，本地存储可用；页面自己的 Origin 调 API 会被白名单拒绝。
+    api_request("POST", f"/api/v1/topics/{topic_id}/messages", {"kind": "note", "content": "[战斗原型](docs/demo/index.html)"})
+    page.get_by_role("button", name="战斗原型", exact=True).click()
+    preview = page.get_by_role("dialog", name="文件预览：index.html", exact=True)
+    page_frame = preview.locator("iframe.project-file-frame")
+    page_frame.wait_for()
+    view_parts = urlsplit(page_frame.get_attribute("src") or "")
+    assert view_parts.netloc not in (urlsplit(API_URL).netloc, web_parts.netloc), view_parts
+    page_status = preview.frame_locator("iframe.project-file-frame").locator("#status")
+    page_status.filter(has_text="原型脚本已运行，本地存储可用").wait_for()
+    assert page_status.evaluate("e => getComputedStyle(e).color") == "rgb(1, 2, 3)"
+    view_origin = f"{view_parts.scheme}://{view_parts.netloc}"
+    try:
+        LOCAL_OPENER.open(Request(f"{API_URL}/api/v1/topics", headers={"Origin": view_origin}), timeout=5)
+        raise AssertionError("页面来源不应能读取 API")
+    except HTTPError as error:
+        assert error.code == 403, error.code
+    view_token = view_parts.path.split("/")[1]
+    try:
+        LOCAL_OPENER.open(f"{view_origin}/{view_token}/.env", timeout=5)
+        raise AssertionError("页面视图不应出站受保护文件")
+    except HTTPError as error:
+        assert error.code == 403, error.code
+    preview.get_by_role("button", name="查看源码", exact=True).click()
+    preview.locator("pre").filter(has_text="../shared/app.js").wait_for()
+    preview.get_by_role("button", name="查看页面", exact=True).click()
+    page_status.filter(has_text="原型脚本已运行").wait_for()
+    if OPEN_LOG:
+        preview.get_by_role("button", name="在浏览器中打开", exact=True).click()
+        preview.get_by_role("status").filter(has_text="已交给系统浏览器打开").wait_for()
+        expected_open = os.path.realpath(Path(PROJECT_PATH) / "docs" / "demo" / "index.html")
+        deadline = time.monotonic() + 5
+        while not (Path(OPEN_LOG).exists() and Path(OPEN_LOG).read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert Path(OPEN_LOG).read_text().strip() == expected_open, Path(OPEN_LOG).read_text()
+    preview.get_by_role("button", name="关闭文件预览", exact=True).click()
+    for href, status in [("docs/model.json", 415), (".env", 403), ("docs/demo/missing.html", 404)]:
+        api_expect_error("POST", f"/api/v1/topics/{topic_id}/files/open", status, {"href": href})
 
     # 消息图片：项目内相对路径经议题只读图片接口出站；council-asset: 引用经资产接口渲染并自动挂到消息。
     api_request("POST", f"/api/v1/topics/{topic_id}/messages", {
@@ -1386,8 +1435,6 @@ with sync_playwright() as playwright:
     assert redispatched["pipeline"]["task"]["title"] == f'{dispatched["pipeline"]["task"]["title"]}（2）', redispatched["pipeline"]["task"]
     # 删除：阶段在跑时 409 要求先取消（版本被驱动抢先推进时按最新版本重试）；已取消的整棵子树物理删除，
     # 详情 404、实施项链接随之清掉，图片仍留在资产库。
-    # 页面先离开任务页：任务列表逐行读取委派，列表刚读到的子任务若恰好被删，那一行会 404
-    # （界面按 allSettled 忽略，但浏览器仍记一条控制台错误）。
     page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
     page.get_by_role("heading", name="流水线", exact=True).wait_for()
     for _ in range(5):
@@ -1399,6 +1446,7 @@ with sync_playwright() as playwright:
     assert refused["message"] == "流水线还在运行，请先取消再删除。", refused
     first_round_assets = api_request("GET", f"/api/v1/assets?project={quote(PROJECT_PATH)}&target=work_item:{first_round['id']}")
     assert first_round_assets["total"] >= 1, first_round_assets
+    DELETED_TASK_IDS.update([dispatch_id, *(child["id"] for child in api_request("GET", f"/api/v1/pipelines/{dispatch_id}")["children"])])
     api_request("DELETE", f"/api/v1/pipelines/{dispatch_id}?expectedVersion={cancelled_dispatch['task']['version']}")
     api_expect_error("GET", f"/api/v1/pipelines/{dispatch_id}", 404)
     for asset in first_round_assets["items"]:
@@ -1488,6 +1536,7 @@ with sync_playwright() as playwright:
     api_request("POST", f"/api/v1/pipelines/{ui_dispatch_id}/cancel", {"expectedVersion": ui_dispatch["task"]["version"]})
     page.get_by_role("button", name="删除流水线", exact=True).click()
     page.get_by_text("删除后流水线与子任务记录不可恢复，生成的图片仍留在资产库。确定吗？").wait_for()
+    DELETED_TASK_IDS.update([ui_dispatch_id, *(child["id"] for child in api_request("GET", f"/api/v1/pipelines/{ui_dispatch_id}")["children"])])
     page.get_by_role("button", name="确认删除", exact=True).click()
     page.wait_for_function("location.hash === '#/pipelines'")
     page.get_by_role("heading", name="流水线", exact=True).wait_for()

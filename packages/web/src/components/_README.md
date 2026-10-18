@@ -33,6 +33,6 @@
 
 `DelegationDeliveryEvidence.tsx` 展示所有状态下已保存的提交、审核问题和材料阻断。执行阶段区分首次实施与按审核意见修正，恢复入口区分提交复审与修正草稿接续。
 
-| `files/` | 文件预览 | ProjectFilesProvider 统一内部打开、竞态与项目切换；ProjectFileDialog 显示只读工作表/Markdown/源码，ProjectFileIcon 提供类型图标 |
+| `files/` | 文件预览 | ProjectFilesProvider 统一内部打开、竞态与项目切换；ProjectFileDialog 显示只读工作表/Markdown/源码，HTML 在沙箱 iframe 里渲染页面（页面来自本地服务独立端口，与 API 不同源）并可「在浏览器中打开」原文件，ProjectFileIcon 提供类型图标 |
 
 `WorkItemDelegationPanel.tsx` 新增可选 `formExtras`（插在提交按钮前，任务详情用它放「团队模式」开关与并行上限）；`DelegationExecutionProgress.tsx` 只需委派的 `execution` 字段，团队右栏的 Worker 委派摘要直接复用。

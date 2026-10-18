@@ -1,10 +1,12 @@
 /**
- * @input  依赖：文件预览仓储、当前项目身份、只读预览弹层
+ * @input  依赖：文件预览仓储（预览、在浏览器中打开）、当前项目身份、只读预览弹层
  * @output 导出：统一文件打开上下文与 ProjectFilesProvider
  * @pos    讨论/决策链接与架构附件共用一个弹层；切换项目和关闭时丢弃旧请求结果
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { loadProjectFilePreview, type ProjectFilePreview, type ProjectFileReference } from "../../data/project-files";
+import { loadProjectFilePreview, openProjectFileInBrowser, type ProjectFilePreview, type ProjectFileReference } from "../../data/project-files";
 import { getErrorMessage } from "../../data/error-message";
 import { ProjectFileDialog } from "./ProjectFileDialog";
 import { ProjectFilesContext } from "../../hooks/useProjectFiles";
@@ -27,6 +29,6 @@ export function ProjectFilesProvider({ children, projectKey }: { children: React
   }, []);
   return <ProjectFilesContext.Provider value={open}>
     {children}
-    {reference ? <ProjectFileDialog reference={reference} preview={preview} error={error} onClose={close} onRetry={() => open(reference)} /> : null}
+    {reference ? <ProjectFileDialog reference={reference} preview={preview} error={error} onClose={close} onRetry={() => open(reference)} onOpenInBrowser={() => openProjectFileInBrowser(reference)} /> : null}
   </ProjectFilesContext.Provider>;
 }

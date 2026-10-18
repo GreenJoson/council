@@ -8,7 +8,7 @@
 
 import { createRequire } from "node:module";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -318,6 +318,12 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
   writeFileSync(path.join(docs, "bad.xlsx"), 'invalid workbook');
   // 1×1 真 PNG：消息里 `![架构草图](docs/logo.png)` 经议题只读图片接口出站。
   writeFileSync(path.join(docs, "logo.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
+  // HTML 页面预览：页面经 `../` 引用兄弟目录的样式与脚本（与用户的原型 Demo 同构），脚本还会用本地存储。
+  mkdirSync(path.join(docs, "demo"));
+  mkdirSync(path.join(docs, "shared"));
+  writeFileSync(path.join(docs, "demo", "index.html"), '<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8"><title>战斗原型</title><link rel="stylesheet" href="../shared/style.css"><script src="../shared/app.js" defer></script></head>\n<body><p id="status">脚本未运行</p></body></html>\n');
+  writeFileSync(path.join(docs, "shared", "style.css"), "#status { color: rgb(1, 2, 3); }\n");
+  writeFileSync(path.join(docs, "shared", "app.js"), "localStorage.setItem('council-e2e', '可用');\ndocument.getElementById('status').textContent = '原型脚本已运行，本地存储' + localStorage.getItem('council-e2e');\n");
   writeFileSync(path.join(projectPath, ".gitignore"), '.env\n');
   writeFileSync(path.join(projectPath, ".env"), 'COUNCIL_E2E_PRIVATE=placeholder\n');
   const gitEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" };
@@ -342,11 +348,22 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
   const children = [remoteProvider];
   try {
     await waitForServer("Council 测试远程 Provider", remoteProvider, REMOTE_PROVIDER_PORT);
+    // 「在浏览器中打开」走系统打开命令：用只记录参数的替身顶在 PATH 前面，验收时不真的弹出浏览器。
+    const openerName = { darwin: "open", linux: "xdg-open" }[process.platform];
+    const openLog = path.join(dataDirectory, "system-open.log");
+    const openerDirectory = path.join(dataDirectory, "opener-bin");
+    if (openerName) {
+      mkdirSync(openerDirectory);
+      writeFileSync(path.join(openerDirectory, openerName), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${openLog}'\n`);
+      chmodSync(path.join(openerDirectory, openerName), 0o755);
+    }
     const api = startChild(
       "api",
       process.execPath,
       [path.join(ROOT, "packages/mcp-server/dist/src/http-index.js")],
-      apiEnvironment(dataDirectory),
+      openerName
+        ? { ...apiEnvironment(dataDirectory), PATH: `${openerDirectory}${path.delimiter}${process.env.PATH ?? ""}` }
+        : apiEnvironment(dataDirectory),
     );
     children.push(api);
     await waitForServer("Council API", api, API_PORT);
@@ -369,6 +386,7 @@ with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         COUNCIL_PROJECT_PATH: projectPath,
         COUNCIL_FAKE_PROVIDER_URL: `http://localhost:${String(REMOTE_PROVIDER_PORT)}/v1`,
         COUNCIL_DATA_DIR: dataDirectory,
+        ...(openerName ? { COUNCIL_E2E_OPEN_LOG: openLog } : {}),
         ...clientConfigEnvironment(dataDirectory),
       },
     );

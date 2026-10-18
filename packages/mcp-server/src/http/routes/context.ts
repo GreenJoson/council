@@ -1,5 +1,5 @@
 /**
- * @input  依赖：Zod、council-orchestrator RuntimeBinding、CouncilDatabase、编排服务、HTTP 配置、项目文件预览服务与 Model Router 公开错误
+ * @input  依赖：Zod、council-orchestrator RuntimeBinding、CouncilDatabase、编排服务、HTTP 配置、项目文件预览服务、HTML 页面视图端口与 Model Router 公开错误
  * @output 导出：路由模块共享的 HttpRouteContext 依赖包，以及 parse / publicRuntimeBinding / rethrowModelRouterError 共享辅助
  * @pos    http/app.ts 与各路由模块之间的依赖注入契约，共享校验与脱敏辅助的单一真源
  *
@@ -12,6 +12,7 @@ import type { CouncilDatabase } from "../../database.js";
 import { ModelRouterPublicError } from "../../model-router-service.js";
 import type { CouncilOrchestrationService } from "../../orchestration/service.js";
 import type { ProjectFilePreviewService } from "../../project-file-preview.js";
+import type { ProjectFileViewServer } from "../../project-file-view.js";
 import type { CouncilHttpConfig } from "../../types.js";
 import { HttpError, validationIssues } from "../responses.js";
 
@@ -22,6 +23,7 @@ export interface HttpRouteContext {
   database: CouncilDatabase;
   orchestration?: CouncilOrchestrationService;
   projectFiles: ProjectFilePreviewService;
+  fileView: ProjectFileViewServer;
 }
 
 export function parse<T>(schema: z.ZodType<T>, input: unknown): T {

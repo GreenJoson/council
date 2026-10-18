@@ -1,6 +1,6 @@
 /**
- * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件、Zod、RevisionEventStream、项目文件预览服务与 routes/ 下各路由模块
- * @output 导出：含 schema ready、服务停止、SSE 事件流，并按顺序挂载设置/客户端接入/议题/实施项/任务/资产/流水线/Worker 团队/编排路由模块与脱敏错误处理的应用工厂
+ * @input  依赖：CouncilDatabase、HTTP 配置、Express 安全中间件、Zod、RevisionEventStream、项目文件预览服务、HTML 页面视图端口与 routes/ 下各路由模块
+ * @output 导出：含 schema ready、服务停止、SSE 事件流、HTML 页面视图端口（随包返回，由入口负责关闭），并按顺序挂载设置/客户端接入/议题/实施项/任务/资产/流水线/Worker 团队/编排路由模块与脱敏错误处理的应用工厂
  * @pos    WebUI 与桌面壳访问 canonical 数据、Provider/Agent 路由和运行状态的 HTTP 入口
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -34,6 +34,7 @@ import {
 } from "../errors.js";
 import { logger } from "../logger.js";
 import { ProjectFilePreviewService } from "../project-file-preview.js";
+import { ProjectFileViewServer } from "../project-file-view.js";
 import type { CouncilOrchestrationService } from "../orchestration/service.js";
 import { COUNCIL_SCHEMA_VERSION } from "../schema-migrator.js";
 import type { CouncilHttpConfig } from "../types.js";
@@ -154,6 +155,7 @@ function createErrorMiddleware(): ErrorRequestHandler {
 export interface CouncilHttpAppBundle {
   app: express.Express;
   events: RevisionEventStream;
+  fileView: ProjectFileViewServer;
 }
 
 export function createCouncilHttpApp(
@@ -164,6 +166,13 @@ export function createCouncilHttpApp(
 ): CouncilHttpAppBundle {
   const app = express();
   const projectFiles = new ProjectFilePreviewService(config.filePreview);
+  // HTML 页面跑在独立端口（与 API 不同源），首次预览 HTML 时才监听。
+  const fileView = new ProjectFileViewServer(projectFiles, {
+    host: config.host,
+    port: projectFiles.config.viewPort,
+    tokenTtlMs: projectFiles.config.viewTokenTtlMs,
+    maxTokens: projectFiles.config.viewMaxTokens,
+  });
   const events = new RevisionEventStream(
     database,
     config.eventPollMs,
@@ -222,7 +231,7 @@ export function createCouncilHttpApp(
   });
 
   // 路由模块的注册顺序与拆分前的内联顺序一致，Express 按注册顺序匹配。
-  const context: HttpRouteContext = { config, database, orchestration, projectFiles };
+  const context: HttpRouteContext = { config, database, orchestration, projectFiles, fileView };
   registerSettingsRoutes(app, context);
   registerClientConfigRoutes(app, context);
   registerTopicRoutes(app, context);
@@ -243,5 +252,5 @@ export function createCouncilHttpApp(
   });
   app.use(createErrorMiddleware());
 
-  return { app, events };
+  return { app, events, fileView };
 }

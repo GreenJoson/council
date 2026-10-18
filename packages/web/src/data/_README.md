@@ -67,5 +67,5 @@ HTTP 和桌面仓储透传可选接续权限；未选择时不发送覆盖值。
 
 任务域（`tasks/`）不新增 SSE 事件，也不在 `TaskRepository` 上提供 subscribe：任务写入递增 content revision，由内容仓储发布新快照；委派写入递增 orchestration revision，体现在编排快照 `revision`。任务视图的 hook 监听这两个既有信号后重读任务，写操作直接返回最新行，避免第三条 EventSource 或轮询。桌面模式读走 Tauri `list_tasks`/`get_task`（离线可用），委派列表与所有写入走本地 Agent 服务 HTTP；离线时 `getTask` 返回空委派加 `limitation`，写入抛出与编排面板一致的离线指引；项目路径每次从 Rust 设置读取并在读后复核，不另建设置世代。
 
-| `project-files.ts` | 文件引用 | 从 Markdown AST 聚合项目附件；本地链接分类、预览协议校验与 HTTP/桌面文件服务接入；`resolveApiBaseUrl` 为文件预览与图片出站提供本地服务地址 |
+| `project-files.ts` | 文件引用 | 从 Markdown AST 聚合项目附件；本地链接分类、预览协议校验（HTML 预览带页面视图地址 `viewUrl`）、「在浏览器中打开」与 HTTP/桌面文件服务接入；`resolveApiBaseUrl` 为文件预览与图片出站提供本地服务地址 |
 | `markdown-images.ts` | 图片解析 | Markdown 图片 src 解析（直链 / `council-asset:` 经资产仓储 / 项目内相对路径经议题图片接口）与发布后把正文引用的资产挂到消息（幂等、失败不阻塞发布） |

@@ -29,4 +29,4 @@
 `execution-evidence.css` 为提交与审核证据保留整行、折叠列表与长路径换行。
 # 项目文件预览
 
-`project-files.css` 维护 Markdown 文件链接、架构附件卡片、只读预览弹层、工作表网格与窄屏布局，使用 `theme.css` 的语义 token。
+`project-files.css` 维护 Markdown 文件链接、架构附件卡片、只读预览弹层、工作表网格、HTML 页面 iframe（固定浅色画布）与窄屏布局，使用 `theme.css` 的语义 token。

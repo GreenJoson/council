@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HTTP 启动环境配置
- * @output 导出：项目文件预览的大小、表格与隔离解析预算
+ * @output 导出：项目文件预览的大小、表格与隔离解析预算，以及 HTML 页面视图端口、令牌有效期与令牌数上限
  * @pos    文件预览配置的单一真源；业务代码不读取环境变量
  */
 import { z } from "zod/v4";
@@ -16,6 +16,10 @@ const schema = z.object({
   maxArchiveEntries: z.coerce.number().int().positive().max(100_000).default(10_000),
   workerMemoryMb: z.coerce.number().int().min(64).max(512).default(256),
   timeoutMs: z.coerce.number().int().positive().max(60_000).default(15_000),
+  // HTML 页面视图：独立 loopback 端口（0 = 首次使用时由系统分配），令牌闲置超时与同时有效的令牌数（每个项目一个）。
+  viewPort: z.coerce.number().int().min(0).max(65_535).default(0),
+  viewTokenTtlMs: z.coerce.number().int().positive().max(86_400_000).default(1_800_000),
+  viewMaxTokens: z.coerce.number().int().positive().max(1_000).default(32),
 });
 
 export type ProjectFilePreviewConfig = z.infer<typeof schema>;

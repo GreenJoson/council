@@ -1,6 +1,7 @@
 /**
  * @input  依赖：Markdown AST、议题详情、HTTP/桌面桥与文件预览响应
- * @output 导出：本地文件引用聚合、预览类型、文件/图片接口服务地址解析 resolveApiBaseUrl 与预览数据访问入口
+ * @output 导出：本地文件引用聚合、预览类型（HTML 带页面视图地址）、文件/图片接口服务地址解析 resolveApiBaseUrl、
+ *         预览数据访问入口与「在浏览器中打开」openProjectFileInBrowser
  * @pos    附件以项目文件引用存在；不上传、复制或隐式读取整棵目录；图片出站地址由 markdown-images.ts 复用 resolveApiBaseUrl 拼出
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -34,9 +35,11 @@ export interface ProjectFilePreview {
   sizeBytes: number;
   updatedAt: string;
   truncated: boolean;
-  kind: "text" | "markdown" | "spreadsheet";
+  kind: "text" | "markdown" | "html" | "spreadsheet";
   text?: string;
   sheets?: PreviewSheet[];
+  /** HTML 页面视图地址（本地服务的独立端口）；缺省表示页面视图不可用，只能看源码 */
+  viewUrl?: string;
 }
 
 export function isProjectFileLink(href: string): boolean {
@@ -97,7 +100,12 @@ function parsePreview(value: unknown): ProjectFilePreview {
       && Number.isSafeInteger(sheet.rowCount) && Number.isSafeInteger(sheet.columnCount) && typeof sheet.truncated === "boolean")) {
       throw new Error("工作表预览响应无效");
     }
-  } else if ((data.kind !== "text" && data.kind !== "markdown") || typeof data.text !== "string") throw new Error("文件预览正文无效");
+  } else if ((data.kind !== "text" && data.kind !== "markdown" && data.kind !== "html") || typeof data.text !== "string") {
+    throw new Error("文件预览正文无效");
+  }
+  if (data.viewUrl !== undefined && (data.kind !== "html" || typeof data.viewUrl !== "string" || !/^https?:\/\//i.test(data.viewUrl))) {
+    throw new Error("文件预览响应无效");
+  }
   return data;
 }
 
@@ -116,11 +124,22 @@ export async function resolveApiBaseUrl(): Promise<string | undefined> {
   return import.meta.env.VITE_COUNCIL_API_URL?.trim() || undefined;
 }
 
-export async function loadProjectFilePreview(reference: ProjectFileReference): Promise<ProjectFilePreview> {
+async function fileServiceUrl(reference: ProjectFileReference, action: "preview" | "open"): Promise<URL> {
   if ((import.meta.env.VITE_COUNCIL_DATA_MODE ?? "mock") === "mock") throw new Error("演示模式没有本地文件；请连接项目后查看附件。");
   const baseUrl = await resolveApiBaseUrl();
   if (!baseUrl) throw new Error("未配置项目文件服务。");
-  return requestApiData(globalThis.fetch.bind(globalThis),
-    createApiUrl(baseUrl, `/api/v1/topics/${encodeURIComponent(reference.topicId)}/files/preview`), parsePreview,
-    jsonRequest({ href: reference.href, ...(reference.basePath ? { basePath: reference.basePath } : {}) }));
+  return createApiUrl(baseUrl, `/api/v1/topics/${encodeURIComponent(reference.topicId)}/files/${action}`);
+}
+
+function referenceBody(reference: ProjectFileReference): RequestInit {
+  return jsonRequest({ href: reference.href, ...(reference.basePath ? { basePath: reference.basePath } : {}) });
+}
+
+export async function loadProjectFilePreview(reference: ProjectFileReference): Promise<ProjectFilePreview> {
+  return requestApiData(globalThis.fetch.bind(globalThis), await fileServiceUrl(reference, "preview"), parsePreview, referenceBody(reference));
+}
+
+/** 项目内 HTML 交给本地服务用系统默认浏览器打开原文件（与双击同效）。 */
+export async function openProjectFileInBrowser(reference: ProjectFileReference): Promise<void> {
+  await requestApiData(globalThis.fetch.bind(globalThis), await fileServiceUrl(reference, "open"), () => undefined, referenceBody(reference));
 }

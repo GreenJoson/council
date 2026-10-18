@@ -232,6 +232,7 @@ MCP 的委派请求会交给本机 Council HTTP 服务执行，因此桌面 app 
 `council_attach_asset`（把资产挂到任务、消息或决策，角色为 reference/output/final/brief）；HTTP 对应 `/api/v1/assets`（`?unlinked=true` 同义）、
 `POST /api/v1/assets/import`、`POST /api/v1/assets/upload?project=`（请求正文为图片字节，只收图片）、`POST /api/v1/assets/ingest`（`{projectPath, sourcePath}` 本机绝对路径，只收图片，桌面端“引用图片”用）、`/api/v1/assets/:assetId`（`/content` 取原文件、`/thumbnail` 取缩略图、`/links` 管理挂接，`DELETE` 软删除）。
 消息正文里的 `council-asset:<资产 ID>` 引用在发布时自动挂到该消息；`GET /api/v1/topics/:topicId/files/image?href=<项目内相对路径>` 只读出站项目内图片供消息内嵌，不入库。
+`POST /api/v1/topics/:topicId/files/preview` 对 `.html`/`.htm` 额外返回 `viewUrl`：页面由本地服务的独立 loopback 端口按项目令牌出站（与 API 不同源，页面脚本调 API 会被来源白名单拒绝），相对路径资源在项目根内逐个解析，越界与受保护路径照样拒绝；端口与令牌由 `COUNCIL_FILE_PREVIEW_VIEW_PORT`（默认 0，系统分配）、`COUNCIL_FILE_PREVIEW_VIEW_TOKEN_TTL_MS`、`COUNCIL_FILE_PREVIEW_VIEW_MAX_TOKENS` 配置。`POST /api/v1/topics/:topicId/files/open`（`{href, basePath?}`）用系统默认浏览器打开项目内 HTML 原文件，非 HTML 返回 `415`。
 入库按文件头嗅探类型，只接受 `COUNCIL_ASSET_MIME_ALLOWLIST` 内的类型，单文件与总量受 `COUNCIL_ASSET_MAX_BYTES`、
 `COUNCIL_ASSET_MAX_TOTAL_BYTES` 限制；文件按内容哈希存放在 `COUNCIL_ASSET_DIR`（留空为日志库下的 `assets` 子目录），
 缩略图由 `COUNCIL_ASSET_THUMBNAIL_COMMAND` 生成并缓存。资产只属于一个项目，跨项目不可见。

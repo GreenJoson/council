@@ -1,6 +1,6 @@
 /**
  * @input  依赖：HttpRouteContext（HTTP 配置、CouncilDatabase、可选编排服务、项目文件预览服务）、项目路径规范化、Zod schema 与统一响应
- * @output 导出：注册议题列表/详情/创建/更正/关闭、项目文件只读预览与项目图片出站、消息发布（自动关联正文引用的资产库图片）
+ * @output 导出：注册议题列表/详情/创建/更正/关闭、项目文件只读预览（HTML 附页面视图地址）、在系统浏览器中打开项目 HTML、项目图片出站、消息发布（自动关联正文引用的资产库图片）
  *         与决策记录/接受 REST 的 registerTopicRoutes
  * @pos    WebUI 与桌面壳访问议题 canonical 内容数据的 HTTP 路由模块；桌面模式人类消息经 Rust 直写 SQLite 不经这里，
  *         其资产关联由前端发布后补调资产链接接口
@@ -10,6 +10,8 @@
 
 import type { Express } from "express";
 import { linkReferencedAssets } from "../../assets/asset-references.js";
+import { logger } from "../../logger.js";
+import { openInSystemBrowser } from "../../project-file-view.js";
 import { normalizeProjectPath } from "../../project-path.js";
 import { sendInlineBytes, sendSuccess } from "../responses.js";
 import {
@@ -27,7 +29,7 @@ import {
 import { parse, type HttpRouteContext } from "./context.js";
 
 export function registerTopicRoutes(app: Express, context: HttpRouteContext): void {
-  const { config, database, orchestration, projectFiles } = context;
+  const { config, database, orchestration, projectFiles, fileView } = context;
 
   app.get("/api/v1/topics", (request, response) => {
     const query = parse(listTopicsQuerySchema, request.query);
@@ -71,7 +73,26 @@ export function registerTopicRoutes(app: Express, context: HttpRouteContext): vo
     const { topicId } = parse(topicParamsSchema, request.params);
     const input = parse(projectFileReferenceSchema, request.body);
     response.set("Cache-Control", "no-store");
-    sendSuccess(response, await projectFiles.preview(database.getTopic(topicId).projectPath, input.href, input.basePath));
+    const { projectPath } = database.getTopic(topicId);
+    const preview = await projectFiles.preview(projectPath, input.href, input.basePath);
+    if (preview.kind !== "html" || !projectPath) {
+      sendSuccess(response, preview);
+      return;
+    }
+    // 页面视图端口起不来时仍返回源码，界面退回源码视图。
+    const viewUrl = await fileView.issue(projectPath, preview.relativePath).catch((error: unknown) => {
+      logger.warn("http-api", "HTML 页面视图端口不可用，预览退回源码", error);
+      return undefined;
+    });
+    sendSuccess(response, viewUrl ? { ...preview, viewUrl } : preview);
+  });
+
+  // 「在浏览器中打开」：只接受项目内 HTML 文件，交给系统默认程序打开原文件，与双击同效。
+  app.post("/api/v1/topics/:topicId/files/open", async (request, response) => {
+    const { topicId } = parse(topicParamsSchema, request.params);
+    const input = parse(projectFileReferenceSchema, request.body);
+    await openInSystemBrowser(await projectFiles.resolveHtml(database.getTopic(topicId).projectPath, input.href, input.basePath));
+    sendSuccess(response, { opened: true });
   });
 
   // 消息正文里 `![](docs/x.png)` 这类项目相对路径图片：浏览器 <img> 直接取字节，只读、不入库。

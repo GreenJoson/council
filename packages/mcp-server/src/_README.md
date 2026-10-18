@@ -79,6 +79,7 @@
 `native-runtime-progress.ts` 优先识别最终认证/服务错误，历史工具拒绝不能覆盖终止原因。
 
 | `project-file-preview.ts` / `project-file-preview-config.ts` | 文件预览 | 绑定议题项目的只读文件边界与集中预算；文本直接返回，表格放入受限 Worker，`image` 校验后原样出站供消息内嵌图片；不持久化文件内容 |
+| `project-file-view.ts` | HTML 页面视图 | 独立 loopback 端口按项目令牌出站项目文件，HTML 页面与它相对引用的 CSS/JS/图片在与 REST API 不同源的地址上运行（页面脚本调 API 会被来源白名单拒绝）；端口首次预览 HTML 时才监听，令牌闲置超时与数量上限见 `COUNCIL_FILE_PREVIEW_VIEW_*`；`openInSystemBrowser` 用系统默认程序打开已校验的项目 HTML |
 | `spreadsheet-preview-worker.ts` | 隔离解析 | SheetJS 只读 XLSX/CSV/TSV，ZIP 声明及实际解压双重限额，工作表矩阵有界，SEA 构建内嵌 Worker 资源 |
 | `client-config/` | 客户端接入领域 | P4 magpie 式配置分发：向 Claude（`.claude.json` 的 `mcpServers.council`）与 Codex（`config.toml` 受管块）写 MCP 注册并复制 `skills/council`，带 stash/applied/漂移/还原；目标路径来自 `config.ts` 的 `loadClientConfigSettings`，见 `client-config/_README.md` |
 | `stdio-mcp.ts` | stdio MCP 启动 | `runStdioMcp` 供 `index.ts` 与 `http-index.ts --council-stdio-mcp`（桌面 sidecar 无独立 index.js）共用；`resolveStdioMcpLaunch` 是本机 stdio MCP 启动命令的唯一真源（sidecar 标记 / dist / tsx），客户端接入写入与团队 Lead 注入都从这里取 |
