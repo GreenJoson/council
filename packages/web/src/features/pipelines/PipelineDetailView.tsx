@@ -2,7 +2,7 @@
  * @input  依赖：界面语言、PipelineRepository、AssetRepository、pipelineId、两路 revision；
  *         use-pipeline-detail、PipelineTrack、StageControls、PipelineReviews、FoldList、pipeline-labels
  * @output 导出：PipelineDetailView —— #/pipelines/<id>：头部（目标、模板、当前阶段、父任务链接）、阶段轨道、人工操作区、
- *         约束（过长折叠）、复盘记录（可搜索、按轮收起）与最终稿；写操作 409 时提示「流水线已更新，请重试」并已自动重读；
+ *         原型 Demo 位置（非 Git 项目导出到 council-demos/）、约束（过长折叠）、复盘记录（可搜索、按轮收起）与最终稿；写操作 409 时提示「流水线已更新，请重试」并已自动重读；
  *         删除成功后回到流水线列表
  * @pos    流水线视图的详情态；调用方按 pipelineId 作 key 重挂载，切换流水线时状态不串
  *
@@ -100,6 +100,16 @@ export function PipelineDetailView({ repository, assetRepository, pipelineId, re
           return ok;
         }}
       />
+
+      {document.demo ? (
+        <section className="task-detail-section" data-pipeline-demo>
+          <h2>{t("原型 Demo")}</h2>
+          <p>{t("已导出到项目目录：")}<code>{document.demo.path}/index.html</code></p>
+          <p className="task-muted">
+            {t("用浏览器打开这个文件即可查看（共 {count} 个文件），不用安装依赖或启动服务。", { count: document.demo.fileCount })}
+          </p>
+        </section>
+      ) : null}
 
       {document.request.constraints?.length ? (
         <section className="task-detail-section">

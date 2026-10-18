@@ -20,6 +20,8 @@
  *         新一轮出图派发后以 human 身份收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，
  *         不收尾父任务会一直显示进行中），启动对账先对每条未取消流水线补做这一步再判断是否已结束；
  *         阶段失败说明优先取 AgentInvocationError.publicMessage（额度用尽等可处理的原因）
+ *         非 Git 项目的原型在独立 Demo 工作区里做，通过后经 exportDemo 导出到项目 council-demos/ 并记进 document.demo；
+ *         导出失败阶段记 demo_export_failed，委派仍是 approved，resume 只重新导出、不重跑原型
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
@@ -83,6 +85,8 @@ export interface PipelineDelegationPort {
   /** 某个任务上的全部委派；删除流水线前确认没有活动委派。 */
   listForWorkItem(workItemId: string): WorkItemDelegation[];
   onSettled(listener: (delegation: WorkItemDelegation) => void | Promise<void>): () => void;
+  /** 已通过的原型委派若在独立 Demo 工作区（非 Git 项目），导出到项目 council-demos/；Git 项目返回 undefined。 */
+  exportDemo(delegationId: string, name: string): Promise<{ path: string; fileCount: number } | undefined>;
   stageProjectInputs(
     root: string,
     assetIds: readonly string[],
@@ -268,6 +272,11 @@ export class PipelineDriver {
     if (stage.id === "prototype") {
       if (!stage.workItemId) return await this.startPrototype(pipelineId, actorId);
       const previous = stage.delegationId ? this.#delegations.get(stage.delegationId) : undefined;
+      // 原型已通过、只是 Demo 没导出成功：重新导出即可，不重跑。
+      if (previous?.status === "approved") {
+        await this.#completePrototype(pipelineId, stage, previous, actorId);
+        return this.#store.load(pipelineId);
+      }
       const resumable = previous?.kind === "code" && previous.status === "failed"
         && CHECKPOINT_FAILURES.has(previous.failureCode ?? "");
       return await this.#startStageDelegation(
@@ -659,10 +668,43 @@ export class PipelineDriver {
       this.#failStage(pipelineId, stage.id, code, `${message}${hint}`, actorId);
       return;
     }
+    if (stage.id === "prototype") {
+      await this.#completePrototype(pipelineId, stage, delegation, actorId);
+      return;
+    }
     const at = now();
     this.#store.write(pipelineId, ({ document: current }) =>
       withStage(current, stage.id, { ...stageFields(stage), status: "completed", endedAt: at }, at), { actorId });
-    if (stage.id === "image") this.#launchOneShot(pipelineId, "review", actorId);
+    this.#launchOneShot(pipelineId, "review", actorId);
+  }
+
+  /** 锁内：原型通过 → 非 Git 项目先导出 Demo（同一次通过只导出一次），再把阶段置 completed。 */
+  async #completePrototype(
+    pipelineId: string,
+    stage: PipelineStage,
+    delegation: WorkItemDelegation,
+    actorId: string,
+  ): Promise<void> {
+    const { task, document } = this.#store.load(pipelineId);
+    let demo = document.demo?.delegationId === delegation.id ? document.demo : undefined;
+    if (!demo) {
+      try {
+        const exported = await this.#delegations.exportDemo(delegation.id, task.title);
+        if (exported) demo = { ...exported, delegationId: delegation.id };
+      } catch (error) {
+        logger.warn("pipeline", `流水线 Demo 导出失败：${pipelineId}`, error);
+        const reason = errorMessage(error, "导出失败。");
+        this.#failStage(pipelineId, "prototype", "demo_export_failed",
+          `原型已通过审核，但 Demo 导出到项目目录失败：${reason}「恢复」会重新导出，不重跑原型。`, actorId);
+        return;
+      }
+    }
+    const at = now();
+    const { error: _error, ...fields } = stageFields(stage);
+    this.#store.write(pipelineId, ({ document: current }) => ({
+      ...withStage(current, "prototype", { ...fields, status: "completed", endedAt: at }, at),
+      ...(demo ? { demo } : {}),
+    }), { actorId });
   }
 
   #failStage(pipelineId: string, stageId: PipelineStageId, code: string, message: string, actorId: string): void {

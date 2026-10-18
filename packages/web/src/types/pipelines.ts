@@ -1,6 +1,6 @@
 /**
  * @input  依赖：council.ts 的任务行快照 CouncilWorkItem 与 WorkItemStatus
- * @output 导出：流水线模板/阶段/阶段状态常量与联合类型、PipelineStage、PipelineReview（含本轮缺少产物的交付物 missing）、CouncilPipelineDocument（schemaVersion 1）、
+ * @output 导出：流水线模板/阶段/阶段状态常量与联合类型、PipelineStage、PipelineReview（含本轮缺少产物的交付物 missing）、PipelineDemo、CouncilPipelineDocument（schemaVersion 1，可选 demo 为非 Git 项目原型导出的 Demo 位置）、
  *         PipelineSummary（列表项）、PipelineListResult（列表读结果）、PipelineDetail（详情）、PipelineDispatchResult（从讨论消息派活的结果）、
  *         CreatePipelineInput（新建入参）
  * @pos    P3 流水线（/api/v1/pipelines）在 Web 端的稳定领域模型；字段与 docs/council-v2-refactor-plan.md
@@ -78,6 +78,11 @@ export interface PipelineRequest {
   referenceAssetIds?: string[];
 }
 
+export interface PipelineDemo {
+  path: string;
+  fileCount: number;
+}
+
 export interface CouncilPipelineDocument {
   schemaVersion: 1;
   template: PipelineTemplate;
@@ -92,6 +97,8 @@ export interface CouncilPipelineDocument {
   reviews: PipelineReview[];
   revisionCount: number;
   finalAssetIds?: string[];
+  /** 非 Git 项目的原型通过后导出的静态 Demo：path 相对项目根（如 council-demos/xxx），入口是其中的 index.html。 */
+  demo?: PipelineDemo;
   /** 取消后文档的标记；契约只写「置 cancelled」，具体字段由后端决定，前端只认这一处。 */
   status?: "cancelled";
   updatedAt: string;

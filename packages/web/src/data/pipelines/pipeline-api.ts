@@ -165,6 +165,7 @@ export function parseCouncilPipelineDocument(value: unknown): CouncilPipelineDoc
   const draftBrief = readOptionalRecord(record, "draftBrief", "pipeline");
   const brief = readOptionalRecord(record, "brief", "pipeline");
   const finalAssetIds = readOptionalStringArray(record, "finalAssetIds", "pipeline");
+  const demo = readOptionalRecord(record, "demo", "pipeline");
   return {
     schemaVersion: 1,
     template: readEnum(record, "template", PIPELINE_TEMPLATES, "pipeline"),
@@ -181,6 +182,12 @@ export function parseCouncilPipelineDocument(value: unknown): CouncilPipelineDoc
     reviews: record.reviews.map(parseReview),
     revisionCount: readNonNegativeInteger(record, "revisionCount", "pipeline"),
     ...(finalAssetIds ? { finalAssetIds } : {}),
+    ...(demo ? {
+      demo: {
+        path: readString(demo, "path", "pipeline.demo"),
+        fileCount: readNonNegativeInteger(demo, "fileCount", "pipeline.demo"),
+      },
+    } : {}),
     ...(record.status === "cancelled" ? { status: "cancelled" as const } : {}),
     updatedAt: readString(record, "updatedAt", "pipeline"),
   };

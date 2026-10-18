@@ -3,12 +3,13 @@
  *         http-client 的 CouncilApiError（识别 409）
  * @output 导出：usePipelineDetail —— 流水线详情读取、加载/错误态、手动重读，以及确认 brief、选定 final、恢复、取消、删除写操作与忙碌标记
  * @pos    流水线详情的状态与副作用层；调用方按 pipelineId 作 key 重挂载。写操作统一带当前父任务 version，
- *         返回的最新详情就地替换；409（版本冲突/阶段已变化）时标记 conflict 并主动重读
+ *         返回的最新详情就地替换；409（版本冲突/阶段已变化）时标记 conflict 并主动重读；
+ *         删除请求发出后不再因 revision 推送重读（删除完成的推送可能先于响应到达，重读只会 404），删除失败再恢复重读
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getErrorMessage } from "../../data/error-message";
 import { CouncilApiError } from "../../data/http-client";
 import type { PipelineRepository } from "../../data/pipelines/pipeline-repository";
@@ -52,8 +53,10 @@ export function usePipelineDetail(
   const [busyAction, setBusyAction] = useState<PipelineAction | null>(null);
   const [retry, setRetry] = useState(0);
   const localTick = useLocalChangeTick(repository);
+  const removingRef = useRef(false);
 
   useEffect(() => {
+    if (removingRef.current) return undefined;
     let active = true;
     setIsLoading(true);
     repository.getPipeline(pipelineId)
@@ -103,9 +106,17 @@ export function usePipelineDetail(
     selectFinal: (assetIds) => run("final", (expected) => repository.selectFinal(pipelineId, assetIds, expected)),
     resume: () => run("resume", (expected) => repository.resumePipeline(pipelineId, expected)),
     cancel: () => run("cancel", (expected) => repository.cancelPipeline(pipelineId, expected)),
-    remove: () => run("delete", async (expected) => {
-      await repository.deletePipeline(pipelineId, expected);
-      return undefined;
-    }),
+    remove: async () => {
+      removingRef.current = true;
+      const ok = await run("delete", async (expected) => {
+        await repository.deletePipeline(pipelineId, expected);
+        return undefined;
+      });
+      if (!ok) {
+        removingRef.current = false;
+        reload();
+      }
+      return ok;
+    },
   };
 }

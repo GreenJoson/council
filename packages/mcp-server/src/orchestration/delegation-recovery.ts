@@ -1,7 +1,10 @@
 /**
  * @input  依赖：原委派检查点、当前项目与受控 Git 执行器
  * @output 导出：失败分类（含图像委派 image_unavailable / outputs_missing / manifest_invalid），以及提交、草稿、审核修正中断的恢复前工作区验证
- * @pos    仅显式恢复；保留原目录与历史，HEAD 必须匹配最近已记录提交或基线
+ * @pos    仅显式恢复；保留原目录与历史，HEAD 必须匹配最近已记录提交或基线；
+ *         原工作区的对象库在委派根目录内（非 Git 项目原型的独立 Demo 仓库）时，以该仓库为源、不再要求项目是 Git 仓库
+ *
+ * ⚠️ 一旦本文件被更新，务必更新以上注释
  */
 import path from "node:path";
 import { realpath } from "node:fs/promises";
@@ -12,6 +15,7 @@ import type { DelegationPrivateState } from "./work-item-delegation-store.js";
 import { DelegationReviewError } from "./delegation-review.js";
 import { DelegationExecutionCheckpointError } from "./delegation-execution-result.js";
 import { DelegationImageError } from "./delegation-image-execution.js";
+import { standaloneCommonDir } from "./delegation-standalone-workspace.js";
 
 export function delegationFailureCode(error: unknown): string {
   if (error instanceof DelegationReviewError) return error.code;
@@ -37,7 +41,10 @@ export async function validateRecoveryCheckpoint(input: {
   projectPath: string;
   worktreeRoot: string;
   git: (cwd: string, args: string[]) => Promise<string>;
-}): Promise<{ originalRoot: string; relativeProjectPath: string; baseCommit: string; headCommit: string; oldRoot: string; mode: "commit" | "workspace" }> {
+}): Promise<{
+  originalRoot: string; relativeProjectPath: string; baseCommit: string; headCommit: string; oldRoot: string;
+  mode: "commit" | "workspace"; standalone: boolean;
+}> {
   const { previous, git } = input;
   const headCommit = previous.headCommit ?? previous.baseCommit;
   let mode: "commit" | "workspace" = previous.headCommit ? "commit" : "workspace";
@@ -52,7 +59,14 @@ export async function validateRecoveryCheckpoint(input: {
     throw new CouncilConflictError("恢复工作区不在 Council 管理目录内。");
   }
   const project = await realpath(input.projectPath);
-  const originalRoot = (await git(project, ["rev-parse", "--show-toplevel"])).trim();
+  // 独立 Demo 仓库：对象库就在委派根目录内，源仓库是它所在目录；项目本身不是 Git 仓库，不参与比对。
+  const standaloneCommon = await standaloneCommonDir({ root: oldRoot, worktreeRoot: managed, git });
+  if (standaloneCommon && path.basename(standaloneCommon) !== ".git") {
+    throw new CouncilConflictError("恢复工作区的仓库结构无效，请检查后重新委派。");
+  }
+  const originalRoot = standaloneCommon
+    ? path.dirname(standaloneCommon)
+    : (await git(project, ["rev-parse", "--show-toplevel"])).trim();
   const originalCommon = await realpath(path.resolve(originalRoot, (await git(originalRoot, ["rev-parse", "--git-common-dir"])).trim()));
   const oldCommon = await realpath(path.resolve(oldRoot, (await git(oldRoot, ["rev-parse", "--git-common-dir"])).trim()));
   if (oldCommon !== originalCommon || (await git(oldRoot, ["rev-parse", "HEAD"])).trim() !== headCommit) {
@@ -67,5 +81,9 @@ export async function validateRecoveryCheckpoint(input: {
   }
   const base = (await git(oldRoot, ["merge-base", previous.baseCommit, headCommit])).trim();
   if (base !== previous.baseCommit) throw new CouncilConflictError("恢复提交不属于原始基线。");
-  return { originalRoot, relativeProjectPath: path.relative(originalRoot, project), baseCommit: base, headCommit, oldRoot, mode };
+  return {
+    originalRoot,
+    relativeProjectPath: standaloneCommon ? "" : path.relative(originalRoot, project),
+    baseCommit: base, headCommit, oldRoot, mode, standalone: Boolean(standaloneCommon),
+  };
 }

@@ -11,6 +11,8 @@
  *         从仓储同步 Lead headCommit（Worker 合并会移动 Lead HEAD），交付提交经 withLeadWorkspace 排进团队锁；startTeamWorker 建 team_worker 子委派并交给
  *         delegation-worker-execution（不审核、不认领实施项）；setTeamLeadHead / teamLeadWorkspace / projectPathOf 供 TeamService 用
  *         全新仓库的安全基线拆到 delegation-initial-baseline
+ *         流水线原型（任务 kind=prototype）在非 Git 项目改走 delegation-standalone-workspace 的独立 Demo 仓库（建在委派根目录，
+ *         不碰项目），提示词与审核带上 Demo 约定；exportStandaloneDemo 供流水线在通过后把 Demo 导出到项目 council-demos/
  *
  * ⚠️ 一旦本文件被更新，务必更新以上注释
  * 阶段执行、审核材料、Git 交付与交接分属专用模块；跨工作区不复用模型会话
@@ -36,6 +38,12 @@ import { RuntimeAuditStore, redactAuditText } from "./runtime-audit-store.js";
 import { runDelegationRuntimeStage, type DelegationRuntimeInput } from "./delegation-runtime-stage.js";
 import { executeTeamWorker, type TeamWorkerWorkspace } from "./delegation-worker-execution.js";
 import { createInitialBaseline as establishInitialBaseline } from "./delegation-initial-baseline.js";
+import {
+  exportStandaloneDemo,
+  prepareStandaloneRepository,
+  standaloneCommonDir,
+  standaloneWorkspaceInstructions,
+} from "./delegation-standalone-workspace.js";
 import type { RuntimeMcpServers } from "../runtime-mcp-servers.js";
 import {
   copyInputAssets,
@@ -49,7 +57,7 @@ import {
 import { AssetService } from "../assets/asset-service.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import {
   canExecute,
   canReview,
@@ -149,6 +157,8 @@ interface PreparedWorkspace {
   baseCommit: string;
   branchName: string;
   restoredWork?: boolean;
+  /** 非 Git 项目的原型：独立 Demo 仓库，提示词与审核带上 Demo 约定。 */
+  standalone?: boolean;
 }
 
 interface DelegationAssignment {
@@ -590,6 +600,7 @@ export class WorkItemDelegationManager {
       await this.#executeInWorkspace(created.id, {
         root, cwd: path.join(root, checkpoint.relativeProjectPath), baseCommit: checkpoint.baseCommit, branchName,
         ...(snapshot ? { restoredWork: true } : {}),
+        ...(checkpoint.standalone ? { standalone: true } : {}),
       }, controller.signal, previous.headCommit ? { headCommit: checkpoint.headCommit, summary: previous.summary ?? "请直接检查保留的提交。" } : undefined);
     })().catch((error: unknown) => this.#recordFailure(created.id, error, true)).finally(() => {
       this.#controllers.delete(created.id); this.#tasks.delete(created.id);
@@ -751,12 +762,14 @@ export class WorkItemDelegationManager {
     projectPath: string,
     createInitialBaseline: boolean,
     signal: AbortSignal,
+    allowStandalone = false,
   ): Promise<PreparedWorkspace> {
     const normalized = await realpath(normalizeProjectPath(projectPath) as string);
     // 非 Git 目录给出可操作的指引，而不是笼统的“Git 操作失败”；出图走隔离目录，不经过这里。
     const toplevel = await this.#runGit(normalized, ["rev-parse", "--show-toplevel"], signal);
     if (toplevel.exitCode !== 0) {
-      throw new Error("项目目录还不是 Git 仓库：代码委派需要 Git 隔离工作区与 diff 审核，请先初始化并提交一次；出图委派不受此限制。");
+      if (allowStandalone) return await this.#prepareStandaloneWorkspace(delegation, signal);
+      throw new Error("项目目录还不是 Git 仓库：代码委派需要 Git 隔离工作区与 diff 审核，请先初始化并提交一次；出图委派与流水线原型阶段不受此限制。");
     }
     const root = await realpath(toplevel.stdout.trim());
     if (!path.isAbsolute(root)) {
@@ -802,6 +815,46 @@ export class WorkItemDelegationManager {
     };
   }
 
+  /** 非 Git 项目的原型：委派根目录下新建独立仓库（空树基线），项目目录不动。 */
+  async #prepareStandaloneWorkspace(delegation: WorkItemDelegation, signal: AbortSignal): Promise<PreparedWorkspace> {
+    const suffix = delegation.id.replace(/^delegation-/u, "").slice(0, 12);
+    const branchName = delegation.branchName ?? `codex/council-${suffix}`;
+    const worktreePath = path.join(this.config.worktreeRoot, delegation.id);
+    await mkdir(this.config.worktreeRoot, { recursive: true, mode: 0o700 });
+    const baseCommit = await prepareStandaloneRepository({
+      root: worktreePath,
+      branchName,
+      git: async (cwd, args, env) => (await this.#git(cwd, args, signal, env)).stdout,
+    });
+    this.#store.update(delegation.id, { baseCommit, branchName, worktreePath, now: new Date().toISOString() });
+    this.#recordAudit(delegation.id, "workspace.standalone", { summary: "项目不是 Git 仓库，原型改在独立 Demo 工作区执行。" });
+    return { root: worktreePath, cwd: worktreePath, baseCommit, branchName, standalone: true };
+  }
+
+  /**
+   * 流水线原型通过后：独立 Demo 工作区（非 Git 项目）按已审核提交导出到项目 `council-demos/` 下；
+   * Git 项目的 worktree 返回 undefined（代码在委派分支上）。工作区已不存在时也返回 undefined。
+   */
+  async exportStandaloneDemo(id: string, name: string): Promise<{ path: string; fileCount: number } | undefined> {
+    const delegation = this.#store.getPrivate(id);
+    if (!delegation || delegation.status !== "approved" || !delegation.worktreePath || !delegation.headCommit) return undefined;
+    if (!(await lstat(delegation.worktreePath).then(() => true, () => false))) return undefined;
+    const signal = new AbortController().signal;
+    const git = async (cwd: string, args: string[], env?: NodeJS.ProcessEnv) => (await this.#git(cwd, args, signal, env)).stdout;
+    if (!(await standaloneCommonDir({ root: delegation.worktreePath, worktreeRoot: this.config.worktreeRoot, git }))) {
+      return undefined;
+    }
+    const exported = await exportStandaloneDemo({
+      root: delegation.worktreePath,
+      headCommit: delegation.headCommit,
+      projectPath: this.#taskContext(delegation.workItemId).projectPath,
+      name,
+      git,
+    });
+    this.#recordAudit(id, "demo.exported", { path: exported.path, files: exported.fileCount });
+    return exported;
+  }
+
   /**
    * 图像委派的工作区：委派根目录下的独立空目录，不依赖 Git。
    * 产物只入资产库、从不提交，worktree 只会带来“必须是仓库 / 必须干净”的无关约束；
@@ -842,6 +895,7 @@ export class WorkItemDelegationManager {
         task.projectPath,
         createInitialBaseline,
         signal,
+        task.item.kind === "prototype",
       );
       await this.#executeInWorkspace(id, workspace, signal);
     } catch (error) {
@@ -953,7 +1007,10 @@ export class WorkItemDelegationManager {
       now: new Date().toISOString(),
     });
     // 代码委派的输入图（原型任务的终稿等）拷进不被提交的 .council/in/，提示词里只给相对 cwd 的路径。
-    const inputContext = await this.#prepareCodeInputAssets(delegation.inputAssetIds, workspace, signal);
+    const inputContext = [
+      ...await this.#prepareCodeInputAssets(delegation.inputAssetIds, workspace, signal),
+      ...(workspace.standalone ? standaloneWorkspaceInstructions(task.projectPath) : []),
+    ];
     const fingerprint = createHash("sha256").update(JSON.stringify({
       criteria: delegation.acceptanceCriteria, context: task.contextFingerprint, project: task.projectPath,
       permission: delegation.permissionProfile,
@@ -1126,6 +1183,7 @@ export class WorkItemDelegationManager {
           "",
           `验收标准：${delegation!.acceptanceCriteria}`,
           `当前任务与约束（不能依赖旧会话是否仍在）：\n${task.context}`,
+          ...(workspace.standalone ? standaloneWorkspaceInstructions(task.projectPath) : []),
           `执行摘要：\n${executorSummary}`,
           `代码 diff：\n${evidence.content}`,
         ].join("\n"),

@@ -10,7 +10,7 @@
 | `dispatch-protocol.ts` | 协议正本 | 讨论消息「一键派活」的 `council-dispatch` 尾块：给讨论 Agent 的协议说明 `DISPATCH_PROTOCOL_PROMPT`（四个讨论适配器的可信前缀都带）与严格解析 `extractPipelineDispatch`（模板 + 项目内参考图相对路径 + 经模板校验的 brief） |
 | `pipeline-prompts.ts` | 提示词 | brief / review 一次性调用指令（首行机器标记 `COUNCIL_PIPELINE_BRIEF` / `COUNCIL_PIPELINE_REVIEW`；brief 指令告知单次生图上限与每张约 1 分钟的时间预算）与原型子任务说明（告知沙箱限制：起不了服务/浏览器时不停下等放行，未验证项写进收尾说明交人工）；用户输入作为数据段，只出现相对路径；复盘产物行带生图清单标注的 deliverableId 提示 |
 | `pipeline-state.ts` | 状态读写 | 每条流水线一把串行锁；文档写入一律锁内重读父任务后用刚读到的版本写（子任务派生会让父版本 +1）；`completeImageChildren` 以 human 身份收尾仍 in_progress 的出图子任务（驱动器收尾被接手的旧轮、服务选定终稿时共用） |
-| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机；复盘只看本次图像委派入库的产物（委派 `outputManifest.assetIds`，按清单顺序列给复盘者），resume 重跑不把失败尝试入库的图混进本轮，选定阶段仍可从子任务全部 output 资产里挑；本轮 brief 里有交付物没有任何产物时复盘记为 revise 并在 `missing` 列出，下一轮修订补做；新一轮出图派发后收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，不收尾父任务会一直显示进行中），启动对账先补做这一步 |
+| `pipeline-driver.ts` | 状态机 | 唯一推进者：brief/review 一次性调用（锁外调用、锁内重读，已取消或 startedAt 变了就丢弃结果）、图像/修订/原型委派派发与终态推进、失败阶段重试、取消、启动对账与停机；复盘只看本次图像委派入库的产物（委派 `outputManifest.assetIds`，按清单顺序列给复盘者），resume 重跑不把失败尝试入库的图混进本轮，选定阶段仍可从子任务全部 output 资产里挑；本轮 brief 里有交付物没有任何产物时复盘记为 revise 并在 `missing` 列出，下一轮修订补做；新一轮出图派发后收尾被接手的旧出图子任务（委派通过后它们停在 in_progress 等人工验收，不收尾父任务会一直显示进行中），启动对账先补做这一步；非 Git 项目的原型通过后经端口 `exportDemo` 把 Demo 导出到项目 `council-demos/` 并记进文档 `demo`（同一委派只导出一次），导出失败记 `demo_export_failed`、resume 只重新导出不重跑 |
 | `pipeline-service.ts` | 用例 | create/dispatchFromMessage/list/get/confirmBrief/selectFinal/resume/cancel/delete：校验版本、阶段可操作性、brief 模板约束、终稿归属与数量、默认 Agent 选择后交给驱动器；dispatchFromMessage 从已存讨论消息的派活尾块起流水线；delete 物理删除不在运行的流水线 |
 
 ## 职责

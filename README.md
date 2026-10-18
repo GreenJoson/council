@@ -218,6 +218,14 @@ For contributions, describe the user-visible problem, keep changes within the ow
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
 
+### Unreleased
+
+- The pipeline prototype stage no longer requires a Git repository. When the project folder is not a Git repo, Council builds the prototype in its own isolated demo workspace instead of failing.
+  - The agent makes a static demo you can open by double-clicking `index.html`; review and handoff/resume work as before, and the project folder is never `git init`-ed.
+  - After approval, the demo and the images it uses are exported to `council-demos/<pipeline name>/` in the project (a number is appended if the name is taken; nothing is overwritten), and the pipeline detail page shows where.
+  - If the export fails, "Resume" only re-exports instead of rerunning the prototype. Git projects work as before.
+- Deleting a pipeline no longer briefly reloads the deleted pipeline (and flashes a "not found" error) before returning to the list.
+
 ### 0.10.4 — 2026-10-18
 
 - Blind answers: start a message with several mentions (for example `@claude @codex give me one plan each`) and each agent answers in its own round without seeing the others' answers to this request.

@@ -1,6 +1,6 @@
 """
 @input  依赖：已启动的 Council HTTP/Web、Playwright Chromium 和测试 URL 环境变量
-@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、同题盲答（连写两个 @ 时两位远程 Agent 互不可见地作答并排成组、一键互评时可读到对方）、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、取消、409/400 含简报合计张数超上限）、讨论消息派活（尾块重解析、参考图入库、跳过简报确认直接生图、重复派活返回原流水线、取消后可重派且同名标题自动加序号、无尾块/越界参考图 400、消息不存在 404）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾、消息派活卡点击跳到新流水线与坏方案只提示不给按钮）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
+@output 导出：项目隔离、附件内部预览、消息图片（项目内相对路径出站、API 上传去重与自动挂到消息、编辑器文件选择发布、403/404/415）、REST/SSE、模型路由、同题盲答（连写两个 @ 时两位远程 Agent 互不可见地作答并排成组、一键互评时可读到对方）、持久审计、包装交接/损坏交接、长任务上下文、人工验收边界、直接任务闭环、图像委派闭环（生图、去重入库、参考图变体、非 Codex 拒绝）与 P3 流水线闭环（自动修订且被接手的首轮出图子任务即收尾、选终稿、原型委派、失败 resume、清单损坏后 resume 且复盘只看本次入库产物、生图超时收回已写完整的图并把缺图记为 missing 由修订轮补做、原型交接暂停后 resume 接续并保留第一段改动、非 Git 项目原型走独立 Demo 工作区并导出到 council-demos/、取消、409/400 含简报合计张数超上限）、讨论消息派活（尾块重解析、参考图入库、跳过简报确认直接生图、重复派活返回原流水线、取消后可重派且同名标题自动加序号、无尾块/越界参考图 400、消息不存在 404）及流水线界面链路（列表分组与取消徽标、已完成详情、界面新建 → 确认 brief → 并排勾选 → 选定收尾、消息派活卡点击跳到新流水线与坏方案只提示不给按钮）、P4 Worker 团队闭环（组队、Lead 注入 MCP 工具面、派发 3 个 Worker 与并行上限 409、中断 1 个、合并 2 个、Lead 收尾后全团队只审一次、被中断 Worker 不进交付）与客户端接入（委托 client_config_smoke.py：隔离目标路径上的写入 → 漂移 409 → 还原）检查
 @pos    真实 HTTP + SQLite + 子进程 Agent 链路的浏览器主验收；控制台错误收集放过团队契约「GET …/team 404 = 没有团队」
 
 ⚠️ 一旦本文件被更新，务必更新以上注释
@@ -185,7 +185,8 @@ def collect_console_error(message: ConsoleMessage, errors: list[str]) -> None:
     location_url = urlsplit(message.location.get("url") or "").path
     if "status of 404" in message.text and TEAM_NOT_FOUND_URL.search(location_url):
         return
-    errors.append(message.text)
+    # 带上出错资源的路径（不含查询串），失败时能直接看出是哪个请求。
+    errors.append(f"{message.text} @ {location_url}" if location_url else message.text)
 
 
 with sync_playwright() as playwright:
@@ -565,6 +566,11 @@ with sync_playwright() as playwright:
     blind_group.locator(".blind-answer-group-status", has_text="已完成").wait_for()
     blind_cards = blind_group.locator(".message-card")
     assert blind_cards.count() == 2
+    # 消息卡有按序号错开的入场动画（位移），量位置前等两张卡的动画都播完。
+    blind_group.evaluate(
+        "group => Promise.all([...group.querySelectorAll('.message-card')]"
+        ".flatMap(card => card.getAnimations()).map(animation => animation.finished))"
+    )
     first_box, second_box = blind_cards.nth(0).bounding_box(), blind_cards.nth(1).bounding_box()
     assert abs(first_box["y"] - second_box["y"]) < 2 and second_box["x"] >= first_box["x"] + first_box["width"], (first_box, second_box)
     blind_runs = [
@@ -1193,6 +1199,39 @@ with sync_playwright() as playwright:
     prototype_task = next(child for child in mockup["children"] if child["id"] == prototype_child["id"])
     assert prototype_task["status"] == "in_progress", prototype_task
     api_expect_error("POST", f"/api/v1/pipelines/{mockup_id}/cancel", 409, {"expectedVersion": mockup["task"]["version"]})
+    assert "demo" not in mockup["document"], mockup["document"]
+
+    # 非 Git 项目的原型：在 Council 委派目录里的独立 Demo 仓库里做，项目不被 git init；交接暂停后照样接续，
+    # 通过后 Demo 按已审核提交连同输入图导出到项目 council-demos/ 下的普通文件夹。
+    plain_project = Path(PROJECT_PATH).parent / "plain-project"
+    plain_project.mkdir()
+    (plain_project / "notes.md").write_text("不是 Git 仓库的项目\n", encoding="utf-8")
+    plain_id = api_request("POST", "/api/v1/pipelines", {
+        **mockup_payload, "project": str(plain_project),
+        "goal": "COUNCIL_SEGMENT_E2E PIPELINE_HANDOFF_ONCE 非 Git 项目：记账 App 本地 Demo",
+    })["pipeline"]["task"]["id"]
+    plain = wait_pipeline(plain_id, waiting_at("brief"), "非 Git 项目 brief 待确认")
+    api_request("POST", f"/api/v1/pipelines/{plain_id}/brief",
+                {"brief": plain["document"]["draftBrief"], "expectedVersion": plain["task"]["version"]})
+    plain = wait_pipeline(plain_id, waiting_at("select"), "非 Git 项目选定终稿")
+    plain = api_request("POST", f"/api/v1/pipelines/{plain_id}/final",
+                        {"assetIds": plain["outputAssetIds"][:1], "expectedVersion": plain["task"]["version"]})
+    plain_child = next(child for child in plain["children"] if child["kind"] == "prototype")
+    plain_paused = wait_task_delegation(plain_child["id"], "failed", timeout=30)
+    assert plain_paused["failureCode"] == "execution_checkpoint", plain_paused
+    plain = wait_pipeline(plain_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "failed", "非 Git 原型交接暂停")
+    plain = api_request("POST", f"/api/v1/pipelines/{plain_id}/resume", {"expectedVersion": plain["task"]["version"]})
+    plain_done = wait_task_delegation(plain_child["id"], "approved", timeout=30)
+    assert plain_done["resumedFromId"] == plain_paused["id"], plain_done
+    plain = wait_pipeline(plain_id, lambda detail: pipeline_stage(detail, "prototype")["status"] == "completed", "非 Git 原型完成")
+    plain_demo = plain["document"]["demo"]
+    assert plain_demo["path"].startswith("council-demos/") and plain_demo["delegationId"] == plain_done["id"], plain_demo
+    demo_dir = plain_project / plain_demo["path"]
+    assert (demo_dir / "stage-one.txt").is_file() and (demo_dir / "stage-two.txt").is_file(), sorted(demo_dir.rglob("*"))
+    assert any((demo_dir / ".council" / "in").iterdir()), sorted(demo_dir.rglob("*"))
+    assert plain_demo["fileCount"] == sum(1 for item in demo_dir.rglob("*") if item.is_file()), plain_demo
+    assert not (plain_project / ".git").exists() and not (demo_dir / ".git").exists()
+    assert not (plain_project / "stage-one.txt").exists()
 
     concept = api_request("POST", "/api/v1/pipelines", {
         "project": PROJECT_PATH, "template": "concept-sheet",
@@ -1347,6 +1386,10 @@ with sync_playwright() as playwright:
     assert redispatched["pipeline"]["task"]["title"] == f'{dispatched["pipeline"]["task"]["title"]}（2）', redispatched["pipeline"]["task"]
     # 删除：阶段在跑时 409 要求先取消（版本被驱动抢先推进时按最新版本重试）；已取消的整棵子树物理删除，
     # 详情 404、实施项链接随之清掉，图片仍留在资产库。
+    # 页面先离开任务页：任务列表逐行读取委派，列表刚读到的子任务若恰好被删，那一行会 404
+    # （界面按 allSettled 忽略，但浏览器仍记一条控制台错误）。
+    page.goto(f"{WEB_URL}#/pipelines", wait_until="domcontentloaded")
+    page.get_by_role("heading", name="流水线", exact=True).wait_for()
     for _ in range(5):
         running_detail = api_request("GET", f"/api/v1/pipelines/{redispatch_id}")
         assert pipeline_stage(running_detail, "image")["status"] == "running", running_detail["document"]
@@ -1380,6 +1423,10 @@ with sync_playwright() as playwright:
     for stage_id in ("brief", "image", "review", "select", "prototype"):
         wait_stage(page, stage_id, ("completed",))
     assert page.locator("[data-pipeline-final] code").count() == len(final_ids)
+    assert page.locator("[data-pipeline-demo]").count() == 0
+    page.goto(f"{WEB_URL}#/pipelines/{plain_id}", wait_until="domcontentloaded")
+    page.locator(f"[data-pipeline-detail='{plain_id}'] [data-pipeline-demo] code").wait_for()
+    assert page.locator("[data-pipeline-demo] code").inner_text() == f"{plain_demo['path']}/index.html"
 
     page.get_by_role("link", name="返回流水线列表").click()
     page.get_by_role("button", name="新建流水线", exact=True).click()

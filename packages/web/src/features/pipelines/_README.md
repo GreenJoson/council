@@ -8,7 +8,7 @@
 |---|---|---|
 | `PipelinesView.tsx` | 入口 | 创建一次流水线仓储与资产仓储；有 `pipelineId` 时渲染详情（按 id 重挂载），否则渲染列表；新建成功后跳到 `#/pipelines/<新 id>` |
 | `PipelineList.tsx` | 列表 | 按 等待我处理 / 进行中 / 失败 / 已完成 分组（取消的归入已完成），行显示目标、模板、更新时间与当前阶段徽标；桌面离线时显示 limitation 并禁用新建 |
-| `PipelineDetailView.tsx` | 详情 | 头部（目标、阶段徽标、模板、父任务链接）、阶段轨道、人工操作区、约束（长列表折叠）、复盘记录（`PipelineReviews`）与最终稿；写操作 409 时提示「流水线已更新，请重试」 |
+| `PipelineDetailView.tsx` | 详情 | 头部（目标、阶段徽标、模板、父任务链接）、阶段轨道、人工操作区、原型 Demo 位置（非 Git 项目导出到 `council-demos/` 时显示 `index.html` 路径）、约束（长列表折叠）、复盘记录（`PipelineReviews`）与最终稿；写操作 409 时提示「流水线已更新，请重试」 |
 | `PipelineTrack.tsx` | 轨道 | 按模板阶段顺序横向展示每段状态、起止时间、错误 code/message 与子任务链接（`#/tasks/<id>`，显示子任务标题），窄屏纵向；修订轮出图失败而此前已有产出时注明「旧图保留、恢复只重跑这一轮」 |
 | `PipelineReviews.tsx` | 复盘 | 复盘记录按轮折叠（默认只展开最新一轮），轮标题显示通过/返工与需修改项数；区块内搜索交付物 id、问题与改法，命中轮自动展开、未命中轮隐藏 |
 | `StageControls.tsx` | 操作 | brief 等人 → BriefEditor 编辑 `draftBrief` 后确认；select 等人 → AssetCompare 勾选 1–3 张后选定；failed → 恢复；未结束 → 两步确认取消 |

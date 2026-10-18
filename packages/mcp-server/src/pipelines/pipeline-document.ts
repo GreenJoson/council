@@ -1,6 +1,6 @@
 /**
  * @input  依赖：brief-protocol（CouncilBrief 解析与限制）、templates（模板/阶段 id 与模板要求）
- * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument（request.source 记录派活来源的议题/消息）、初始文档 createPipelineDocument、
+ * @output 导出：council-pipeline 文档类型与严格解析 parsePipelineDocument（request.source 记录派活来源的议题/消息，可选 demo 记非 Git 项目原型导出的 Demo 位置）、初始文档 createPipelineDocument、
  *         阶段读写 helper（stageOf/withStage/nextStageAfter）、模板校验 assertBriefMatchesTemplate（含交付物合计张数 ≤ 单次生图上限 PipelineBriefLimits）、
  *         brief 解析 parsePipelineBrief（deliverable id 先转小写再严格校验）、
  *         尾块提取 extractFencedBlock/extractCouncilBrief、council-review 解析 parseCouncilReview、
@@ -136,6 +136,12 @@ const documentSchema = z.object({
   finalAssetIds: z.array(idText).max(BRIEF_PROTOCOL_LIMITS.maxManifestOutputs).optional(),
   /** 实现扩展：复盘达到修订上限等需要告知用户、但不是失败的说明。 */
   notice: shortText.optional(),
+  /** 实现扩展：非 Git 项目的原型通过后导出的 Demo（相对项目根的文件夹路径）；delegationId 防止同一次通过重复导出。 */
+  demo: z.object({
+    path: z.string().trim().min(1).max(250),
+    fileCount: z.number().int().min(0),
+    delegationId: idText,
+  }).strict().optional(),
   updatedAt: isoText,
 }).strict();
 
