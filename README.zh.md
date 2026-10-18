@@ -8,7 +8,7 @@
 
 Council 把 Claude、Codex 和其他已配置 Agent 放进同一个项目、同一个议题。从提案、独立审查、人工决策到隔离实施，不必再靠你在聊天窗口之间反复搬运消息。
 
-当前桌面版本为 **0.10.3**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
+当前桌面版本为 **0.10.4**。打包配置支持 macOS Apple Silicon 和 Intel；本次版本已在 Apple Silicon 上验收。当前构建配置尚未提供 Windows、Linux 桌面安装包。
 
 ## 解决什么问题？
 
@@ -218,7 +218,7 @@ E2E 需要 Python 3、Python Playwright 包及其 Chromium 浏览器，使用临
 
 发布审核记录放在 `docs/`，0.9.2 之前的版本只保留在 git 历史里。
 
-### 未发布
+### 0.10.4 — 2026-10-18
 
 - 同题盲答：一条消息开头连写多个召唤（如 `@claude @codex 各出一版方案`），每位 Agent 各答一轮，答题时看不到彼此这次的回答。
   - 回答挪到召唤消息下面并排成组，窄屏叠成单列；没答完的位置显示排队或作答中。
