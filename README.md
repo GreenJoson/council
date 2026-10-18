@@ -8,7 +8,7 @@ English · [简体中文](README.zh.md)
 
 Council connects Claude, Codex, and other configured agents around the same project and topic. Move from a proposal to independent review, a human decision, and isolated implementation without manually ferrying messages between chat windows.
 
-The current desktop release is **0.10.5**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
+The current desktop release is **0.10.6**. The desktop packaging configuration supports macOS Apple Silicon and Intel; the current release has been validated on Apple Silicon. Windows and Linux desktop packages are not provided by the current build configuration.
 
 ## Why Council?
 
@@ -174,7 +174,8 @@ In **Provider & Agent**, save the connection, choose an Agent, and click **Fetch
 **Project attachments** in the architecture archive collects local Markdown file links from topics, messages and decisions. Add links such as `[Design](docs/design.xlsx)` or `[Parameters](config/model.json)`. Existing absolute paths inside the project also work. Attachment cards and inline file links open a read-only preview in Council.
 
 - XLSX supports worksheet tabs; CSV/TSV opens as a grid. Formulas use saved values without recalculation.
-- Markdown has reading and source views. JSON, YAML, configuration and code open as text. Scripts and HTML are never executed, and document images are not fetched automatically.
+- Markdown has reading and source views. JSON, YAML, configuration and code open as text without running scripts, and document images are not fetched automatically.
+- HTML files (such as a prototype demo's `index.html`) open as the rendered, interactive page, with a source view a click away. Styles, scripts and images referenced by relative paths like `../` load as usual. The page runs in a sandbox on a different origin from Council, so it can't read Council's data, navigate away or open popups. **Open in browser** opens the original file in your default browser, just like double-clicking it.
 - Attachments are **references to current project files**. Topics retain the links; files remain in the project without automatic copying or uploading. These are not versioned backups. Missing files show an error. Uploads, snapshots, PDF/Word and legacy XLS previews are not yet supported.
 - Preview reads regular files within the topic's project only. Traversal, escaping symlinks and protected configuration paths such as `.env` or keys are rejected. `COUNCIL_FILE_PREVIEW_*` configures size, grid, expansion and parsing budgets. Truncated previews are labeled and never modify the source.
 
@@ -217,6 +218,13 @@ For contributions, describe the user-visible problem, keep changes within the ow
 ## Changelog
 
 Release review records live in `docs/` (Chinese). Versions before 0.9.2 are only in the git history.
+
+### 0.10.6 — 2026-10-18
+
+- HTML file links in messages (such as a prototype demo's `index.html`) now open as the rendered page instead of only the source.
+  - The page is interactive. Styles, scripts and images referenced by relative paths like `../` load as usual, and the page's own local storage works.
+  - **View source** is one click away, and **Open in browser** opens the original file in your default browser.
+  - The page runs in a sandbox on a different origin from Council: its scripts can't read Council's data, navigate the Council window or open popups. Files outside the project and protected files such as `.env` or keys stay unreadable.
 
 ### 0.10.5 — 2026-10-18
 
